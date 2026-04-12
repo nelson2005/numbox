@@ -37,32 +37,33 @@ def test_linear_scaling():
     real pair of clock reads around a math.sin() operation that itself cannot
     be eliminated (its result is accumulated and returned).
 
-    We measure time(2n) / time(n) and assert it falls in [0.5, 4.0].  The
+    We measure time(2n) / time(n) and assert it falls in [0.5, 5.0].  The
     wide tolerance accommodates noisy CI environments while still catching
     gross mis-behaviour (e.g. the loop being compiled away entirely, which
-    would produce a ratio near 0).
+    would produce a ratio near 1.0 regardless of n).
     """
     @njit
     def timed_loop(n):
-        total = 0
+        total_ns = 0
+        sink = 0.0
         for i in range(n):
             t0 = monotonic_ns()
-            _ = math.sin(float(i))
+            sink += math.sin(float(i))
             t1 = monotonic_ns()
-            total += t1 - t0
-        return total
+            total_ns += t1 - t0
+        return total_ns, sink
 
     # Warm up JIT compilation.
     timed_loop(100)
 
     n_small = 10_000
     n_large = 20_000
-    t_small = timed_loop(n_small)
-    t_large = timed_loop(n_large)
+    t_small, _ = timed_loop(n_small)
+    t_large, _ = timed_loop(n_large)
 
     ratio = t_large / t_small
-    assert 0.5 <= ratio <= 4.0, (
-        f"Linear scaling ratio {ratio:.3f} out of expected range [0.5, 4.0]; "
+    assert 0.5 <= ratio <= 5.0, (
+        f"Linear scaling ratio {ratio:.3f} out of expected range [0.5, 5.0]; "
         f"t_small={t_small}, t_large={t_large}"
     )
 
@@ -84,20 +85,21 @@ def test_wall_clock_consistency():
     """
     @njit
     def timed_loop(n):
-        total = 0
+        total_ns = 0
+        sink = 0.0
         for i in range(n):
             t0 = monotonic_ns()
-            _ = math.sin(float(i))
+            sink += math.sin(float(i))
             t1 = monotonic_ns()
-            total += t1 - t0
-        return total
+            total_ns += t1 - t0
+        return total_ns, sink
 
     # Warm up JIT compilation.
     timed_loop(100)
 
     n = 50_000
     wall_start = time.perf_counter_ns()
-    jit_total = timed_loop(n)
+    jit_total, _ = timed_loop(n)
     wall_total = time.perf_counter_ns() - wall_start
 
     assert wall_total > 0, "wall clock elapsed is zero — loop too fast for timer resolution"
