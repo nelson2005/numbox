@@ -56,7 +56,15 @@ if _SYSTEM == "Windows":
 
     @intrinsic
     def monotonic_ns(typingctx):
-        """Stack-only monotonic clock via QueryPerformanceCounter."""
+        """Stack-only monotonic clock via QueryPerformanceCounter.
+
+        Converts ticks to nanoseconds without overflow by decomposing::
+
+            ns = (ticks / freq) * 1e9 + (ticks % freq) * 1e9 / freq
+
+        The naive ``ticks * 1e9 / freq`` overflows int64 after ~15 min
+        of uptime at a typical 10 MHz QPC frequency.
+        """
         def codegen(context, builder, signature, arguments):
             counter_ptr = builder.alloca(_i64)
             fn_ty = ir.FunctionType(_i32, [_i64.as_pointer()])
@@ -64,8 +72,12 @@ if _SYSTEM == "Windows":
                 builder.module, fn_ty, "QueryPerformanceCounter")
             builder.call(fn, [counter_ptr])
             ticks = builder.load(counter_ptr)
-            numer = builder.mul(ticks, _BILLION)
-            return builder.sdiv(numer, _QPC_FREQ_CONST)
+            sec = builder.sdiv(ticks, _QPC_FREQ_CONST)
+            rem = builder.srem(ticks, _QPC_FREQ_CONST)
+            sec_ns = builder.mul(sec, _BILLION)
+            rem_ns = builder.sdiv(builder.mul(rem, _BILLION),
+                                  _QPC_FREQ_CONST)
+            return builder.add(sec_ns, rem_ns)
         return int64(), codegen
 
 else:
