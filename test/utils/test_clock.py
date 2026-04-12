@@ -61,6 +61,8 @@ def test_linear_scaling():
     t_small, _ = timed_loop(n_small)
     t_large, _ = timed_loop(n_large)
 
+    assert t_small > 0, f"expected positive time, got t_small={t_small}"
+    assert t_large > 0, f"expected positive time, got t_large={t_large}"
     ratio = t_large / t_small
     assert 0.5 <= ratio <= 5.0, (
         f"Linear scaling ratio {ratio:.3f} out of expected range [0.5, 5.0]; "

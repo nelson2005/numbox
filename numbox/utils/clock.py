@@ -14,8 +14,9 @@ Platform implementations
 Linux / macOS:
     Calls libc ``clock_gettime(CLOCK_MONOTONIC, &ts)`` where ``ts`` is a
     stack-allocated ``struct timespec {int64 tv_sec; int64 tv_nsec}``.
-    ``clock_gettime`` is resolved via ``address_of_symbol`` from
-    RTLD_DEFAULT — libc is always globally loaded.
+    The LLVM declaration is emitted with ``get_or_insert_function`` and
+    resolved through the platform's normal dynamic symbol lookup at JIT
+    link time — libc is always globally loaded.
 
 Windows:
     Calls ``QueryPerformanceCounter`` from ``kernel32.dll``.  The

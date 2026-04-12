@@ -33,7 +33,8 @@ Lift the existing code from numbduck essentially as-is. Structure:
 
 Calls libc `clock_gettime(CLOCK_MONOTONIC, &ts)` where `ts` is a
 stack-allocated `struct timespec {int64 tv_sec; int64 tv_nsec}`.
-`clock_gettime` is resolved via `address_of_symbol` from RTLD_DEFAULT
+The LLVM declaration is emitted with `get_or_insert_function` and
+resolved through normal dynamic symbol lookup at JIT link time
 (libc is always globally loaded).
 
 ```
@@ -52,8 +53,14 @@ registered with LLVM's symbol search via `load_library_permanently`.
 ```
 alloca int64
 call QueryPerformanceCounter(&counter)
-return counter * 1_000_000_000 / frequency
+sec = counter / frequency
+rem = counter % frequency
+return sec * 1_000_000_000 + rem * 1_000_000_000 / frequency
 ```
+
+The naive `counter * 1e9 / frequency` overflows int64 after ~15 min
+at a typical 10 MHz QPC frequency. The decomposed arithmetic keeps
+all intermediates within int64 range.
 
 ### Why `@intrinsic` (not `@cres` + `_call_lib_func`)
 
