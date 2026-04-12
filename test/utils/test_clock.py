@@ -94,11 +94,12 @@ def test_wall_clock_consistency():
     # Warm up JIT compilation.
     timed_loop(100)
 
-    n = 10_000
+    n = 50_000
     wall_start = time.monotonic_ns()
     jit_total = timed_loop(n)
     wall_total = time.monotonic_ns() - wall_start
 
+    assert wall_total > 0, "wall clock elapsed is zero — loop too fast for timer resolution"
     ratio = jit_total / wall_total
     assert 0.1 <= ratio <= 10.0, (
         f"JIT/wall ratio {ratio:.3f} out of expected range [0.1, 10.0]; "
