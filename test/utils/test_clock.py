@@ -72,9 +72,10 @@ def test_wall_clock_consistency():
 
     If the JIT clock were being optimized away or silently reordered, the
     accumulated JIT total would diverge from the Python wall-clock time that
-    wraps the same call.  The two clocks use the same underlying OS primitive
-    (clock_gettime CLOCK_MONOTONIC / QPC), so their totals should agree to
-    within measurement overhead.
+    wraps the same call.  We use time.perf_counter_ns() for the wall clock
+    because it uses QPC on Windows (matching our JIT clock's source),
+    whereas time.monotonic_ns() on Windows has ~1ms resolution and can
+    return zero for fast loops.
 
     We assert jit_total / wall_total is in [0.1, 10.0].  The ratio can
     legitimately differ from 1.0 because the wall clock also captures Python
@@ -95,9 +96,9 @@ def test_wall_clock_consistency():
     timed_loop(100)
 
     n = 50_000
-    wall_start = time.monotonic_ns()
+    wall_start = time.perf_counter_ns()
     jit_total = timed_loop(n)
-    wall_total = time.monotonic_ns() - wall_start
+    wall_total = time.perf_counter_ns() - wall_start
 
     assert wall_total > 0, "wall clock elapsed is zero — loop too fast for timer resolution"
     ratio = jit_total / wall_total
