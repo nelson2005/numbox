@@ -77,6 +77,30 @@ def func_name(x):
 
 ## CI
 
-- **numbox_ci.yml** — lint + test + build on push/PR (matrix: Python 3.10–3.14, ubuntu + ubuntu-arm + windows)
+- **numbox_ci.yml** — lint + test + build on push/PR (matrix: Python 3.10–3.14, ubuntu + ubuntu-arm + windows + macOS; min/max numba versions)
 - **docs.yml** — Sphinx docs → GitHub Pages on push to main
 - **release.yml** — build + publish to PyPI on release
+
+## Project Status
+
+### monotonic_ns (numbox#7) — upstream PR open
+
+- **Upstream PR:** Goykhman/numbox#8 — CI green (15/15), Copilot comments addressed, awaiting maintainer review
+- **Branches:**
+  - `feat/monotonic-ns` — full feature branch (has CLAUDE.md, fork CI with expanded numba matrix, planning docs)
+  - `upstream-pr/monotonic-ns` — clean branch from upstream/main with only upstream-appropriate files
+- **Files added:**
+  - `numbox/utils/clock.py` — JIT-callable `monotonic_ns() -> int64` intrinsic
+  - `test/utils/test_clock.py` — 4 tests (positive, monotonic, linear scaling, wall-clock consistency)
+- **Files modified:**
+  - `test/utils/test_lowlevel.py` — skipif guards for `_get_jit_address`/`_get_wrapper_address` (removed in newer numba)
+- **Key decisions:**
+  - Uses `@intrinsic` pattern (not `@cres` + `_call_lib_func`) — direct LLVM IR codegen
+  - Windows: overflow-safe QPC arithmetic `(ticks / freq) * 1e9 + (ticks % freq) * 1e9 / freq`
+  - Zero-initialized stack buffers before OS clock calls (neither API unconditionally guarantees success)
+  - QPC frequency baked as compile-time constant (per-machine, constant per boot)
+  - Test uses `sink += math.sin(float(i))` to prevent LLVM DCE of timed workload
+  - Test uses `time.perf_counter_ns()` for wall clock (QPC on all CPython versions; `monotonic_ns()` uses GetTickCount64 on 3.10–3.12)
+- **Not yet done:**
+  - Feature branch `feat/monotonic-ns` needs the zero-init and docstring fixes cherry-picked from `upstream-pr/monotonic-ns`
+  - numbduck's `examples/_jit_clock.py` still has the int64 overflow bug — fix separately
