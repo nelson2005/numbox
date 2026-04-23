@@ -8,13 +8,13 @@ numbox — a toolbox of low-level utilities for working with numba. Provides typ
 
 ## Build & Dev
 
-- Venv: `python3.10 -m venv venv && venv/bin/pip install -e . flake8 pytest`
+- Venv: `python3.11 -m venv venv && venv/bin/pip install -e . flake8 pytest`
 - Install: `pip install -e .`
 - Test: `pytest`
 - Lint: `flake8` (max-line-length=127, max-complexity=10)
 - Docs: `cd docs && make html` (Sphinx)
-- Python: >=3.10 (CI tests 3.10–3.14)
-- Key dependency: `numba>=0.60.0,<=0.64.0` (use `numba==0.60.0` locally)
+- Python: >=3.10 (CI tests 3.10–3.14; local venv pinned to 3.11)
+- Key dependency: `numba>=0.60.0,<0.66.0` (matches `pyproject.toml`; use `numba==0.60.0` locally)
 
 ## Architecture
 
@@ -60,7 +60,7 @@ def func_name(x):
 ## Key Paths
 
 - `numbox/core/bindings/signatures.py` — all native function type signatures
-- `numbox/core/bindings/_math.py` — libm wrappers (34 single-arg + 9 two-arg float64 functions)
+- `numbox/core/bindings/_math.py` — libm wrappers (33 single-arg + 9 two-arg float64 functions)
 - `numbox/core/bindings/_c.py` — libc wrappers
 - `numbox/core/bindings/_sqlite.py` — libsqlite3 wrappers
 - `numbox/utils/clock.py` — cross-platform monotonic nanosecond clock intrinsic
@@ -68,14 +68,12 @@ def func_name(x):
 
 ## Preferences
 
-- Never include "Co-Authored-By" in git commit messages
-- Avoid shell variable substitution in bash — inline actual values directly into commands
-- Prefer simpler approaches
-- Always git pull before making edits
-- Commit messages must not mention AI, Claude, Anthropic, or any AI tooling — only attribute to the user
-- Keep all memories in both MEMORY.md and the project CLAUDE.md (CLAUDE.md is in git and survives OS reinstalls)
-- Environment details go in MEMORY.md only (may change between OS installs)
-- Always exclude CLAUDE.md from upstream PRs (use a dedicated branch based on upstream/main)
+Cross-project preferences live in the user's MEMORY.md. Only numbox-specific workflow rules are kept here.
+
+- Always exclude CLAUDE.md and fork-only `numbox_ci.yml` matrix expansions from upstream PRs (use a dedicated branch based on `upstream/main`)
+- Never merge local feature branches into main — main must always match `upstream/main` (exception: CLAUDE.md and the fork-only CI matrix additions)
+- Feature branches: base off `origin/main` (has CLAUDE.md + fork CI); upstream PR branches: base off `upstream/main` (no CLAUDE.md, stock CI)
+- Do all coding work on the feature branch (has CLAUDE.md + fork CI), then cherry-pick to the upstream PR branch when ready
 
 ## CI
 
@@ -83,8 +81,12 @@ def func_name(x):
 - **docs.yml** — Sphinx docs → GitHub Pages on push to main
 - **release.yml** — build + publish to PyPI on release
 
+## Related Projects
+
+- **[numbduck](https://github.com/Goykhman/numbduck)** — adapts DuckDB's C API for use inside numba `@njit` code. Built on numbox's bindings toolkit (`signatures` dict, `@cres`, `_call_lib_func`).
+- **[numbarrow](https://github.com/Goykhman/numbarrow)** — bridges PyArrow arrays into numba `@njit` code. Also built on numbox.
+
 ## Project Status
 
-### monotonic_ns (numbox#7) — merged
-
-- **Upstream PR:** Goykhman/numbox#8 — merged 2026-04-13
+- **monotonic_ns clock** — merged 2026-04-13 via fork [nelson2005/numbox#7](https://github.com/nelson2005/numbox/pull/7) / upstream [Goykhman/numbox#8](https://github.com/Goykhman/numbox/pull/8). JIT-callable `monotonic_ns() -> int64` intrinsic in [`numbox/utils/clock.py`](numbox/utils/clock.py).
+- **Fork-only CLAUDE.md + CI expansion** — [nelson2005/numbox#5](https://github.com/nelson2005/numbox/pull/5) (this PR). Adds this file and expands the CI matrix with per-Python numba version pins, macOS runner, and `pytest --durations=20`.
