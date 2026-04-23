@@ -59,42 +59,42 @@
     {
       "id": 8,
       "subject": "Task 8: Migrate numbduck jit_utils → numbox.utils.lowlevel.array_data_p",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "**Goal:** Delete numbduck/jit_utils.py; update all callers to import array_data_p from numbox.\n\n**Files:**\n- Delete: `/home/erik/projects/numbduck/numbduck/jit_utils.py`\n- Modify: any numbduck files importing from numbduck.jit_utils\n\n**Verify:** File absent, no grep matches for numbduck.jit_utils, pytest green.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbduck/numbduck/jit_utils.py\"], \"verifyCommand\": \"test ! -f /home/erik/projects/numbduck/numbduck/jit_utils.py && /home/erik/projects/numbduck/venv/bin/pytest /home/erik/projects/numbduck/test -v\", \"acceptanceCriteria\": [\"jit_utils.py deleted\", \"No remaining numbduck.jit_utils references\", \"numbduck tests green\"], \"model\": \"haiku\"}\n```"
     },
     {
       "id": 9,
       "subject": "Task 9: Migrate numbduck utils.py to use numbox load_lib_path",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "**Goal:** Remove numbduck's local _load_cdll and route load_duckdb through numbox.core.bindings.utils.load_lib_path. Keep DuckDB-specific discovery in place.\n\n**Files:**\n- Modify: `/home/erik/projects/numbduck/numbduck/utils.py`\n\n**Verify:** No `_load_cdll` in file; pytest green.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbduck/numbduck/utils.py\"], \"verifyCommand\": \"! grep -n _load_cdll /home/erik/projects/numbduck/numbduck/utils.py && /home/erik/projects/numbduck/venv/bin/pytest /home/erik/projects/numbduck/test -v\", \"acceptanceCriteria\": [\"_load_cdll removed\", \"load_duckdb uses load_lib_path\", \"DuckDB discovery functions retained\", \"numbduck tests green\"], \"model\": \"sonnet\"}\n```"
     },
     {
       "id": 10,
       "subject": "Task 10: Migrate ducklib.py to use numbox ABI helpers + cres_if_available",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "**Goal:** Remove local ABI helpers, platform flags, and cres wrapper from ducklib.py. Import replacements from numbox. Leave _build_packed_interval (DuckDB-specific) alone.\n\n**Files:**\n- Modify: `/home/erik/projects/numbduck/numbduck/ducklib.py`\n\n**Verify:** No local defs remain; numbduck tests green.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbduck/numbduck/ducklib.py\"], \"verifyCommand\": \"/home/erik/projects/numbduck/venv/bin/pytest /home/erik/projects/numbduck/test -v\", \"acceptanceCriteria\": [\"No local _emit_byval_call _call_lib_func_byval _call_lib_func_struct_in _call_lib_func_struct_out _is_win _is_sysv_x86_64 _has_symbol _unavailable\", \"Imports from numbox.core.bindings.abi and numbox.utils.highlevel\", \"cres(..., if_available=True) decorators route through cres_if_available\", \"_build_packed_interval stays local\", \"numbduck tests green\"], \"model\": \"sonnet\"}\n```"
     },
     {
       "id": 11,
       "subject": "Task 11: Migrate test_ducklib.py bridge intrinsics to numbox",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "**Goal:** Remove inline bridge intrinsic defs (_incref_meminfo, _release_meminfo, _deref_structref_raw_ptr, borrow_structref, export_meminfo, _MI_TY) from test_ducklib.py; import from numbox.utils.meminfo.\n\n**Files:**\n- Modify: `/home/erik/projects/numbduck/test/test_ducklib.py`\n\n**Verify:** structref_meminfo_bridge tests pass.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbduck/test/test_ducklib.py\"], \"verifyCommand\": \"/home/erik/projects/numbduck/venv/bin/pytest /home/erik/projects/numbduck/test/test_ducklib.py -v -k structref_meminfo_bridge\", \"acceptanceCriteria\": [\"No local @intrinsic defs of bridge symbols\", \"No local @njit defs of borrow_structref/export_meminfo\", \"Imports from numbox.utils.meminfo\", \"_MI_TY local removed\", \"All bridge tests pass\"], \"model\": \"sonnet\"}\n```"
     },
     {
       "id": 12,
       "subject": "Task 12: Migrate numbduck vector.py → numbox.core.vector",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "**Goal:** Delete numbduck/vector.py and test/test_vector.py (coverage now in numbox); update examples/irr.py import.\n\n**Files:**\n- Delete: `/home/erik/projects/numbduck/numbduck/vector.py`\n- Delete: `/home/erik/projects/numbduck/test/test_vector.py`\n- Modify: `/home/erik/projects/numbduck/examples/irr.py`\n\n**Verify:** Files absent; examples/irr.py imports from numbox.core.vector; pytest green.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbduck/numbduck/vector.py\", \"/home/erik/projects/numbduck/test/test_vector.py\", \"/home/erik/projects/numbduck/examples/irr.py\"], \"verifyCommand\": \"test ! -f /home/erik/projects/numbduck/numbduck/vector.py && test ! -f /home/erik/projects/numbduck/test/test_vector.py && grep 'from numbox.core.vector import' /home/erik/projects/numbduck/examples/irr.py && /home/erik/projects/numbduck/venv/bin/pytest /home/erik/projects/numbduck/test -v\", \"acceptanceCriteria\": [\"vector.py deleted from numbduck\", \"test_vector.py deleted from numbduck\", \"examples/irr.py imports from numbox.core.vector\", \"numbduck tests green\"], \"model\": \"haiku\"}\n```"
     },
     {
       "id": 13,
       "subject": "Task 13: Full verification on both projects; push feature branches",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8, 9, 10, 11, 12],
       "description": "**Goal:** Clean-cache full test run on both projects; push both feature branches; spot-check CI.\n\n**Files:** (none)\n\n**Verify:** numbox pytest green, numbduck pytest green, both branches pushed, numbox CI queued.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test -v --durations=20 && /home/erik/projects/numbduck/venv/bin/pytest /home/erik/projects/numbduck/test -v --durations=20\", \"acceptanceCriteria\": [\"numbox test suite all green\", \"numbduck test suite all green\", \"Both branches pushed to origin (user approval required)\", \"numbox CI matrix queued\"], \"model\": \"sonnet\"}\n```"
     },
@@ -106,5 +106,5 @@
       "description": "**Goal:** Publish numbox 0.5.9 to PyPI; update numbduck pyproject.toml pin. Upstream PR and tag are out-of-plan (require explicit user approval).\n\n**Files:**\n- Modify: `/home/erik/projects/numbduck/pyproject.toml`\n- Tag: numbox `v0.5.9` (out-of-plan)\n\n**Verify:** numbduck pin reads `numbox~=0.5.9`; v0.5.9 tag exists on numbox.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbduck/pyproject.toml\"], \"verifyCommand\": \"grep 'numbox~=0.5.9' /home/erik/projects/numbduck/pyproject.toml && git -C /home/erik/projects/numbox tag | grep v0.5.9\", \"acceptanceCriteria\": [\"numbox v0.5.9 tag exists (after upstream PR merge)\", \"numbduck pin bumped to ~=0.5.9\", \"PyPI release workflow succeeded\", \"numbduck tests still green against installed 0.5.9\"], \"model\": \"haiku\"}\n```"
     }
   ],
-  "lastUpdated": "2026-04-22T02:30:00Z"
+  "lastUpdated": "2026-04-23T23:15:00Z"
 }
