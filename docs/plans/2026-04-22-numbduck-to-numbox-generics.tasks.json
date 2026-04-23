@@ -4,55 +4,55 @@
     {
       "id": 0,
       "subject": "Task 0: Setup branches and docs/plans exclusion",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Establish feature branches on both repos; add `docs/plans/**` to numbox's upstream-exclude list.\n\n**Files:**\n- Modify: `/home/erik/projects/numbox/CLAUDE.md` (Preferences)\n\n**Verify:** `git -C <numbox> branch --show-current` = `feat/generalize-numbduck-generics`; `git -C <numbduck> branch --show-current` = `feat/use-numbox-generics`; `grep docs/plans numbox/CLAUDE.md` matches.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbox/CLAUDE.md\"], \"verifyCommand\": \"git -C /home/erik/projects/numbox branch --show-current && git -C /home/erik/projects/numbduck branch --show-current && grep docs/plans /home/erik/projects/numbox/CLAUDE.md\", \"acceptanceCriteria\": [\"numbox on feat/generalize-numbduck-generics\", \"numbduck on feat/use-numbox-generics\", \"CLAUDE.md excludes docs/plans/**\"], \"model\": \"haiku\"}\n```"
     },
     {
       "id": 1,
       "subject": "Task 1: Add array_data_p to numbox/utils/lowlevel.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Provide numba-callable helper returning numpy array data pointer as signed intp.\n\n**Files:**\n- Modify: `/home/erik/projects/numbox/numbox/utils/lowlevel.py`\n- Modify: `/home/erik/projects/numbox/test/utils/test_lowlevel.py`\n\n**Verify:** `pytest test/utils/test_lowlevel.py -v -k array_data_p` → 2 passed.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbox/numbox/utils/lowlevel.py\", \"/home/erik/projects/numbox/test/utils/test_lowlevel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test/utils/test_lowlevel.py -v -k array_data_p\", \"acceptanceCriteria\": [\"Callable from Python and @njit\", \"Returns intp equal to arr.ctypes.data\", \"Works for float64 and int32\"], \"model\": \"sonnet\"}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: Add load_lib_path to numbox/core/bindings/utils.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Path-based, handle-returning CDLL loader with platform-appropriate flags.\n\n**Files:**\n- Modify: `/home/erik/projects/numbox/numbox/core/bindings/utils.py`\n- Modify: `/home/erik/projects/numbox/test/core/test_bindings.py`\n\n**Verify:** `pytest test/core/test_bindings.py -v -k load_lib_path` → passed.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbox/numbox/core/bindings/utils.py\", \"/home/erik/projects/numbox/test/core/test_bindings.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test/core/test_bindings.py -v -k load_lib_path\", \"acceptanceCriteria\": [\"Returns loaded CDLL\", \"Linux/Darwin uses RTLD_GLOBAL\", \"Windows uses winmode=0\", \"Returned handle supports hasattr checks\"], \"model\": \"sonnet\"}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: Add cres_if_available to numbox/utils/highlevel.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** cres variant that stubs wrapper when named C symbol is missing from a given library handle.\n\n**Files:**\n- Modify: `/home/erik/projects/numbox/numbox/utils/highlevel.py`\n- Modify: `/home/erik/projects/numbox/test/utils/test_highlevel.py`\n\n**Verify:** `pytest test/utils/test_highlevel.py -v -k cres_if_available` → 2 passed.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbox/numbox/utils/highlevel.py\", \"/home/erik/projects/numbox/test/utils/test_highlevel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test/utils/test_highlevel.py -v -k cres_if_available\", \"acceptanceCriteria\": [\"Present symbol returns real cres wrapper\", \"Missing symbol returns stub raising NotImplementedError\", \"Stub preserves __name__\"], \"model\": \"sonnet\"}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: Create numbox/core/bindings/abi.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Lift struct-by-value ABI codegen helpers from numbduck into numbox bindings layer.\n\n**Files:**\n- Create: `/home/erik/projects/numbox/numbox/core/bindings/abi.py`\n- Create: `/home/erik/projects/numbox/test/core/test_abi.py`\n\n**Verify:** `pytest test/core/test_abi.py -v` → 2 passed (platform-conditional skip acceptable).\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbox/numbox/core/bindings/abi.py\", \"/home/erik/projects/numbox/test/core/test_abi.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test/core/test_abi.py -v\", \"acceptanceCriteria\": [\"Public symbols _is_win _is_sysv_x86_64 _emit_byval_call _call_lib_func_byval _call_lib_func_struct_in _call_lib_func_struct_out\", \"Reads signatures from numbox.core.bindings.signatures\", \"Imports cleanly\"], \"model\": \"opus\"}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: Add bridge intrinsics to numbox/utils/meminfo.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Promote numbduck's structref↔raw-pointer bridge (_incref_meminfo, _release_meminfo, _deref_structref_raw_ptr, borrow_structref, export_meminfo) into numbox where structref_meminfo already lives.\n\n**Files:**\n- Modify: `/home/erik/projects/numbox/numbox/utils/meminfo.py`\n- Modify: `/home/erik/projects/numbox/test/core/test_meminfo.py`\n\n**Verify:** `pytest test/core/test_meminfo.py -v -k bridge` → 2 passed.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbox/numbox/utils/meminfo.py\", \"/home/erik/projects/numbox/test/core/test_meminfo.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test/core/test_meminfo.py -v -k bridge\", \"acceptanceCriteria\": [\"_incref_meminfo and _release_meminfo intrinsics on intp\", \"_deref_structref_raw_ptr reconstructs structref value\", \"borrow_structref = incref + deref\", \"export_meminfo = structref_meminfo + incref\", \"Refcount ladder verified\", \"Round-trip recovers field values\"], \"model\": \"opus\"}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: Create numbox/core/vector.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Port numbduck's generic growable numba Vector (make_vector, vector_push, vector_extend, len/getitem/setitem overloads).\n\n**Files:**\n- Create: `/home/erik/projects/numbox/numbox/core/vector.py`\n- Create: `/home/erik/projects/numbox/test/core/test_vector.py`\n\n**Verify:** `pytest test/core/test_vector.py -v` passes all ported tests (~14).\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbox/numbox/core/vector.py\", \"/home/erik/projects/numbox/test/core/test_vector.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test/core/test_vector.py -v\", \"acceptanceCriteria\": [\"make_vector returns (create, type_instance)\", \"vector_push grows geometrically\", \"vector_extend copies and grows\", \"len/getitem/setitem overloads work in @njit\", \"Memoized by elem_type.key\", \"All ported numbduck tests pass\"], \"model\": \"sonnet\"}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: Install numbox feature branch into numbduck venv",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2, 3, 4, 5, 6],
       "description": "**Goal:** Point numbduck's venv at the locally-checked-out numbox feature branch so Phase 2 migrations can import new symbols.\n\n**Files:** (env change only)\n\n**Verify:** Single-line smoke import of all 6 new symbols exits 0.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbduck/venv/bin/python -c 'from numbox.utils.lowlevel import array_data_p; from numbox.core.bindings.abi import _call_lib_func_byval; from numbox.utils.meminfo import borrow_structref; from numbox.core.vector import make_vector; from numbox.utils.highlevel import cres_if_available; from numbox.core.bindings.utils import load_lib_path; print(\\\"ok\\\")'\", \"acceptanceCriteria\": [\"All six new symbols importable from numbduck venv\"], \"model\": \"haiku\"}\n```"
     },
@@ -106,5 +106,5 @@
       "description": "**Goal:** Publish numbox 0.5.9 to PyPI; update numbduck pyproject.toml pin. Upstream PR and tag are out-of-plan (require explicit user approval).\n\n**Files:**\n- Modify: `/home/erik/projects/numbduck/pyproject.toml`\n- Tag: numbox `v0.5.9` (out-of-plan)\n\n**Verify:** numbduck pin reads `numbox~=0.5.9`; v0.5.9 tag exists on numbox.\n\n```json:metadata\n{\"files\": [\"/home/erik/projects/numbduck/pyproject.toml\"], \"verifyCommand\": \"grep 'numbox~=0.5.9' /home/erik/projects/numbduck/pyproject.toml && git -C /home/erik/projects/numbox tag | grep v0.5.9\", \"acceptanceCriteria\": [\"numbox v0.5.9 tag exists (after upstream PR merge)\", \"numbduck pin bumped to ~=0.5.9\", \"PyPI release workflow succeeded\", \"numbduck tests still green against installed 0.5.9\"], \"model\": \"haiku\"}\n```"
     }
   ],
-  "lastUpdated": "2026-04-22T00:00:00Z"
+  "lastUpdated": "2026-04-22T02:30:00Z"
 }
