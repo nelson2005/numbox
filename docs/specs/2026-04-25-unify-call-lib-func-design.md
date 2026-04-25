@@ -2,11 +2,11 @@
 
 ## Motivation
 
-[`numbox/core/bindings/abi.py`](../../numbox/core/bindings/abi.py) currently provides three intrinsics that callers must pick between based on what the C function does to its arguments and return value:
+Before this change, [`numbox/core/bindings/abi.py`](../../numbox/core/bindings/abi.py) exposed three intrinsics that callers had to pick between based on what the C function did to its arguments and return value:
 
-- [`_call_lib_func_struct_in`](../../numbox/core/bindings/abi.py#L91) — pass a ≤16-byte struct (by value on SysV x86-64 / AAPCS64, by pointer on Windows x64). Raises `TypingError` for >16-byte structs.
-- [`_call_lib_func_struct_out`](../../numbox/core/bindings/abi.py#L126) — return a ≤16-byte struct (direct on SysV / AAPCS64, via `sret` on Windows x64). Raises `TypingError` for >16-byte structs.
-- [`_call_lib_func_args_struct_out`](../../numbox/core/bindings/abi.py#L168) — same return-side gating as `_struct_out`, with multiple scalar args.
+- `_call_lib_func_struct_in` — passed a ≤16-byte struct (by value on SysV x86-64 / AAPCS64, by pointer on Windows x64). Raised `TypingError` for >16-byte structs.
+- `_call_lib_func_struct_out` — returned a ≤16-byte struct (direct on SysV / AAPCS64, via `sret` on Windows x64). Raised `TypingError` for >16-byte structs.
+- `_call_lib_func_args_struct_out` — same return-side gating as `_struct_out`, with multiple scalar args.
 
 There is no helper for the >16-byte struct-IN case. Numbduck has three call sites that do this by hand — `_duckdb_create_decimal`, `_duckdb_create_varint`, `_duckdb_bind_decimal` — each with its own custom `@intrinsic` that mirrors `_emit_byval_call` and adds the SysV-x86-64-only `byval` arg attribute plus `optnone` + `noinline` function attributes ([rationale](https://github.com/numba/llvmlite/issues/300#issuecomment-327235846)). They also carry a local `_is_sysv_x86_64 = not _is_win and platform.machine() in ("x86_64", "AMD64")` flag.
 
