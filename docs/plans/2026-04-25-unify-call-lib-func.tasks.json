@@ -1,0 +1,31 @@
+{
+  "planPath": "docs/plans/2026-04-25-unify-call-lib-func.md",
+  "specPath": "docs/specs/2026-04-25-unify-call-lib-func-design.md",
+  "branch": "feat/unify-call-lib-func",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "ABI Task 1: Extend _call_lib_func to be ABI-aware",
+      "status": "pending",
+      "model": "sonnet",
+      "description": "**Goal:** Add `_classify` and `_current_platform` helpers in abi.py; rewrite call.py's `_call_lib_func` codegen to dispatch per arg class and platform. Legacy intrinsics stay in place; existing tests still pass.\n\n**Files:**\n- Modify: `numbox/core/bindings/abi.py`\n- Modify: `numbox/core/bindings/call.py`\n\n**Verify:** `venv/bin/pytest test/core/ -v --durations=20` → all green.\n\nFull code in `docs/plans/2026-04-25-unify-call-lib-func.md` Task 1.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/abi.py\", \"numbox/core/bindings/call.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test/core/ -v --durations=20\", \"acceptanceCriteria\": [\"_classify returns three classes\", \"_current_platform handles three ABIs\", \">16B return raises TypingError\", \"Existing tests still pass\"], \"model\": \"sonnet\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "ABI Task 2: Delete redundant ABI intrinsics",
+      "status": "pending",
+      "blockedBy": [1],
+      "model": "sonnet",
+      "description": "**Goal:** Remove `_call_lib_func_struct_in`, `_call_lib_func_struct_out`, `_call_lib_func_args_struct_out`, `_is_win` from abi.py. Update `test_abi.py` to assert deletions, drop their imports, rename + rewrite the lldiv test.\n\n**Files:**\n- Modify: `numbox/core/bindings/abi.py`\n- Modify: `test/core/test_abi.py`\n\n**Verify:** `venv/bin/pytest test/core/test_abi.py -v --durations=20` → 4 passed.\n\nFull code in `docs/plans/2026-04-25-unify-call-lib-func.md` Task 2.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/abi.py\", \"test/core/test_abi.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test/core/test_abi.py -v --durations=20\", \"acceptanceCriteria\": [\"3 intrinsics + _is_win removed\", \"_resolve_sig stays\", \"lldiv test rewritten via _call_lib_func\", \"4 passed\"], \"model\": \"sonnet\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "ABI Task 3: Add ABI dispatch tests",
+      "status": "pending",
+      "blockedBy": [1, 2],
+      "model": "sonnet",
+      "description": "**Goal:** Append three new tests to test_abi.py: scalar regression guard (cos), and IR-inspection tests confirming byval+optnone+noinline on >16B SysV path and absent on ≤16B SysV path.\n\n**Files:**\n- Modify: `test/core/test_abi.py`\n\n**Verify:** `venv/bin/pytest test/core/test_abi.py -v --durations=20` → 7 passed on x86_64 Linux; 5 passed + 2 skipped on Windows / ARM.\n\nFull code in `docs/plans/2026-04-25-unify-call-lib-func.md` Task 3.\n\n```json:metadata\n{\"files\": [\"test/core/test_abi.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest /home/erik/projects/numbox/test/core/test_abi.py -v --durations=20\", \"acceptanceCriteria\": [\"3 new tests added\", \"skipif gates correctly on non-SysV\", \"7 passed on dev host\"], \"model\": \"sonnet\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-04-25T00:50:00Z"
+}
