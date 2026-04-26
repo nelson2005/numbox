@@ -8,7 +8,7 @@ numbox — a toolbox of low-level utilities for working with numba. Provides typ
 
 ## Build & Dev
 
-- Venv: `python3.11 -m venv venv && venv/bin/pip install -e . flake8 pytest`
+- Venv: `python3.11 -m venv venv && venv/bin/pip install -e . flake8 pytest pytest-cov`
 - Install: `pip install -e .`
 - Test: `pytest`
 - Lint: `flake8` (max-line-length=127, max-complexity=10)
