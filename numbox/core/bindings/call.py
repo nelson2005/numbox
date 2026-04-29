@@ -8,8 +8,10 @@ from numba.extending import intrinsic
 
 from numbox.core.bindings.abi import (
     _CLASS_SCALAR, _CLASS_STRUCT_SMALL, _CLASS_STRUCT_LARGE,
+    _EIGHTBYTE_CLASS_INTEGER,
     _PLATFORM_AAPCS64, _PLATFORM_SYSV_X86_64, _PLATFORM_WIN_X64,
-    _classify, _current_platform, _is_windows_register_passable,
+    _classify, _classify_eightbytes, _current_platform,
+    _is_canonical_int64_pair_layout, _is_windows_register_passable,
     _struct_bytes,
 )
 from numbox.core.bindings.signatures import signatures
@@ -129,6 +131,9 @@ def _call_lib_func(typingctx, func_name_ty, args_ty=NoneType):
                 )
             )
             if pass_by_value:
+                if _needs_int_int_eightbyte_repack(arg_ty, plat):
+                    val, arg_ll_ty = _repack_to_i64_pair(
+                        builder, val, arg_ll_ty)
                 ll_arg_tys.append(arg_ll_ty)
                 ll_arg_vals.append(val)
                 continue
@@ -169,6 +174,48 @@ def _emit_byval_call(builder, arg, arg_ll_ty, ret_type, func_name):
     func_ty_ll = llir.FunctionType(ret_type, [arg_ll_ty.as_pointer()])
     func_p = get_or_insert_function(builder.module, func_ty_ll, func_name)
     return builder.call(func_p, [stack_p])
+
+
+def _needs_int_int_eightbyte_repack(arg_ty, plat):
+    """Whether a 16-byte by-value struct arg needs repack to ``{i64, i64}``
+    before the call on the host's ABI.
+
+    Only SysV x86-64 has the issue: llvmlite's small-struct lowering
+    drops fields when both eightbytes are pure-INTEGER but the LLVM
+    type isn't already the canonical ``{i64, i64}`` shape (e.g.
+    ``{i32, i32, i64}`` — the duckdb_interval layout — loses the
+    second ``i32``). AAPCS64 and Windows x64 are unaffected (their
+    by-value paths handle non-canonical 16B INT/INT aggregates
+    correctly via different ABI rules).
+    """
+    if plat != _PLATFORM_SYSV_X86_64:
+        return False
+    if _struct_bytes(arg_ty, "_call_lib_func") != 16:
+        return False
+    if _is_canonical_int64_pair_layout(arg_ty):
+        return False
+    return _classify_eightbytes(arg_ty) == (
+        _EIGHTBYTE_CLASS_INTEGER, _EIGHTBYTE_CLASS_INTEGER,
+    )
+
+
+def _repack_to_i64_pair(builder, val, orig_ll_ty):
+    """Repack a 16-byte struct value to ``{i64, i64}`` via memory bitcast.
+
+    Allocates an ``orig_ll_ty`` slot on the stack, stores ``val`` into
+    it, then loads the same bytes back as ``{i64, i64}``. Both
+    eightbytes must already be pure-INTEGER (caller checks via
+    ``_needs_int_int_eightbyte_repack``); the bitcast is a pure byte
+    reinterpretation, no zext/shift gymnastics required. Returns
+    ``(repacked_val, repacked_ll_ty)`` for the caller to substitute
+    into the call site. See: https://github.com/numba/llvmlite/issues/300#issuecomment-327235846
+    """
+    i64x2_ll_ty = llir.LiteralStructType(
+        [llir.IntType(64), llir.IntType(64)])
+    slot = builder.alloca(orig_ll_ty)
+    builder.store(val, slot)
+    slot_as_i64x2 = builder.bitcast(slot, i64x2_ll_ty.as_pointer())
+    return builder.load(slot_as_i64x2), i64x2_ll_ty
 
 
 @intrinsic(prefer_literal=True)
