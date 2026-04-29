@@ -105,11 +105,12 @@ _EIGHTBYTE_CLASS_SSE = "sse"
 
 
 def _iter_struct_fields(ty, fn_name):
-    """Yield ``(offset, size, is_sse)`` for each scalar field of a
-    struct-shaped numba type. SSE = float/double; everything else
-    (signed / unsigned integers, pointers represented as ``intp``) is
-    INTEGER. Size is needed by ``_classify_eightbytes`` to detect
-    fields that span the 8-byte eightbyte boundary.
+    """Yield ``(offset, size, is_float)`` for each scalar field of a
+    struct-shaped numba type. ``is_float`` is true for ``Float`` types
+    (float / double); the SysV ABI's "field is float ⇒ eightbyte is
+    SSE" mapping is the consumer's responsibility (see
+    ``_classify_eightbytes``). Size is needed to detect fields that
+    span the 8-byte eightbyte boundary.
 
     For ``BaseTuple`` the fields are bit-packed sequentially with no
     padding (mirrors ``_struct_bytes``'s ``sum(bitwidth)`` model). For
@@ -166,9 +167,9 @@ def _classify_eightbytes(ty):
         )
     cls_lo = _EIGHTBYTE_CLASS_INTEGER
     cls_hi = _EIGHTBYTE_CLASS_INTEGER
-    for offset, size, is_sse in _iter_struct_fields(
+    for offset, size, is_float in _iter_struct_fields(
             ty, "_classify_eightbytes"):
-        if not is_sse:
+        if not is_float:
             continue
         # SysV per-eightbyte rule: if any SSE field touches an
         # eightbyte (even partially via a boundary span), the whole
