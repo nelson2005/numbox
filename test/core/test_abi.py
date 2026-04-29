@@ -496,17 +496,22 @@ def test_call_lib_func_undefined_signature_raises():
     del keepalive
 
 
-@pytest.mark.skipif(
-    _platform_str() != "sysv_x86_64",
-    reason="INT/INT eightbyte repack only kicks in on SysV x86-64",
-)
-def test_call_lib_func_int_int_eightbyte_repack_round_trip(patch_signature):
+def test_call_lib_func_int_int_struct_arg_round_trip(patch_signature):
     """Round-trip a 16-byte ``{i32, i32, i64}`` struct (the
-    ``duckdb_interval`` shape) through ``_call_lib_func`` on SysV
-    x86-64. Without the eightbyte repack, llvmlite drops the second
-    ``i32`` field when lowering the by-value call — only the first
-    ``i32`` and the trailing ``i64`` survive. After the repack to
-    canonical ``{i64, i64}``, all three fields arrive intact.
+    ``duckdb_interval`` shape) through ``_call_lib_func`` on every
+    supported ABI.
+
+    On SysV x86-64 the by-value path requires the new INT/INT
+    eightbyte repack — without it, llvmlite drops fields. On Windows
+    x64, 16B falls outside the ``{1, 2, 4, 8}`` register-passable
+    set so the call goes via alloca + pointer-pass. On AAPCS64 the
+    by-value path passes the struct in ``X0`` / ``X1`` directly.
+
+    If this test fails on AAPCS64 (ubuntu-arm or macOS-ARM64),
+    llvmlite has the same eightbyte-packing gap there too — extend
+    ``_needs_int_int_eightbyte_repack`` in
+    [`call.py`](../../numbox/core/bindings/call.py) to include
+    ``_PLATFORM_AAPCS64``.
     """
     import ctypes
     import llvmlite.binding as ll
@@ -594,16 +599,16 @@ def test_call_lib_func_sse_eightbyte_arg_not_repacked(patch_signature):
     del keepalive
 
 
-@pytest.mark.skipif(
-    _platform_str() != "sysv_x86_64",
-    reason="canonical-skip is SysV x86-64 specific",
-)
 def test_call_lib_func_canonical_int64_pair_round_trip(patch_signature):
-    """A canonical 16B ``UniTuple(int64, 2)`` already lowers to
-    ``{i64, i64}`` and round-trips correctly through ``_call_lib_func``
-    without any repack — regression guard that the canonical-skip in
-    ``_needs_int_int_eightbyte_repack`` doesn't break the path numbduck
-    will use for ``duckdb_hugeint`` and ``duckdb_uhugeint``.
+    """A canonical 16B ``UniTuple(int64, 2)`` round-trips correctly
+    through ``_call_lib_func`` on every supported ABI — regression
+    guard that the canonical-skip in
+    ``_needs_int_int_eightbyte_repack`` doesn't break the by-value
+    path on SysV x86-64 / AAPCS64 or the alloca + pointer-pass path
+    on Windows x64. This is the arg-side complement to the existing
+    ``test_call_lib_func_lldiv_via_unified`` (which exercises the
+    return side of canonical 16B). Numbduck's ``duckdb_hugeint`` and
+    ``duckdb_uhugeint`` bind wrappers will rely on this path.
     """
     import ctypes
     import llvmlite.binding as ll
