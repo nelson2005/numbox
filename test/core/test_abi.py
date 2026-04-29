@@ -104,6 +104,26 @@ def test_classify_eightbytes_mixed_lo_eightbyte_is_sse():
     )
 
 
+def test_classify_eightbytes_field_spans_eightbyte_boundary():
+    """An SSE field that straddles the 8-byte boundary makes BOTH
+    eightbytes SSE. ``Tuple([int32, float64, int32])`` has the
+    ``float64`` at offsets [4, 12) — touching both lo and hi
+    eightbytes — so the result is SSE/SSE per the SysV any-SSE-wins
+    rule, not SSE/INT. (Bytes 0–3 are i32 INTEGER but the SSE field
+    touching bytes 4–7 makes lo SSE; bytes 8–11 are part of the same
+    SSE field, making hi SSE; bytes 12–15 are i32 INTEGER but hi is
+    already SSE.)"""
+    from numba.core import types
+    from numbox.core.bindings.abi import (
+        _EIGHTBYTE_CLASS_SSE, _classify_eightbytes,
+    )
+
+    ty = types.Tuple([types.int32, types.float64, types.int32])
+    assert _classify_eightbytes(ty) == (
+        _EIGHTBYTE_CLASS_SSE, _EIGHTBYTE_CLASS_SSE,
+    )
+
+
 def test_classify_eightbytes_record_with_padding():
     """`Record.make_c_struct([(a, int32), (b, int64)])` is 16B with a
     4-byte gap (i32@0, pad, i64@8). Both eightbytes are pure INTEGER."""
@@ -551,6 +571,121 @@ def test_call_lib_func_int_int_struct_arg_round_trip(patch_signature):
         f"second i32 field was dropped by SysV by-value lowering: {received}"
     )
     assert result == 7 + 11 + 1_000_000
+    del echo  # keepalive
+
+
+@pytest.mark.skipif(
+    _platform_str() not in ("sysv_x86_64", "aapcs64"),
+    reason="return-side eightbyte repack only kicks in on SysV / AAPCS64",
+)
+def test_call_lib_func_int_int_return_uses_i64_pair_in_ir(patch_signature):
+    """For a 16B non-canonical INT/INT return on SysV x86-64 / AAPCS64,
+    the LLVM IR must declare the C function as returning ``{i64, i64}``,
+    not ``{i32, i32, i64}`` — sidestepping llvmlite's eightbyte-
+    packing gap on the return side. The numba-side return value is
+    then unpacked back to the original LLVM type via memory bitcast.
+
+    IR-only check rather than a true round-trip because Python ctypes
+    ``CFUNCTYPE`` callbacks cannot return ``Structure`` by value
+    ("invalid result type for callback function") — there's no clean
+    way to author a Python-side producer that returns a ``{i32, i32,
+    i64}`` struct via the platform ABI for a JIT'd caller to consume.
+    The arg-side counterpart
+    (``test_call_lib_func_int_int_struct_arg_round_trip``) already
+    provides end-to-end validation of the symmetric
+    ``_repack_to_i64_pair`` + ``_repack_from_i64_pair`` machinery.
+    """
+    from numba import njit, types as nb_types
+    from numbox.core.bindings.call import _call_lib_func
+
+    name = "numbox_test_int_int_eightbyte_return_ir"
+    keepalive = _register_test_symbol(name)
+    ret_struct = nb_types.Tuple(
+        [nb_types.int32, nb_types.int32, nb_types.int64])
+    patch_signature(name, ret_struct(nb_types.int32))
+
+    @njit
+    def run(x):
+        return _call_lib_func(name, (x,))
+
+    run.compile((nb_types.int32,))
+    ir_text = list(run.inspect_llvm().values())[0]
+    declare_line = next(
+        (line for line in ir_text.splitlines()
+         if "declare" in line and name in line),
+        None,
+    )
+    assert declare_line is not None, (
+        f"could not find declare line for {name} in IR:\n{ir_text}"
+    )
+    # The return type appears between `declare` and the function name.
+    # We want `{ i64, i64 }` (the canonical eightbyte pair), NOT
+    # `{ i32, i32, i64 }` (which would be llvmlite emitting the
+    # non-canonical layout that drops fields).
+    decl_prefix = declare_line.split('@' + name)[0]
+    assert "i64, i64" in decl_prefix, (
+        f"expected return type to be repacked to '{{i64, i64}}'; "
+        f"declare line was:\n{declare_line}"
+    )
+    assert "i32, i32, i64" not in decl_prefix, (
+        f"return type still shows non-canonical '{{i32, i32, i64}}' "
+        f"-- repack not applied; declare line was:\n{declare_line}"
+    )
+    del keepalive
+
+
+def test_call_lib_func_four_i32_struct_arg_round_trip(patch_signature):
+    """Round-trip a 16-byte ``UniTuple(int32, 4)`` struct (LLVM type
+    ``[4 x i32]``, 4-byte alignment) through ``_call_lib_func`` on
+    every supported ABI.
+
+    On SysV x86-64 / AAPCS64 this exercises the alignment-safe repack
+    path: ``_repack_to_i64_pair`` allocates a well-aligned ``{i64, i64}``
+    slot rather than an under-aligned ``[4 x i32]`` slot, so the
+    final ``{i64, i64}`` load doesn't trip undefined behavior on
+    stricter targets / optimization levels. On Windows the 16B path
+    goes via alloca + pointer-pass.
+    """
+    import ctypes
+    import llvmlite.binding as ll
+    from numba import njit, types as nb_types
+    from numbox.core.bindings.call import _call_lib_func
+
+    class _Quad32C(ctypes.Structure):
+        _fields_ = [
+            ("a", ctypes.c_int32),
+            ("b", ctypes.c_int32),
+            ("c", ctypes.c_int32),
+            ("d", ctypes.c_int32),
+        ]
+
+    received = {}
+
+    @ctypes.CFUNCTYPE(ctypes.c_int64, _Quad32C)
+    def echo(s):
+        received["a"] = s.a
+        received["b"] = s.b
+        received["c"] = s.c
+        received["d"] = s.d
+        return s.a + s.b + s.c + s.d
+
+    name = "numbox_test_four_i32_round_trip"
+    addr = ctypes.cast(echo, ctypes.c_void_p).value
+    ll.add_symbol(name, addr)
+    arg_struct = nb_types.UniTuple(nb_types.int32, 4)
+    patch_signature(name, nb_types.int64(arg_struct))
+
+    @njit(nb_types.int64(
+        nb_types.int32, nb_types.int32, nb_types.int32, nb_types.int32))
+    def run(a, b, c, d):
+        return _call_lib_func(name, ((a, b, c, d),))
+
+    result = run(101, 202, 303, 404)
+
+    assert received == {"a": 101, "b": 202, "c": 303, "d": 404}, (
+        f"4×i32 fields scrambled: {received}"
+    )
+    assert result == 101 + 202 + 303 + 404
     del echo  # keepalive
 
 

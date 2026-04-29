@@ -105,9 +105,11 @@ _EIGHTBYTE_CLASS_SSE = "sse"
 
 
 def _iter_struct_fields(ty, fn_name):
-    """Yield ``(offset, is_sse)`` for each scalar field of a struct-
-    shaped numba type. SSE = float/double; everything else (signed /
-    unsigned integers, pointers represented as ``intp``) is INTEGER.
+    """Yield ``(offset, size, is_sse)`` for each scalar field of a
+    struct-shaped numba type. SSE = float/double; everything else
+    (signed / unsigned integers, pointers represented as ``intp``) is
+    INTEGER. Size is needed by ``_classify_eightbytes`` to detect
+    fields that span the 8-byte eightbyte boundary.
 
     For ``BaseTuple`` the fields are bit-packed sequentially with no
     padding (mirrors ``_struct_bytes``'s ``sum(bitwidth)`` model). For
@@ -117,12 +119,17 @@ def _iter_struct_fields(ty, fn_name):
     if isinstance(ty, nb_types.BaseTuple):
         offset = 0
         for ft in ty.types:
-            yield offset, isinstance(ft, nb_types.Float)
-            offset += ft.bitwidth // 8
+            size = ft.bitwidth // 8
+            yield offset, size, isinstance(ft, nb_types.Float)
+            offset += size
         return
     if isinstance(ty, nb_types.Record):
         for fld in ty.fields.values():
-            yield fld.offset, isinstance(fld.type, nb_types.Float)
+            yield (
+                fld.offset,
+                fld.type.bitwidth // 8,
+                isinstance(fld.type, nb_types.Float),
+            )
         return
     raise TypingError(
         f"{fn_name}: expected a struct-shaped type (Record, Tuple, "
@@ -159,12 +166,17 @@ def _classify_eightbytes(ty):
         )
     cls_lo = _EIGHTBYTE_CLASS_INTEGER
     cls_hi = _EIGHTBYTE_CLASS_INTEGER
-    for offset, is_sse in _iter_struct_fields(ty, "_classify_eightbytes"):
+    for offset, size, is_sse in _iter_struct_fields(
+            ty, "_classify_eightbytes"):
         if not is_sse:
             continue
+        # SysV per-eightbyte rule: if any SSE field touches an
+        # eightbyte (even partially via a boundary span), the whole
+        # eightbyte is SSE. So a field at offsets [4, 12) makes BOTH
+        # eightbytes SSE -- not just one or the other.
         if offset < 8:
             cls_lo = _EIGHTBYTE_CLASS_SSE
-        else:
+        if offset + size > 8:
             cls_hi = _EIGHTBYTE_CLASS_SSE
     return cls_lo, cls_hi
 
@@ -183,7 +195,11 @@ def _is_canonical_int64_pair_layout(ty):
     if isinstance(ty, nb_types.Record):
         if ty.size != 16:
             return False
-        flds = list(ty.fields.values())
+        # Sort by offset so a Record built with fields declared in
+        # non-offset order (e.g. via numpy structured dtype with
+        # explicit `offsets`) is still recognized as canonical when
+        # the offsets sort to [0, 8].
+        flds = sorted(ty.fields.values(), key=lambda f: f.offset)
         if len(flds) != 2:
             return False
         if [f.offset for f in flds] != [0, 8]:
