@@ -914,26 +914,23 @@ def test_call_lib_func_large_return_round_trip_unituple_24b(patch_signature):
     del echo  # keepalive
 
 
-def test_call_lib_func_large_return_record_uses_sret_in_ir(patch_signature):
-    """A 24-byte numba ``Record`` return (``i32`` + 4B pad + ``i64`` +
-    ``i64`` per ``Record.make_c_struct``'s C-alignment rules) is
-    classified as ``_CLASS_STRUCT_LARGE`` and lowered via sret. IR-
-    only check rather than a true round-trip: numba's ``Record`` type
-    has pointer-based value representation, so returning a stack-
-    allocated struct value (what the sret path naturally produces) and
-    then having Python read fields off the boxed result reaches
-    already-freed stack memory after the ``@njit`` function returns.
-    The Tuple round-trip tests above already exercise the value path
-    end-to-end on the same codegen; this test pins that ``Record``
-    return types are at least accepted by typing + IR generation, since
-    ``_classify`` and ``_struct_bytes`` already support them on the
-    arg side. (Safe ``Record`` returns would need NRT-allocated
-    storage; out of scope for this change.)
+def test_call_lib_func_large_return_record_rejected(patch_signature):
+    """A >16-byte ``Record`` return is explicitly rejected with
+    ``TypingError``. Numba's ``RecordModel`` represents values as raw
+    ``[N x i8]*`` pointers, so the natural stack-alloca sret slot
+    would dangle after the ``@njit`` function returns and Python-side
+    boxing would dereference freed memory. Safe support needs NRT-
+    allocated storage hooked into numba's record-ownership model -- a
+    larger lift than this PR takes on, with no current consumer to
+    validate against (numbduck uses ``Tuple``, not ``Record``).
+    Tuple/UniTuple returns with the same byte layout work end-to-end
+    via the round-trip and ``uses_sret_in_ir`` tests above.
     """
     from numba import njit, types as nb_types
+    from numba.core.errors import TypingError
     from numbox.core.bindings.call import _call_lib_func
 
-    name = "numbox_test_large_ret_record_ir"
+    name = "numbox_test_large_ret_record_rejected"
     keepalive = _register_test_symbol(name)
     rec_ty = nb_types.Record.make_c_struct([
         ("a", nb_types.int32),
@@ -946,22 +943,8 @@ def test_call_lib_func_large_return_record_uses_sret_in_ir(patch_signature):
     def run(x):
         return _call_lib_func(name, (x,))
 
-    run.compile((nb_types.int32,))
-    ir_text = list(run.inspect_llvm().values())[0]
-    declare_line = next(
-        (line for line in ir_text.splitlines()
-         if "declare" in line and name in line),
-        None,
-    )
-    assert declare_line is not None, (
-        f"could not find declare line for {name} in IR:\n{ir_text}"
-    )
-    assert "declare void" in declare_line, (
-        f"expected 'declare void' for sret return; got:\n{declare_line}"
-    )
-    assert "sret(" in declare_line, (
-        f"expected 'sret(' on hidden first arg; got:\n{declare_line}"
-    )
+    with pytest.raises(TypingError, match="Record returns >16 bytes"):
+        run.compile((nb_types.int32,))
     del keepalive
 
 
