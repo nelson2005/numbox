@@ -855,18 +855,18 @@ def test_call_lib_func_large_return_uses_sret_in_ir(patch_signature):
 
 
 @pytest.mark.skipif(
-    _platform_str() != "sysv_x86_64",
+    _platform_str() not in ("sysv_x86_64", "win_x64"),
     reason=(
         "Round-trip relies on a Python ctypes callback receiving the "
         "sret hidden first arg in the same register as a normal first "
-        "arg. True on SysV x86-64 (RDI). On AAPCS64 the sret pointer "
-        "goes in x8 (indirect-result-location register), separate from "
-        "x0 — ctypes thunks read args in x0/x1 order, so the buffer "
-        "pointer never reaches the callback. Windows x64 puts sret in "
-        "RCX (also the first GP arg register) so the same shape would "
-        "work, but a portable ctypes-only fixture isn't worth a Windows-"
-        "specific code path; the IR-only tests already pin sret lowering "
-        "on every platform."
+        "arg. True on SysV x86-64 (RDI) and Windows x64 (RCX). On "
+        "AAPCS64 the sret pointer goes in x8 (indirect-result-location "
+        "register), separate from x0 — ctypes thunks read args in "
+        "x0/x1 order, so the buffer pointer never reaches the callback "
+        "and the test segfaults. The IR-only tests still pin sret "
+        "lowering on every platform; numbduck's real C consumers "
+        "(duckdb_get_decimal/_varint) follow the AAPCS64 ABI directly "
+        "and exercise this path on AAPCS64 in their own CI."
     ),
 )
 def test_call_lib_func_large_return_round_trip_unituple_24b(patch_signature):
@@ -874,8 +874,8 @@ def test_call_lib_func_large_return_round_trip_unituple_24b(patch_signature):
     ``_call_lib_func``. The test C callback is declared as
     ``void(_BigC*, int64)`` -- exactly the sret-lowered shape -- and
     writes three i64 fields into the caller-allocated buffer. Verifies
-    the full sret round-trip on SysV x86-64: alloca, hidden first
-    arg, callee write-through-pointer, caller load.
+    the full sret round-trip on SysV x86-64 and Windows x64: alloca,
+    hidden first arg, callee write-through-pointer, caller load.
     """
     import ctypes
     import llvmlite.binding as ll
@@ -966,12 +966,11 @@ def test_call_lib_func_large_return_record_uses_sret_in_ir(patch_signature):
 
 
 @pytest.mark.skipif(
-    _platform_str() != "sysv_x86_64",
+    _platform_str() not in ("sysv_x86_64", "win_x64"),
     reason=(
         "Same AAPCS64 sret/x8 ctypes-callback mismatch documented on "
         "the UniTuple round-trip. IR-only coverage of the LARGE-return "
-        "path on non-SysV platforms lives in the *_uses_sret_in_ir "
-        "tests."
+        "path on AAPCS64 lives in the *_uses_sret_in_ir tests."
     ),
 )
 def test_call_lib_func_large_return_round_trip_varint_shaped(patch_signature):
