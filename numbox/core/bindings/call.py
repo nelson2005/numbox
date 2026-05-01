@@ -50,8 +50,11 @@ def _call_lib_func(typingctx, func_name_ty, args_ty=NoneType):
       eightbyte repack on SysV / AAPCS64: the LLVM call is declared
       to return ``{i64, i64}`` and the result is unpacked back to
       the original LLVM type via memory bitcast.
-    - **>16-byte struct returns** -- raise ``TypingError``. No consumer
-      currently needs this; add it when one does.
+    - **>16-byte struct returns** -- ``sret`` (caller-allocated hidden
+      first arg, void return) on every platform. SysV x86-64 / AAPCS64
+      / Windows x64 all use indirect-result-location for this size
+      class; the codegen path is shared with the Windows ``<=16-byte``
+      non-register-passable case.
 
     For C signatures of form ``func(T*)`` (pointer to struct) rather
     than ``func(T)`` lowered to a byval pointer by the ABI, use the
@@ -74,11 +77,6 @@ def _call_lib_func(typingctx, func_name_ty, args_ty=NoneType):
 
     ret_ty = func_sig.return_type
     ret_class = _classify(ret_ty)
-    if ret_class == _CLASS_STRUCT_LARGE:
-        raise TypingError(
-            f"_call_lib_func: return struct >16 bytes is unsupported "
-            f"({func_name})"
-        )
 
     if args_ty == NoneType:
         arg_types = ()
@@ -92,9 +90,13 @@ def _call_lib_func(typingctx, func_name_ty, args_ty=NoneType):
 
     plat = _current_platform()
     use_sret = (
-        ret_class == _CLASS_STRUCT_SMALL
-        and plat == _PLATFORM_WIN_X64
-        and not _is_windows_register_passable(_struct_bytes(ret_ty, "_call_lib_func"))
+        ret_class == _CLASS_STRUCT_LARGE
+        or (
+            ret_class == _CLASS_STRUCT_SMALL
+            and plat == _PLATFORM_WIN_X64
+            and not _is_windows_register_passable(
+                _struct_bytes(ret_ty, "_call_lib_func"))
+        )
     )
     needs_ret_repack = (
         ret_class == _CLASS_STRUCT_SMALL
