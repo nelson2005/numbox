@@ -39,6 +39,24 @@ def func_name(x):
 3. Function names must match the C library names exactly
 4. Args passed as tuple literal to `_call_lib_func`
 
+### Bindings: implementation gotchas
+
+These have caught cleanly-reasoned designs more than once. Apply to all new bindings, intrinsics, and platform-aware additions.
+
+**Symbol resolution must use extern refs, not literal addresses.** [`ll.address_of_symbol(name)`](https://llvmlite.readthedocs.io/en/latest/user-guide/binding/modules.html) at lowering time returns the *current process's* runtime address — useful only as a presence check. Baking that int into LLVM IR breaks `cache=True` because ASLR randomizes the address per process and cached objects are meant to survive across runs and machines. The correct pattern, used by [`_call_lib_func`](numbox/core/bindings/call.py) itself: emit an extern declaration with [`get_or_insert_function(builder.module, func_ll_ty, func_name)`](numbox/core/bindings/call.py#L185) and let llvmlite's JIT linker resolve the name at link time. The [literal-address check](numbox/core/bindings/call.py#L76) earlier in the intrinsic is *only* a presence assertion; `func_p_as_int` is never consumed by codegen. The same extern-ref pattern works for data symbols (`@stdout = external global ptr`) and for accessor functions whose return value is per-thread ([`__errno_location`](https://man7.org/linux/man-pages/man3/errno.3.html), `__error`, `_errno`).
+
+**Reuse the existing pointer/string helpers; don't reinvent.** Already in [`numbox/utils/lowlevel.py`](numbox/utils/lowlevel.py):
+
+- [`array_data_p(arr) -> intp`](numbox/utils/lowlevel.py#L297) — numpy array data pointer (signed). Python- and `@njit`-callable.
+- [`get_str_from_p_as_int(p) -> unicode_type`](numbox/utils/lowlevel.py#L148) — read NUL-terminated C string at address `p` into a Python `unicode_type`. Capped at [`MAX_STR_LENGTH`](numbox/core/configurations.py) (= `2**31 - 1`; the cap bounds the `carray` view, the loop exits on first NUL). `@njit`-callable.
+- [`get_unicode_data_p(s) -> intp`](numbox/utils/lowlevel.py#L174) — pointer to a Python unicode's data payload (null-terminated). `@njit`-callable.
+
+These are the canonical primitives for C-string interop. New bindings should compose them, not reimplement byte loops or pointer casts. **Before designing anything that touches strings, pointers, or buffer ownership, read [`numbox/utils/lowlevel.py`](numbox/utils/lowlevel.py) end-to-end first.**
+
+**Public surface is star-imported.** [`numbox/core/bindings/__init__.py`](numbox/core/bindings/__init__.py) does `from numbox.core.bindings._c import *` (and same for `_math`, `_sqlite`). Anything at top level without a leading underscore is part of the public API. Keep new intrinsics private (`_`-prefixed); keep user-facing wrappers public.
+
+**Platform-variable C types — `long`, `time_t`, `size_t`.** `long` is 64-bit on POSIX (LP64) but 32-bit on Windows x64 (LLP64); `time_t` size varies historically; `size_t` is 64-bit on all current 64-bit CI platforms. A `signatures` entry that uses `int64` for `long` will silently corrupt registers on Windows. Functions affected: `fseek`/`ftell`/`fsetpos`/`fgetpos`, `time`/`clock`, `strtol`/`strtoul`. Either dispatch per platform (option-(ii) style: different symbol or signature per platform) or omit the function from the batch and document as a follow-up. Don't ship a uniform-`int64` signature that's correct on POSIX and wrong on Windows.
+
 ### Core Modules
 
 - **`core/any/`** — type erasure: wraps any value into uniform type
