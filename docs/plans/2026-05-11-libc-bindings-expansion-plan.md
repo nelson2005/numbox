@@ -760,7 +760,70 @@ cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test
 
 **Steps:**
 
-- [ ] **Step 1: Add signatures** — append to `signatures_c` in `numbox/core/bindings/signatures.py`:
+- [ ] **Step 1: Write the failing tests** — extend `test/core/test_stdio_handles.py` with the capfd roundtrip:
+
+```python
+def test_stderr_fputs_roundtrip(capfd):
+    from numbox.core.bindings import fputs, fflush
+    from numbox.utils.lowlevel import get_unicode_data_p
+
+    @njit(cache=True)
+    def write_to_stderr():
+        p = get_unicode_data_p("ok\n")
+        fputs(p, stderr())
+        fflush(stderr())
+
+    write_to_stderr()
+    out, err = capfd.readouterr()
+    assert "ok" in err
+```
+
+And add `test_c_stdio` to `test/core/test_bindings.py`:
+
+```python
+def test_c_stdio(tmp_path):
+    import numpy as np
+    from numba import njit
+    from numbox.core.bindings import fopen, fwrite, fclose, fread
+    from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
+
+    path = tmp_path / "rt.bin"
+    payload = b"hello-from-njit\x00\x01\x02"
+
+    @njit(cache=True)
+    def write_and_read(path_str, mode_w, mode_r, payload_arr, read_back):
+        wpath = get_unicode_data_p(path_str)
+        wmode = get_unicode_data_p(mode_w)
+        rmode = get_unicode_data_p(mode_r)
+        wfp = fopen(wpath, wmode)
+        if wfp == 0:
+            return -1, 0
+        wbuf = array_data_p(payload_arr)
+        nw = fwrite(wbuf, 1, payload_arr.size, wfp)
+        fclose(wfp)
+        rfp = fopen(wpath, rmode)
+        if rfp == 0:
+            return nw, -1
+        rbuf = array_data_p(read_back)
+        nr = fread(rbuf, 1, read_back.size, rfp)
+        fclose(rfp)
+        return nw, nr
+
+    payload_arr = np.frombuffer(payload, dtype=np.uint8).copy()
+    read_back = np.zeros(len(payload), dtype=np.uint8)
+    nw, nr = write_and_read(str(path), "wb", "rb", payload_arr, read_back)
+    assert nw == len(payload)
+    assert nr == len(payload)
+    assert bytes(read_back) == payload
+```
+
+- [ ] **Step 2: Run — confirm red** (ImportError on `fputs` / `fflush` / `fopen` / `fwrite` / `fclose` / `fread`).
+
+```bash
+cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test/core/test_stdio_handles.py::test_stderr_fputs_roundtrip test/core/test_bindings.py::test_c_stdio -v
+```
+
+- [ ] **Step 3: Add signatures** — append to `signatures_c` in `numbox/core/bindings/signatures.py`:
 
 ```python
     # === stdio (non-variadic) ===
@@ -778,7 +841,7 @@ cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test
     "clearerr": void(intp),
 ```
 
-- [ ] **Step 2: Add cres wrappers** — append to `numbox/core/bindings/_c.py`:
+- [ ] **Step 4: Add cres wrappers** — append to `numbox/core/bindings/_c.py`:
 
 ```python
 @cres(signatures.get("puts"), cache=True)
@@ -841,73 +904,21 @@ def clearerr(fp):
     return _call_lib_func("clearerr", (fp,))
 ```
 
-- [ ] **Step 3: Extend `test/core/test_stdio_handles.py`** with capfd roundtrip:
-
-```python
-def test_stderr_fputs_roundtrip(capfd):
-    from numbox.core.bindings import fputs, fflush
-    from numbox.utils.lowlevel import get_unicode_data_p
-
-    @njit(cache=True)
-    def write_to_stderr():
-        p = get_unicode_data_p("ok\n")
-        fputs(p, stderr())
-        fflush(stderr())
-
-    write_to_stderr()
-    out, err = capfd.readouterr()
-    assert "ok" in err
-```
-
-- [ ] **Step 4: Add `test_c_stdio` to `test/core/test_bindings.py`**
-
-```python
-def test_c_stdio(tmp_path):
-    import numpy as np
-    from numba import njit
-    from numbox.core.bindings import fopen, fwrite, fclose, fread
-    from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
-
-    path = tmp_path / "rt.bin"
-    payload = b"hello-from-njit\x00\x01\x02"
-
-    @njit(cache=True)
-    def write_and_read(path_str, mode_w, mode_r, payload_arr, read_back):
-        wpath = get_unicode_data_p(path_str)
-        wmode = get_unicode_data_p(mode_w)
-        rmode = get_unicode_data_p(mode_r)
-        wfp = fopen(wpath, wmode)
-        if wfp == 0:
-            return -1, 0
-        wbuf = array_data_p(payload_arr)
-        nw = fwrite(wbuf, 1, payload_arr.size, wfp)
-        fclose(wfp)
-        rfp = fopen(wpath, rmode)
-        if rfp == 0:
-            return nw, -1
-        rbuf = array_data_p(read_back)
-        nr = fread(rbuf, 1, read_back.size, rfp)
-        fclose(rfp)
-        return nw, nr
-
-    payload_arr = np.frombuffer(payload, dtype=np.uint8).copy()
-    read_back = np.zeros(len(payload), dtype=np.uint8)
-    nw, nr = write_and_read(str(path), "wb", "rb", payload_arr, read_back)
-    assert nw == len(payload)
-    assert nr == len(payload)
-    assert bytes(read_back) == payload
-```
-
-- [ ] **Step 5: Clean cache, run targeted tests, lint, full suite**
+- [ ] **Step 5: Clean cache, re-run tests — confirm green**
 
 ```bash
 /home/erik/projects/numbox/venv/bin/python -c "import shutil, pathlib; shutil.rmtree(pathlib.Path('~/.cache/numba').expanduser(), ignore_errors=True); [shutil.rmtree(p, ignore_errors=True) for p in pathlib.Path('/home/erik/projects/numbox').rglob('__pycache__')]"
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test/core/test_stdio_handles.py test/core/test_bindings.py -v --durations=20
+```
+
+- [ ] **Step 6: Lint + full suite**
+
+```bash
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/flake8 numbox/core/bindings/_c.py numbox/core/bindings/signatures.py test/core/test_stdio_handles.py test/core/test_bindings.py
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest --durations=20
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git -C /home/erik/projects/numbox add numbox/core/bindings/signatures.py numbox/core/bindings/_c.py test/core/test_stdio_handles.py test/core/test_bindings.py
@@ -947,64 +958,7 @@ cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test
 
 **Steps:**
 
-- [ ] **Step 1: Add signatures** — append to `signatures_c`:
-
-```python
-    # === strings ===
-    "strcmp": int32(intp, intp),
-    "strncmp": int32(intp, intp, intp),
-    "strchr": intp(intp, int32),
-    "strrchr": intp(intp, int32),
-    "strstr": intp(intp, intp),
-    "strncpy": intp(intp, intp, intp),
-    "strerror": intp(int32),
-```
-
-- [ ] **Step 2: Add cres wrappers** — append to `_c.py`:
-
-```python
-@cres(signatures.get("strcmp"), cache=True)
-def strcmp(a, b):
-    return _call_lib_func("strcmp", (a, b))
-
-
-@cres(signatures.get("strncmp"), cache=True)
-def strncmp(a, b, n):
-    return _call_lib_func("strncmp", (a, b, n))
-
-
-@cres(signatures.get("strchr"), cache=True)
-def strchr(s, c):
-    return _call_lib_func("strchr", (s, c))
-
-
-@cres(signatures.get("strrchr"), cache=True)
-def strrchr(s, c):
-    return _call_lib_func("strrchr", (s, c))
-
-
-@cres(signatures.get("strstr"), cache=True)
-def strstr(haystack, needle):
-    return _call_lib_func("strstr", (haystack, needle))
-
-
-@cres(signatures.get("strncpy"), cache=True)
-def strncpy(dst, src, n):
-    return _call_lib_func("strncpy", (dst, src, n))
-
-
-@cres(signatures.get("strerror"), cache=True)
-def strerror(errnum):
-    """Return a pointer to the static error-message string for errnum.
-
-    NOT thread-safe — the returned pointer references a per-process
-    static buffer that subsequent strerror calls may overwrite. Use
-    strerror_safe for thread-safe operation.
-    """
-    return _call_lib_func("strerror", (errnum,))
-```
-
-- [ ] **Step 3: Add tests** — append to `test/core/test_bindings.py`:
+- [ ] **Step 1: Write the failing tests** — append to `test/core/test_bindings.py`:
 
 ```python
 def test_c_strings():
@@ -1067,16 +1021,84 @@ def test_c_strerror():
     assert len(get_str_from_p_as_int(p)) > 0
 ```
 
-- [ ] **Step 4: Clean, test, lint, full suite**
+- [ ] **Step 2: Run — confirm red** (ImportError on the string wrappers).
+
+```bash
+cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py::test_c_strings test/core/test_bindings.py::test_c_strerror -v
+```
+
+- [ ] **Step 3: Add signatures** — append to `signatures_c`:
+
+```python
+    # === strings ===
+    "strcmp": int32(intp, intp),
+    "strncmp": int32(intp, intp, intp),
+    "strchr": intp(intp, int32),
+    "strrchr": intp(intp, int32),
+    "strstr": intp(intp, intp),
+    "strncpy": intp(intp, intp, intp),
+    "strerror": intp(int32),
+```
+
+- [ ] **Step 4: Add cres wrappers** — append to `_c.py`:
+
+```python
+@cres(signatures.get("strcmp"), cache=True)
+def strcmp(a, b):
+    return _call_lib_func("strcmp", (a, b))
+
+
+@cres(signatures.get("strncmp"), cache=True)
+def strncmp(a, b, n):
+    return _call_lib_func("strncmp", (a, b, n))
+
+
+@cres(signatures.get("strchr"), cache=True)
+def strchr(s, c):
+    return _call_lib_func("strchr", (s, c))
+
+
+@cres(signatures.get("strrchr"), cache=True)
+def strrchr(s, c):
+    return _call_lib_func("strrchr", (s, c))
+
+
+@cres(signatures.get("strstr"), cache=True)
+def strstr(haystack, needle):
+    return _call_lib_func("strstr", (haystack, needle))
+
+
+@cres(signatures.get("strncpy"), cache=True)
+def strncpy(dst, src, n):
+    return _call_lib_func("strncpy", (dst, src, n))
+
+
+@cres(signatures.get("strerror"), cache=True)
+def strerror(errnum):
+    """Return a pointer to the static error-message string for errnum.
+
+    NOT thread-safe — the returned pointer references a per-process
+    static buffer that subsequent strerror calls may overwrite. Use
+    strerror_safe for thread-safe operation.
+    """
+    return _call_lib_func("strerror", (errnum,))
+```
+
+- [ ] **Step 5: Clean cache, re-run tests — confirm green**
 
 ```bash
 /home/erik/projects/numbox/venv/bin/python -c "import shutil, pathlib; shutil.rmtree(pathlib.Path('~/.cache/numba').expanduser(), ignore_errors=True); [shutil.rmtree(p, ignore_errors=True) for p in pathlib.Path('/home/erik/projects/numbox').rglob('__pycache__')]"
-cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py -v --durations=20
+cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py::test_c_strings test/core/test_bindings.py::test_c_strerror -v --durations=20
+```
+
+- [ ] **Step 6: Lint + full suite**
+
+```bash
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/flake8 numbox/core/bindings/_c.py numbox/core/bindings/signatures.py test/core/test_bindings.py
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest --durations=20
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git -C /home/erik/projects/numbox add numbox/core/bindings/signatures.py numbox/core/bindings/_c.py test/core/test_bindings.py
@@ -1112,46 +1134,7 @@ cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test
 
 **Steps:**
 
-- [ ] **Step 1: Add signatures** — append to `signatures_c`:
-
-```python
-    # === memory ===
-    "memcpy": intp(intp, intp, intp),
-    "memmove": intp(intp, intp, intp),
-    "memset": intp(intp, int32, intp),
-    "memcmp": int32(intp, intp, intp),
-    "memchr": intp(intp, int32, intp),
-```
-
-- [ ] **Step 2: Add cres wrappers** — append to `_c.py`:
-
-```python
-@cres(signatures.get("memcpy"), cache=True)
-def memcpy(dst, src, n):
-    return _call_lib_func("memcpy", (dst, src, n))
-
-
-@cres(signatures.get("memmove"), cache=True)
-def memmove(dst, src, n):
-    return _call_lib_func("memmove", (dst, src, n))
-
-
-@cres(signatures.get("memset"), cache=True)
-def memset(dst, c, n):
-    return _call_lib_func("memset", (dst, c, n))
-
-
-@cres(signatures.get("memcmp"), cache=True)
-def memcmp(a, b, n):
-    return _call_lib_func("memcmp", (a, b, n))
-
-
-@cres(signatures.get("memchr"), cache=True)
-def memchr(s, c, n):
-    return _call_lib_func("memchr", (s, c, n))
-```
-
-- [ ] **Step 3: Add `test_c_memory`** — append to `test/core/test_bindings.py`:
+- [ ] **Step 1: Write the failing test** `test_c_memory` — append to `test/core/test_bindings.py`:
 
 ```python
 def test_c_memory():
@@ -1205,16 +1188,66 @@ def test_c_memory():
     assert do_chr(haystack) == 3
 ```
 
-- [ ] **Step 4: Clean, test, lint, full suite**
+- [ ] **Step 2: Run — confirm red** (ImportError on memcpy/memmove/memset/memcmp/memchr).
+
+```bash
+cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py::test_c_memory -v
+```
+
+- [ ] **Step 3: Add signatures** — append to `signatures_c`:
+
+```python
+    # === memory ===
+    "memcpy": intp(intp, intp, intp),
+    "memmove": intp(intp, intp, intp),
+    "memset": intp(intp, int32, intp),
+    "memcmp": int32(intp, intp, intp),
+    "memchr": intp(intp, int32, intp),
+```
+
+- [ ] **Step 4: Add cres wrappers** — append to `_c.py`:
+
+```python
+@cres(signatures.get("memcpy"), cache=True)
+def memcpy(dst, src, n):
+    return _call_lib_func("memcpy", (dst, src, n))
+
+
+@cres(signatures.get("memmove"), cache=True)
+def memmove(dst, src, n):
+    return _call_lib_func("memmove", (dst, src, n))
+
+
+@cres(signatures.get("memset"), cache=True)
+def memset(dst, c, n):
+    return _call_lib_func("memset", (dst, c, n))
+
+
+@cres(signatures.get("memcmp"), cache=True)
+def memcmp(a, b, n):
+    return _call_lib_func("memcmp", (a, b, n))
+
+
+@cres(signatures.get("memchr"), cache=True)
+def memchr(s, c, n):
+    return _call_lib_func("memchr", (s, c, n))
+```
+
+- [ ] **Step 5: Clean cache, re-run — confirm green**
 
 ```bash
 /home/erik/projects/numbox/venv/bin/python -c "import shutil, pathlib; shutil.rmtree(pathlib.Path('~/.cache/numba').expanduser(), ignore_errors=True); [shutil.rmtree(p, ignore_errors=True) for p in pathlib.Path('/home/erik/projects/numbox').rglob('__pycache__')]"
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py::test_c_memory -v --durations=20
+```
+
+- [ ] **Step 6: Lint + full suite**
+
+```bash
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/flake8 numbox/core/bindings/_c.py numbox/core/bindings/signatures.py test/core/test_bindings.py
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest --durations=20
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git -C /home/erik/projects/numbox add numbox/core/bindings/signatures.py numbox/core/bindings/_c.py test/core/test_bindings.py
@@ -1249,22 +1282,7 @@ cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test
 
 **Steps:**
 
-- [ ] **Step 1: Add signature** — append to `signatures_c`:
-
-```python
-    # === env ===
-    "getenv": intp(intp),
-```
-
-- [ ] **Step 2: Add cres wrapper** — append to `_c.py`:
-
-```python
-@cres(signatures.get("getenv"), cache=True)
-def getenv(name):
-    return _call_lib_func("getenv", (name,))
-```
-
-- [ ] **Step 3: Add test** — append to `test/core/test_bindings.py`:
+- [ ] **Step 1: Write the failing test** — append to `test/core/test_bindings.py`:
 
 ```python
 def test_c_env():
@@ -1279,16 +1297,42 @@ def test_c_env():
     assert lookup("NUMBOX_NONEXISTENT_XYZZY") == 0
 ```
 
-- [ ] **Step 4: Clean, test, lint, full suite**
+- [ ] **Step 2: Run — confirm red** (ImportError on `getenv`).
+
+```bash
+cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py::test_c_env -v
+```
+
+- [ ] **Step 3: Add signature** — append to `signatures_c`:
+
+```python
+    # === env ===
+    "getenv": intp(intp),
+```
+
+- [ ] **Step 4: Add cres wrapper** — append to `_c.py`:
+
+```python
+@cres(signatures.get("getenv"), cache=True)
+def getenv(name):
+    return _call_lib_func("getenv", (name,))
+```
+
+- [ ] **Step 5: Clean cache, re-run — confirm green**
 
 ```bash
 /home/erik/projects/numbox/venv/bin/python -c "import shutil, pathlib; shutil.rmtree(pathlib.Path('~/.cache/numba').expanduser(), ignore_errors=True); [shutil.rmtree(p, ignore_errors=True) for p in pathlib.Path('/home/erik/projects/numbox').rglob('__pycache__')]"
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py::test_c_env -v --durations=20
+```
+
+- [ ] **Step 6: Lint + full suite**
+
+```bash
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/flake8 numbox/core/bindings/_c.py numbox/core/bindings/signatures.py test/core/test_bindings.py
 cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest --durations=20
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git -C /home/erik/projects/numbox add numbox/core/bindings/signatures.py numbox/core/bindings/_c.py test/core/test_bindings.py
