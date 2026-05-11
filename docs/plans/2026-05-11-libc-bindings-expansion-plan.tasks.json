@@ -1,0 +1,69 @@
+{
+  "planPath": "docs/plans/2026-05-11-libc-bindings-expansion-plan.md",
+  "specPath": "docs/plans/2026-05-11-libc-bindings-expansion-design.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Pre-flight checks",
+      "status": "pending",
+      "description": "**Goal:** Confirm baseline-green starting state.\n\n**Files:** read-only — `numbox/utils/lowlevel.py`, `numbox/core/bindings/call.py`, the spec doc.\n\n**Verify:**\n- `venv/bin/python -c 'import numba; print(numba.__version__)'` → `0.60.0`\n- baseline pytest green\n- baseline flake8 clean\n\nNo commit.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest --durations=20 && /home/erik/projects/numbox/venv/bin/flake8\", \"acceptanceCriteria\": [\"baseline pytest green\", \"flake8 clean\", \"numba 0.60.0\"], \"model\": \"sonnet\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Stdio handle intrinsics + wrappers",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** `stdout() / stderr() / stdin()` callable from `@njit`, returning FILE* as intp. Establish `_stdio.py` pattern + extern-global LLVM ref idiom.\n\n**Files:**\n- Create: `numbox/core/bindings/_stdio.py`\n- Create: `test/core/test_stdio_handles.py`\n- Modify: `numbox/core/bindings/__init__.py`\n\n**Verify:** `venv/bin/pytest test/core/test_stdio_handles.py -v --durations=20` → 3 passed\n\nSee plan Task 1 for full TDD steps and code.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_stdio.py\", \"test/core/test_stdio_handles.py\", \"numbox/core/bindings/__init__.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_stdio_handles.py -v --durations=20\", \"acceptanceCriteria\": [\"stdout/stderr/stdin return non-zero intp from @njit\", \"cache=True works on second run\", \"platform branches: Linux/Darwin/Windows\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: errno intrinsics + wrappers",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** `errno_get() / errno_set(v)` callable from `@njit`, per-thread correct under prange.\n\n**Files:**\n- Create: `numbox/core/bindings/_errno.py`\n- Create: `test/core/test_errno.py`\n- Modify: `numbox/core/bindings/__init__.py`\n\n**Verify:** `venv/bin/pytest test/core/test_errno.py -v --durations=20`\n\nKey tests: roundtrip, two-thread no-contamination, prange iteration correctness. See plan Task 2.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_errno.py\", \"test/core/test_errno.py\", \"numbox/core/bindings/__init__.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_errno.py -v --durations=20\", \"acceptanceCriteria\": [\"set/get roundtrip\", \"two-thread no cross-contamination\", \"prange per-iteration correctness\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: strerror_safe intrinsic + Alpine CI",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Unified `strerror_safe(errnum, buf, buflen)` across glibc / musl / macOS / Windows + Alpine shell-only CI job validating musl symbol layout.\n\n**Files:**\n- Create: `numbox/core/bindings/_strerror.py`\n- Create: `test/core/test_strerror_safe.py`\n- Modify: `numbox/core/bindings/__init__.py`\n- Modify: `.github/workflows/numbox_ci.yml`\n\n**Verify:** `venv/bin/pytest test/core/test_strerror_safe.py -v --durations=20`\n\nKey test: IR-inspection (Linux-only) — patch `ll.address_of_symbol` to return None for `__xpg_strerror_r`, assert emitted IR contains `strerror_r`, NOT `__xpg_strerror_r`. See plan Task 3.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_strerror.py\", \"test/core/test_strerror_safe.py\", \"numbox/core/bindings/__init__.py\", \".github/workflows/numbox_ci.yml\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_strerror_safe.py -v --durations=20\", \"acceptanceCriteria\": [\"strerror_safe ENOENT roundtrip\", \"short-buffer nonzero return\", \"two-thread no contamination\", \"IR-inspection symbol-probe test\", \"Alpine CI job present, guards musl strerror_r presence + xpg absence\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Monomorphic stdio batch (12 functions)",
+      "status": "pending",
+      "blockedBy": [1, 2],
+      "description": "**Goal:** 12 non-variadic stdio: puts/fputs/fputc/putchar/fwrite/fread/fflush/fopen/fclose/feof/ferror/clearerr. Extend test_stdio_handles.py with capfd roundtrip. Add test_c_stdio file-roundtrip.\n\n**Files:**\n- Modify: `numbox/core/bindings/signatures.py`\n- Modify: `numbox/core/bindings/_c.py`\n- Modify: `test/core/test_stdio_handles.py`\n- Modify: `test/core/test_bindings.py`\n\n**Verify:** `venv/bin/pytest test/core/test_stdio_handles.py test/core/test_bindings.py::test_c_stdio -v --durations=20`\n\nSee plan Task 4.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_c.py\", \"test/core/test_stdio_handles.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_stdio_handles.py test/core/test_bindings.py -v --durations=20\", \"acceptanceCriteria\": [\"12 wrappers callable\", \"capfd stderr roundtrip\", \"file roundtrip byte-equality\"], \"model\": \"sonnet\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Monomorphic strings batch (7 functions)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** strcmp/strncmp/strchr/strrchr/strstr/strncpy/strerror. Add test_c_strings + test_c_strerror.\n\n**Files:**\n- Modify: `numbox/core/bindings/signatures.py`\n- Modify: `numbox/core/bindings/_c.py`\n- Modify: `test/core/test_bindings.py`\n\n**Verify:** `venv/bin/pytest test/core/test_bindings.py::test_c_strings test/core/test_bindings.py::test_c_strerror -v --durations=20`\n\nSee plan Task 5.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_c.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py -v --durations=20\", \"acceptanceCriteria\": [\"7 wrappers callable\", \"strncpy correctness with array_data_p destination\", \"strerror pointer non-null\"], \"model\": \"sonnet\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Monomorphic memory batch (5 functions)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** memcpy/memmove/memset/memcmp/memchr. Add test_c_memory.\n\n**Files:**\n- Modify: `numbox/core/bindings/signatures.py`\n- Modify: `numbox/core/bindings/_c.py`\n- Modify: `test/core/test_bindings.py`\n\n**Verify:** `venv/bin/pytest test/core/test_bindings.py::test_c_memory -v --durations=20`\n\nSee plan Task 6.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_c.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py::test_c_memory -v --durations=20\", \"acceptanceCriteria\": [\"5 wrappers callable\", \"memmove overlapping-region correctness\", \"memcmp sign-of-return\", \"memchr offset\"], \"model\": \"sonnet\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Monomorphic env (getenv)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** getenv wrapper + test_c_env (PATH non-zero; bogus env returns 0).\n\n**Files:**\n- Modify: `numbox/core/bindings/signatures.py`\n- Modify: `numbox/core/bindings/_c.py`\n- Modify: `test/core/test_bindings.py`\n\n**Verify:** `venv/bin/pytest test/core/test_bindings.py::test_c_env -v --durations=20`\n\nSee plan Task 7.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_c.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py::test_c_env -v --durations=20\", \"acceptanceCriteria\": [\"getenv(PATH) != 0\", \"getenv(NUMBOX_NONEXISTENT_XYZZY) == 0\"], \"model\": \"sonnet\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Sphinx docs",
+      "status": "pending",
+      "blockedBy": [1, 2, 3, 4, 5, 6, 7],
+      "description": "**Goal:** Narrative section + 3 automodule blocks in `docs/numbox.core.bindings.rst`.\n\n**Files:** Modify: `docs/numbox.core.bindings.rst`\n\n**Verify:** `cd docs && venv/bin/python -m sphinx -b html -W --keep-going . _build/html` → exit 0 (no warnings under -W).\n\nSee plan Task 8.\n\n```json:metadata\n{\"files\": [\"docs/numbox.core.bindings.rst\"], \"verifyCommand\": \"cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/python -m sphinx -b html -W --keep-going . _build/html\", \"acceptanceCriteria\": [\"narrative inserted between ABI dispatch and Modules\", \"3 automodule blocks for _stdio/_errno/_strerror\", \"sphinx -W exits 0\"], \"model\": \"sonnet\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-05-11"
+}
