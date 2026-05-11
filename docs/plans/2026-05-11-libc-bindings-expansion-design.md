@@ -280,12 +280,12 @@ def append_to_file(path, msg):
     fclose(fp)
     return n
 
-# Buffer compare via numpy
+# Buffer compare via numpy (assumes both arrays contiguous)
 @njit
 def buffer_equal(a, b):
-    if a.size != b.size:
+    if a.nbytes != b.nbytes:
         return False
-    return memcmp(array_data_p(a), array_data_p(b), a.size) == 0
+    return memcmp(array_data_p(a), array_data_p(b), a.nbytes) == 0
 ```
 
 ## 5. Tests
