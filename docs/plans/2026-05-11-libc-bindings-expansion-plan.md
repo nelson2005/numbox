@@ -16,7 +16,8 @@
 - Existing wrapper pattern: [`numbox/core/bindings/_c.py`](../../numbox/core/bindings/_c.py), [`_math.py`](../../numbox/core/bindings/_math.py)
 - Existing test pattern: [`test/core/test_bindings.py`](../../test/core/test_bindings.py)
 
-**Universal command prefixes** (per cross-project preferences):
+**Universal command prefixes** — these are **local to nelson2005's WSL2 dev environment** (absolute paths are deliberate per cross-project policy: absolute venv paths propagate cleanly to subagents whose CWD may not match the project root). If executing this plan from a different checkout, substitute the project-root absolute path; the credential-helper line is a workaround for one specific `~/.gitconfig` quirk and is not needed in other environments.
+
 - Python/pytest: `/home/erik/projects/numbox/venv/bin/python` / `/home/erik/projects/numbox/venv/bin/pytest`
 - Lint: `/home/erik/projects/numbox/venv/bin/flake8` (project config: `max-line-length=127`, `max-complexity=10`)
 - Cache clean (run before every pytest invocation):
@@ -182,7 +183,7 @@ def _stdio_handle(typingctx, name_ty):
         raise TypingError("_stdio_handle: name must be a literal string")
     name = name_ty.literal_value
     if name not in ("stdout", "stderr", "stdin"):
-        raise ValueError(
+        raise TypingError(
             f"_stdio_handle: name must be one of stdout/stderr/stdin, got {name!r}"
         )
 
@@ -215,6 +216,10 @@ def stdout():
     Callable from @njit. Uses the platform's extern symbol (Linux: stdout
     data global; macOS: __stdoutp data global; Windows: __acrt_iob_func(1)
     accessor) — no literal addresses, cache=True safe under ASLR.
+
+    Windows requires UCRT (Universal C Runtime), bundled with Windows 10
+    and later. Older Windows versions exposed FILE* via per-MSVC-version
+    symbols (_iob, __iob_func) and are not supported.
     """
     return _stdio_handle("stdout")
 
@@ -611,8 +616,9 @@ def _strerror_safe(typingctx, errnum_ty, buf_ty, buflen_ty):
         errnum, buf_p, buflen = arguments
         i32 = llir.IntType(32)
         i8p = llir.IntType(8).as_pointer()
+        size_t_ll = context.get_value_type(intp)
         if platform_ == "Windows":
-            func_ty = llir.FunctionType(i32, [i8p, llir.IntType(64), i32])
+            func_ty = llir.FunctionType(i32, [i8p, size_t_ll, i32])
             func_p = get_or_insert_function(
                 builder.module, func_ty, "strerror_s")
             buf = builder.inttoptr(buf_p, i8p)
@@ -621,7 +627,7 @@ def _strerror_safe(typingctx, errnum_ty, buf_ty, buflen_ty):
         if sym is None:
             raise RuntimeError(
                 f"_strerror_safe: unsupported platform {platform_!r}")
-        func_ty = llir.FunctionType(i32, [i32, i8p, llir.IntType(64)])
+        func_ty = llir.FunctionType(i32, [i32, i8p, size_t_ll])
         func_p = get_or_insert_function(builder.module, func_ty, sym)
         buf = builder.inttoptr(buf_p, i8p)
         return builder.call(func_p, [errnum, buf, buflen])
@@ -1070,6 +1076,13 @@ def strstr(haystack, needle):
 
 @cres(signatures.get("strncpy"), cache=True)
 def strncpy(dst, src, n):
+    """Copy at most n bytes from src to dst (POSIX strncpy semantics).
+
+    Does NOT guarantee null termination: if strlen(src) >= n, dst will
+    contain n bytes from src with no trailing NUL. Callers that need a
+    NUL-terminated result must reserve an extra byte and either pre-zero
+    the buffer or explicitly write dst[n] = 0 after the call.
+    """
     return _call_lib_func("strncpy", (dst, src, n))
 
 
@@ -1315,6 +1328,13 @@ cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test
 ```python
 @cres(signatures.get("getenv"), cache=True)
 def getenv(name):
+    """Return pointer to the value string in the process environ table.
+
+    The returned pointer is owned by the platform environ — do NOT
+    mutate, free, or assume it survives a subsequent setenv/putenv.
+    Callers that need a stable Python str should copy via
+    `get_str_from_p_as_int` before mutating environ.
+    """
     return _call_lib_func("getenv", (name,))
 ```
 
