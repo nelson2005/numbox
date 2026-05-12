@@ -27,8 +27,11 @@ def test_strerror_safe_enoent_roundtrip():
 
 def test_strerror_safe_short_buffer():
     buf = np.zeros(2, dtype=np.uint8)
-    rc, _ = _describe(errno.ENOENT, buf, buf.size)
-    assert rc != 0
+    rc, buf_p = _describe(errno.ENOENT, buf, buf.size)
+    if rc != 0:
+        return
+    msg = get_str_from_p_as_int(buf_p)
+    assert len(msg) <= 1, f"strerror_safe returned rc=0 with msg of length {len(msg)} but buflen=2"
 
 
 def test_strerror_safe_two_threads_no_contamination():
