@@ -60,7 +60,7 @@
     {
       "id": 8,
       "subject": "Task 8: Sphinx docs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2, 3, 4, 5, 6, 7],
       "description": "**Goal:** Narrative section + 3 automodule blocks in `docs/numbox.core.bindings.rst`.\n\n**Files:** Modify: `docs/numbox.core.bindings.rst`\n\n**Verify:** `cd docs && venv/bin/python -m sphinx -b html -W --keep-going . _build/html` → exit 0 (no warnings under -W).\n\nSee plan Task 8.\n\n```json:metadata\n{\"files\": [\"docs/numbox.core.bindings.rst\"], \"verifyCommand\": \"cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/python -m sphinx -b html -W --keep-going . _build/html\", \"acceptanceCriteria\": [\"narrative inserted between ABI dispatch and Modules\", \"3 automodule blocks for _stdio/_errno/_strerror\", \"sphinx -W exits 0\"], \"model\": \"sonnet\"}\n```"
     }
