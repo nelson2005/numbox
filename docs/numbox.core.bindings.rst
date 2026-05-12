@@ -38,6 +38,37 @@ References:
 - `Windows x64 calling convention <https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention>`_
 - `AAPCS64 <https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst>`_
 
+Stdio handles, errno, and thread-safe strerror
+++++++++++++++++++++++++++++++++++++++++++++++
+
+**Stdio handles.** ``stdout()``, ``stderr()``, and ``stdin()`` are exposed as JIT-callable functions
+rather than module-level Python constants because the C library's stdio ``FILE *`` values can be either
+data symbols (glibc exports ``stdout``, ``stderr``, ``stdin`` as global variables) or accessor functions
+(musl, macOS, and Windows export them via macros that expand to function calls). Both shapes are wrapped
+behind a uniform ``() -> intp`` interface using extern-symbol references in LLVM IR — never literal
+addresses — so that ``cache=True`` remains correct under ASLR: the address is resolved at JIT link time
+on each run rather than being baked into the cached object.
+
+**errno.** ``errno_get()`` and ``errno_set(v)`` reach the per-thread errno location on every call via the
+platform's accessor function (``__errno_location`` on glibc, ``__error`` on Darwin, ``_errno`` on
+Windows). This makes the wrappers correct under ``@njit(parallel=True)``: each ``prange`` worker sees
+its own thread's errno. Note that a Python caller cannot observe an errno value set inside a ``@njit``
+function because Python and the JIT run on different threads.
+
+**Thread-safe strerror.** ``strerror_safe(errnum, buf, buflen)`` writes the error message into a
+caller-supplied buffer, returning 0 on success and a positive errno code on failure. The underlying
+symbol is selected at lowering time:
+
+- **glibc Linux** — uses ``__xpg_strerror_r`` when present (POSIX form), falling back to ``strerror_r``
+- **musl Linux** — uses ``strerror_r`` (and ``__xpg_strerror_r`` if exported as an alias; both are POSIX-form on musl)
+- **macOS Darwin** — uses ``strerror_r``
+- **Windows** — uses ``strerror_s`` with reordered args (buffer, size, errnum)
+
+The Linux probe is verified by an IR-inspection test (Linux-only) that monkeypatches
+``ll.address_of_symbol`` to confirm the fallback to ``strerror_r`` works. The musl path is independently
+verified by a small Alpine-container CI job that uses ``nm`` to confirm ``strerror_r`` is present in the
+libc shared object. See module docstrings below for caller idioms.
+
 Modules
 ++++++++
 
@@ -53,6 +84,30 @@ numbox.core.bindings._c
 -----------------------
 
 .. automodule:: numbox.core.bindings._c
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+numbox.core.bindings._errno
+---------------------------
+
+.. automodule:: numbox.core.bindings._errno
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+numbox.core.bindings._stdio
+---------------------------
+
+.. automodule:: numbox.core.bindings._stdio
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+numbox.core.bindings._strerror
+------------------------------
+
+.. automodule:: numbox.core.bindings._strerror
    :members:
    :show-inheritance:
    :undoc-members:
