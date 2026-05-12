@@ -1,3 +1,5 @@
+import errno
+
 import numpy as np
 import pytest
 from ctypes import addressof, c_char_p, c_int64, c_void_p
@@ -129,13 +131,12 @@ def test_c_strings():
 
 
 @njit(cache=True)
-def _strerror_lookup(e):
-    return strerror(e)
+def _strerror_lookup_enoent():
+    return strerror(np.int32(errno.ENOENT))
 
 
 def test_c_strerror():
-    import errno
-    p = _strerror_lookup(np.int32(errno.ENOENT))
+    p = _strerror_lookup_enoent()
     assert p != 0
     assert len(get_str_from_p_as_int(p)) > 0
 
