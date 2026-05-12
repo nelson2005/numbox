@@ -4,7 +4,7 @@ from ctypes import addressof, c_char_p, c_int64, c_void_p
 from numba import njit
 from numbox.core.bindings import *
 from numbox.core.bindings.utils import platform_
-from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
+from numbox.utils.lowlevel import array_data_p, get_unicode_data_p, get_str_from_p_as_int
 from test.auxiliary_utils import collect_and_run_tests, str_from_p_as_int
 
 
@@ -87,6 +87,57 @@ def test_c_stdio(tmp_path):
     assert nw == len(payload)
     assert nr == len(payload)
     assert bytes(read_back) == payload
+
+
+@njit(cache=True)
+def _strings_compare_search():
+    a = get_unicode_data_p("hello")
+    b = get_unicode_data_p("hello")
+    c = get_unicode_data_p("world")
+    eq = strcmp(a, b)
+    ne = strcmp(a, c)
+    n_eq = strncmp(a, c, 0)
+    h = get_unicode_data_p("hello world")
+    ord_l = np.int32(108)
+    first_l = strchr(h, ord_l)
+    last_l = strrchr(h, ord_l)
+    substr = strstr(h, get_unicode_data_p("world"))
+    return eq, ne, n_eq, first_l - h, last_l - h, substr - h
+
+
+@njit(cache=True)
+def _strings_copy(dst):
+    src = get_unicode_data_p("abcdef")
+    dst_p = array_data_p(dst)
+    strncpy(dst_p, src, 6)
+    return dst_p
+
+
+def test_c_strings():
+    eq, ne, n_eq, off_first, off_last, off_sub = _strings_compare_search()
+    assert eq == 0
+    assert ne != 0
+    assert n_eq == 0
+    assert off_first == 2
+    assert off_last == 9
+    assert off_sub == 6
+
+    dst = np.zeros(8, dtype=np.uint8)
+    dst_p = _strings_copy(dst)
+    assert bytes(dst[:6]) == b"abcdef"
+    assert get_str_from_p_as_int(dst_p) == "abcdef"
+
+
+@njit(cache=True)
+def _strerror_lookup(e):
+    return strerror(e)
+
+
+def test_c_strerror():
+    import errno
+    p = _strerror_lookup(np.int32(errno.ENOENT))
+    assert p != 0
+    assert len(get_str_from_p_as_int(p)) > 0
 
 
 if __name__ == "__main__":

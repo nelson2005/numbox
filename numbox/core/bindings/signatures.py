@@ -24,6 +24,14 @@ signatures_c = {
     "feof": int32(intp),
     "ferror": int32(intp),
     "clearerr": void(intp),
+    # === strings ===
+    "strcmp": int32(intp, intp),
+    "strncmp": int32(intp, intp, intp),
+    "strchr": intp(intp, int32),
+    "strrchr": intp(intp, int32),
+    "strstr": intp(intp, intp),
+    "strncpy": intp(intp, intp, intp),
+    "strerror": intp(int32),
 }
 
 signatures_m = {

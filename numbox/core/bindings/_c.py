@@ -80,3 +80,51 @@ def ferror(fp):
 @cres(signatures.get("clearerr"), cache=True)
 def clearerr(fp):
     return _call_lib_func("clearerr", (fp,))
+
+
+@cres(signatures.get("strcmp"), cache=True)
+def strcmp(a, b):
+    return _call_lib_func("strcmp", (a, b))
+
+
+@cres(signatures.get("strncmp"), cache=True)
+def strncmp(a, b, n):
+    return _call_lib_func("strncmp", (a, b, n))
+
+
+@cres(signatures.get("strchr"), cache=True)
+def strchr(s, c):
+    return _call_lib_func("strchr", (s, c))
+
+
+@cres(signatures.get("strrchr"), cache=True)
+def strrchr(s, c):
+    return _call_lib_func("strrchr", (s, c))
+
+
+@cres(signatures.get("strstr"), cache=True)
+def strstr(haystack, needle):
+    return _call_lib_func("strstr", (haystack, needle))
+
+
+@cres(signatures.get("strncpy"), cache=True)
+def strncpy(dst, src, n):
+    """Copy at most n bytes from src to dst (POSIX strncpy semantics).
+
+    Does NOT guarantee null termination: if strlen(src) >= n, dst will
+    contain n bytes from src with no trailing NUL. Callers that need a
+    NUL-terminated result must reserve an extra byte and either pre-zero
+    the buffer or explicitly write dst[n] = 0 after the call.
+    """
+    return _call_lib_func("strncpy", (dst, src, n))
+
+
+@cres(signatures.get("strerror"), cache=True)
+def strerror(errnum):
+    """Return a pointer to the static error-message string for errnum.
+
+    NOT thread-safe — the returned pointer references a per-process
+    static buffer that subsequent strerror calls may overwrite. Use
+    strerror_safe for thread-safe operation.
+    """
+    return _call_lib_func("strerror", (errnum,))
