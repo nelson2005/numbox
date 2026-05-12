@@ -128,3 +128,28 @@ def strerror(errnum):
     strerror_safe for thread-safe operation.
     """
     return _call_lib_func("strerror", (errnum,))
+
+
+@cres(signatures.get("memcpy"), cache=True)
+def memcpy(dst, src, n):
+    return _call_lib_func("memcpy", (dst, src, n))
+
+
+@cres(signatures.get("memmove"), cache=True)
+def memmove(dst, src, n):
+    return _call_lib_func("memmove", (dst, src, n))
+
+
+@cres(signatures.get("memset"), cache=True)
+def memset(dst, c, n):
+    return _call_lib_func("memset", (dst, c, n))
+
+
+@cres(signatures.get("memcmp"), cache=True)
+def memcmp(a, b, n):
+    return _call_lib_func("memcmp", (a, b, n))
+
+
+@cres(signatures.get("memchr"), cache=True)
+def memchr(s, c, n):
+    return _call_lib_func("memchr", (s, c, n))

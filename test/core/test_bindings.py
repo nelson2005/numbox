@@ -141,5 +141,56 @@ def test_c_strerror():
     assert len(get_str_from_p_as_int(p)) > 0
 
 
+@njit(cache=True)
+def _mem_do_copy(src, dst):
+    return memcpy(array_data_p(dst), array_data_p(src), src.nbytes)
+
+
+@njit(cache=True)
+def _mem_do_move(arr):
+    p = array_data_p(arr)
+    return memmove(p + 2, p, 5)
+
+
+@njit(cache=True)
+def _mem_do_set(arr):
+    return memset(array_data_p(arr), np.int32(0x7F), arr.nbytes)
+
+
+@njit(cache=True)
+def _mem_do_cmp(a, b):
+    return memcmp(array_data_p(a), array_data_p(b), a.nbytes)
+
+
+@njit(cache=True)
+def _mem_do_chr(h):
+    p = array_data_p(h)
+    return memchr(p, np.int32(3), h.nbytes) - p
+
+
+def test_c_memory():
+    src = np.arange(10, dtype=np.uint8)
+    dst = np.zeros(10, dtype=np.uint8)
+    _mem_do_copy(src, dst)
+    assert (dst == src).all()
+
+    overlap = np.arange(10, dtype=np.uint8).copy()
+    _mem_do_move(overlap)
+    assert overlap[2] == 0 and overlap[6] == 4
+
+    fill = np.zeros(8, dtype=np.uint8)
+    _mem_do_set(fill)
+    assert (fill == 0x7F).all()
+
+    a = np.array([1, 2, 3, 4], dtype=np.uint8)
+    b = np.array([1, 2, 3, 5], dtype=np.uint8)
+    assert _mem_do_cmp(a, b) < 0
+    assert _mem_do_cmp(b, a) > 0
+    assert _mem_do_cmp(a, a) == 0
+
+    haystack = np.array([0, 1, 2, 3, 4, 5], dtype=np.uint8)
+    assert _mem_do_chr(haystack) == 3
+
+
 if __name__ == "__main__":
     collect_and_run_tests(__name__)

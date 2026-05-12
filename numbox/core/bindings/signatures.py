@@ -32,6 +32,12 @@ signatures_c = {
     "strstr": intp(intp, intp),
     "strncpy": intp(intp, intp, intp),
     "strerror": intp(int32),
+    # === memory ===
+    "memcpy": intp(intp, intp, intp),
+    "memmove": intp(intp, intp, intp),
+    "memset": intp(intp, int32, intp),
+    "memcmp": int32(intp, intp, intp),
+    "memchr": intp(intp, int32, intp),
 }
 
 signatures_m = {
