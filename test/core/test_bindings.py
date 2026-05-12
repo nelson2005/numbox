@@ -192,5 +192,15 @@ def test_c_memory():
     assert _mem_do_chr(haystack) == 3
 
 
+@njit(cache=True)
+def _env_lookup(name):
+    return getenv(get_unicode_data_p(name))
+
+
+def test_c_env():
+    assert _env_lookup("PATH") != 0
+    assert _env_lookup("NUMBOX_NONEXISTENT_XYZZY") == 0
+
+
 if __name__ == "__main__":
     collect_and_run_tests(__name__)

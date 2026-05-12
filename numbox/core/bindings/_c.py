@@ -153,3 +153,15 @@ def memcmp(a, b, n):
 @cres(signatures.get("memchr"), cache=True)
 def memchr(s, c, n):
     return _call_lib_func("memchr", (s, c, n))
+
+
+@cres(signatures.get("getenv"), cache=True)
+def getenv(name):
+    """Return pointer to the value string in the process environ table.
+
+    The returned pointer is owned by the platform environ — do NOT
+    mutate, free, or assume it survives a subsequent setenv/putenv.
+    Callers that need a stable Python str should copy via
+    `get_str_from_p_as_int` before mutating environ.
+    """
+    return _call_lib_func("getenv", (name,))

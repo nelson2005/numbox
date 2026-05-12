@@ -38,6 +38,8 @@ signatures_c = {
     "memset": intp(intp, int32, intp),
     "memcmp": int32(intp, intp, intp),
     "memchr": intp(intp, int32, intp),
+    # === env ===
+    "getenv": intp(intp),
 }
 
 signatures_m = {
