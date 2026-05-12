@@ -25,7 +25,7 @@
     {
       "id": 3,
       "subject": "Task 3: strerror_safe intrinsic + Alpine CI",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Unified `strerror_safe(errnum, buf, buflen)` across glibc / musl / macOS / Windows + Alpine shell-only CI job validating musl symbol layout.\n\n**Files:**\n- Create: `numbox/core/bindings/_strerror.py`\n- Create: `test/core/test_strerror_safe.py`\n- Modify: `numbox/core/bindings/__init__.py`\n- Modify: `.github/workflows/numbox_ci.yml`\n\n**Verify:** `venv/bin/pytest test/core/test_strerror_safe.py -v --durations=20`\n\nKey test: IR-inspection (Linux-only) — patch `ll.address_of_symbol` to return None for `__xpg_strerror_r`, assert emitted IR contains `strerror_r`, NOT `__xpg_strerror_r`. See plan Task 3.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_strerror.py\", \"test/core/test_strerror_safe.py\", \"numbox/core/bindings/__init__.py\", \".github/workflows/numbox_ci.yml\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_strerror_safe.py -v --durations=20\", \"acceptanceCriteria\": [\"strerror_safe ENOENT roundtrip\", \"short-buffer nonzero return\", \"two-thread no contamination\", \"IR-inspection symbol-probe test\", \"Alpine CI job present, guards musl strerror_r presence + xpg absence\"], \"model\": \"opus\"}\n```"
     },

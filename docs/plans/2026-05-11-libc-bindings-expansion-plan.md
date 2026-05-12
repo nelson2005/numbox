@@ -590,7 +590,7 @@ cd /home/erik/projects/numbox && /home/erik/projects/numbox/venv/bin/pytest test
 import llvmlite.binding as ll
 from llvmlite import ir as llir
 from numba.core.cgutils import get_or_insert_function
-from numba.core.types import int32, intp
+from numba.core.types import int32, int64, intp
 from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import platform_, load_lib
@@ -653,7 +653,7 @@ def _render_ir_for_probe():
     return str(module)
 
 
-@cres(int32(int32, intp, intp), cache=True)
+@cres(int32(int64, intp, intp), cache=True)
 def strerror_safe(errnum, buf, buflen):
     """Write the error message for errnum into buf (length buflen).
 
@@ -662,8 +662,12 @@ def strerror_safe(errnum, buf, buflen):
     platforms. Cross-platform dispatch happens at lowering time:
     __xpg_strerror_r on glibc, strerror_r on musl / macOS, strerror_s
     on Windows (with arg reorder).
+
+    errnum is declared int64 so Python callers can pass errno.ENOENT
+    (numba's default int) without a cast; the value is narrowed to
+    int32 inside before reaching the intrinsic.
     """
-    return _strerror_safe(errnum, buf, buflen)
+    return _strerror_safe(int32(errnum), buf, buflen)
 ```
 
 - [ ] **Step 4: Update `__init__.py`**
