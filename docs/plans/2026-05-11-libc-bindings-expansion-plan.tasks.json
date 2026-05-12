@@ -5,20 +5,20 @@
     {
       "id": 0,
       "subject": "Task 0: Pre-flight checks",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Confirm baseline-green starting state.\n\n**Files:** read-only — `numbox/utils/lowlevel.py`, `numbox/core/bindings/call.py`, the spec doc.\n\n**Verify:**\n- `venv/bin/python -c 'import numba; print(numba.__version__)'` → `0.60.0`\n- baseline pytest green\n- baseline flake8 clean\n\nNo commit.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest --durations=20 && /home/erik/projects/numbox/venv/bin/flake8\", \"acceptanceCriteria\": [\"baseline pytest green\", \"flake8 clean\", \"numba 0.60.0\"], \"model\": \"sonnet\"}\n```"
     },
     {
       "id": 1,
       "subject": "Task 1: Stdio handle intrinsics + wrappers",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** `stdout() / stderr() / stdin()` callable from `@njit`, returning FILE* as intp. Establish `_stdio.py` pattern + extern-global LLVM ref idiom.\n\n**Files:**\n- Create: `numbox/core/bindings/_stdio.py`\n- Create: `test/core/test_stdio_handles.py`\n- Modify: `numbox/core/bindings/__init__.py`\n\n**Verify:** `venv/bin/pytest test/core/test_stdio_handles.py -v --durations=20` → 3 passed\n\nSee plan Task 1 for full TDD steps and code.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_stdio.py\", \"test/core/test_stdio_handles.py\", \"numbox/core/bindings/__init__.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_stdio_handles.py -v --durations=20\", \"acceptanceCriteria\": [\"stdout/stderr/stdin return non-zero intp from @njit\", \"cache=True works on second run\", \"platform branches: Linux/Darwin/Windows\"], \"model\": \"opus\"}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: errno intrinsics + wrappers",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** `errno_get() / errno_set(v)` callable from `@njit`, per-thread correct under prange.\n\n**Files:**\n- Create: `numbox/core/bindings/_errno.py`\n- Create: `test/core/test_errno.py`\n- Modify: `numbox/core/bindings/__init__.py`\n\n**Verify:** `venv/bin/pytest test/core/test_errno.py -v --durations=20`\n\nKey tests: roundtrip, two-thread no-contamination, prange iteration correctness. See plan Task 2.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_errno.py\", \"test/core/test_errno.py\", \"numbox/core/bindings/__init__.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_errno.py -v --durations=20\", \"acceptanceCriteria\": [\"set/get roundtrip\", \"two-thread no cross-contamination\", \"prange per-iteration correctness\"], \"model\": \"opus\"}\n```"
     },
@@ -65,5 +65,5 @@
       "description": "**Goal:** Narrative section + 3 automodule blocks in `docs/numbox.core.bindings.rst`.\n\n**Files:** Modify: `docs/numbox.core.bindings.rst`\n\n**Verify:** `cd docs && venv/bin/python -m sphinx -b html -W --keep-going . _build/html` → exit 0 (no warnings under -W).\n\nSee plan Task 8.\n\n```json:metadata\n{\"files\": [\"docs/numbox.core.bindings.rst\"], \"verifyCommand\": \"cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/python -m sphinx -b html -W --keep-going . _build/html\", \"acceptanceCriteria\": [\"narrative inserted between ABI dispatch and Modules\", \"3 automodule blocks for _stdio/_errno/_strerror\", \"sphinx -W exits 0\"], \"model\": \"sonnet\"}\n```"
     }
   ],
-  "lastUpdated": "2026-05-11"
+  "lastUpdated": "2026-05-12"
 }
