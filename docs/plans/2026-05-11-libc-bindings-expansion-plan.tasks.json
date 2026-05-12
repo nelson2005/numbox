@@ -32,7 +32,7 @@
     {
       "id": 4,
       "subject": "Task 4: Monomorphic stdio batch (12 functions)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2],
       "description": "**Goal:** 12 non-variadic stdio: puts/fputs/fputc/putchar/fwrite/fread/fflush/fopen/fclose/feof/ferror/clearerr. Extend test_stdio_handles.py with capfd roundtrip. Add test_c_stdio file-roundtrip.\n\n**Files:**\n- Modify: `numbox/core/bindings/signatures.py`\n- Modify: `numbox/core/bindings/_c.py`\n- Modify: `test/core/test_stdio_handles.py`\n- Modify: `test/core/test_bindings.py`\n\n**Verify:** `venv/bin/pytest test/core/test_stdio_handles.py test/core/test_bindings.py::test_c_stdio -v --durations=20`\n\nSee plan Task 4.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_c.py\", \"test/core/test_stdio_handles.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_stdio_handles.py test/core/test_bindings.py -v --durations=20\", \"acceptanceCriteria\": [\"12 wrappers callable\", \"capfd stderr roundtrip\", \"file roundtrip byte-equality\"], \"model\": \"sonnet\"}\n```"
     },
@@ -65,5 +65,5 @@
       "description": "**Goal:** Narrative section + 3 automodule blocks in `docs/numbox.core.bindings.rst`.\n\n**Files:** Modify: `docs/numbox.core.bindings.rst`\n\n**Verify:** `cd docs && venv/bin/python -m sphinx -b html -W --keep-going . _build/html` → exit 0 (no warnings under -W).\n\nSee plan Task 8.\n\n```json:metadata\n{\"files\": [\"docs/numbox.core.bindings.rst\"], \"verifyCommand\": \"cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/python -m sphinx -b html -W --keep-going . _build/html\", \"acceptanceCriteria\": [\"narrative inserted between ABI dispatch and Modules\", \"3 automodule blocks for _stdio/_errno/_strerror\", \"sphinx -W exits 0\"], \"model\": \"sonnet\"}\n```"
     }
   ],
-  "lastUpdated": "2026-05-12"
+  "lastUpdated": "2026-05-12T02:15:00Z"
 }
