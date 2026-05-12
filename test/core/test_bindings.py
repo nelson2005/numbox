@@ -142,7 +142,7 @@ def test_c_strerror():
 
 
 @njit(cache=True)
-def _mem_do_copy(src, dst):
+def _mem_do_copy(dst, src):
     return memcpy(array_data_p(dst), array_data_p(src), src.nbytes)
 
 
@@ -171,12 +171,12 @@ def _mem_do_chr(h):
 def test_c_memory():
     src = np.arange(10, dtype=np.uint8)
     dst = np.zeros(10, dtype=np.uint8)
-    _mem_do_copy(src, dst)
+    _mem_do_copy(dst, src)
     assert (dst == src).all()
 
     overlap = np.arange(10, dtype=np.uint8).copy()
     _mem_do_move(overlap)
-    assert overlap[2] == 0 and overlap[6] == 4
+    assert (overlap[2:7] == np.arange(5, dtype=np.uint8)).all()
 
     fill = np.zeros(8, dtype=np.uint8)
     _mem_do_set(fill)
