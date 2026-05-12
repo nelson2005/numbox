@@ -129,7 +129,6 @@ jobs:
         shell: sh
         run: |
           apk add --no-cache binutils
-          set -e
           test -e /lib/ld-musl-x86_64.so.1 || (echo "no musl on this image"; exit 1)
           LIBC=/lib/ld-musl-x86_64.so.1
           nm -D "$LIBC" | grep -E '^[0-9a-f]+ T strerror_r$' || (echo "musl strerror_r missing"; exit 1)

@@ -59,6 +59,9 @@ def _render_ir_for_probe():
     i32 = llir.IntType(32)
     i8p = llir.IntType(8).as_pointer()
     sym = _select_posix_symbol()
+    # llir.IntType(64) mirrors _strerror_safe's context.get_value_type(intp);
+    # intp == i64 on every 64-bit target we ship. Hardcoded here because no
+    # JIT context is available outside the intrinsic's codegen call.
     func_ty = llir.FunctionType(i32, [i32, i8p, llir.IntType(64)])
     get_or_insert_function(module, func_ty, sym)
     return str(module)
