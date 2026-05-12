@@ -1,6 +1,8 @@
+import pytest
 from numba import njit
 
 from numbox.core.bindings import stdout, stderr, stdin, fputs, fflush
+from numbox.core.bindings.utils import platform_
 from numbox.utils.lowlevel import get_unicode_data_p
 
 
@@ -32,6 +34,10 @@ def test_stdin_handle_nonzero():
     assert get() != 0
 
 
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level fputs+fflush to stderr() on Windows",
+)
 def test_stderr_fputs_roundtrip(capfd):
     _write_to_stderr()
     out, err = capfd.readouterr()
