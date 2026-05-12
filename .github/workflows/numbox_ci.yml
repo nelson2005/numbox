@@ -117,3 +117,23 @@ jobs:
       run: |
         git clean -Xfd
         python -m build --wheel
+
+  musl_symbol_check:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.20
+    permissions:
+      contents: read
+    steps:
+      - name: musl symbol layout
+        shell: sh
+        run: |
+          apk add --no-cache binutils
+          set -e
+          test -e /lib/ld-musl-x86_64.so.1 || (echo "no musl on this image"; exit 1)
+          LIBC=/lib/ld-musl-x86_64.so.1
+          nm -D "$LIBC" | grep -E '^[0-9a-f]+ T strerror_r$' || (echo "musl strerror_r missing"; exit 1)
+          if nm -D "$LIBC" | grep -q '__xpg_strerror_r'; then
+            echo "musl now exports __xpg_strerror_r — revisit strerror_safe probe"; exit 1
+          fi
+          echo "musl libc has expected layout"
