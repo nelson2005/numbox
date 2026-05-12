@@ -1,8 +1,31 @@
+import numpy as np
 import pytest
 from ctypes import addressof, c_char_p, c_int64, c_void_p
+from numba import njit
 from numbox.core.bindings import *
 from numbox.core.bindings.utils import platform_
+from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
 from test.auxiliary_utils import collect_and_run_tests, str_from_p_as_int
+
+
+@njit(cache=True)
+def _write_and_read(path_str, mode_w, mode_r, payload_arr, read_back):
+    wpath = get_unicode_data_p(path_str)
+    wmode = get_unicode_data_p(mode_w)
+    rmode = get_unicode_data_p(mode_r)
+    wfp = fopen(wpath, wmode)
+    if wfp == 0:
+        return -1, 0
+    wbuf = array_data_p(payload_arr)
+    nw = fwrite(wbuf, 1, payload_arr.size, wfp)
+    fclose(wfp)
+    rfp = fopen(wpath, rmode)
+    if rfp == 0:
+        return nw, -1
+    rbuf = array_data_p(read_back)
+    nr = fread(rbuf, 1, read_back.size, rfp)
+    fclose(rfp)
+    return nw, nr
 
 
 def test_c():
@@ -56,36 +79,11 @@ def test_load_lib_path_returns_handle_with_known_symbol():
 
 
 def test_c_stdio(tmp_path):
-    import numpy as np
-    from numba import njit
-    from numbox.core.bindings import fopen, fwrite, fclose, fread
-    from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
-
     path = tmp_path / "rt.bin"
     payload = b"hello-from-njit\x00\x01\x02"
-
-    @njit
-    def write_and_read(path_str, mode_w, mode_r, payload_arr, read_back):
-        wpath = get_unicode_data_p(path_str)
-        wmode = get_unicode_data_p(mode_w)
-        rmode = get_unicode_data_p(mode_r)
-        wfp = fopen(wpath, wmode)
-        if wfp == 0:
-            return -1, 0
-        wbuf = array_data_p(payload_arr)
-        nw = fwrite(wbuf, 1, payload_arr.size, wfp)
-        fclose(wfp)
-        rfp = fopen(wpath, rmode)
-        if rfp == 0:
-            return nw, -1
-        rbuf = array_data_p(read_back)
-        nr = fread(rbuf, 1, read_back.size, rfp)
-        fclose(rfp)
-        return nw, nr
-
     payload_arr = np.frombuffer(payload, dtype=np.uint8).copy()
     read_back = np.zeros(len(payload), dtype=np.uint8)
-    nw, nr = write_and_read(str(path), "wb", "rb", payload_arr, read_back)
+    nw, nr = _write_and_read(str(path), "wb", "rb", payload_arr, read_back)
     assert nw == len(payload)
     assert nr == len(payload)
     assert bytes(read_back) == payload
