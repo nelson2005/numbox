@@ -53,7 +53,7 @@
     {
       "id": 7,
       "subject": "Task 7: Monomorphic env (getenv)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** getenv wrapper + test_c_env (PATH non-zero; bogus env returns 0).\n\n**Files:**\n- Modify: `numbox/core/bindings/signatures.py`\n- Modify: `numbox/core/bindings/_c.py`\n- Modify: `test/core/test_bindings.py`\n\n**Verify:** `venv/bin/pytest test/core/test_bindings.py::test_c_env -v --durations=20`\n\nSee plan Task 7.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_c.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_bindings.py::test_c_env -v --durations=20\", \"acceptanceCriteria\": [\"getenv(PATH) != 0\", \"getenv(NUMBOX_NONEXISTENT_XYZZY) == 0\"], \"model\": \"sonnet\"}\n```"
     },
