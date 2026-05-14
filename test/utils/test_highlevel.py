@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 from numba import njit, typeof
 from numba.core.types import float64, int8, unicode_type
@@ -5,16 +6,19 @@ from numba.core.types.function_type import CompileResultWAP, FunctionType
 from numba.core.types.functions import Dispatcher
 from numpy import isclose
 
+from numbox.core.bindings import errno_get, getenv, memcpy, rand
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib_path
 from numbox.utils.highlevel import (
     cres,
+    cres_cacheable,
     cres_if_available,
     determine_field_index,
     make_structref,
     make_structref_code_txt,
 )
+from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
 from test.auxiliary_utils import collect_and_run_tests
 from test.common_structrefs import S1Type
 from test.utils.auxiliaries import aux_1
@@ -305,6 +309,54 @@ def test_cres_if_available_missing_symbol_returns_stub():
             signatures.pop("nonexistent_fn", None)
         else:
             signatures["nonexistent_fn"] = prior
+
+
+def _sole_compile_result(dispatcher):
+    """Return the single compiled result on a numba dispatcher."""
+    sigs = dispatcher.nopython_signatures
+    assert len(sigs) == 1, sigs
+    return dispatcher.overloads[sigs[0]]
+
+
+def test_cres_cacheable_zero_arg_caller_is_cacheable():
+    @njit(cache=True)
+    def caller():
+        return errno_get()
+    caller()
+    assert not _sole_compile_result(caller).has_dynamic_globals
+
+
+def test_cres_cacheable_single_arg_caller_is_cacheable():
+    @njit(cache=True)
+    def caller(name_p):
+        return getenv(name_p)
+    caller(get_unicode_data_p("NUMBOX_NONEXISTENT_XYZZY"))
+    assert not _sole_compile_result(caller).has_dynamic_globals
+
+
+def test_cres_cacheable_multi_arg_caller_is_cacheable():
+    @njit(cache=True)
+    def caller(dst, src):
+        memcpy(array_data_p(dst), array_data_p(src), src.nbytes)
+    caller(np.zeros(4, dtype=np.uint8), np.arange(4, dtype=np.uint8))
+    assert not _sole_compile_result(caller).has_dynamic_globals
+
+
+def test_plain_cres_caller_trips_dynamic_globals():
+    """Negative control: plain @cres bindings still trip has_dynamic_globals.
+
+    rand() is wrapped with plain @cres (not @cres_cacheable) in _c.py, so a
+    caller referencing it as a Python global routes through numba's
+    FunctionType lowering and gets has_dynamic_globals=True. This locks down
+    the test methodology: if this assertion ever fails, either rand was
+    upgraded to @cres_cacheable (delete this test) or numba changed how it
+    detects dynamic globals (revisit the cacheable tests above).
+    """
+    @njit(cache=True)
+    def caller():
+        return rand()
+    caller()
+    assert _sole_compile_result(caller).has_dynamic_globals
 
 
 if __name__ == '__main__':

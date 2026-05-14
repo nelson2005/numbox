@@ -74,6 +74,8 @@ def _make_icall_for_sig(sig):
 
     @intrinsic
     def _icall(typingctx, addr_ty, args_ty=NoneType):
+        # args_ty default applies only when n_args==0 — the wrapper emits
+        # _icall(_addr) with no second arg; the arg_tys==() branch handles it.
         if arg_tys == ():
             n = 0
             is_tuple = False

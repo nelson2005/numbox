@@ -26,7 +26,10 @@ def test_strerror_safe_enoent_roundtrip():
 
 
 def test_strerror_safe_short_buffer():
-    buf = np.zeros(2, dtype=np.uint8)
+    # Pre-fill with 0xFF so the trailing-NUL check actually probes the
+    # implementation: a zero-initialized buffer would pass the assertion
+    # even if strerror_safe wrote nothing.
+    buf = np.full(2, 0xFF, dtype=np.uint8)
     rc, _ = _describe(errno.ENOENT, buf, buf.size)
     # POSIX strerror_r returns ERANGE on short buffer; Windows strerror_s may
     # truncate-and-succeed instead. The portable contract is NUL-termination
