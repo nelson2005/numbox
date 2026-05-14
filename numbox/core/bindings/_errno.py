@@ -1,10 +1,14 @@
 from llvmlite import ir as llir
 from numba.core.cgutils import get_or_insert_function
+from numba.core.errors import TypingError
 from numba.core.types import int32, int64, intp, void
 from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import platform_, load_lib
 from numbox.utils.highlevel import cres
+
+
+__all__ = ["errno_get", "errno_set"]
 
 
 load_lib("c")
@@ -19,13 +23,14 @@ _ERRNO_ACCESSOR = {
 
 @intrinsic
 def _errno_ptr(typingctx):
+    sym = _ERRNO_ACCESSOR.get(platform_)
+    if sym is None:
+        raise TypingError(
+            f"_errno_ptr: unsupported platform {platform_!r}")
+
     def codegen(context, builder, signature, arguments):
         intp_ll = context.get_value_type(intp)
         i32_ptr = llir.IntType(32).as_pointer()
-        sym = _ERRNO_ACCESSOR.get(platform_)
-        if sym is None:
-            raise RuntimeError(
-                f"_errno_ptr: unsupported platform {platform_!r}")
         func_ty = llir.FunctionType(i32_ptr, [])
         func_p = get_or_insert_function(builder.module, func_ty, sym)
         ptr = builder.call(func_p, [])
@@ -59,8 +64,9 @@ def errno_get():
 
     Re-resolves the per-thread errno location on every call: on
     @njit(parallel=True) workers, the accessor returns that worker's
-    errno. The Python caller cannot observe an errno value set inside a
-    parallel region after return — different OS thread.
+    errno. A Python caller observes errno set inside a normal @njit
+    function (same OS thread), but not errno set inside a parallel
+    region's worker (different OS thread).
     """
     return _load_int32_at(_errno_ptr())
 

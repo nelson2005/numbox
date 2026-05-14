@@ -43,26 +43,36 @@ Stdio handles, errno, and thread-safe strerror
 
 **Stdio handles.** ``stdout()``, ``stderr()``, and ``stdin()`` are exposed as JIT-callable functions
 rather than module-level Python constants because the C library's stdio ``FILE *`` values can be either
-data symbols (glibc exports ``stdout``, ``stderr``, ``stdin`` as global variables) or accessor functions
-(musl, macOS, and Windows export them via macros that expand to function calls). Both shapes are wrapped
-behind a uniform ``() -> intp`` interface using extern-symbol references in LLVM IR — never literal
-addresses — so that ``cache=True`` remains correct under ASLR: the address is resolved at JIT link time
-on each run rather than being baked into the cached object.
+data symbols or accessor functions:
+
+- **Linux (glibc and musl)** — data symbols (``stdout``, ``stderr``, ``stdin`` global variables)
+- **macOS Darwin** — data symbols (``__stdoutp``, ``__stderrp``, ``__stdinp`` — what the libc headers'
+  ``stdout`` / ``stderr`` / ``stdin`` macros expand to)
+- **Windows** — accessor function (``__acrt_iob_func(0|1|2)``); UCRT-only (Windows 10+)
+
+Both shapes are wrapped behind a uniform ``() -> intp`` interface using extern-symbol references in LLVM IR —
+never literal addresses — so that ``cache=True`` remains correct under ASLR: the address is resolved at
+JIT link time on each run rather than being baked into the cached object.
 
 **errno.** ``errno_get()`` and ``errno_set(v)`` reach the per-thread errno location on every call via the
 platform's accessor function (``__errno_location`` on glibc, ``__error`` on Darwin, ``_errno`` on
 Windows). This makes the wrappers correct under ``@njit(parallel=True)``: each ``prange`` worker sees
-its own thread's errno. Note that a Python caller cannot observe an errno value set inside a ``@njit``
-function because Python and the JIT run on different threads.
+its own thread's errno. A Python caller observes errno set inside a normal ``@njit`` function (same OS
+thread), but not errno set inside a ``prange`` worker (different OS thread).
 
 **Thread-safe strerror.** ``strerror_safe(errnum, buf, buflen)`` writes the error message into a
 caller-supplied buffer, returning 0 on success and a positive errno code on failure. The underlying
 symbol is selected at lowering time:
 
-- **glibc Linux** — uses ``__xpg_strerror_r`` when present (POSIX form), falling back to ``strerror_r``
-- **musl Linux** — uses ``strerror_r`` (and ``__xpg_strerror_r`` if exported as an alias; both are POSIX-form on musl)
-- **macOS Darwin** — uses ``strerror_r``
-- **Windows** — uses ``strerror_s`` with reordered args (buffer, size, errnum)
+- **glibc Linux** — ``__xpg_strerror_r`` (always present on glibc 2.0+; POSIX-form)
+- **musl Linux** — ``strerror_r`` (POSIX-form on musl)
+- **macOS Darwin** — ``strerror_r`` (POSIX-form)
+- **Windows** — ``strerror_s`` with reordered args (buffer, size, errnum)
+
+Other Linux libcs are not supported: on glibc the ``strerror_r`` symbol is the GNU form (returns
+``char *``) and would not match the POSIX-shaped IR this module generates. The Linux selector only
+falls through to ``strerror_r`` when ``__xpg_strerror_r`` is absent — a condition that holds on musl
+but not on glibc.
 
 The Linux probe is verified by an IR-inspection test (Linux-only) that monkeypatches
 ``ll.address_of_symbol`` to confirm the fallback to ``strerror_r`` works. The musl path is independently

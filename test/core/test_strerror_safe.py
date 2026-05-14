@@ -27,11 +27,13 @@ def test_strerror_safe_enoent_roundtrip():
 
 def test_strerror_safe_short_buffer():
     buf = np.zeros(2, dtype=np.uint8)
-    rc, buf_p = _describe(errno.ENOENT, buf, buf.size)
-    if rc != 0:
-        return
-    msg = get_str_from_p_as_int(buf_p)
-    assert len(msg) <= 1, f"strerror_safe returned rc=0 with msg of length {len(msg)} but buflen=2"
+    rc, _ = _describe(errno.ENOENT, buf, buf.size)
+    # POSIX strerror_r returns ERANGE on short buffer; Windows strerror_s may
+    # truncate-and-succeed instead. The portable contract is NUL-termination
+    # within the caller's buffer — verify that directly rather than reading
+    # the buffer via a NUL-scanning helper (which could read past the
+    # allocation if the implementation didn't NUL-terminate).
+    assert buf[-1] == 0, f"buffer not NUL-terminated (rc={rc})"
 
 
 def test_strerror_safe_two_threads_no_contamination():

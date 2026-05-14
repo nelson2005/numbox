@@ -1,3 +1,15 @@
+"""Stdio handles (stdout/stderr/stdin) callable from @njit code.
+
+Uses extern-symbol references in LLVM IR so cache=True remains correct
+under ASLR. Linux and macOS expose the handles as data symbols (Linux:
+``stdout``/``stderr``/``stdin``; macOS: ``__stdoutp``/``__stderrp``/
+``__stdinp`` — what the libc headers' stdio macros expand to). Windows
+exposes them via an accessor function (``__acrt_iob_func``).
+
+Windows requires UCRT (Universal C Runtime), bundled with Windows 10
+and later. Older Windows versions exposed FILE* via per-MSVC-version
+symbols (``_iob``, ``__iob_func``) and are not supported.
+"""
 from llvmlite import ir as llir
 from numba.core.cgutils import get_or_insert_function
 from numba.core.errors import TypingError
@@ -6,6 +18,9 @@ from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import platform_, load_lib
 from numbox.utils.highlevel import cres
+
+
+__all__ = ["stdout", "stderr", "stdin"]
 
 
 load_lib("c")
@@ -36,6 +51,9 @@ def _stdio_handle(typingctx, name_ty):
         raise TypingError(
             f"_stdio_handle: name must be one of stdout/stderr/stdin, got {name!r}"
         )
+    if platform_ not in ("Linux", "Darwin", "Windows"):
+        raise TypingError(
+            f"_stdio_handle: unsupported platform {platform_!r}")
 
     def codegen(context, builder, signature, arguments):
         intp_ll = context.get_value_type(intp)
@@ -45,15 +63,13 @@ def _stdio_handle(typingctx, name_ty):
             gv = _get_or_insert_global(builder.module, ptr_ll, sym)
             file_ptr = builder.load(gv)
             return builder.ptrtoint(file_ptr, intp_ll)
-        if platform_ == "Windows":
-            func_ty = llir.FunctionType(ptr_ll, [llir.IntType(32)])
-            func_p = get_or_insert_function(
-                builder.module, func_ty, "__acrt_iob_func")
-            idx = llir.Constant(llir.IntType(32), _WIN_IOB_INDEX[name])
-            file_ptr = builder.call(func_p, [idx])
-            return builder.ptrtoint(file_ptr, intp_ll)
-        raise RuntimeError(
-            f"_stdio_handle: unsupported platform {platform_!r}")
+        # platform_ == "Windows" (guarded at typing time above)
+        func_ty = llir.FunctionType(ptr_ll, [llir.IntType(32)])
+        func_p = get_or_insert_function(
+            builder.module, func_ty, "__acrt_iob_func")
+        idx = llir.Constant(llir.IntType(32), _WIN_IOB_INDEX[name])
+        file_ptr = builder.call(func_p, [idx])
+        return builder.ptrtoint(file_ptr, intp_ll)
 
     sig = intp(name_ty)
     return sig, codegen
@@ -61,26 +77,17 @@ def _stdio_handle(typingctx, name_ty):
 
 @cres(intp(), cache=True)
 def stdout():
-    """Return the current process's stdout FILE* as intp.
-
-    Callable from @njit. Uses the platform's extern symbol (Linux: stdout
-    data global; macOS: __stdoutp data global; Windows: __acrt_iob_func(1)
-    accessor) — no literal addresses, cache=True safe under ASLR.
-
-    Windows requires UCRT (Universal C Runtime), bundled with Windows 10
-    and later. Older Windows versions exposed FILE* via per-MSVC-version
-    symbols (_iob, __iob_func) and are not supported.
-    """
+    """Return the current process's stdout FILE* as intp. See module docstring."""
     return _stdio_handle("stdout")
 
 
 @cres(intp(), cache=True)
 def stderr():
-    """Return the current process's stderr FILE* as intp."""
+    """Return the current process's stderr FILE* as intp. See module docstring."""
     return _stdio_handle("stderr")
 
 
 @cres(intp(), cache=True)
 def stdin():
-    """Return the current process's stdin FILE* as intp."""
+    """Return the current process's stdin FILE* as intp. See module docstring."""
     return _stdio_handle("stdin")
