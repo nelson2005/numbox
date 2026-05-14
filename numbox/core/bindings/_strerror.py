@@ -20,8 +20,8 @@ from numba.core.errors import TypingError
 from numba.core.types import int32, int64, intp
 from numba.extending import intrinsic
 
+from numbox.core.bindings._cacheable import cres_cacheable
 from numbox.core.bindings.utils import platform_, load_lib
-from numbox.utils.highlevel import cres
 
 
 __all__ = ["strerror_safe"]
@@ -87,7 +87,7 @@ def _render_ir_for_probe():
     return str(module)
 
 
-@cres(int32(int64, intp, intp), cache=True)
+@cres_cacheable(int32(int64, intp, intp))
 def strerror_safe(errnum, buf, buflen):
     """Write the error message for errnum into buf (length buflen).
 

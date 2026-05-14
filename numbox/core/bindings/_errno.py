@@ -4,8 +4,8 @@ from numba.core.errors import TypingError
 from numba.core.types import int32, int64, intp, void
 from numba.extending import intrinsic
 
+from numbox.core.bindings._cacheable import cres_cacheable
 from numbox.core.bindings.utils import platform_, load_lib
-from numbox.utils.highlevel import cres
 
 
 __all__ = ["errno_get", "errno_set"]
@@ -58,7 +58,7 @@ def _store_int32_at(typingctx, p_ty, v_ty):
     return void(p_ty, v_ty), codegen
 
 
-@cres(int32(), cache=True)
+@cres_cacheable(int32())
 def errno_get():
     """Return the current thread's errno as int32.
 
@@ -71,7 +71,7 @@ def errno_get():
     return _load_int32_at(_errno_ptr())
 
 
-@cres(void(int64), cache=True)
+@cres_cacheable(void(int64))
 def errno_set(v):
     """Set the current thread's errno to v.
 

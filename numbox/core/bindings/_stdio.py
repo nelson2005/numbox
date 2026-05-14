@@ -16,8 +16,8 @@ from numba.core.errors import TypingError
 from numba.core.types import intp
 from numba.extending import intrinsic
 
+from numbox.core.bindings._cacheable import cres_cacheable
 from numbox.core.bindings.utils import platform_, load_lib
-from numbox.utils.highlevel import cres
 
 
 __all__ = ["stdout", "stderr", "stdin"]
@@ -75,19 +75,19 @@ def _stdio_handle(typingctx, name_ty):
     return sig, codegen
 
 
-@cres(intp(), cache=True)
+@cres_cacheable(intp())
 def stdout():
     """Return the current process's stdout FILE* as intp. See module docstring."""
     return _stdio_handle("stdout")
 
 
-@cres(intp(), cache=True)
+@cres_cacheable(intp())
 def stderr():
     """Return the current process's stderr FILE* as intp. See module docstring."""
     return _stdio_handle("stderr")
 
 
-@cres(intp(), cache=True)
+@cres_cacheable(intp())
 def stdin():
     """Return the current process's stdin FILE* as intp. See module docstring."""
     return _stdio_handle("stdin")
