@@ -322,7 +322,7 @@ def test_cres_cacheable_zero_arg_caller_is_cacheable():
     def caller():
         return errno_get()
     caller()
-    assert not _sole_compile_result(caller).has_dynamic_globals
+    assert not _sole_compile_result(caller).library.has_dynamic_globals
 
 
 def test_cres_cacheable_single_arg_caller_is_cacheable():
@@ -330,7 +330,7 @@ def test_cres_cacheable_single_arg_caller_is_cacheable():
     def caller(name_p):
         return getenv(name_p)
     caller(get_unicode_data_p("NUMBOX_NONEXISTENT_XYZZY"))
-    assert not _sole_compile_result(caller).has_dynamic_globals
+    assert not _sole_compile_result(caller).library.has_dynamic_globals
 
 
 def test_cres_cacheable_multi_arg_caller_is_cacheable():
@@ -338,7 +338,7 @@ def test_cres_cacheable_multi_arg_caller_is_cacheable():
     def caller(dst, src):
         memcpy(array_data_p(dst), array_data_p(src), src.nbytes)
     caller(np.zeros(4, dtype=np.uint8), np.arange(4, dtype=np.uint8))
-    assert not _sole_compile_result(caller).has_dynamic_globals
+    assert not _sole_compile_result(caller).library.has_dynamic_globals
 
 
 def test_plain_cres_caller_trips_dynamic_globals():
@@ -355,7 +355,7 @@ def test_plain_cres_caller_trips_dynamic_globals():
     def caller():
         return rand()
     caller()
-    assert _sole_compile_result(caller).has_dynamic_globals
+    assert _sole_compile_result(caller).library.has_dynamic_globals
 
 
 if __name__ == '__main__':
