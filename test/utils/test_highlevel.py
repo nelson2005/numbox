@@ -314,7 +314,7 @@ def _sole_compile_result(dispatcher):
     """Return the single compiled result on a numba dispatcher."""
     sigs = dispatcher.nopython_signatures
     assert len(sigs) == 1, sigs
-    return dispatcher.overloads[sigs[0]]
+    return dispatcher.get_compile_result(sigs[0])
 
 
 def test_cres_cacheable_zero_arg_caller_is_cacheable():
