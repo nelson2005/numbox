@@ -12,7 +12,6 @@ from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib_path
 from numbox.utils.highlevel import (
     cres,
-    cres_cacheable,
     cres_if_available,
     determine_field_index,
     make_structref,
