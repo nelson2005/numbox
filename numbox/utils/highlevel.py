@@ -4,7 +4,7 @@ from inspect import getfile, getmodule, getsource
 from io import StringIO
 from numba import njit
 from numba.core.itanium_mangler import mangle_type_or_value
-from numba.core.types import Type
+from numba.core.types import Type, intp, void
 from numba.core.types.functions import Dispatcher
 from numba.core.types.function_type import CompileResultWAP
 from numba.core.typing.templates import Signature
@@ -16,6 +16,11 @@ from typing import Callable, Iterable, Optional
 
 from numbox.core.configurations import default_jit_options
 from numbox.utils.standard import make_params_strings
+from numbox.utils._addr_global import (
+    _load_addr_from_named_global,
+    _make_icall_for_sig,
+    _store_addr_to_named_global,
+)
 
 
 def _file_anchor():
@@ -35,6 +40,104 @@ def cres(sig, **kwargs):
         cres_wap = CompileResultWAP(func_cres)
         return cres_wap
     return _
+
+
+def _cres_cacheable_global_name(func):
+    """Stable cross-process LLVM-global symbol for ``func``'s entry-point address."""
+    return (
+        f"_numbox_cres_cacheable_addr__{func.__module__}__{func.__name__}"
+    ).replace(".", "_")
+
+
+def cres_cacheable(sig, **njit_kwargs):
+    """Like ``cres``, but returns a ``CPUDispatcher`` that's cacheable from
+    ``@njit(cache=True)`` callers.
+
+    ``cres`` returns a ``CompileResultWAP`` (numba ``FunctionType`` value).
+    When a user ``@njit(cache=True)`` references one as a Python global,
+    numba's ``lower_constant_function_type`` materializes the value's
+    runtime address via ``add_dynamic_addr``, which sets
+    ``has_dynamic_globals`` on the caller's compiled IR and disables its
+    persistent cache: ``NumbaWarning: Cannot cache compiled function "..."
+    as it uses dynamic globals``.
+
+    ``cres_cacheable`` produces two parallel artifacts:
+
+    - An ``@cres`` ``CompileResultWAP``, attached as
+      ``wrapped.as_funcvalue``. External consumers that need a
+      ``FunctionType`` value (e.g. for storing in a struct field) still
+      have one.
+    - An ``@njit(sig, cache=True)`` dispatcher (this decorator's return
+      value) that loads the underlying function pointer from a named LLVM
+      global and indirect-calls through it. Cached caller IR references
+      only the symbol name, not a runtime address — callers cache cleanly.
+
+    Cross-process safety: a per-binding setup ``@njit(void(intp),
+    cache=True)`` runs once per process at module import and writes the
+    live ``CompileResultWAP`` address into the named global. The JIT
+    linker resolves the symbol per process, so cached caller IR survives
+    across processes and remains ASLR-correct.
+
+    See ``numbox/utils/_addr_global.py`` for the underlying intrinsics and
+    the CRE pattern they're adapted from.
+    """
+    njit_kwargs.setdefault("cache", True)
+    arg_tys = tuple(sig.args)
+    n_args = len(arg_tys)
+    ret_is_void = sig.return_type == void
+
+    def _decorator(func):
+        funcvalue = cres(sig, **njit_kwargs)(func)
+        global_name = _cres_cacheable_global_name(func)
+        _icall = _make_icall_for_sig(sig)
+
+        params = ", ".join(f"a{i}" for i in range(n_args))
+        if n_args == 0:
+            call_args = "_addr"
+        elif n_args == 1:
+            call_args = "_addr, a0"
+        else:
+            call_args = "_addr, (" + ", ".join(f"a{i}" for i in range(n_args)) + ")"
+        body = (
+            f"def _wrapper({params}):\n"
+            f"    _addr = _load_addr({global_name!r})\n"
+        )
+        body += "    " + ("" if ret_is_void else "return ") + f"_icall({call_args})\n"
+
+        ns = {
+            "_load_addr": _load_addr_from_named_global,
+            "_icall": _icall,
+        }
+        exec(compile(body, getfile(_file_anchor), mode="exec"), ns)
+        wrapper = ns["_wrapper"]
+        wrapper.__name__ = func.__name__
+        wrapper.__qualname__ = getattr(func, "__qualname__", func.__name__)
+        wrapper.__module__ = func.__module__
+        wrapper.__doc__ = func.__doc__
+
+        compiled = njit(sig, **njit_kwargs)(wrapper)
+
+        # One-time setup: write the live cres address into the named global.
+        # The setup is itself @njit(cache=True) — cacheable because the addr
+        # comes in as an argument (no Python global is baked into its IR) and
+        # the global name is exec-inlined as a literal string.
+        setup_body = (
+            f"def _setup(addr):\n"
+            f"    _store_addr({global_name!r}, addr)\n"
+        )
+        setup_ns = {"_store_addr": _store_addr_to_named_global}
+        exec(compile(setup_body, getfile(_file_anchor), mode="exec"), setup_ns)
+        _setup_py = setup_ns["_setup"]
+        _setup_py.__name__ = f"_setup_for_{func.__name__}"
+        _setup_py.__qualname__ = _setup_py.__name__
+        _setup_py.__module__ = __name__
+        _setup = njit(void(intp), **njit_kwargs)(_setup_py)
+        _setup(funcvalue.address)
+
+        compiled.as_funcvalue = funcvalue
+        return compiled
+
+    return _decorator
 
 
 def cres_if_available(lib, sig, **kwargs):

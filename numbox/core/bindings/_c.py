@@ -1,5 +1,4 @@
-from numbox.utils.highlevel import cres
-from numbox.core.bindings._cacheable import cres_cacheable
+from numbox.utils.highlevel import cres, cres_cacheable
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib

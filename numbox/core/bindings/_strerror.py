@@ -20,8 +20,8 @@ from numba.core.errors import TypingError
 from numba.core.types import int32, int64, intp
 from numba.extending import intrinsic
 
-from numbox.core.bindings._cacheable import cres_cacheable
 from numbox.core.bindings.utils import platform_, load_lib
+from numbox.utils.highlevel import cres_cacheable
 
 
 __all__ = ["strerror_safe"]
