@@ -15,6 +15,7 @@ docstring for the user-facing story.
 """
 from llvmlite import ir as llir
 from numba.core import cgutils
+from numba.core.errors import TypingError
 from numba.core.types import BaseTuple, Literal, NoneType, intp, void
 from numba.extending import intrinsic
 
@@ -41,7 +42,7 @@ def _get_or_make_named_global(builder, ll_ty, name):
 def _store_addr_to_named_global(typingctx, name_ty, val_ty):
     """Store an ``intp`` into a named LLVM global addressed by literal name."""
     if not isinstance(name_ty, Literal):
-        return
+        raise TypingError("_store_addr_to_named_global: name must be a literal string")
     name = name_ty.literal_value
 
     def codegen(context, builder, sig, args):
@@ -56,7 +57,7 @@ def _store_addr_to_named_global(typingctx, name_ty, val_ty):
 def _load_addr_from_named_global(typingctx, name_ty):
     """Load an ``intp`` from a named LLVM global addressed by literal name."""
     if not isinstance(name_ty, Literal):
-        return
+        raise TypingError("_load_addr_from_named_global: name must be a literal string")
     name = name_ty.literal_value
 
     def codegen(context, builder, sig, args):
@@ -83,12 +84,12 @@ def _make_icall_for_sig(sig):
             n = len(tuple(args_ty))
             is_tuple = True
             if n != len(arg_tys):
-                return
+                raise TypingError(f"_icall: expected {len(arg_tys)} arguments, got {n}")
         else:
             n = 1
             is_tuple = False
             if len(arg_tys) != 1:
-                return
+                raise TypingError(f"_icall: expected 1 argument, got {len(arg_tys)}")
 
         def codegen(context, builder, signature, arguments):
             addr = arguments[0]
