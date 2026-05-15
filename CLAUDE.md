@@ -8,12 +8,12 @@ numbox — a toolbox of low-level utilities for working with numba. Provides typ
 
 ## Build & Dev
 
-- Venv: `python3.11 -m venv venv && venv/bin/pip install -e . flake8 pytest`
+- Venv: `python3.12 -m venv venv && venv/bin/pip install -e . flake8 pytest`
 - Install: `pip install -e .`
 - Test: `pytest`
 - Lint: `flake8` (max-line-length=127, max-complexity=10)
 - Docs: `cd docs && make html` (Sphinx)
-- Python: >=3.10 (CI tests 3.10–3.14; local venv pinned to 3.11)
+- Python: >=3.10 (CI tests 3.10–3.14; local venv pinned to 3.12)
 - Key dependency: `numba>=0.60.0,<0.66.0` (matches `pyproject.toml`; use `numba==0.60.0` locally)
 
 ## Architecture
