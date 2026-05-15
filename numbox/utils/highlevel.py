@@ -1,7 +1,10 @@
 import hashlib
+import os
 import re
+import tempfile
 from inspect import getfile, getmodule, getsource
 from io import StringIO
+from pathlib import Path
 from numba import njit
 from numba.core.itanium_mangler import mangle_type_or_value
 from numba.core.types import Type, intp, void
@@ -46,7 +49,7 @@ def _cres_cacheable_global_name(func):
     """Stable cross-process LLVM-global symbol for ``func``'s entry-point address."""
     return (
         f"_numbox_cres_cacheable_addr__{func.__module__}__{func.__name__}"
-    ).replace(".", "_")
+    ).replace(".", "$")
 
 
 def cres_cacheable(sig, **njit_kwargs):
@@ -277,6 +280,47 @@ def {make_name}({struct_fields_str}):
     return code_txt, fields_types
 
 
+def _anchor_root() -> Path:
+    from numba import config
+    from numba.misc.appdirs import AppDirs
+    if config.CACHE_DIR:
+        return Path(config.CACHE_DIR) / "numbox-structref"
+    return Path(AppDirs(appname="numba", appauthor=False).user_cache_dir) / "numbox-structref"
+
+
+def _structref_anchor_path(struct_name: str, code_txt: str) -> Path:
+    """Stable on-disk source anchor for the generated structref code.
+
+    Content-addressed so identical generated text always resolves to the
+    same path; numba's source-mtime cache key then hits across runs and
+    processes. The anchor is a real file whose contents match the exec'd
+    code line-for-line, so `inspect.getsource` returns the right source
+    and tokenizes cleanly. This sidesteps a Python 3.13 regression class
+    (CPython #105013, #117212, #122981) where `inspect.getsource` on an
+    exec'd function whose `co_filename` anchors at an unrelated real
+    file returns arbitrary other content and the new C tokenizer chokes
+    on it.
+    """
+    root = _anchor_root()
+    root.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(code_txt.encode("utf-8")).hexdigest()[:16]
+    return root / f"{struct_name}_{digest}.py"
+
+
+def _materialize_anchor(path: Path, code_txt: str) -> None:
+    if path.exists():
+        return
+    fd, tmp_str = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".tmp-")
+    tmp = Path(tmp_str)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(code_txt)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def make_structref(
     struct_name: str,
     struct_fields: Iterable[str] | dict[str, Type],
@@ -303,6 +347,20 @@ def make_structref(
     without poking the jitted caller can result in a stale cache - when the latter is
     cached. This is not an exclusive limitation of a dynamic structref creation via
     this function and is equally true when the structref definition is coded explicitly.
+
+    Anchor file (Python 3.13 / numba interaction — important)
+    --------------------------------------------------------
+    The generated ``code_txt`` is written to a content-addressed file under
+    numba's cache directory and that file — not ``highlevel.py`` — is used as
+    the ``compile()`` anchor. Without this, numba's cache-save path calls
+    ``inspect.getsourcelines`` on the generated functions, which reads
+    arbitrary content from ``highlevel.py`` at the recorded ``co_firstlineno``;
+    on Python 3.13 the new C tokenizer rejects many such mid-file slices
+    outright (CPython `#105013 <https://github.com/python/cpython/issues/105013>`_,
+    `#117212 <https://github.com/python/cpython/issues/117212>`_,
+    `#122981 <https://github.com/python/cpython/issues/122981>`_), breaking
+    cold-cache CI for every caller of ``make_structref``. See
+    `_structref_anchor_path` for the path scheme.
     """
     code_txt, fields_types = make_structref_code_txt(
         struct_name, struct_fields, struct_type_class, struct_methods
@@ -324,7 +382,9 @@ def make_structref(
             struct_type_class.__name__: struct_type_class
         }
     }
-    code = compile(code_txt, getfile(_file_anchor), mode="exec")
+    anchor = _structref_anchor_path(struct_name, code_txt)
+    _materialize_anchor(anchor, code_txt)
+    code = compile(code_txt, str(anchor), mode="exec")
     exec(code, ns)
     return ns[struct_name]
 
