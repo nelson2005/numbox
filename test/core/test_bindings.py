@@ -1,4 +1,5 @@
 import errno
+import os
 
 import numpy as np
 import pytest
@@ -98,13 +99,17 @@ def _strings_compare_search():
     c = get_unicode_data_p("world")
     eq = strcmp(a, b)
     ne = strcmp(a, c)
-    n_eq = strncmp(a, c, 0)
+    # Bounded comparison: "hello" vs "help!" first matches 3 chars, differs at 4
+    d_hello = get_unicode_data_p("hello")
+    d_help = get_unicode_data_p("help!")
+    n_match = strncmp(d_hello, d_help, 3)
+    n_differ = strncmp(d_hello, d_help, 4)
     h = get_unicode_data_p("hello world")
     ord_l = np.int32(108)
     first_l = strchr(h, ord_l)
     last_l = strrchr(h, ord_l)
     substr = strstr(h, get_unicode_data_p("world"))
-    return eq, ne, n_eq, first_l - h, last_l - h, substr - h
+    return eq, ne, n_match, n_differ, first_l - h, last_l - h, substr - h
 
 
 @njit(cache=True)
@@ -116,10 +121,13 @@ def _strings_copy(dst):
 
 
 def test_c_strings():
-    eq, ne, n_eq, off_first, off_last, off_sub = _strings_compare_search()
+    eq, ne, n_match, n_differ, off_first, off_last, off_sub = _strings_compare_search()
     assert eq == 0
     assert ne != 0
-    assert n_eq == 0
+    # strncmp("hello", "help!", 3) == 0: first 3 bytes "hel" match
+    assert n_match == 0, n_match
+    # strncmp("hello", "help!", 4) != 0: differs at byte 3 ('l' vs 'p')
+    assert n_differ != 0, n_differ
     assert off_first == 2
     assert off_last == 9
     assert off_sub == 6
@@ -198,8 +206,26 @@ def _env_lookup(name):
 
 
 def test_c_env():
-    assert _env_lookup("PATH") != 0
-    assert _env_lookup("NUMBOX_NONEXISTENT_XYZZY") == 0
+    """getenv contract: returns a pointer to the environ-table string for set
+    variables and 0 for unset variables. Verify both the presence/absence
+    distinction AND that the returned pointer dereferences to the correct
+    value — a stale or wrong-variable pointer would slip past an address-only
+    check."""
+    path_p = _env_lookup("PATH")
+    assert path_p != 0, "getenv returned 0 for PATH (which should be set)"
+    assert _env_lookup("NUMBOX_NONEXISTENT_XYZZY") == 0, (
+        "getenv returned non-zero for a deliberately-unset variable"
+    )
+    # Dereference the returned pointer and compare to Python's view of PATH.
+    # Any regression that returns the wrong variable's pointer (or a stale
+    # one) would diverge here.
+    expected = os.environ.get("PATH", "")
+    assert expected != "", "PATH unset in test environment — cannot verify"
+    got = get_str_from_p_as_int(path_p)
+    assert got == expected, (
+        f"getenv('PATH') returned a pointer to {got!r}; "
+        f"os.environ['PATH'] is {expected!r}"
+    )
 
 
 if __name__ == "__main__":

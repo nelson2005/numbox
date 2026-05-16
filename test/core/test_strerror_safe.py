@@ -10,6 +10,11 @@ from numbox.core.bindings.utils import platform_
 from numbox.utils.lowlevel import array_data_p, get_str_from_p_as_int
 
 
+# Invalid errno value far outside any libc's mapped range (POSIX errno is
+# typically <200; glibc reserves through ~133 for application use).
+INVALID_ERRNO = 99999
+
+
 @njit(cache=True)
 def _describe(errnum, buf, buflen):
     buf_p = array_data_p(buf)
@@ -17,12 +22,75 @@ def _describe(errnum, buf, buflen):
     return rc, buf_p
 
 
-def test_strerror_safe_enoent_roundtrip():
-    buf = np.zeros(128, dtype=np.uint8)
-    rc, buf_p = _describe(errno.ENOENT, buf, buf.size)
-    assert rc == 0
+def _strerror(errnum, buflen=128):
+    """Helper: return (rc, msg) for a single errno."""
+    buf = np.zeros(buflen, dtype=np.uint8)
+    rc, buf_p = _describe(errnum, buf, buf.size)
     msg = get_str_from_p_as_int(buf_p)
-    assert len(msg) > 0
+    return rc, msg
+
+
+def test_strerror_safe_enoent_roundtrip():
+    """Known errno produces a non-empty, non-fallback message.
+
+    Locale-tolerant: we don't pin LANG/LC_MESSAGES, so the exact English
+    "No such file or directory" string is not asserted. Instead we verify
+    that ENOENT and EACCES produce *different* messages — a property that
+    holds in every locale (no locale collapses distinct errno values into
+    the same translation) — and that neither matches the libc's
+    "Unknown error N" fallback shape that would indicate the errno wasn't
+    recognized.
+    """
+    rc_enoent, msg_enoent = _strerror(errno.ENOENT)
+    rc_eacces, msg_eacces = _strerror(errno.EACCES)
+    assert rc_enoent == 0, f"ENOENT roundtrip rc={rc_enoent}"
+    assert rc_eacces == 0, f"EACCES roundtrip rc={rc_eacces}"
+    assert msg_enoent, "ENOENT produced empty message"
+    assert msg_eacces, "EACCES produced empty message"
+    # Distinct errnos must produce distinct messages on any sane locale.
+    assert msg_enoent != msg_eacces, (
+        f"ENOENT and EACCES produced identical messages "
+        f"({msg_enoent!r}) — likely both fell through to a fallback"
+    )
+    # Neither message should look like the unrecognized-errno fallback.
+    # glibc renders "Unknown error N"; musl uses "No error information";
+    # Windows uses "Unknown error". Reject any "unknown error" prefix in
+    # any case.
+    for errnum, msg in [(errno.ENOENT, msg_enoent), (errno.EACCES, msg_eacces)]:
+        assert not msg.lower().startswith("unknown error"), (
+            f"errno {errnum} produced fallback message {msg!r}"
+        )
+
+
+def test_strerror_safe_invalid_errno_uses_fallback():
+    """An unrecognized errno produces a fallback message (and either rc=0 or
+    a positive errno indicator), with the buffer still NUL-terminated.
+
+    Per the POSIX strerror_r spec and Windows strerror_s docs, exact rc
+    behavior on unknown errno varies across libcs:
+
+      - glibc: writes "Unknown error N", returns 0
+      - musl:  writes "No error information", returns EINVAL
+      - macOS: writes "Unknown error: N", returns 0
+      - Windows: returns EINVAL, writes a fallback
+
+    The test asserts the *portable* contract: the buffer is non-empty,
+    NUL-terminated, and either (a) the rc indicates an error, or (b) the
+    message is a recognized "unknown/unrecognized" fallback shape. This
+    pins down the EINVAL-or-fallback path that the strerror_safe docstring
+    promises without overfitting to one libc.
+    """
+    rc, msg = _strerror(INVALID_ERRNO)
+    assert msg, "invalid errno produced empty message"
+    looks_like_fallback = (
+        "unknown" in msg.lower()
+        or "unrecognized" in msg.lower()
+        or "no error information" in msg.lower()
+    )
+    assert rc != 0 or looks_like_fallback, (
+        f"invalid errno {INVALID_ERRNO} produced rc=0 and recognized "
+        f"message {msg!r} — strerror_safe failed to flag it as unknown"
+    )
 
 
 def test_strerror_safe_short_buffer():

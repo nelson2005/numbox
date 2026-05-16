@@ -1,3 +1,8 @@
+import os
+import subprocess
+import sys
+import textwrap
+
 import numpy as np
 import pytest
 from numba import njit, typeof
@@ -339,6 +344,73 @@ def test_cres_cacheable_multi_arg_caller_is_cacheable():
         memcpy(array_data_p(dst), array_data_p(src), src.nbytes)
     caller(np.zeros(4, dtype=np.uint8), np.arange(4, dtype=np.uint8))
     assert not _sole_compile_result(caller).library.has_dynamic_globals
+
+
+def test_cres_cacheable_caller_survives_subprocess_round_trip(tmp_path):
+    """Real cross-process cache survival test for cres_cacheable.
+
+    The heuristic tests above (``has_dynamic_globals is False``) only prove
+    cache *eligibility*. This test proves cache *correctness*: a caller
+    compiled with ``@njit(cache=True)`` against a ``cres_cacheable`` binding
+    actually round-trips through the on-disk cache (.nbi/.nbc files), with
+    the second process loading the cached IR and producing identical output
+    to the cold-cache first process. The .nbc mtime is the load-bearing
+    cache-hit signal — if the second run regenerates it, the cache failed.
+
+    This is the property ``cres_cacheable`` exists for: ASLR-safe cached
+    caller IR that survives across processes via the named-LLVM-global
+    address-slot pattern (see ``cres_cacheable`` docstring).
+    """
+    # The probe must live in a real file (not `python -c`) — numba refuses
+    # to cache functions defined in `<string>` because no source locator
+    # exists for them.
+    probe = tmp_path / "probe.py"
+    probe.write_text(textwrap.dedent("""
+        from numba import njit
+        from numbox.core.bindings import errno_get, errno_set
+
+        @njit(cache=True)
+        def caller():
+            errno_set(42)
+            return errno_get()
+
+        v = caller()
+        assert v == 42, f"got {v!r}"
+        print(v)
+    """))
+    cache_dir = tmp_path / "numba-cache"
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
+
+    r1 = subprocess.run(
+        [sys.executable, str(probe)], env=env, capture_output=True, text=True,
+    )
+    assert r1.returncode == 0, f"run1 (cold) failed:\n{r1.stderr}"
+    assert r1.stdout.strip() == "42", f"cold run produced {r1.stdout!r}"
+
+    nbc_files_after_cold = sorted(cache_dir.rglob("*.nbc"))
+    assert nbc_files_after_cold, (
+        f"cold run did not write any .nbc cache file under {cache_dir}; "
+        f"stderr was:\n{r1.stderr}"
+    )
+    cold_mtimes = {p: p.stat().st_mtime_ns for p in nbc_files_after_cold}
+
+    r2 = subprocess.run(
+        [sys.executable, str(probe)], env=env, capture_output=True, text=True,
+    )
+    assert r2.returncode == 0, f"run2 (warm) failed:\n{r2.stderr}"
+    assert r2.stdout.strip() == "42", f"warm run produced {r2.stdout!r}"
+
+    # Load-bearing assertion: the .nbc files were NOT rewritten on the
+    # warm run. If numba had to regenerate IR (cache miss), mtime moves.
+    nbc_files_after_warm = sorted(cache_dir.rglob("*.nbc"))
+    assert nbc_files_after_warm == nbc_files_after_cold, (
+        f"warm run added/removed cache files; cold={nbc_files_after_cold} "
+        f"warm={nbc_files_after_warm}"
+    )
+    for p in nbc_files_after_warm:
+        assert p.stat().st_mtime_ns == cold_mtimes[p], (
+            f"warm run rewrote cache file {p} — cache was not hit"
+        )
 
 
 def test_plain_cres_caller_trips_dynamic_globals():
