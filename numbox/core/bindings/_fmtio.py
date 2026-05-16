@@ -50,7 +50,7 @@ from llvmlite import ir as llir
 from numba.core import cgutils
 from numba.core.cgutils import get_or_insert_function
 from numba.core.errors import TypingError
-from numba.core.types import BaseTuple, Float, Integer, Literal, int32
+from numba.core.types import BaseTuple, Float, Integer, Literal, int32, intp
 from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import load_lib
@@ -203,12 +203,29 @@ def snprintf(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
         )
 
     def codegen(context, builder, sig, llvm_args):
+        # Deliberately do NOT delegate to cgutils.snprintf: on Windows, the
+        # numba helper resolves to "_snprintf" (the legacy MSVCRT symbol,
+        # which returns -1 on truncation instead of the C99 "would have
+        # written" count, and may not NUL-terminate). We declare plain
+        # "snprintf" instead — UCRT exports it as the C99-compliant
+        # implementation, present on Windows 10+ (already numbox's
+        # documented support floor for the rest of the stdio surface).
+        # On Linux glibc/musl and macOS, "snprintf" is the standard symbol.
         i8p = llir.IntType(8).as_pointer()
+        i32_ll = llir.IntType(32)
+        mod = builder.module
         buf_int, size_val, _, args_pack = llvm_args
         buf_ptr = builder.inttoptr(buf_int, i8p)
+        intp_ll = context.get_value_type(intp)
         unpacked = _unpack_args_tuple(builder, args_ty, args_pack)
         promoted = [_promote_for_varargs(builder, t, v) for t, v in unpacked]
-        return cgutils.snprintf(
-            builder, buf_ptr, size_val, fmt_str, *promoted)
+        fmt_bytes = cgutils.make_bytearray((fmt_str + '\x00').encode('ascii'))
+        global_fmt = cgutils.global_constant(mod, "snprintf_format", fmt_bytes)
+        fmt_p = builder.bitcast(global_fmt, i8p)
+        fn_ty = llir.FunctionType(
+            i32_ll, [i8p, intp_ll, i8p], var_arg=True,
+        )
+        fn = get_or_insert_function(mod, fn_ty, "snprintf")
+        return builder.call(fn, [buf_ptr, size_val, fmt_p] + promoted)
 
     return int32(buf_ty, size_ty, fmt_ty, args_ty), codegen
