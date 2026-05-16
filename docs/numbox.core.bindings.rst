@@ -142,11 +142,11 @@ Example — render the message for ``ENOENT`` (errno 2 on POSIX) into a buffer:
     msg = bytes(buf[:buf.tolist().index(0)]).decode()
     # rc == 0; msg is the (locale-dependent) string for ENOENT
 
-Variadic formatted I/O — printf / fprintf / snprintf
-++++++++++++++++++++++++++++++++++++++++++++++++++++
+Variadic formatted I/O — printf / fprintf / snprintf / sscanf
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-``printf``, ``fprintf``, and ``snprintf`` are ``@intrinsic`` shells that
-emit direct extern variadic calls to libc. LLVM's backend handles the
+``printf``, ``fprintf``, ``snprintf``, and ``sscanf`` are ``@intrinsic``
+shells that emit direct extern variadic calls to libc. LLVM's backend handles the
 platform-specific variadic ABI (SysV x86-64 ``AL``-register convention,
 Win64 FP shadow, AAPCS64 named/anonymous split) automatically when the
 function is declared with ``var_arg=True``; the bindings handle C
@@ -269,6 +269,60 @@ detect truncation, decode:
    in-process shape does not match the naive ``declare i32 @snprintf(...)``
    LLVM declaration. The portable check
    ``(rc < 0) or (rc >= size)`` works on every platform.
+
+**Parsing direction: `sscanf <https://man7.org/linux/man-pages/man3/sscanf.3.html>`_.**
+The inverse of the printf family: parse fields from a NUL-terminated input
+buffer into caller-supplied output pointers. Shape differs from the writers:
+
+- ``buf`` is an ``intp`` pointing at the input bytes (e.g. from
+  ``get_unicode_data_p``).
+- ``args`` is a tuple of ``intp`` *output pointers* — each one points at
+  writable storage that sscanf fills based on the corresponding format
+  specifier. Typically obtained via ``array_data_p`` of a 1-element numpy
+  array of the right dtype.
+- Returns the count of items successfully assigned (``int32``), or
+  ``-1`` (``EOF``) on input failure before the first conversion.
+
+Unlike printf-family, there is **no default-argument promotion** for
+sscanf's variadic args (pointers don't promote). The binding validates
+only that every variadic arg has type ``intp``, so you can't accidentally
+pass an integer value where a pointer is expected. The pointed-to storage
+must still be the right size for the format spec — the binding cannot
+check that:
+
+================   =============================================
+Format spec        Required output points at
+================   =============================================
+``%hhd``           ``int8`` (1 byte)
+``%hd``            ``int16`` (2 bytes)
+``%d``             ``int32`` (4 bytes)
+``%lld``           ``int64`` (8 bytes)
+``%u``             ``uint32``
+``%llu``           ``uint64``
+``%f``             ``float32`` (4 bytes — NOT double, ``%lf`` is for that)
+``%lf``            ``float64`` (8 bytes)
+``%s``             ``char`` buffer (caller responsible for size + NUL room)
+``%n``             forbidden; security hole disabled in fortified builds
+================   =============================================
+
+Example — parse a "<int> <double>" pair into typed numpy slots:
+
+.. code-block:: python
+
+    import numpy as np
+    from numba import njit
+    from numbox.core.bindings import sscanf
+    from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
+
+    @njit(cache=True)
+    def parse_pair(text_p, n_out, x_out):
+        return sscanf(text_p, "%d %lf",
+                      (array_data_p(n_out), array_data_p(x_out)))
+
+    n_out = np.zeros(1, dtype=np.int32)
+    x_out = np.zeros(1, dtype=np.float64)
+    rc = parse_pair(get_unicode_data_p("42 3.14"), n_out, x_out)
+    # rc == 2; n_out[0] == 42; x_out[0] == 3.14
 
 Modules
 ++++++++

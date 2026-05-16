@@ -1,5 +1,10 @@
-"""Variadic formatted I/O — ``printf``, ``fprintf``, ``snprintf`` callable
-from @njit.
+"""Variadic formatted I/O — ``printf``, ``fprintf``, ``snprintf``, ``sscanf``
+callable from @njit.
+
+``sscanf`` is the inverse direction: parse fields from an input buffer into
+caller-supplied output pointers. Same Literal[str] format constraint, but
+no default-argument promotion (its variadic args are pointers, which don't
+promote). See ``sscanf``'s docstring for the pointer-vs-spec contract.
 
 These are ``@intrinsic`` shells that each emit a direct extern variadic
 call to libc — no delegation through ``numba.core.cgutils`` helpers, so
@@ -64,13 +69,13 @@ from llvmlite import ir as llir
 from numba.core import cgutils
 from numba.core.cgutils import get_or_insert_function
 from numba.core.errors import TypingError
-from numba.core.types import BaseTuple, Float, Integer, Literal, int32
+from numba.core.types import BaseTuple, Float, Integer, Literal, int32, intp
 from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import load_lib, platform_
 
 
-__all__ = ["printf", "fprintf", "snprintf"]
+__all__ = ["printf", "fprintf", "snprintf", "sscanf"]
 
 
 load_lib("c")
@@ -221,6 +226,93 @@ def fprintf(typingctx, fp_ty, fmt_ty, args_ty):
             builder, "fprintf", fmt_str, [fp_ptr], args_ty, args_pack)
 
     return int32(fp_ty, fmt_ty, args_ty), codegen
+
+
+@intrinsic(prefer_literal=True)
+def sscanf(typingctx, buf_ty, fmt_ty, args_ty):
+    """libc ``sscanf(buf, fmt, args)`` — parse fields from a NUL-terminated
+    input buffer into caller-supplied output pointers.
+
+    Shape differs from printf/fprintf/snprintf:
+
+    - ``buf`` is an ``intp`` pointing at the NUL-terminated *input* bytes.
+    - ``fmt`` is a literal Python string (UTF-8 encoded in the IR global).
+    - ``args`` is a tuple of ``intp`` *output pointers* — each one points
+      at writable storage that sscanf will fill in based on the
+      corresponding format specifier.
+
+    Returns the number of items successfully assigned (``int32``), or
+    ``-1`` (``EOF``) on input failure before the first conversion.
+
+    **Pointer-vs-spec contract** is the user's responsibility, same as in C:
+
+    ===========   ====================================
+    Format spec   Required output pointer points at
+    ===========   ====================================
+    ``%hhd``      ``int8`` (1 byte)
+    ``%hd``       ``int16`` (2 bytes)
+    ``%d``        ``int32`` (4 bytes)
+    ``%ld``       ``int32`` on LP64-Linux, ``int32`` on Win64 (``long``)
+    ``%lld``      ``int64`` (8 bytes)
+    ``%u``        ``uint32``
+    ``%llu``      ``uint64``
+    ``%f``        ``float32`` (4 bytes)
+    ``%lf``       ``float64`` (8 bytes)
+    ``%s``        ``char`` array (caller must ensure adequate size + NUL room)
+    ``%n``        forbidden (security hole, glibc disables in fortified builds)
+    ===========   ====================================
+
+    Pointer-size mismatches corrupt memory silently. The binding validates
+    only that each variadic arg has type ``intp`` (so you can't accidentally
+    pass an integer value where a pointer is expected); it cannot validate
+    that the pointed-to storage is wide enough for the format spec.
+
+    Example::
+
+        import numpy as np
+        from numba import njit
+        from numbox.core.bindings import sscanf
+        from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
+
+        @njit(cache=True)
+        def parse_pair(text_p, n_out, x_out):
+            return sscanf(text_p, "%d %lf",
+                          (array_data_p(n_out), array_data_p(x_out)))
+
+        n_out = np.zeros(1, dtype=np.int32)
+        x_out = np.zeros(1, dtype=np.float64)
+        rc = parse_pair(get_unicode_data_p("42 3.14"), n_out, x_out)
+        # rc == 2; n_out[0] == 42; x_out[0] == 3.14
+    """
+    fmt_str = _require_literal_fmt_and_tuple_args("sscanf", fmt_ty, args_ty)
+    if buf_ty != intp:
+        raise TypingError(
+            f"sscanf: buf must be intp (pointer-as-int), got {buf_ty!r}"
+        )
+    # Every variadic output must be intp (a pointer). Pointers don't undergo
+    # default-argument promotion (they're already register-width), so we
+    # don't need the float32/intN<32 widening that printf-family uses — we
+    # just need to ensure the caller didn't pass a non-pointer value into a
+    # pointer slot, which would have sscanf write through whatever bits
+    # happen to be there.
+    for i, ty in enumerate(tuple(args_ty)):
+        if ty != intp:
+            raise TypingError(
+                f"sscanf: args[{i}] must be intp (output pointer), got {ty!r}"
+            )
+
+    def codegen(context, builder, sig, llvm_args):
+        i8p = llir.IntType(8).as_pointer()
+        buf_int, _, args_pack = llvm_args
+        buf_ptr = builder.inttoptr(buf_int, i8p)
+        # _emit_variadic_call applies _promote_for_varargs to each tuple
+        # element; for intp values that's a no-op (intp passes through),
+        # so the helper Just Works here. The pointer-vs-spec contract is
+        # documented in the docstring and the user's responsibility.
+        return _emit_variadic_call(
+            builder, "sscanf", fmt_str, [buf_ptr], args_ty, args_pack)
+
+    return int32(buf_ty, fmt_ty, args_ty), codegen
 
 
 @intrinsic(prefer_literal=True)

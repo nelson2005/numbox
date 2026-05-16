@@ -1,4 +1,4 @@
-"""Tests for the variadic printf/fprintf/snprintf intrinsics in
+"""Tests for the variadic printf/fprintf/snprintf/sscanf intrinsics in
 numbox.core.bindings._fmtio.
 
 Coverage:
@@ -9,9 +9,12 @@ Coverage:
 - TypingError on non-literal format strings
 - TypingError on non-tuple args
 - Empty args tuple
+- UTF-8 format string acceptance
 - @njit(cache=True) survives a subprocess round-trip (no cres_cacheable
   indirection — these intrinsics emit a direct libc extern call, JIT linker
   resolves per process)
+- sscanf: parse-into-numpy roundtrip, multi-field, EOF, partial-match,
+  intp-output enforcement
 """
 import os
 import subprocess
@@ -28,6 +31,7 @@ from numbox.core.bindings import (
     fprintf,
     printf,
     snprintf,
+    sscanf,
     stderr,
     stdout,
 )
@@ -341,6 +345,151 @@ def test_printf_non_tuple_args_raises():
 
     with pytest.raises(TypingError, match=r"printf.*tuple"):
         caller()
+
+
+# ============================================================================
+# sscanf
+# ============================================================================
+
+@njit(cache=True)
+def _sscanf_int(text_p, out_arr):
+    return sscanf(text_p, "%d", (array_data_p(out_arr),))
+
+
+@njit(cache=True)
+def _sscanf_int_long(text_p, out_arr):
+    return sscanf(text_p, "%lld", (array_data_p(out_arr),))
+
+
+@njit(cache=True)
+def _sscanf_double(text_p, out_arr):
+    return sscanf(text_p, "%lf", (array_data_p(out_arr),))
+
+
+@njit(cache=True)
+def _sscanf_pair(text_p, n_out, x_out):
+    return sscanf(text_p, "%d %lf", (array_data_p(n_out), array_data_p(x_out)))
+
+
+@njit(cache=True)
+def _sscanf_two_ints(text_p, a_out, b_out):
+    return sscanf(text_p, "%d %d", (array_data_p(a_out), array_data_p(b_out)))
+
+
+def test_sscanf_int_roundtrip():
+    """Parse a single int32 from a NUL-terminated input buffer. rc must be
+    1 (one item assigned); the int32 numpy slot must hold the parsed value.
+    """
+    out = np.zeros(1, dtype=np.int32)
+    rc = _sscanf_int(get_unicode_data_p("42"), out)
+    assert rc == 1, rc
+    assert out[0] == 42, out[0]
+
+
+def test_sscanf_int_negative():
+    out = np.zeros(1, dtype=np.int32)
+    rc = _sscanf_int(get_unicode_data_p("-17"), out)
+    assert rc == 1
+    assert out[0] == -17
+
+
+def test_sscanf_int64_with_lld():
+    """%lld writes 8 bytes — the caller MUST provide an int64-sized slot.
+    int32 here would silently corrupt adjacent memory."""
+    out = np.zeros(1, dtype=np.int64)
+    rc = _sscanf_int_long(get_unicode_data_p("12345678901234"), out)
+    assert rc == 1
+    assert out[0] == 12345678901234
+
+
+def test_sscanf_double():
+    out = np.zeros(1, dtype=np.float64)
+    rc = _sscanf_double(get_unicode_data_p("3.141592653589793"), out)
+    assert rc == 1
+    assert abs(out[0] - 3.141592653589793) < 1e-15, out[0]
+
+
+def test_sscanf_multi_field():
+    """Multi-field parse — %d into int32, %lf into float64. rc == 2."""
+    n_out = np.zeros(1, dtype=np.int32)
+    x_out = np.zeros(1, dtype=np.float64)
+    rc = _sscanf_pair(get_unicode_data_p("42 3.14"), n_out, x_out)
+    assert rc == 2, rc
+    assert n_out[0] == 42
+    assert abs(x_out[0] - 3.14) < 1e-12
+
+
+def test_sscanf_returns_partial_count_on_failed_conversion():
+    """sscanf returns the count assigned BEFORE the first conversion that
+    fails. Format "%d %d" against input "42 not_a_number" assigns 42 to the
+    first slot, fails to parse the second, returns 1."""
+    a = np.zeros(1, dtype=np.int32)
+    b = np.full(1, -999, dtype=np.int32)  # sentinel: untouched on failure
+    rc = _sscanf_two_ints(get_unicode_data_p("42 not_a_number"), a, b)
+    assert rc == 1, rc
+    assert a[0] == 42
+    assert b[0] == -999, "b should not have been assigned"
+
+
+def test_sscanf_returns_eof_on_empty_input():
+    """Per C11 7.21.6.2: sscanf returns EOF (-1) if an input failure occurs
+    before any conversion. Empty input + a conversion spec triggers EOF."""
+    out = np.zeros(1, dtype=np.int32)
+    rc = _sscanf_int(get_unicode_data_p(""), out)
+    # POSIX/glibc/musl: -1 (EOF). Some libcs may use a different negative
+    # value, but EOF is canonically -1 on every platform numbox supports.
+    assert rc == -1, rc
+
+
+def test_sscanf_non_literal_format_raises():
+    @njit
+    def caller(text_p, out_arr, fmt):
+        return sscanf(text_p, fmt, (array_data_p(out_arr),))
+
+    out = np.zeros(1, dtype=np.int32)
+    with pytest.raises(TypingError, match=r"sscanf.*literal"):
+        caller(get_unicode_data_p("42"), out, "%d")
+
+
+def test_sscanf_rejects_non_intp_output_arg():
+    """sscanf's variadic outputs MUST be intp (pointer-as-int). The binding
+    validates this at typing time so the user can't accidentally pass an
+    integer value where a pointer is expected (which would have sscanf
+    write through whatever bits happen to be there → segfault or memory
+    corruption)."""
+    @njit
+    def caller():
+        # np.float64 value (not a pointer) in the output slot
+        return sscanf(get_unicode_data_p("42"), "%d", (np.float64(0.0),))
+
+    with pytest.raises(TypingError, match=r"sscanf.*intp"):
+        caller()
+
+
+def test_sscanf_rejects_non_intp_int_output_arg():
+    """Even a smaller int (np.int32, not pointer-width) is rejected — the
+    variadic slot is pointer-sized on the ABI side, and intp is the
+    consistent pointer-as-int type used elsewhere in numbox.
+    """
+    @njit
+    def caller():
+        return sscanf(get_unicode_data_p("42"), "%d", (np.int32(7),))
+
+    with pytest.raises(TypingError, match=r"sscanf.*intp"):
+        caller()
+
+
+def test_sscanf_rejects_non_intp_buf():
+    """The input buffer must be intp too (a pointer to the NUL-terminated
+    input bytes)."""
+    @njit
+    def caller(out_arr):
+        # Passing a unicode_type directly instead of get_unicode_data_p
+        return sscanf("42", "%d", (array_data_p(out_arr),))
+
+    out = np.zeros(1, dtype=np.int32)
+    with pytest.raises(TypingError, match=r"sscanf.*buf.*intp"):
+        caller(out)
 
 
 @pytest.mark.skipif(
