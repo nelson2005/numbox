@@ -204,23 +204,50 @@ def _env_lookup(name):
     return getenv(get_unicode_data_p(name))
 
 
-def test_c_env(monkeypatch):
+@pytest.fixture
+def _getenv_test_var(monkeypatch):
+    """Set a unique env var that numbox's getenv binding can read, and
+    clean it up on teardown.
+
+    Plain ``monkeypatch.setenv`` is sufficient on POSIX. On Windows it
+    isn't: ``numbox.core.bindings.utils.load_lib("c")`` resolves to
+    ``msvcrt.dll`` (the legacy CRT compatibility shim — what
+    ``ctypes.cdll.msvcrt`` returns), while Python 3.10+ uses UCRT for
+    ``os.environ`` / ``monkeypatch.setenv``. MSVCRT and UCRT have
+    separate ``environ`` tables, so a var set via the Python-side path
+    is invisible to the binding's getenv call. To make the test
+    deterministic on Windows, set the var via the same MSVCRT instance
+    the binding uses (``msvcrt._putenv_s``); the env-table the binding
+    reads is then the one that contains the var.
+    """
+    var_name = "NUMBOX_TEST_GETENV_VAR_7d4f1c"
+    var_value = "numbox-getenv-roundtrip-sentinel"
+    if platform_ == "Windows":
+        import ctypes
+        msvcrt = ctypes.cdll.msvcrt
+        msvcrt._putenv_s(var_name.encode(), var_value.encode())
+        try:
+            yield var_name, var_value
+        finally:
+            # _putenv_s with empty value removes the var (MSDN docs).
+            msvcrt._putenv_s(var_name.encode(), b"")
+    else:
+        monkeypatch.setenv(var_name, var_value)
+        yield var_name, var_value
+
+
+def test_c_env(_getenv_test_var):
     """getenv contract: returns a pointer to the environ-table string for set
     variables and 0 for unset variables. Verify both the presence/absence
     distinction AND that the returned pointer dereferences to the correct
     value — a stale or wrong-variable pointer would slip past an address-only
     check.
 
-    Uses a dedicated test-controlled env var (set via the pytest
-    ``monkeypatch`` fixture, auto-restored on teardown) rather than the
-    ambient ``PATH`` — hermetic CI runners can clear ``PATH``, and a
-    test that depends on process-global state outside its own control
-    fails for the wrong reason.
+    Uses a dedicated test-controlled env var rather than the ambient
+    ``PATH`` (hermetic CI runners can clear ``PATH``); see the
+    ``_getenv_test_var`` fixture for the platform-aware setup.
     """
-    var_name = "NUMBOX_TEST_GETENV_VAR"
-    var_value = "numbox-getenv-roundtrip-sentinel-7d4f1c"
-    monkeypatch.setenv(var_name, var_value)
-
+    var_name, var_value = _getenv_test_var
     found_p = _env_lookup(var_name)
     assert found_p != 0, (
         f"getenv returned 0 for {var_name} (which was just set to {var_value!r})"
@@ -228,9 +255,6 @@ def test_c_env(monkeypatch):
     assert _env_lookup("NUMBOX_NONEXISTENT_XYZZY") == 0, (
         "getenv returned non-zero for a deliberately-unset variable"
     )
-    # Dereference the returned pointer and compare to the sentinel we set.
-    # Any regression that returns the wrong variable's pointer (or a stale
-    # one) would diverge here.
     got = get_str_from_p_as_int(found_p)
     assert got == var_value, (
         f"getenv({var_name!r}) returned a pointer to {got!r}; "
