@@ -169,6 +169,15 @@ def _emit_variadic_call(builder, symbol, fmt_str, leading_vals, args_ty, args_pa
     i32_ll = llir.IntType(32)
     mod = builder.module
     fmt_bytes = cgutils.make_bytearray((fmt_str + '\x00').encode('utf-8'))
+    # Name collisions are not possible here even though we reuse
+    # f"{symbol}_format" across every call site of a given binding:
+    # cgutils.global_constant defaults to linkage='internal' and routes
+    # through add_global_variable → module.get_unique_name → scope.deduplicate,
+    # which auto-suffixes within a module (printf_format, printf_format.1, …).
+    # Across modules, internal-linkage globals are module-private (like
+    # C `static`); LLVM's linker further renames on merge into the shared
+    # MCJIT engine. So multiple call sites with identical or distinct
+    # format strings each get their own deduplicated global.
     global_fmt = cgutils.global_constant(mod, f"{symbol}_format", fmt_bytes)
     fmt_p = builder.bitcast(global_fmt, i8p)
     unpacked = _unpack_args_tuple(builder, args_ty, args_pack)
