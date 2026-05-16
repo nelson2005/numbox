@@ -45,39 +45,102 @@ Stdio handles, errno, and thread-safe strerror
 rather than module-level Python constants because the C library's stdio ``FILE *`` values can be either
 data symbols or accessor functions:
 
-- **Linux (glibc and musl)** — data symbols (``stdout``, ``stderr``, ``stdin`` global variables)
+- **Linux (glibc and musl)** — data symbols (``stdout``, ``stderr``, ``stdin`` global variables, declared in
+  `<stdio.h> <https://www.gnu.org/software/libc/manual/html_node/Standard-Streams.html>`_)
 - **macOS Darwin** — data symbols (``__stdoutp``, ``__stderrp``, ``__stdinp`` — what the libc headers'
-  ``stdout`` / ``stderr`` / ``stdin`` macros expand to)
-- **Windows** — accessor function (``__acrt_iob_func(0|1|2)``); UCRT-only (Windows 10+)
+  ``stdout`` / ``stderr`` / ``stdin`` macros expand to per
+  `Apple's stdio.h <https://opensource.apple.com/source/Libc/Libc-1439.40.11/include/stdio.h.auto.html>`_)
+- **Windows** — accessor function (`__acrt_iob_func(0|1|2)
+  <https://learn.microsoft.com/en-us/cpp/c-runtime-library/internal-crt-globals-and-functions>`_);
+  UCRT-only (Windows 10+ / VS 2015+)
 
 Both shapes are wrapped behind a uniform ``() -> intp`` interface using extern-symbol references in LLVM IR —
 never literal addresses — so that ``cache=True`` remains correct under ASLR: the address is resolved at
 JIT link time on each run rather than being baked into the cached object.
 
+Example — write to stderr from inside @njit:
+
+.. code-block:: python
+
+    from numba import njit, types
+    from numbox.core.bindings import stderr
+    from numbox.core.bindings._c import fputs, fflush
+
+    @njit(cache=True)
+    def log_to_stderr(msg_p):
+        fputs(msg_p, stderr())
+        fflush(stderr())
+
 **errno.** ``errno_get()`` and ``errno_set(v)`` reach the per-thread errno location on every call via the
-platform's accessor function (``__errno_location`` on glibc, ``__error`` on Darwin, ``_errno`` on
-Windows). This makes the wrappers correct under ``@njit(parallel=True)``: each ``prange`` worker sees
-its own thread's errno. A Python caller observes errno set inside a normal ``@njit`` function (same OS
-thread), but not errno set inside a ``prange`` worker (different OS thread).
+platform's accessor function (`__errno_location
+<https://man7.org/linux/man-pages/man3/errno.3.html>`_ on Linux glibc and musl,
+`__error <https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/intro.2.html>`_
+on Darwin, `_errno <https://learn.microsoft.com/en-us/cpp/c-runtime-library/errno-doserrno-sys-errlist-and-sys-nerr>`_
+on Windows UCRT). This makes the wrappers correct under ``@njit(parallel=True)``: each ``prange`` worker
+sees its own thread's errno. A Python caller observes errno set inside a normal ``@njit`` function (same
+OS thread), but not errno set inside a ``prange`` worker (different OS thread).
+
+Example — read and report errno after a syscall-style binding:
+
+.. code-block:: python
+
+    from numba import njit
+    from numbox.core.bindings import errno_get, errno_set
+
+    @njit(cache=True)
+    def clear_then_call_and_report(do_work):
+        errno_set(0)
+        result = do_work()
+        return result, errno_get()
 
 **Thread-safe strerror.** ``strerror_safe(errnum, buf, buflen)`` writes the error message into a
 caller-supplied buffer, returning 0 on success and a positive errno code on failure. The underlying
 symbol is selected at lowering time:
 
-- **glibc Linux** — ``__xpg_strerror_r`` (always present on glibc 2.0+; POSIX-form)
-- **musl Linux** — ``strerror_r`` (POSIX-form on musl)
-- **macOS Darwin** — ``strerror_r`` (POSIX-form)
-- **Windows** — ``strerror_s`` with reordered args (buffer, size, errnum)
+- **glibc Linux** — `__xpg_strerror_r
+  <https://codebrowser.dev/glibc/glibc/string/xpg-strerror.c.html>`_ (POSIX XSI form, present on glibc
+  2.3.4+ which shipped in 2004)
+- **musl Linux** — also ``__xpg_strerror_r``, exported as a `weak alias
+  <https://git.musl-libc.org/cgit/musl/tree/src/string/strerror_r.c>`_ to musl's own ``strerror_r``
+  (which is itself the POSIX form; musl never shipped the GNU char-pointer form)
+- **macOS Darwin** — `strerror_r
+  <https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/strerror_r.3.html>`_
+  (POSIX form)
+- **Windows** — `strerror_s
+  <https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/strerror-s-strerror-s-wcserror-s-wcserror-s>`_
+  with reordered args (buffer, size, errnum)
 
-Other Linux libcs are not supported: on glibc the ``strerror_r`` symbol is the GNU form (returns
-``char *``) and would not match the POSIX-shaped IR this module generates. The Linux selector only
-falls through to ``strerror_r`` when ``__xpg_strerror_r`` is absent — a condition that holds on musl
-but not on glibc.
+Other Linux libcs are not supported: on glibc the plain ``strerror_r`` symbol is the
+`GNU form <https://man7.org/linux/man-pages/man3/strerror_r.3.html>`_ (returns ``char *``) and would
+not match the POSIX-shaped IR this module generates. The Linux selector unconditionally picks
+``__xpg_strerror_r``, which resolves correctly on both glibc and musl (the musl path goes through the
+weak alias). A ``strerror_r`` fallback remains in the selector as defense-in-depth in case a future
+libc drops ``__xpg_strerror_r``, but the fallback is currently unreachable on every supported libc.
 
-The Linux probe is verified by an IR-inspection test (Linux-only) that monkeypatches
-``ll.address_of_symbol`` to confirm the fallback to ``strerror_r`` works. The musl path is independently
-verified by a small Alpine-container CI job that uses ``nm`` to confirm ``strerror_r`` is present in the
-libc shared object. See module docstrings below for caller idioms.
+The Linux selector logic is verified by an IR-inspection test (Linux-only) that monkeypatches
+``ll.address_of_symbol`` to drive the fallback branch. The musl symbol layout is independently verified
+by a small Alpine-container CI job that confirms (a) musl exports ``strerror_r``, (b) musl ALSO exports
+``__xpg_strerror_r``, and (c) both names resolve to the same address (i.e. the weak alias holds).
+
+Example — render the message for ``ENOENT`` (errno 2 on POSIX) into a buffer:
+
+.. code-block:: python
+
+    import errno
+    import numpy as np
+    from numba import njit
+    from numbox.core.bindings import strerror_safe
+    from numbox.utils.lowlevel import array_data_p
+
+    @njit(cache=True)
+    def explain(errnum, buf):
+        rc = strerror_safe(errnum, array_data_p(buf), buf.size)
+        return rc
+
+    buf = np.zeros(128, dtype=np.uint8)
+    rc = explain(errno.ENOENT, buf)
+    msg = bytes(buf[:buf.tolist().index(0)]).decode()
+    # rc == 0; msg is the (locale-dependent) string for ENOENT
 
 Modules
 ++++++++
