@@ -142,6 +142,106 @@ Example — render the message for ``ENOENT`` (errno 2 on POSIX) into a buffer:
     msg = bytes(buf[:buf.tolist().index(0)]).decode()
     # rc == 0; msg is the (locale-dependent) string for ENOENT
 
+Variadic formatted I/O — printf / fprintf / snprintf
+++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+``printf``, ``fprintf``, and ``snprintf`` are exposed as ``@intrinsic``
+shells over `numba.core.cgutils.printf and snprintf
+<https://github.com/numba/numba/blob/main/numba/core/cgutils.py>`_ —
+numba's own internal variadic-call codegen helpers, which the bindings
+delegate to. The LLVM backend handles the platform-specific variadic ABI
+(SysV x86-64 ``AL``-register convention, Win64 FP shadow, AAPCS64 named/
+anonymous split) automatically; the binding handles only C default-argument
+promotion and the pointer-as-``intp`` shape that numbox uses throughout.
+
+**Call convention.** Numba's ``@intrinsic`` doesn't accept Python-level
+``*args``, so the variadic arguments are passed as a **tuple literal** —
+the same idiom ``_call_lib_func`` uses elsewhere in the package::
+
+    printf("x = %d, ratio = %.3f\n", (n, ratio))
+    fprintf(stderr(), "warning: %s\n", (msg_p,))
+    snprintf(array_data_p(buf), buf.size, "[%d:%d]", (lo, hi))
+    printf("no args here\n", ())
+
+**Format string must be a literal.** Required to embed it as an IR global
+constant at typing time, the same constraint numba's internal debug
+``printf`` operates under. A runtime-built ``unicode`` raises a clean
+``TypingError`` at call typing time. This is identical to the C compile-time
+expectation for format-string-attribute-checked functions.
+
+**C ABI default-argument promotion (handled by the binding):**
+
+============   ============================
+Numba type     Promoted to (in varargs slot)
+============   ============================
+``float32``    ``float64`` (``fpext``)
+``int8``       ``int32`` (``sext``)
+``int16``      ``int32`` (``sext``)
+``uint8``      ``int32`` (``zext``)
+``uint16``     ``int32`` (``zext``)
+``int32``      pass through
+``int64``      pass through
+``uint32``     pass through
+``uint64``     pass through
+``float64``    pass through
+``intp``       pass through (use ``%s`` for char-pointer, ``%lld``/``%p`` for the integer)
+============   ============================
+
+The user is responsible for matching format specifiers to argument types
+the same way a C programmer is. For example, ``%lld`` for ``int64`` on
+LP64; ``%d`` for ``int32``; ``%s`` for an ``intp`` from ``get_unicode_data_p``;
+``%.3f`` for ``float64`` or ``float32`` (both promote to ``double``).
+
+**Stdout buffering.** ``stdout`` is line-buffered when attached to a terminal
+and block-buffered when redirected (a pipe, file, or pytest's ``capfd``
+capture). Add an explicit ``fflush(stdout())`` after a ``printf`` if you
+need the output to appear before the process exits. ``stderr`` is
+traditionally unbuffered; ``fflush(stderr())`` is harmless.
+
+**Caching.** ``@njit(cache=True)`` callers of ``printf`` / ``fprintf`` /
+``snprintf`` cache cleanly across processes: each call site emits a
+direct extern reference to the libc symbol and a deterministic format-
+string global constant. The JIT linker resolves the libc symbol at link
+time in each process, so the cached IR is ASLR-safe. No
+``cres_cacheable`` indirection is needed (unlike the fixed-arg bindings,
+these never route through a numba dispatcher whose ``id`` would be
+ASLR-randomized).
+
+Example — log to stderr with `fprintf(3) <https://man7.org/linux/man-pages/man3/fprintf.3.html>`_:
+
+.. code-block:: python
+
+    from numba import njit
+    from numbox.core.bindings import fprintf, fflush, stderr
+    from numbox.utils.lowlevel import get_unicode_data_p
+
+    @njit(cache=True)
+    def warn(code, msg_p):
+        fprintf(stderr(), "warning code=%d: %s\n", (code, msg_p))
+        fflush(stderr())
+
+    warn(7, get_unicode_data_p("disk getting full"))
+
+Example — format into a buffer with `snprintf(3) <https://man7.org/linux/man-pages/man3/snprintf.3.html>`_,
+detect truncation, decode:
+
+.. code-block:: python
+
+    import numpy as np
+    from numba import njit
+    from numbox.core.bindings import snprintf
+    from numbox.utils.lowlevel import array_data_p
+
+    @njit(cache=True)
+    def fmt_range(lo, hi, buf):
+        return snprintf(array_data_p(buf), buf.size, "[%d:%d]", (lo, hi))
+
+    buf = np.zeros(64, dtype=np.uint8)
+    n = fmt_range(7, 11, buf)
+    if n >= buf.size:
+        pass  # truncated; bytes(buf[:buf.size - 1]) is the partial result
+    msg = bytes(buf[:n]).decode()  # "[7:11]"
+
 Modules
 ++++++++
 
@@ -181,6 +281,14 @@ numbox.core.bindings._strerror
 ------------------------------
 
 .. automodule:: numbox.core.bindings._strerror
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+numbox.core.bindings._fmtio
+---------------------------
+
+.. automodule:: numbox.core.bindings._fmtio
    :members:
    :show-inheritance:
    :undoc-members:
