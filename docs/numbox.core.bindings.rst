@@ -238,9 +238,26 @@ detect truncation, decode:
 
     buf = np.zeros(64, dtype=np.uint8)
     n = fmt_range(7, 11, buf)
-    if n >= buf.size:
-        pass  # truncated; bytes(buf[:buf.size - 1]) is the partial result
-    msg = bytes(buf[:n]).decode()  # "[7:11]"
+    # Portable truncation check (works on Linux/macOS C99 snprintf
+    # *and* Windows MSVCRT _snprintf — see snprintf docstring):
+    truncated = (n < 0) or (n >= buf.size)
+    if not truncated:
+        msg = bytes(buf[:n]).decode()  # "[7:11]"
+
+.. warning::
+   ``snprintf`` truncation semantics **diverge on Windows**. POSIX / C99
+   ``snprintf`` returns the would-have-written count (excluding NUL) and
+   always NUL-terminates the buffer when ``size > 0``. The Windows
+   binding delegates through numba's ``cgutils.snprintf``, which resolves
+   to MSVCRT's `_snprintf
+   <https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/snprintf-snprintf-snprintf-l-snwprintf-snwprintf-l>`_
+   — that returns ``-1`` on truncation and does NOT guarantee
+   NUL-termination of the buffer. We attempted to bypass this by
+   declaring UCRT's C99 ``snprintf`` directly, but the call crashed with
+   an access violation: UCRT exports a header-inline wrapper whose
+   in-process shape does not match the naive ``declare i32 @snprintf(...)``
+   LLVM declaration. The portable check
+   ``(rc < 0) or (rc >= size)`` works on every platform.
 
 Modules
 ++++++++

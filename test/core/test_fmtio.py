@@ -213,9 +213,11 @@ def test_fprintf_to_stdout(capfd):
 
 
 def test_snprintf_basic():
+    """A fits-in-buffer call writes the expected bytes and returns the
+    written-count (excluding NUL). This part of the contract is identical
+    across all platforms."""
     buf = np.zeros(64, dtype=np.uint8)
     rc = _snprintf_into(buf, 7, 11)
-    # rc is the count that WOULD have been written (excluding NUL).
     assert rc == len("[7:11]"), rc
     nul = buf.tolist().index(0)
     assert bytes(buf[:nul]) == b"[7:11]"
@@ -230,19 +232,43 @@ def test_snprintf_no_args():
 
 
 def test_snprintf_truncation_detection():
-    """snprintf returns the count it WOULD have written if size were
-    unlimited. Caller detects truncation via rc >= size. The actually-
-    written portion is always NUL-terminated when size > 0."""
+    """snprintf truncation behavior diverges by platform — see the
+    snprintf docstring in numbox/core/bindings/_fmtio.py.
+
+    - **Linux/macOS** (POSIX/C99 ``snprintf``): ``rc`` is the would-have-
+      written count (excluding NUL); ``rc >= size`` signals truncation;
+      the buffer is always NUL-terminated when ``size > 0``.
+    - **Windows** (MSVCRT ``_snprintf``, what numba's ``cgutils.snprintf``
+      resolves to): ``rc < 0`` signals truncation; the buffer is NOT
+      guaranteed to be NUL-terminated. The would-have-written count is
+      not recoverable.
+
+    The portable check ``(rc < 0) or (rc >= size)`` works on both."""
     buf = np.full(5, 0xFF, dtype=np.uint8)  # 0xFF pre-fill catches no-write
     rc = _snprintf_into(buf, 12345, 67890)
     full_msg = b"[12345:67890]"  # 13 bytes
-    assert rc == len(full_msg), rc
-    assert rc >= buf.size, "expected truncation indicator (rc >= size)"
-    # NUL must land within the buffer (snprintf always NUL-terminates when
-    # size > 0). The truncated prefix is the first size-1 bytes.
-    assert buf[-1] == 0, f"snprintf must NUL-terminate; got {buf.tolist()!r}"
-    truncated = bytes(buf[:buf.size - 1])
-    assert truncated == full_msg[:buf.size - 1], (truncated, full_msg)
+
+    # Portable truncation signal — must hold on every platform.
+    truncated = (rc < 0) or (rc >= buf.size)
+    assert truncated, (
+        f"expected truncation indicator: rc={rc}, buf.size={buf.size}"
+    )
+
+    if platform_ == "Windows":
+        # MSVCRT _snprintf returns -1 on truncation; no NUL-term guarantee.
+        assert rc == -1, f"Windows _snprintf returns -1 on truncation; got {rc}"
+        # buf[-1] is not guaranteed to be 0; don't assert on it.
+    else:
+        # POSIX/C99 snprintf returns the would-have-written count and
+        # always NUL-terminates within the buffer.
+        assert rc == len(full_msg), rc
+        assert buf[-1] == 0, (
+            f"snprintf must NUL-terminate on POSIX; got {buf.tolist()!r}"
+        )
+        truncated_prefix = bytes(buf[:buf.size - 1])
+        assert truncated_prefix == full_msg[:buf.size - 1], (
+            truncated_prefix, full_msg
+        )
 
 
 def test_printf_non_literal_format_raises():

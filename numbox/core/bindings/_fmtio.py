@@ -50,7 +50,7 @@ from llvmlite import ir as llir
 from numba.core import cgutils
 from numba.core.cgutils import get_or_insert_function
 from numba.core.errors import TypingError
-from numba.core.types import BaseTuple, Float, Integer, Literal, int32, intp
+from numba.core.types import BaseTuple, Float, Integer, Literal, int32
 from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import load_lib
@@ -185,16 +185,34 @@ def snprintf(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
     ``size`` is the buffer size in bytes (``intp``). ``fmt`` must be a literal
     Python string. ``args`` is a tuple of values (use ``()`` for zero args).
 
-    Returns the number of characters that WOULD have been written if ``size``
-    were unlimited, NOT counting the trailing NUL (``int32``). Caller can
-    detect truncation by comparing ``rc >= size``. When ``size > 0``, the
-    written portion is always NUL-terminated.
+    **Return value differs by platform**:
+
+    - **Linux glibc, Linux musl, macOS**: C99 / POSIX semantics. Returns the
+      number of characters that WOULD have been written if ``size`` were
+      unlimited, NOT counting the trailing NUL. The written portion is
+      always NUL-terminated when ``size > 0``. Detect truncation via
+      ``rc >= size``.
+    - **Windows**: MSVCRT ``_snprintf`` semantics (what numba's underlying
+      ``cgutils.snprintf`` codegen helper resolves to). Returns the number
+      of bytes written on success (excluding NUL), or **-1 on truncation**.
+      The buffer is **not guaranteed to be NUL-terminated** when truncated.
+      Detect truncation via ``rc < 0``. This non-C99 behavior is inherited
+      from numba's choice of the MSVCRT-compatible symbol; calling UCRT's
+      C99-compliant ``snprintf`` directly via the JIT linker turned out
+      to crash with an access violation (the actual UCRT export shape is
+      not what one would naively expect from the C99 headers).
+
+    A portable "did it fit?" check that works on every supported platform::
+
+        n = snprintf(array_data_p(buf), buf.size, fmt, args)
+        truncated = (n < 0) or (n >= buf.size)
 
     Example::
 
         buf = np.zeros(64, dtype=np.uint8)
         n = snprintf(array_data_p(buf), buf.size, "[%d:%d]", (lo, hi))
-        # n < buf.size: no truncation; bytes(buf[:n]) is the message
+        # On Linux/macOS: n < buf.size means no truncation; bytes(buf[:n]) is the message.
+        # On Windows: n >= 0 means no truncation; bytes(buf[:n]) is the message.
     """
     fmt_str = _literal_format_or_raise("snprintf", fmt_ty)
     if not isinstance(args_ty, BaseTuple):
@@ -203,29 +221,20 @@ def snprintf(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
         )
 
     def codegen(context, builder, sig, llvm_args):
-        # Deliberately do NOT delegate to cgutils.snprintf: on Windows, the
-        # numba helper resolves to "_snprintf" (the legacy MSVCRT symbol,
-        # which returns -1 on truncation instead of the C99 "would have
-        # written" count, and may not NUL-terminate). We declare plain
-        # "snprintf" instead — UCRT exports it as the C99-compliant
-        # implementation, present on Windows 10+ (already numbox's
-        # documented support floor for the rest of the stdio surface).
-        # On Linux glibc/musl and macOS, "snprintf" is the standard symbol.
+        # Delegate to numba's cgutils.snprintf — it resolves to "snprintf"
+        # on Linux/macOS (C99 semantics) and to "_snprintf" on Windows
+        # (MSVCRT legacy semantics). Attempting to override the Windows
+        # symbol to plain "snprintf" (the UCRT C99-compliant version)
+        # produced an access violation in CI; the UCRT export is not in
+        # the simple C-callable shape that a `declare i32 @snprintf(...)`
+        # LLVM declaration would link to. The docstring documents the
+        # resulting per-platform contract divergence.
         i8p = llir.IntType(8).as_pointer()
-        i32_ll = llir.IntType(32)
-        mod = builder.module
         buf_int, size_val, _, args_pack = llvm_args
         buf_ptr = builder.inttoptr(buf_int, i8p)
-        intp_ll = context.get_value_type(intp)
         unpacked = _unpack_args_tuple(builder, args_ty, args_pack)
         promoted = [_promote_for_varargs(builder, t, v) for t, v in unpacked]
-        fmt_bytes = cgutils.make_bytearray((fmt_str + '\x00').encode('ascii'))
-        global_fmt = cgutils.global_constant(mod, "snprintf_format", fmt_bytes)
-        fmt_p = builder.bitcast(global_fmt, i8p)
-        fn_ty = llir.FunctionType(
-            i32_ll, [i8p, intp_ll, i8p], var_arg=True,
-        )
-        fn = get_or_insert_function(mod, fn_ty, "snprintf")
-        return builder.call(fn, [buf_ptr, size_val, fmt_p] + promoted)
+        return cgutils.snprintf(
+            builder, buf_ptr, size_val, fmt_str, *promoted)
 
     return int32(buf_ty, size_ty, fmt_ty, args_ty), codegen
