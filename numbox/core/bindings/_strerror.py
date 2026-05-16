@@ -59,6 +59,15 @@ def _select_posix_symbol():
 
 @intrinsic
 def _strerror_safe(typingctx, errnum_ty, buf_ty, buflen_ty):
+    # The underlying libc signatures (strerror_r, __xpg_strerror_r,
+    # strerror_s) all take a 32-bit int for errnum. Enforce int32 at
+    # typing time so a future caller that drops the explicit cast in
+    # the public strerror_safe wrapper gets a clean TypingError instead
+    # of an opaque IR-lowering type-mismatch. Mirrors the defensive
+    # guard in _store_int32_at (numbox/core/bindings/_errno.py).
+    if errnum_ty != int32:
+        raise TypingError(
+            f"_strerror_safe: errnum must be int32, got {errnum_ty!r}")
     if platform_ == "Windows":
         sym = "strerror_s"
     else:

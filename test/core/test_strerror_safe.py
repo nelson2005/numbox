@@ -129,6 +129,25 @@ def test_strerror_safe_two_threads_no_contamination():
     assert results[0][1] != results[1][1]
 
 
+def test_strerror_safe_rejects_int64_errnum():
+    """The private _strerror_safe intrinsic requires int32 errnum at typing
+    time. The user-facing strerror_safe wrapper casts to int32 first, so
+    this guard only fires on direct misuse — defensive parallel to the
+    _store_int32_at guard in _errno.py.
+    """
+    from numba.core.errors import TypingError
+    from numbox.core.bindings._strerror import _strerror_safe
+
+    @njit
+    def caller(errnum, buf, buflen):
+        # errnum arrives as int64 (Python default); no cast — should fail
+        return _strerror_safe(errnum, buf, buflen)
+
+    buf = np.zeros(64, dtype=np.uint8)
+    with pytest.raises(TypingError, match=r"_strerror_safe.*int32"):
+        caller(np.int64(2), array_data_p(buf), buf.size)
+
+
 @pytest.mark.skipif(platform_ != "Linux", reason="glibc-only IR-inspection probe")
 def test_strerror_safe_ir_uses_strerror_r_when_xpg_absent(monkeypatch):
     import llvmlite.binding as ll
