@@ -1,9 +1,23 @@
 """libc wrappers callable from numba `@njit` code.
 
-Every binding here uses extern-symbol references via `_call_lib_func`, so
-`@njit(cache=True)` callers cache correctly under ASLR. Pointer arguments
-are typed as `intp` — caller is responsible for liveness, alignment, and
-ownership of the underlying memory.
+Every binding here uses extern-symbol references via `_call_lib_func`, so the
+ABI dispatch is ASLR-safe. Pointer arguments are typed as `intp` — caller is
+responsible for liveness, alignment, and ownership of the underlying memory.
+
+**Cacheability** is per-binding:
+
+- Wrappers decorated with `@cres_cacheable` (everything below other than
+  `rand`/`srand`/`strlen`) are safe to reference from a user
+  `@njit(cache=True)` caller — the named-LLVM-global indirection in
+  `cres_cacheable` ensures cached caller IR re-resolves the function
+  pointer per process under ASLR.
+- Wrappers still decorated with plain `@cres` (`rand`, `srand`, `strlen` —
+  retained for backward compatibility with pre-`cres_cacheable` consumers)
+  fall through `numba.experimental.function_type.lower_constant_function_type`
+  → `add_dynamic_addr`, which sets `has_dynamic_globals` on the caller and
+  disables that caller's cache. Convert to `@cres_cacheable` if cacheability
+  matters; see `test_plain_cres_caller_trips_dynamic_globals` in
+  `test/utils/test_highlevel.py` for the negative-control proof.
 
 Authoritative references for each binding's semantics:
 

@@ -238,6 +238,10 @@ def fprintf(typingctx, fp_ty, fmt_ty, args_ty):
         fprintf(stderr(), "error %d: %s\\n", (code, msg_p))
     """
     fmt_str = _require_literal_fmt_and_tuple_args("fprintf", fmt_ty, args_ty)
+    if fp_ty != intp:
+        raise TypingError(
+            f"fprintf: fp must be intp (FILE* as pointer-as-int), got {fp_ty!r}"
+        )
 
     def codegen(context, builder, sig, llvm_args):
         i8p = llir.IntType(8).as_pointer()
@@ -280,7 +284,10 @@ def sscanf(typingctx, buf_ty, fmt_ty, args_ty):
     ``%f``        ``float32`` (4 bytes — NOT double; ``%lf`` for double)
     ``%lf``       ``float64`` (8 bytes)
     ``%s``        ``char`` array (caller must ensure adequate size + NUL room)
-    ``%n``        forbidden (security hole, glibc disables in fortified builds)
+    ``%n``        caller-managed; the binding does not parse the format string,
+                  so libc's own behavior applies (glibc fortified builds disable
+                  ``%n`` in the printf family; scanf's ``%n`` writes the consumed
+                  byte count through the corresponding output pointer)
     ===========   ====================================
 
     The ``%ld`` row is the most common cross-platform footgun and the
@@ -378,6 +385,14 @@ def snprintf(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
         # On Windows: n >= 0 means no truncation; bytes(buf[:n]) is the message.
     """
     fmt_str = _require_literal_fmt_and_tuple_args("snprintf", fmt_ty, args_ty)
+    if buf_ty != intp:
+        raise TypingError(
+            f"snprintf: buf must be intp (pointer-as-int), got {buf_ty!r}"
+        )
+    if size_ty != intp:
+        raise TypingError(
+            f"snprintf: size must be intp (size_t-as-int), got {size_ty!r}"
+        )
 
     def codegen(context, builder, sig, llvm_args):
         i8p = llir.IntType(8).as_pointer()

@@ -118,9 +118,10 @@ weak alias). A ``strerror_r`` fallback remains in the selector as defense-in-dep
 libc drops ``__xpg_strerror_r``, but the fallback is currently unreachable on every supported libc.
 
 The Linux selector logic is verified by an IR-inspection test (Linux-only) that monkeypatches
-``ll.address_of_symbol`` to drive the fallback branch. The musl symbol layout is independently verified
-by a small Alpine-container CI job that confirms (a) musl exports ``strerror_r``, (b) musl ALSO exports
-``__xpg_strerror_r``, and (c) both names resolve to the same address (i.e. the weak alias holds).
+``ll.address_of_symbol`` to drive the fallback branch. The musl symbol layout (``strerror_r``
+and ``__xpg_strerror_r`` both exported, both resolving to the same address via musl's weak
+alias) is a runtime invariant the binding depends on; downstream forks may wish to add an
+Alpine-container CI canary that pins the assumption via ``nm -D``.
 
 Example — render the message for ``ENOENT`` (errno 2 on POSIX) into a buffer:
 
@@ -303,7 +304,10 @@ Format spec        Required output points at
 ``%f``             ``float32`` (4 bytes — NOT double, ``%lf`` is for that)
 ``%lf``            ``float64`` (8 bytes)
 ``%s``             ``char`` buffer (caller responsible for size + NUL room)
-``%n``             forbidden; security hole disabled in fortified builds
+``%n``             caller-managed; the binding does not parse the format string, so libc's own
+                   behavior applies (glibc fortified builds disable ``%n`` in the printf family;
+                   ``sscanf`` interprets ``%n`` as "write byte-count consumed so far to the
+                   corresponding output pointer")
 ================   =============================================
 
 The ``%ld`` row is the most common cross-platform footgun and the

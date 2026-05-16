@@ -60,7 +60,9 @@ def test_icall_rejects_wrong_arg_count_tuple():
 def test_icall_rejects_wrong_arg_count_scalar():
     """When the sig has 2+ args and the caller passes a non-tuple second arg,
     _icall reports an arity mismatch (n_args==1 path) rather than silently
-    miscompiling."""
+    miscompiling. The error message reports the sig's expected arity AND
+    the actual arg count in the right direction (an earlier version had
+    them swapped)."""
     icall = _make_icall_for_sig(types.int32(types.int64, types.int64))  # expects 2 args
 
     @njit
@@ -68,8 +70,70 @@ def test_icall_rejects_wrong_arg_count_scalar():
         # _icall(addr, scalar) — non-tuple, but sig wants 2 args
         return icall(0, np.int64(5))
 
-    with pytest.raises(TypingError, match=r"_icall.*expected 1 argument"):
+    with pytest.raises(
+        TypingError, match=r"_icall.*expected 2 arguments, got 1",
+    ):
         caller()
+
+
+def test_store_addr_rejects_non_intp_value():
+    """_store_addr_to_named_global stores into an intp-sized global; if a
+    caller passes an int32 (or other-width integer) the IR's builder.store
+    would fail with a type-mismatch error during lowering rather than the
+    clean TypingError this typing-time guard provides."""
+    @njit
+    def caller():
+        # Passing an int32 value where intp is required
+        _store_addr_to_named_global("test_global", np.int32(42))
+
+    with pytest.raises(TypingError, match=r"_store_addr_to_named_global.*intp"):
+        caller()
+
+
+def test_cres_cacheable_global_name_distinguishes_nested_functions():
+    """Two functions with the same __module__ + __name__ but distinct
+    __qualname__ (e.g. nested helpers from different outer scopes) must
+    get distinct LLVM global symbols. Without __qualname__ in the FQN,
+    the second cres_cacheable setup would overwrite the first's address
+    slot and indirect callers would invoke the wrong function pointer."""
+    from numbox.utils.highlevel import _cres_cacheable_global_name
+
+    def outer_a():
+        def impl():
+            pass
+        return impl
+
+    def outer_b():
+        def impl():
+            pass
+        return impl
+
+    impl_a = outer_a()
+    impl_b = outer_b()
+    # Both impl_a and impl_b have __name__ == "impl" and the same
+    # __module__ — only __qualname__ distinguishes them.
+    assert impl_a.__name__ == impl_b.__name__ == "impl"
+    assert impl_a.__module__ == impl_b.__module__
+    assert impl_a.__qualname__ != impl_b.__qualname__
+    name_a = _cres_cacheable_global_name(impl_a)
+    name_b = _cres_cacheable_global_name(impl_b)
+    assert name_a != name_b, (
+        f"distinct nested functions got identical global symbol {name_a!r}"
+    )
+
+
+def test_cres_cacheable_rejects_non_signature():
+    """cres_cacheable mirrors cres's upfront Signature validation, so a
+    typo like signatures.get('does_not_exist') (which returns None)
+    fails with a clean ValueError naming the binding instead of an
+    AttributeError on `sig.args` at import time."""
+    from numbox.utils.highlevel import cres_cacheable
+
+    with pytest.raises(ValueError, match=r"cres_cacheable.*Signature"):
+        cres_cacheable(None)
+
+    with pytest.raises(ValueError, match=r"cres_cacheable.*Signature"):
+        cres_cacheable("not a signature")
 
 
 def test_make_icall_for_sig_is_memoized():

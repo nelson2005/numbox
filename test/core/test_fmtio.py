@@ -373,6 +373,44 @@ def test_printf_non_tuple_args_raises():
         caller()
 
 
+def test_fprintf_rejects_non_intp_fp():
+    """fprintf's FILE* arg must be intp (pointer-as-int). Passing a wider
+    or narrower type produces a clean TypingError instead of an opaque
+    inttoptr/IR-lowering failure that would either truncate the address
+    or produce malformed IR."""
+    @njit
+    def caller():
+        # np.float64 in the FILE* slot — definitely not an intp pointer
+        return fprintf(np.float64(0.0), "x\n", ())
+
+    with pytest.raises(TypingError, match=r"fprintf.*fp.*intp"):
+        caller()
+
+
+def test_snprintf_rejects_non_intp_buf():
+    """snprintf's destination buffer pointer must be intp."""
+    @njit
+    def caller():
+        return snprintf(np.float64(0.0), 32, "x", ())
+
+    with pytest.raises(TypingError, match=r"snprintf.*buf.*intp"):
+        caller()
+
+
+def test_snprintf_rejects_non_intp_size():
+    """snprintf's size must be intp (size_t-as-int). Passing a narrower
+    integer would declare the libc snprintf with the wrong size_t width
+    in the LLVM IR signature, corrupting the variadic ABI on 64-bit
+    platforms."""
+    @njit
+    def caller(buf_p):
+        return snprintf(buf_p, np.int32(32), "x", ())
+
+    with pytest.raises(TypingError, match=r"snprintf.*size.*intp"):
+        # need a valid intp for buf so the failure is on size, not buf
+        caller(np.intp(0))
+
+
 # ============================================================================
 # sscanf
 # ============================================================================

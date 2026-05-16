@@ -54,6 +54,15 @@ def _store_addr_to_named_global(typingctx, name_ty, val_ty):
     """Store an ``intp`` into a named LLVM global addressed by literal name."""
     if not isinstance(name_ty, Literal):
         raise TypingError("_store_addr_to_named_global: name must be a literal string")
+    # The named global is created with i64/intp storage in codegen below.
+    # Validate val_ty == intp at typing time so callers passing a wider/
+    # narrower integer get a clean TypingError rather than an opaque
+    # IR-lowering type-mismatch in builder.store. Mirrors the load side
+    # (whose signature already pins intp) and the typing pattern used by
+    # _store_int32_at in numbox/core/bindings/_errno.py.
+    if val_ty != intp:
+        raise TypingError(
+            f"_store_addr_to_named_global: val must be intp, got {val_ty!r}")
     name = name_ty.literal_value
 
     def codegen(context, builder, sig, args):
@@ -102,12 +111,19 @@ def _make_icall_for_sig(sig):
             n = len(tuple(args_ty))
             is_tuple = True
             if n != len(arg_tys):
-                raise TypingError(f"_icall: expected {len(arg_tys)} arguments, got {n}")
+                raise TypingError(
+                    f"_icall: expected {len(arg_tys)} arguments, got {n}")
         else:
             n = 1
             is_tuple = False
             if len(arg_tys) != 1:
-                raise TypingError(f"_icall: expected 1 argument, got {len(arg_tys)}")
+                # caller passed a single scalar; sig wants len(arg_tys) args.
+                # The "got 1" is the scalar; the "expected N" is the sig's
+                # arity. Earlier versions of this error swapped these and
+                # confused users about which side was wrong.
+                raise TypingError(
+                    f"_icall: expected {len(arg_tys)} arguments, got 1 "
+                    f"(pass multiple arguments as a tuple)")
 
         def codegen(context, builder, signature, arguments):
             addr = arguments[0]

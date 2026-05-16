@@ -1,5 +1,4 @@
 import errno
-import os
 
 import numpy as np
 import pytest
@@ -205,26 +204,37 @@ def _env_lookup(name):
     return getenv(get_unicode_data_p(name))
 
 
-def test_c_env():
+def test_c_env(monkeypatch):
     """getenv contract: returns a pointer to the environ-table string for set
     variables and 0 for unset variables. Verify both the presence/absence
     distinction AND that the returned pointer dereferences to the correct
     value — a stale or wrong-variable pointer would slip past an address-only
-    check."""
-    path_p = _env_lookup("PATH")
-    assert path_p != 0, "getenv returned 0 for PATH (which should be set)"
+    check.
+
+    Uses a dedicated test-controlled env var (set via the pytest
+    ``monkeypatch`` fixture, auto-restored on teardown) rather than the
+    ambient ``PATH`` — hermetic CI runners can clear ``PATH``, and a
+    test that depends on process-global state outside its own control
+    fails for the wrong reason.
+    """
+    var_name = "NUMBOX_TEST_GETENV_VAR"
+    var_value = "numbox-getenv-roundtrip-sentinel-7d4f1c"
+    monkeypatch.setenv(var_name, var_value)
+
+    found_p = _env_lookup(var_name)
+    assert found_p != 0, (
+        f"getenv returned 0 for {var_name} (which was just set to {var_value!r})"
+    )
     assert _env_lookup("NUMBOX_NONEXISTENT_XYZZY") == 0, (
         "getenv returned non-zero for a deliberately-unset variable"
     )
-    # Dereference the returned pointer and compare to Python's view of PATH.
+    # Dereference the returned pointer and compare to the sentinel we set.
     # Any regression that returns the wrong variable's pointer (or a stale
     # one) would diverge here.
-    expected = os.environ.get("PATH", "")
-    assert expected != "", "PATH unset in test environment — cannot verify"
-    got = get_str_from_p_as_int(path_p)
-    assert got == expected, (
-        f"getenv('PATH') returned a pointer to {got!r}; "
-        f"os.environ['PATH'] is {expected!r}"
+    got = get_str_from_p_as_int(found_p)
+    assert got == var_value, (
+        f"getenv({var_name!r}) returned a pointer to {got!r}; "
+        f"expected {var_value!r}"
     )
 
 

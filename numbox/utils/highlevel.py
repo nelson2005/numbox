@@ -48,16 +48,20 @@ def cres(sig, **kwargs):
 def _cres_cacheable_global_name(func):
     """Stable cross-process LLVM-global symbol for ``func``'s entry-point address.
 
-    The dot-qualified ``<module>.<name>`` goes in plaintext so the symbol is
-    readable in a debugger / ``nm`` output; a 16-hex sha256 suffix of the same
-    FQN forces injectivity against any pathological ``__name__`` (lambdas,
-    nested ``<locals>`` qualnames, monkey-patched attributes) where the
-    plaintext alone could otherwise collide. ``.`` is a legal character in
-    LLVM identifiers and in ELF / Mach-O / PE-COFF symbol tables.
+    Uses ``__qualname__`` (not just ``__name__``) so that nested helpers like
+    ``outer.<locals>.inner`` or two methods of distinct classes named ``impl``
+    in the same module each get a distinct symbol. The full qualname goes
+    into the sha256 input (which is what guarantees injectivity); the
+    plaintext part of the symbol embeds a sanitized qualname (``<`` and ``>``
+    are not legal in unquoted LLVM identifiers, so we replace them with
+    ``_``) so the symbol stays human-readable in ``nm`` / debugger output.
+    ``.`` is a legal character in LLVM identifiers and in ELF / Mach-O /
+    PE-COFF symbol tables.
     """
-    fqn = f"{func.__module__}.{func.__name__}"
-    digest = hashlib.sha256(fqn.encode("utf-8")).hexdigest()[:16]
-    return f"_numbox_cres_cacheable_addr_{fqn}_{digest}"
+    fqn_full = f"{func.__module__}.{func.__qualname__}"
+    fqn_safe = fqn_full.replace("<", "_").replace(">", "_")
+    digest = hashlib.sha256(fqn_full.encode("utf-8")).hexdigest()[:16]
+    return f"_numbox_cres_cacheable_addr_{fqn_safe}_{digest}"
 
 
 def cres_cacheable(sig, **njit_kwargs):
@@ -92,6 +96,11 @@ def cres_cacheable(sig, **njit_kwargs):
     See ``numbox/utils/_addr_global.py`` for the underlying intrinsics and
     the CRE pattern they're adapted from.
     """
+    if not isinstance(sig, Signature):
+        raise ValueError(
+            f"cres_cacheable: expected a single Signature, found "
+            f"{sig!r} of type {type(sig).__name__}"
+        )
     njit_kwargs.setdefault("cache", True)
     arg_tys = tuple(sig.args)
     n_args = len(arg_tys)
