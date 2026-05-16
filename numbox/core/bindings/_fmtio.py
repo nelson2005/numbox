@@ -69,7 +69,9 @@ from llvmlite import ir as llir
 from numba.core import cgutils
 from numba.core.cgutils import get_or_insert_function
 from numba.core.errors import TypingError
-from numba.core.types import BaseTuple, Float, Integer, Literal, int32, intp
+from numba.core.types import (
+    BaseTuple, Boolean, Float, Integer, Literal, int32, intp,
+)
 from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import load_lib, platform_
@@ -93,14 +95,24 @@ _SNPRINTF_SYMBOL = "_snprintf" if platform_ == "Windows" else "snprintf"
 def _promote_for_varargs(builder, arg_ty, arg_val):
     """Apply C default argument promotion for variadic arg passing.
 
-    float32 → double (fpext); int8/int16 → int32 (sext if signed, zext if
-    unsigned). Larger or already-promoted types pass through. This matches
-    what a C compiler does when an arg is passed to a variadic function.
+    - ``float32`` → ``double`` (``fpext``)
+    - ``bool`` → ``int32`` (``zext``; the numba ``Boolean`` type is a sibling
+      of ``Integer`` in the numba type hierarchy, not a subclass, so it has
+      to be handled explicitly — without this, a ``bool`` value lands in a
+      variadic slot as i8 and printf reading ``%d`` would see 3 bytes of
+      garbage in the high bits)
+    - ``int8`` / ``int16`` → ``int32`` (``sext`` if signed, ``zext`` if unsigned)
+    - Larger or already-promoted types pass through.
+
+    Matches what a C compiler does when an arg is passed to a variadic
+    function.
     """
+    i32_ll = llir.IntType(32)
     if isinstance(arg_ty, Float) and arg_ty.bitwidth == 32:
         return builder.fpext(arg_val, llir.DoubleType())
+    if isinstance(arg_ty, Boolean):
+        return builder.zext(arg_val, i32_ll)
     if isinstance(arg_ty, Integer) and arg_ty.bitwidth < 32:
-        i32_ll = llir.IntType(32)
         if arg_ty.signed:
             return builder.sext(arg_val, i32_ll)
         return builder.zext(arg_val, i32_ll)
@@ -252,15 +264,19 @@ def sscanf(typingctx, buf_ty, fmt_ty, args_ty):
     ``%hhd``      ``int8`` (1 byte)
     ``%hd``       ``int16`` (2 bytes)
     ``%d``        ``int32`` (4 bytes)
-    ``%ld``       ``int32`` on LP64-Linux, ``int32`` on Win64 (``long``)
-    ``%lld``      ``int64`` (8 bytes)
+    ``%ld``       ``int64`` on LP64 (Linux, macOS); ``int32`` on Win64 (LLP64) — ``long`` is 8 bytes on LP64 and 4 bytes on Win64
+    ``%lld``      ``int64`` (8 bytes — portable across LP64 and LLP64)
     ``%u``        ``uint32``
     ``%llu``      ``uint64``
-    ``%f``        ``float32`` (4 bytes)
+    ``%f``        ``float32`` (4 bytes — NOT double; ``%lf`` for double)
     ``%lf``       ``float64`` (8 bytes)
     ``%s``        ``char`` array (caller must ensure adequate size + NUL room)
     ``%n``        forbidden (security hole, glibc disables in fortified builds)
     ===========   ====================================
+
+    The ``%ld`` row is the most common cross-platform footgun and the
+    project's own ``CLAUDE.md`` flags it explicitly. Prefer ``%lld`` with
+    an ``int64`` output slot when you want a portable 8-byte width.
 
     Pointer-size mismatches corrupt memory silently. The binding validates
     only that each variadic arg has type ``intp`` (so you can't accidentally

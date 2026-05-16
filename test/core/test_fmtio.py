@@ -82,6 +82,16 @@ def _printf_int8():
 
 
 @njit(cache=True)
+def _printf_bool():
+    # numba's Boolean type is i8 at the LLVM level (1 or 0); without
+    # explicit promotion to i32, printf reading %d would consume the
+    # i8 plus 3 bytes of garbage in the high bits of the register slot.
+    rc = printf("[%d %d]\n", (True, False))
+    fflush(stdout())
+    return rc
+
+
+@njit(cache=True)
 def _printf_string(s_p):
     rc = printf("hi %s!\n", (s_p,))
     fflush(stdout())
@@ -203,6 +213,22 @@ def test_printf_int8_is_promoted_to_int32(capfd):
     _printf_int8()
     out, _ = capfd.readouterr()
     assert out == "[-7 42]\n", repr(out)
+
+
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level stdio writes on Windows",
+)
+def test_printf_bool_is_promoted_to_int32(capfd):
+    """C ABI default-arg promotion: numba's Boolean type is i8 at the LLVM
+    level. Without explicit zext to int32, printf reading %d would consume
+    the bool's 1 byte + 3 garbage bytes from the variadic register slot.
+    The binding's _promote_for_varargs handles Boolean explicitly because
+    numba's Boolean is NOT a subclass of Integer (they're siblings under
+    Number) — the int<32 widening branch wouldn't catch it on its own."""
+    _printf_bool()
+    out, _ = capfd.readouterr()
+    assert out == "[1 0]\n", repr(out)
 
 
 @pytest.mark.skipif(

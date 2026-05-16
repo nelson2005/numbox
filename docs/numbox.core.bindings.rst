@@ -296,7 +296,8 @@ Format spec        Required output points at
 ``%hhd``           ``int8`` (1 byte)
 ``%hd``            ``int16`` (2 bytes)
 ``%d``             ``int32`` (4 bytes)
-``%lld``           ``int64`` (8 bytes)
+``%ld``            ``int64`` on LP64 (Linux/macOS); ``int32`` on Win64 (LLP64) — ``long`` is 8 bytes on LP64 and 4 bytes on Win64
+``%lld``           ``int64`` (8 bytes — portable across LP64 and LLP64)
 ``%u``             ``uint32``
 ``%llu``           ``uint64``
 ``%f``             ``float32`` (4 bytes — NOT double, ``%lf`` is for that)
@@ -304,6 +305,10 @@ Format spec        Required output points at
 ``%s``             ``char`` buffer (caller responsible for size + NUL room)
 ``%n``             forbidden; security hole disabled in fortified builds
 ================   =============================================
+
+The ``%ld`` row is the most common cross-platform footgun and the
+project's own ``CLAUDE.md`` flags it explicitly. Prefer ``%lld`` with
+an ``int64`` output slot when you want a portable 8-byte width.
 
 Example — parse a "<int> <double>" pair into typed numpy slots:
 
