@@ -119,17 +119,32 @@ jobs:
         python -m build --wheel
 
   musl_symbol_check:
+    # Verifies the claims made in numbox/core/bindings/_strerror.py's module
+    # docstring about how strerror_r and __xpg_strerror_r are exported on musl:
+    #   1. musl exports strerror_r (the POSIX XSI implementation)
+    #   2. musl ALSO exports __xpg_strerror_r as a weak alias to strerror_r
+    #   3. Both symbols resolve to the same address (i.e. same function body)
+    # This is what makes _select_posix_symbol's "__xpg_strerror_r first" probe
+    # correct on both glibc and musl, and makes the strerror_r fallback in
+    # that selector currently-unreachable defense-in-depth.
     runs-on: ubuntu-latest
     container:
       image: alpine:3.20
     permissions:
       contents: read
     steps:
-      - name: musl symbol layout
+      - name: musl symbol layout + __xpg_strerror_r weak-alias equivalence
         shell: sh
         run: |
           apk add --no-cache binutils
           test -e /lib/ld-musl-x86_64.so.1 || (echo "no musl on this image"; exit 1)
           LIBC=/lib/ld-musl-x86_64.so.1
-          nm -D "$LIBC" | grep -E '^[0-9a-f]+ T strerror_r$' || (echo "musl strerror_r missing"; exit 1)
-          echo "musl libc has expected layout"
+          STRERROR_ADDR=$(nm -D "$LIBC" | awk '/^[0-9a-f]+ [TW] strerror_r$/ {print $1}')
+          XPG_ADDR=$(nm -D "$LIBC" | awk '/^[0-9a-f]+ [TW] __xpg_strerror_r$/ {print $1}')
+          test -n "$STRERROR_ADDR" || (echo "musl strerror_r missing"; exit 1)
+          test -n "$XPG_ADDR" || (echo "musl __xpg_strerror_r missing — _strerror.py's docstring claim about the weak alias is wrong"; exit 1)
+          if [ "$STRERROR_ADDR" != "$XPG_ADDR" ]; then
+            echo "musl strerror_r ($STRERROR_ADDR) and __xpg_strerror_r ($XPG_ADDR) resolve to different addresses — weak-alias assumption broken"
+            exit 1
+          fi
+          echo "musl libc: strerror_r and __xpg_strerror_r both at $STRERROR_ADDR (weak alias holds)"
