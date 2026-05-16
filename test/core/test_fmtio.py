@@ -108,6 +108,35 @@ def _snprintf_no_args(buf):
     return snprintf(array_data_p(buf), buf.size, "literal", ())
 
 
+# Non-ASCII format-string helpers. "café=" + "%d" + "\n": the 'é' is U+00E9,
+# which encodes as the two-byte UTF-8 sequence b"\xc3\xa9". The expected
+# rendered bytes for n=42 are b"caf\xc3\xa9=42\n" (9 bytes). With ASCII
+# encoding these helpers would have raised UnicodeEncodeError at compile
+# time, so the very fact that they compile + execute is the load-bearing
+# proof that the format-string encoding is UTF-8.
+NON_ASCII_FMT = "café=%d\n"
+NON_ASCII_EXPECTED = "café=42\n".encode("utf-8")  # b'caf\xc3\xa9=42\n'
+
+
+@njit(cache=True)
+def _printf_utf8(n):
+    rc = printf(NON_ASCII_FMT, (n,))
+    fflush(stdout())
+    return rc
+
+
+@njit(cache=True)
+def _fprintf_utf8(n):
+    rc = fprintf(stdout(), NON_ASCII_FMT, (n,))
+    fflush(stdout())
+    return rc
+
+
+@njit(cache=True)
+def _snprintf_utf8(buf, n):
+    return snprintf(array_data_p(buf), buf.size, NON_ASCII_FMT, (n,))
+
+
 @pytest.mark.skipif(
     platform_ == "Windows",
     reason="capfd does not reliably capture C-level stdio writes on Windows",
@@ -312,6 +341,49 @@ def test_printf_non_tuple_args_raises():
 
     with pytest.raises(TypingError, match=r"printf.*tuple"):
         caller()
+
+
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level stdio writes on Windows",
+)
+def test_printf_accepts_utf8_format_literal(capfd):
+    """The format string is encoded as UTF-8 at codegen time, so non-ASCII
+    literals compile cleanly and render as UTF-8 bytes through libc printf.
+    With the prior ASCII encoding this would have raised UnicodeEncodeError
+    at numbox-compile time (when numba lowers the @njit caller)."""
+    _printf_utf8(42)
+    out, _ = capfd.readouterr()
+    # capfd's readouterr() decodes stdout bytes as utf-8 by default, so we
+    # get back the original codepoints. Compare against the str form AND
+    # the underlying UTF-8 byte sequence to pin both layers.
+    assert out == "café=42\n", repr(out)
+    assert out.encode("utf-8") == NON_ASCII_EXPECTED
+
+
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level stdio writes on Windows",
+)
+def test_fprintf_accepts_utf8_format_literal(capfd):
+    _fprintf_utf8(42)
+    out, _ = capfd.readouterr()
+    assert out == "café=42\n", repr(out)
+    assert out.encode("utf-8") == NON_ASCII_EXPECTED
+
+
+def test_snprintf_accepts_utf8_format_literal():
+    """snprintf gives us byte-level access to the written buffer, so we
+    can assert the UTF-8 byte sequence directly without any decoding
+    indirection (capfd is not involved)."""
+    buf = np.zeros(32, dtype=np.uint8)
+    rc = _snprintf_utf8(buf, 42)
+    # rc semantics differ by platform (see snprintf docstring), but for a
+    # message that fits comfortably in the buffer, both platforms return
+    # the byte-count written (excluding NUL).
+    assert rc == len(NON_ASCII_EXPECTED), (rc, len(NON_ASCII_EXPECTED))
+    nul = buf.tolist().index(0)
+    assert bytes(buf[:nul]) == NON_ASCII_EXPECTED, bytes(buf[:nul])
 
 
 def test_fmtio_caller_survives_subprocess_round_trip(tmp_path):

@@ -1,17 +1,31 @@
 """Variadic formatted I/O — ``printf``, ``fprintf``, ``snprintf`` callable
 from @njit.
 
-These are thin ``@intrinsic`` shells over numba's own variadic-call codegen
-helpers in ``numba.core.cgutils``. The format string must be a
-``Literal[str]`` at the call site so it can be embedded as an IR global
-constant — the same constraint numba's internal debug ``printf`` operates
-under.
+These are ``@intrinsic`` shells that each emit a direct extern variadic
+call to libc — no delegation through ``numba.core.cgutils`` helpers, so
+the encoding and symbol choice live entirely in this module. LLVM's
+backend handles the platform-specific variadic ABI (SysV x86-64
+``AL``-register convention, Win64 FP shadow, AAPCS64 named/anonymous
+split) automatically.
+
+The format string must be a ``Literal[str]`` at the call site so it can
+be embedded as an IR global constant — the same constraint a C compiler
+operates under when emitting a format-checked printf call.
+
+**Format string encoding: UTF-8.** Modern terminals, files, and Windows
+10+ consoles all expect UTF-8, and printf treats every non-``%`` byte
+as opaque pass-through. Literal format strings can therefore contain
+arbitrary Unicode characters (``"Цена: %d\\n"``, ``"caf\\u00e9 %s"``);
+the codepoints are encoded to UTF-8 bytes once at codegen time and
+flow through libc unmodified. Note that ``%-Ns`` width is byte-counted
+by printf in every libc, so non-ASCII output won't right-pad to a
+codepoint count — that's printf's contract, not ours.
 
 User-call convention follows the same shape as ``_call_lib_func`` in this
-package: variadic args are passed as a **tuple literal**. ``@intrinsic`` does
-not accept Python-level ``*args`` (its typing-function signature drives
-numba's arg folding directly), so the tuple-as-args idiom is the standard
-numba pattern for variadic shapes::
+package: variadic args are passed as a **tuple literal**. ``@intrinsic``
+does not accept Python-level ``*args`` (its typing-function signature
+drives numba's arg folding directly), so the tuple-as-args idiom is the
+standard numba pattern for variadic shapes::
 
     printf("x = %d, y = %.3f\\n", (n, ratio))
     fprintf(stderr(), "warning: %s\\n", (msg_p,))
@@ -30,21 +44,21 @@ types the same way a C programmer is (e.g. ``%lld`` for ``int64`` on LP64,
 ``%d`` for ``int32``, ``%s`` for an ``intp`` pointing at a NUL-terminated
 C string).
 
-Caching: these intrinsics emit a direct extern call to libc ``printf`` /
-``fprintf`` / ``snprintf``. The JIT linker resolves the symbol per-process,
-the format string is a deterministic Python literal embedded as a global
-constant, and no runtime pointer is baked into the IR. So ``@njit(cache=True)``
-callers cache cleanly — no ``cres_cacheable`` indirection needed (unlike
-fixed-arg bindings, these never go through a numba dispatcher whose ``id``
-would be ASLR-randomized).
+Caching: each call site emits a direct extern reference to the libc
+symbol and a deterministic UTF-8 format-string global. The JIT linker
+resolves the libc symbol per-process, the format-string global is
+content-deterministic, and no runtime pointer is baked into the IR.
+``@njit(cache=True)`` callers cache cleanly — no ``cres_cacheable``
+indirection needed (unlike fixed-arg bindings, these never route through
+a numba dispatcher whose ``id`` would be ASLR-randomized).
 
 References:
 
-- `numba.core.cgutils.printf
-  <https://github.com/numba/numba/blob/main/numba/core/cgutils.py>`_ — the
-  underlying codegen helper this module delegates to.
 - `printf(3) <https://man7.org/linux/man-pages/man3/printf.3.html>`_
+- `fprintf(3) <https://man7.org/linux/man-pages/man3/fprintf.3.html>`_
 - `snprintf(3) <https://man7.org/linux/man-pages/man3/snprintf.3.html>`_
+- `Microsoft _snprintf
+  <https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/snprintf-snprintf-snprintf-l-snwprintf-snwprintf-l>`_
 """
 from llvmlite import ir as llir
 from numba.core import cgutils
@@ -53,13 +67,22 @@ from numba.core.errors import TypingError
 from numba.core.types import BaseTuple, Float, Integer, Literal, int32
 from numba.extending import intrinsic
 
-from numbox.core.bindings.utils import load_lib
+from numbox.core.bindings.utils import load_lib, platform_
 
 
 __all__ = ["printf", "fprintf", "snprintf"]
 
 
 load_lib("c")
+
+
+# Windows ships MSVCRT's "_snprintf" (returns -1 on truncation, no NUL guarantee).
+# UCRT's C99-compliant "snprintf" is exposed via the C headers as an inline
+# wrapper around `__stdio_common_vsnprintf`; declaring `i32 @snprintf(...)` in
+# LLVM IR and letting the JIT linker resolve it crashes with an access
+# violation. So on Windows we deliberately target the MSVCRT-legacy symbol
+# and document the non-C99 truncation contract (see snprintf docstring).
+_SNPRINTF_SYMBOL = "_snprintf" if platform_ == "Windows" else "snprintf"
 
 
 def _promote_for_varargs(builder, arg_ty, arg_val):
@@ -108,6 +131,50 @@ def _unpack_args_tuple(builder, args_ty, args_pack):
     ]
 
 
+def _emit_variadic_call(builder, symbol, fmt_str, leading_vals, args_ty, args_pack):
+    """Emit IR for ``symbol(*leading_vals, fmt_p, *promoted_args) -> i32``.
+
+    - ``leading_vals`` is a list of LLVM values that come before the format
+      string in the call (FILE* for fprintf; buf, size for snprintf; empty
+      for printf). Their LLVM types are read off the values themselves.
+    - ``fmt_str`` is the Python str literal; encoded as UTF-8 + NUL and
+      embedded as an IR global. ``cgutils.global_constant`` auto-uniquifies
+      the global name across multiple call sites.
+    - ``args_ty`` + ``args_pack`` are the tuple-of-args at the typing
+      layer + the LLVM aggregate at the codegen layer; both come from the
+      tuple-as-args calling convention.
+
+    The variadic ABI (AL register on SysV, FP shadow on Win64, named/
+    anonymous split on AAPCS64) is handled automatically by LLVM when the
+    function is declared with ``var_arg=True``.
+    """
+    i8p = llir.IntType(8).as_pointer()
+    i32_ll = llir.IntType(32)
+    mod = builder.module
+    fmt_bytes = cgutils.make_bytearray((fmt_str + '\x00').encode('utf-8'))
+    global_fmt = cgutils.global_constant(mod, f"{symbol}_format", fmt_bytes)
+    fmt_p = builder.bitcast(global_fmt, i8p)
+    unpacked = _unpack_args_tuple(builder, args_ty, args_pack)
+    promoted = [_promote_for_varargs(builder, t, v) for t, v in unpacked]
+    leading_tys = [v.type for v in leading_vals]
+    fn_ty = llir.FunctionType(
+        i32_ll, leading_tys + [i8p], var_arg=True,
+    )
+    fn = get_or_insert_function(mod, fn_ty, symbol)
+    return builder.call(fn, list(leading_vals) + [fmt_p] + promoted)
+
+
+def _require_literal_fmt_and_tuple_args(name, fmt_ty, args_ty):
+    """Typing-time guards shared by all three bindings: literal format
+    string + tuple args. Returns the resolved Python format string."""
+    fmt_str = _literal_format_or_raise(name, fmt_ty)
+    if not isinstance(args_ty, BaseTuple):
+        raise TypingError(
+            f"{name}: args must be a tuple, got {args_ty!r}"
+        )
+    return fmt_str
+
+
 @intrinsic(prefer_literal=True)
 def printf(typingctx, fmt_ty, args_ty):
     """libc ``printf(fmt, args)`` — write formatted text to stdout.
@@ -121,17 +188,12 @@ def printf(typingctx, fmt_ty, args_ty):
         printf("count=%d ratio=%.3f\\n", (n, ratio))
         printf("done\\n", ())
     """
-    fmt_str = _literal_format_or_raise("printf", fmt_ty)
-    if not isinstance(args_ty, BaseTuple):
-        raise TypingError(
-            f"printf: args must be a tuple, got {args_ty!r}"
-        )
+    fmt_str = _require_literal_fmt_and_tuple_args("printf", fmt_ty, args_ty)
 
     def codegen(context, builder, sig, llvm_args):
         _, args_pack = llvm_args
-        unpacked = _unpack_args_tuple(builder, args_ty, args_pack)
-        promoted = [_promote_for_varargs(builder, t, v) for t, v in unpacked]
-        return cgutils.printf(builder, fmt_str, *promoted)
+        return _emit_variadic_call(
+            builder, "printf", fmt_str, [], args_ty, args_pack)
 
     return int32(fmt_ty, args_ty), codegen
 
@@ -149,30 +211,14 @@ def fprintf(typingctx, fp_ty, fmt_ty, args_ty):
 
         fprintf(stderr(), "error %d: %s\\n", (code, msg_p))
     """
-    fmt_str = _literal_format_or_raise("fprintf", fmt_ty)
-    if not isinstance(args_ty, BaseTuple):
-        raise TypingError(
-            f"fprintf: args must be a tuple, got {args_ty!r}"
-        )
+    fmt_str = _require_literal_fmt_and_tuple_args("fprintf", fmt_ty, args_ty)
 
     def codegen(context, builder, sig, llvm_args):
         i8p = llir.IntType(8).as_pointer()
-        mod = builder.module
         fp_int, _, args_pack = llvm_args
         fp_ptr = builder.inttoptr(fp_int, i8p)
-        # Embed the format string as an IR global, same shape as cgutils.printf
-        # does internally for stdout. global_constant auto-uniquifies the name
-        # across multiple call sites.
-        fmt_bytes = cgutils.make_bytearray((fmt_str + '\x00').encode('ascii'))
-        global_fmt = cgutils.global_constant(mod, "fprintf_format", fmt_bytes)
-        fmt_p = builder.bitcast(global_fmt, i8p)
-        unpacked = _unpack_args_tuple(builder, args_ty, args_pack)
-        promoted = [_promote_for_varargs(builder, t, v) for t, v in unpacked]
-        fn_ty = llir.FunctionType(
-            llir.IntType(32), [i8p, i8p], var_arg=True,
-        )
-        fn = get_or_insert_function(mod, fn_ty, "fprintf")
-        return builder.call(fn, [fp_ptr, fmt_p] + promoted)
+        return _emit_variadic_call(
+            builder, "fprintf", fmt_str, [fp_ptr], args_ty, args_pack)
 
     return int32(fp_ty, fmt_ty, args_ty), codegen
 
@@ -187,20 +233,20 @@ def snprintf(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
 
     **Return value differs by platform**:
 
-    - **Linux glibc, Linux musl, macOS**: C99 / POSIX semantics. Returns the
-      number of characters that WOULD have been written if ``size`` were
-      unlimited, NOT counting the trailing NUL. The written portion is
-      always NUL-terminated when ``size > 0``. Detect truncation via
-      ``rc >= size``.
-    - **Windows**: MSVCRT ``_snprintf`` semantics (what numba's underlying
-      ``cgutils.snprintf`` codegen helper resolves to). Returns the number
-      of bytes written on success (excluding NUL), or **-1 on truncation**.
+    - **Linux glibc, Linux musl, macOS**: C99 / POSIX ``snprintf`` semantics.
+      Returns the number of characters that WOULD have been written if
+      ``size`` were unlimited, NOT counting the trailing NUL. The written
+      portion is always NUL-terminated when ``size > 0``. Detect truncation
+      via ``rc >= size``.
+    - **Windows**: MSVCRT ``_snprintf`` semantics. Returns the number of
+      bytes written on success (excluding NUL), or **-1 on truncation**.
       The buffer is **not guaranteed to be NUL-terminated** when truncated.
-      Detect truncation via ``rc < 0``. This non-C99 behavior is inherited
-      from numba's choice of the MSVCRT-compatible symbol; calling UCRT's
-      C99-compliant ``snprintf`` directly via the JIT linker turned out
-      to crash with an access violation (the actual UCRT export shape is
-      not what one would naively expect from the C99 headers).
+      Detect truncation via ``rc < 0``. UCRT's C99-compliant ``snprintf``
+      is a header-only inline over ``__stdio_common_vsnprintf`` rather
+      than a directly-linkable symbol, so we can't reach it through an
+      ``i32 @snprintf(...)`` LLVM declaration — the attempt crashed with
+      an access violation. The Windows binding therefore deliberately
+      targets the MSVCRT-legacy symbol.
 
     A portable "did it fit?" check that works on every supported platform::
 
@@ -214,27 +260,14 @@ def snprintf(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
         # On Linux/macOS: n < buf.size means no truncation; bytes(buf[:n]) is the message.
         # On Windows: n >= 0 means no truncation; bytes(buf[:n]) is the message.
     """
-    fmt_str = _literal_format_or_raise("snprintf", fmt_ty)
-    if not isinstance(args_ty, BaseTuple):
-        raise TypingError(
-            f"snprintf: args must be a tuple, got {args_ty!r}"
-        )
+    fmt_str = _require_literal_fmt_and_tuple_args("snprintf", fmt_ty, args_ty)
 
     def codegen(context, builder, sig, llvm_args):
-        # Delegate to numba's cgutils.snprintf — it resolves to "snprintf"
-        # on Linux/macOS (C99 semantics) and to "_snprintf" on Windows
-        # (MSVCRT legacy semantics). Attempting to override the Windows
-        # symbol to plain "snprintf" (the UCRT C99-compliant version)
-        # produced an access violation in CI; the UCRT export is not in
-        # the simple C-callable shape that a `declare i32 @snprintf(...)`
-        # LLVM declaration would link to. The docstring documents the
-        # resulting per-platform contract divergence.
         i8p = llir.IntType(8).as_pointer()
         buf_int, size_val, _, args_pack = llvm_args
         buf_ptr = builder.inttoptr(buf_int, i8p)
-        unpacked = _unpack_args_tuple(builder, args_ty, args_pack)
-        promoted = [_promote_for_varargs(builder, t, v) for t, v in unpacked]
-        return cgutils.snprintf(
-            builder, buf_ptr, size_val, fmt_str, *promoted)
+        return _emit_variadic_call(
+            builder, _SNPRINTF_SYMBOL, fmt_str,
+            [buf_ptr, size_val], args_ty, args_pack)
 
     return int32(buf_ty, size_ty, fmt_ty, args_ty), codegen

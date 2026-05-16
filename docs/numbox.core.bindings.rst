@@ -145,14 +145,13 @@ Example — render the message for ``ENOENT`` (errno 2 on POSIX) into a buffer:
 Variadic formatted I/O — printf / fprintf / snprintf
 ++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-``printf``, ``fprintf``, and ``snprintf`` are exposed as ``@intrinsic``
-shells over `numba.core.cgutils.printf and snprintf
-<https://github.com/numba/numba/blob/main/numba/core/cgutils.py>`_ —
-numba's own internal variadic-call codegen helpers, which the bindings
-delegate to. The LLVM backend handles the platform-specific variadic ABI
-(SysV x86-64 ``AL``-register convention, Win64 FP shadow, AAPCS64 named/
-anonymous split) automatically; the binding handles only C default-argument
-promotion and the pointer-as-``intp`` shape that numbox uses throughout.
+``printf``, ``fprintf``, and ``snprintf`` are ``@intrinsic`` shells that
+emit direct extern variadic calls to libc. LLVM's backend handles the
+platform-specific variadic ABI (SysV x86-64 ``AL``-register convention,
+Win64 FP shadow, AAPCS64 named/anonymous split) automatically when the
+function is declared with ``var_arg=True``; the bindings handle C
+default-argument promotion, the pointer-as-``intp`` shape numbox uses
+throughout, and embedding the format string as a UTF-8 IR global constant.
 
 **Call convention.** Numba's ``@intrinsic`` doesn't accept Python-level
 ``*args``, so the variadic arguments are passed as a **tuple literal** —
@@ -164,10 +163,23 @@ the same idiom ``_call_lib_func`` uses elsewhere in the package::
     printf("no args here\n", ())
 
 **Format string must be a literal.** Required to embed it as an IR global
-constant at typing time, the same constraint numba's internal debug
-``printf`` operates under. A runtime-built ``unicode`` raises a clean
-``TypingError`` at call typing time. This is identical to the C compile-time
-expectation for format-string-attribute-checked functions.
+constant at typing time, the same constraint a C compiler operates under
+when emitting a format-checked printf call. A runtime-built ``unicode``
+raises a clean ``TypingError`` at call typing time.
+
+**Format string encoding: UTF-8.** Non-ASCII codepoints in the literal
+are encoded as UTF-8 byte sequences and embedded into the IR global.
+printf treats every non-``%`` byte as opaque pass-through, so the bytes
+flow through libc to stdout / FILE\\* / the snprintf buffer unmodified.
+Modern terminals, files, and Windows 10+ consoles all expect UTF-8, so
+``printf("Цена: %d\n", (n,))`` renders correctly out of the box.
+
+  .. note::
+     ``%-Ns`` width is byte-counted by printf in every libc, so non-ASCII
+     output won't right-pad to a codepoint count. That's printf's
+     contract, not the binding's. Pad in numba-side string formatting
+     (``f"{s:<10}"``) before passing through ``%s`` if codepoint-counted
+     widths matter.
 
 **C ABI default-argument promotion (handled by the binding):**
 
@@ -248,8 +260,7 @@ detect truncation, decode:
    ``snprintf`` truncation semantics **diverge on Windows**. POSIX / C99
    ``snprintf`` returns the would-have-written count (excluding NUL) and
    always NUL-terminates the buffer when ``size > 0``. The Windows
-   binding delegates through numba's ``cgutils.snprintf``, which resolves
-   to MSVCRT's `_snprintf
+   binding targets MSVCRT's `_snprintf
    <https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/snprintf-snprintf-snprintf-l-snwprintf-snwprintf-l>`_
    — that returns ``-1`` on truncation and does NOT guarantee
    NUL-termination of the buffer. We attempted to bypass this by
