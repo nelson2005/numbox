@@ -31,6 +31,13 @@ def _errno_ptr(typingctx):
     def codegen(context, builder, signature, arguments):
         intp_ll = context.get_value_type(intp)
         i32_ptr = llir.IntType(32).as_pointer()
+        # NOTE: deliberately NOT setting readnone/memory(none) on this
+        # declaration, even though glibc declares __errno_location with
+        # __attribute_const__ (which maps to LLVM's readnone). Setting the
+        # attribute would allow LLVM to hoist the call out of loops or
+        # across function-call boundaries — fatal for correctness when the
+        # OS thread changes (e.g., across @njit(parallel=True) workers).
+        # An opaque/side-effecting call is what we need here.
         func_ty = llir.FunctionType(i32_ptr, [])
         func_p = get_or_insert_function(builder.module, func_ty, sym)
         ptr = builder.call(func_p, [])
@@ -50,6 +57,16 @@ def _load_int32_at(typingctx, p_ty):
 
 @intrinsic
 def _store_int32_at(typingctx, p_ty, v_ty):
+    # Defensive: the codegen below stores `v` into an i32*. If a caller
+    # ever passes a wider integer (e.g. int64 without an explicit cast),
+    # `builder.store(v, ptr)` would fail at IR generation with a cryptic
+    # type-mismatch error rather than a clean numba TypingError. Catch
+    # the mismatch at typing time. Currently only called from errno_set
+    # which passes `int32(v)`; this guard protects against future bypass.
+    if v_ty != int32:
+        raise TypingError(
+            f"_store_int32_at: v must be int32, got {v_ty!r}")
+
     def codegen(context, builder, signature, arguments):
         p, v = arguments
         i32_ptr = llir.IntType(32).as_pointer()

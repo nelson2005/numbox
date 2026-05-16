@@ -13,6 +13,8 @@ These are private utilities for ``cres_cacheable``; nothing outside this
 module + ``highlevel.py`` should need them. See ``cres_cacheable``'s
 docstring for the user-facing story.
 """
+from functools import lru_cache
+
 from llvmlite import ir as llir
 from numba.core import cgutils
 from numba.core.errors import TypingError
@@ -27,6 +29,15 @@ def _get_or_make_named_global(builder, ll_ty, name):
     time and zero-initializes the slot — the same shape C uses for tentative
     definitions like ``int x;``. The JIT linker resolves the symbol per
     process, so the cached IR is ASLR-safe.
+
+    The cross-module merge depends on numba's single shared MCJIT engine
+    (see ``numba.core.codegen.JitEngine._load_defined_symbols`` and
+    ``CodeLibrary._finalize_specific`` in ``numba/core/codegen.py``). If
+    numba ever migrates to an LLJIT-with-per-module-JITDylib architecture,
+    ``common``/weak-symbol merge semantics across modules become implementation-
+    defined per the `LLVM JIT linkage discussion
+    <https://groups.google.com/g/llvm-dev/c/qwglftF4bdQ/m/32eZrcpVBAAJ>`_,
+    and this site needs revisiting.
     """
     mod = builder.module
     try:
@@ -67,8 +78,15 @@ def _load_addr_from_named_global(typingctx, name_ty):
     return intp(name_ty), codegen
 
 
+@lru_cache(maxsize=None)
 def _make_icall_for_sig(sig):
-    """Build an ``@intrinsic`` that indirect-calls a function pointer matching ``sig``."""
+    """Build an ``@intrinsic`` that indirect-calls a function pointer matching ``sig``.
+
+    Cached by ``sig`` so identical signatures share a single ``_Intrinsic``
+    instance; numba memoizes specializations by intrinsic identity, and a
+    fresh instance per ``cres_cacheable`` decoration would otherwise cause
+    per-import recompilation of byte-identical wrappers.
+    """
     ret_ty = sig.return_type
     arg_tys = tuple(sig.args)
     ret_is_void = ret_ty == void

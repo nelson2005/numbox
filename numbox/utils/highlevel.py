@@ -2,7 +2,7 @@ import hashlib
 import os
 import re
 import tempfile
-from inspect import getfile, getmodule, getsource
+from inspect import getmodule, getsource
 from io import StringIO
 from pathlib import Path
 from numba import njit
@@ -46,10 +46,18 @@ def cres(sig, **kwargs):
 
 
 def _cres_cacheable_global_name(func):
-    """Stable cross-process LLVM-global symbol for ``func``'s entry-point address."""
-    return (
-        f"_numbox_cres_cacheable_addr__{func.__module__}__{func.__name__}"
-    ).replace(".", "$")
+    """Stable cross-process LLVM-global symbol for ``func``'s entry-point address.
+
+    The dot-qualified ``<module>.<name>`` goes in plaintext so the symbol is
+    readable in a debugger / ``nm`` output; a 16-hex sha256 suffix of the same
+    FQN forces injectivity against any pathological ``__name__`` (lambdas,
+    nested ``<locals>`` qualnames, monkey-patched attributes) where the
+    plaintext alone could otherwise collide. ``.`` is a legal character in
+    LLVM identifiers and in ELF / Mach-O / PE-COFF symbol tables.
+    """
+    fqn = f"{func.__module__}.{func.__name__}"
+    digest = hashlib.sha256(fqn.encode("utf-8")).hexdigest()[:16]
+    return f"_numbox_cres_cacheable_addr_{fqn}_{digest}"
 
 
 def cres_cacheable(sig, **njit_kwargs):
@@ -93,6 +101,7 @@ def cres_cacheable(sig, **njit_kwargs):
         funcvalue = cres(sig, **njit_kwargs)(func)
         global_name = _cres_cacheable_global_name(func)
         _icall = _make_icall_for_sig(sig)
+        fqn_stem = f"{func.__module__}.{func.__name__}"
 
         params = ", ".join(f"a{i}" for i in range(n_args))
         if n_args == 0:
@@ -107,11 +116,17 @@ def cres_cacheable(sig, **njit_kwargs):
         )
         body += "    " + ("" if ret_is_void else "return ") + f"_icall({call_args})\n"
 
+        # Anchor at a content-addressed real file (same defense as make_structref):
+        # numba's cache-save path may call inspect.getsource on dynamically-exec'd
+        # functions; on Python 3.13 a co_filename pointing at an unrelated real
+        # file (highlevel.py) returns wrong content per CPython #122981.
+        wrapper_anchor = _cres_cacheable_anchor_path(fqn_stem + ".wrapper", body)
+        _materialize_anchor(wrapper_anchor, body)
         ns = {
             "_load_addr": _load_addr_from_named_global,
             "_icall": _icall,
         }
-        exec(compile(body, getfile(_file_anchor), mode="exec"), ns)
+        exec(compile(body, str(wrapper_anchor), mode="exec"), ns)
         wrapper = ns["_wrapper"]
         wrapper.__name__ = func.__name__
         wrapper.__qualname__ = getattr(func, "__qualname__", func.__name__)
@@ -128,8 +143,10 @@ def cres_cacheable(sig, **njit_kwargs):
             f"def _setup(addr):\n"
             f"    _store_addr({global_name!r}, addr)\n"
         )
+        setup_anchor = _cres_cacheable_anchor_path(fqn_stem + ".setup", setup_body)
+        _materialize_anchor(setup_anchor, setup_body)
         setup_ns = {"_store_addr": _store_addr_to_named_global}
-        exec(compile(setup_body, getfile(_file_anchor), mode="exec"), setup_ns)
+        exec(compile(setup_body, str(setup_anchor), mode="exec"), setup_ns)
         _setup_py = setup_ns["_setup"]
         _setup_py.__name__ = f"_setup_for_{func.__name__}"
         _setup_py.__qualname__ = _setup_py.__name__
@@ -280,31 +297,38 @@ def {make_name}({struct_fields_str}):
     return code_txt, fields_types
 
 
-def _anchor_root() -> Path:
+def _anchor_root(subdir: str = "numbox-structref") -> Path:
     from numba import config
     from numba.misc.appdirs import AppDirs
     if config.CACHE_DIR:
-        return Path(config.CACHE_DIR) / "numbox-structref"
-    return Path(AppDirs(appname="numba", appauthor=False).user_cache_dir) / "numbox-structref"
+        return Path(config.CACHE_DIR) / subdir
+    return Path(AppDirs(appname="numba", appauthor=False).user_cache_dir) / subdir
 
 
-def _structref_anchor_path(struct_name: str, code_txt: str) -> Path:
-    """Stable on-disk source anchor for the generated structref code.
+def _anchor_path(subdir: str, stem: str, code_txt: str) -> Path:
+    """Stable on-disk source anchor for dynamically-exec'd code.
 
     Content-addressed so identical generated text always resolves to the
     same path; numba's source-mtime cache key then hits across runs and
     processes. The anchor is a real file whose contents match the exec'd
-    code line-for-line, so `inspect.getsource` returns the right source
-    and tokenizes cleanly. This sidesteps a Python 3.13 regression class
-    (CPython #105013, #117212, #122981) where `inspect.getsource` on an
-    exec'd function whose `co_filename` anchors at an unrelated real
-    file returns arbitrary other content and the new C tokenizer chokes
-    on it.
+    code line-for-line, so `inspect.getsource` returns the right source.
+    This sidesteps `CPython #122981
+    <https://github.com/python/cpython/issues/122981>`_: on Python 3.13,
+    ``inspect.getsource`` on an exec'd function whose ``co_filename``
+    anchors at an unrelated real file returns arbitrary other content.
     """
-    root = _anchor_root()
+    root = _anchor_root(subdir)
     root.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(code_txt.encode("utf-8")).hexdigest()[:16]
-    return root / f"{struct_name}_{digest}.py"
+    return root / f"{stem}_{digest}.py"
+
+
+def _structref_anchor_path(struct_name: str, code_txt: str) -> Path:
+    return _anchor_path("numbox-structref", struct_name, code_txt)
+
+
+def _cres_cacheable_anchor_path(stem: str, code_txt: str) -> Path:
+    return _anchor_path("numbox-cres-cacheable", stem, code_txt)
 
 
 def _materialize_anchor(path: Path, code_txt: str) -> None:
@@ -319,6 +343,28 @@ def _materialize_anchor(path: Path, code_txt: str) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _orphan_anchor_sweep(subdir: str) -> None:
+    """Best-effort cleanup of orphaned ``.tmp-*`` anchor files from SIGKILL'd
+    writers. Called at module import; failures are silent (the orphan is at
+    worst harmless disk usage).
+    """
+    try:
+        root = _anchor_root(subdir)
+        if not root.exists():
+            return
+        for orphan in root.glob("*.tmp-*"):
+            try:
+                orphan.unlink()
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
+_orphan_anchor_sweep("numbox-structref")
+_orphan_anchor_sweep("numbox-cres-cacheable")
 
 
 def make_structref(
@@ -355,12 +401,9 @@ def make_structref(
     the ``compile()`` anchor. Without this, numba's cache-save path calls
     ``inspect.getsourcelines`` on the generated functions, which reads
     arbitrary content from ``highlevel.py`` at the recorded ``co_firstlineno``;
-    on Python 3.13 the new C tokenizer rejects many such mid-file slices
-    outright (CPython `#105013 <https://github.com/python/cpython/issues/105013>`_,
-    `#117212 <https://github.com/python/cpython/issues/117212>`_,
-    `#122981 <https://github.com/python/cpython/issues/122981>`_), breaking
-    cold-cache CI for every caller of ``make_structref``. See
-    `_structref_anchor_path` for the path scheme.
+    on Python 3.13 ``inspect.getsource`` returns that wrong content (`CPython
+    #122981 <https://github.com/python/cpython/issues/122981>`_), and numba's
+    cache-save chokes on it. See ``_structref_anchor_path`` for the path scheme.
     """
     code_txt, fields_types = make_structref_code_txt(
         struct_name, struct_fields, struct_type_class, struct_methods

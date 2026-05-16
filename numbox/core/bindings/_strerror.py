@@ -2,16 +2,27 @@
 
 Supported libcs (other Linux libcs are not supported):
 
-- **glibc** — ``__xpg_strerror_r`` (always present on glibc 2.0+; POSIX-form)
-- **musl** — ``strerror_r`` (musl's ``strerror_r`` is POSIX-form, verified by the
-  Alpine ``musl_symbol_check`` CI canary)
-- **macOS** — ``strerror_r`` (POSIX-form)
-- **Windows** — ``strerror_s`` with reordered args (buffer, size, errnum)
+- **glibc** — `__xpg_strerror_r
+  <https://codebrowser.dev/glibc/glibc/string/xpg-strerror.c.html>`_ (POSIX
+  XSI form, present on glibc 2.3.4+ which shipped in 2004)
+- **musl** — also ``__xpg_strerror_r``: musl declares ``strerror_r`` as the
+  POSIX XSI form and exports ``__xpg_strerror_r`` as a `weak alias
+  <https://git.musl-libc.org/cgit/musl/tree/src/string/strerror_r.c>`_ to
+  the same implementation, so the same symbol resolves on glibc and musl
+- **macOS** — `strerror_r
+  <https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/strerror_r.3.html>`_
+  (POSIX form)
+- **Windows** — `strerror_s
+  <https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/strerror-s-strerror-s-wcserror-s-wcserror-s>`_
+  with reordered args (buffer, size, errnum)
 
-On glibc, ``strerror_r`` is the GNU form (returns ``char *``) and would not
-match this module's POSIX-shaped IR. The Linux symbol selector falls back to
-``strerror_r`` only when ``__xpg_strerror_r`` is absent — i.e. on musl. On
-glibc the fallback is unreachable in practice.
+On glibc, plain ``strerror_r`` is the GNU form (returns ``char *``) and would
+not match this module's POSIX-shaped IR. The Linux symbol selector
+unconditionally picks ``__xpg_strerror_r`` and never the GNU form. A
+``strerror_r`` fallback remains in the selector as defense-in-depth in case
+a future libc drops the ``__xpg_strerror_r`` symbol, but the fallback is
+unreachable on every libc currently supported (verified by the Alpine
+``musl_symbol_check`` CI canary).
 """
 import llvmlite.binding as ll
 from llvmlite import ir as llir
@@ -34,8 +45,12 @@ def _select_posix_symbol():
     if platform_ == "Linux":
         if ll.address_of_symbol("__xpg_strerror_r") is not None:
             return "__xpg_strerror_r"
-        # Fallback intended for musl (POSIX-form strerror_r). glibc 2.0+ always
-        # exports __xpg_strerror_r, so this branch is unreachable on glibc.
+        # Fallback: defense-in-depth in case a future libc drops the
+        # __xpg_strerror_r symbol. Currently unreachable — glibc 2.3.4+
+        # exports it directly, and musl exports it as a weak alias to its
+        # own (POSIX-form) strerror_r. On glibc, plain strerror_r is the
+        # GNU char*-returning form and would NOT match our IR signature;
+        # we never want to land here on glibc.
         return "strerror_r"
     if platform_ == "Darwin":
         return "strerror_r"
