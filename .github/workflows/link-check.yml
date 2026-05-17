@@ -48,7 +48,7 @@ jobs:
             --retry-wait-time 5
             --timeout 20
             --accept 200,206,429
-            --exclude-mail
+            --exclude '^mailto:'
             --exclude-path .git
             --exclude-path venv
             ${{ steps.scope.outputs.files }}
