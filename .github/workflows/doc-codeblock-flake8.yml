@@ -17,11 +17,6 @@ jobs:
 
       - run: pip install flake8
 
-      - name: Fetch extract_codeblocks.py
-        run: |
-          curl -fsSL -o /tmp/extract_codeblocks.py \
-            https://raw.githubusercontent.com/nelson2005/config/main/templates/scripts/extract_codeblocks.py
-
       - name: Lint Python blocks in .rst and .md
         run: |
           shopt -s globstar nullglob
@@ -33,4 +28,8 @@ jobs:
             echo "No docs/ or top-level README to scan; skipping."
             exit 0
           fi
-          python /tmp/extract_codeblocks.py "${paths[@]}"
+          if [[ ! -f .github/scripts/extract_codeblocks.py ]]; then
+            echo "::error::Missing .github/scripts/extract_codeblocks.py. Copy it from nelson2005/config templates/scripts/extract_codeblocks.py."
+            exit 1
+          fi
+          python .github/scripts/extract_codeblocks.py "${paths[@]}"
