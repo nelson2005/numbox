@@ -1,0 +1,65 @@
+name: link-check
+
+on:
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  lychee:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine scope
+        id: scope
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            changed=$(git diff --name-only --diff-filter=AM "origin/${{ github.base_ref }}"...HEAD \
+              | grep -E '\.(rst|md|py)$' || true)
+            if [[ -z "$changed" ]]; then
+              echo "files=" >> "$GITHUB_OUTPUT"
+              echo "No .rst/.md/.py files changed in this PR; skipping link check."
+            else
+              echo "files<<EOF" >> "$GITHUB_OUTPUT"
+              echo "$changed" >> "$GITHUB_OUTPUT"
+              echo "EOF" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            { echo "files<<EOF"; find . -type f \( -name '*.rst' -o -name '*.md' -o -name '*.py' \) \
+              -not -path './.git/*' -not -path './venv/*' -not -path './*/venv*/*'; echo EOF; } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Lychee
+        if: steps.scope.outputs.files != ''
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --no-progress
+            --max-concurrency 4
+            --max-retries 2
+            --retry-wait-time 5
+            --timeout 20
+            --accept 200,206,429
+            --exclude-mail
+            --exclude-path .git
+            --exclude-path venv
+            ${{ steps.scope.outputs.files }}
+          fail: true
+          format: markdown
+          output: ./lychee-report.md
+
+      - name: Upload report
+        if: always() && steps.scope.outputs.files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: lychee-report
+          path: lychee-report.md
+          if-no-files-found: ignore

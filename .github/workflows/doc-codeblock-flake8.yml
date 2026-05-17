@@ -1,0 +1,36 @@
+name: doc-codeblock-flake8
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  doc-codeblock-flake8:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install flake8
+
+      - name: Fetch extract_codeblocks.py
+        run: |
+          curl -fsSL -o /tmp/extract_codeblocks.py \
+            https://raw.githubusercontent.com/nelson2005/config/main/templates/scripts/extract_codeblocks.py
+
+      - name: Lint Python blocks in .rst and .md
+        run: |
+          shopt -s globstar nullglob
+          paths=()
+          for d in docs README.md README.rst; do
+            [[ -e "$d" ]] && paths+=("$d")
+          done
+          if [[ ${#paths[@]} -eq 0 ]]; then
+            echo "No docs/ or top-level README to scan; skipping."
+            exit 0
+          fi
+          python /tmp/extract_codeblocks.py "${paths[@]}"
