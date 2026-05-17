@@ -23,10 +23,12 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             git fetch origin "${{ github.base_ref }}" --depth=1
             changed=$(git diff --name-only --diff-filter=AM "origin/${{ github.base_ref }}"...HEAD \
-              | grep -E '\.(rst|md|py)$' || true)
+              | grep -E '\.(rst|md|py)$' \
+              | grep -vE '^\.github/' \
+              || true)
             if [[ -z "$changed" ]]; then
               echo "files=" >> "$GITHUB_OUTPUT"
-              echo "No .rst/.md/.py files changed in this PR; skipping link check."
+              echo "No documentation files (.rst/.md/.py outside .github/) changed in this PR; skipping link check."
             else
               echo "files<<EOF" >> "$GITHUB_OUTPUT"
               echo "$changed" >> "$GITHUB_OUTPUT"
@@ -34,7 +36,8 @@ jobs:
             fi
           else
             { echo "files<<EOF"; find . -type f \( -name '*.rst' -o -name '*.md' -o -name '*.py' \) \
-              -not -path './.git/*' -not -path './venv/*' -not -path './*/venv*/*'; echo EOF; } >> "$GITHUB_OUTPUT"
+              -not -path './.git/*' -not -path './venv/*' -not -path './*/venv*/*' \
+              -not -path './.github/*'; echo EOF; } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Lychee
