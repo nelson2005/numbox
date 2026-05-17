@@ -114,14 +114,24 @@ def assert_njit_cache_survives_subprocess_roundtrip(
     """
     import pathlib  # local — avoid a top-level import in the test utils
     probe = pathlib.Path(tmp_path) / "probe.py"
-    probe.write_text(textwrap.dedent(probe_source))
+    # Write the probe explicitly as UTF-8. Without encoding= Path.write_text
+    # uses locale.getpreferredencoding() which is cp1252 on Windows runners
+    # and would raise UnicodeEncodeError on any non-Latin-1 char in the
+    # probe source (arrows, em-dashes, accented chars in test data, ...).
+    probe.write_text(textwrap.dedent(probe_source), encoding="utf-8")
     cache_dir = pathlib.Path(tmp_path) / "numba-cache"
     env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
 
     def _run(label):
+        # Force UTF-8 decoding on both ends: PYTHONIOENCODING so the
+        # subprocess uses UTF-8 for stdout/stderr (overrides Windows
+        # cp1252 default), and encoding="utf-8" so capture_output decodes
+        # the captured bytes as UTF-8 (otherwise text=True would use the
+        # parent's locale, which is cp1252 on Windows runners).
         r = subprocess.run(
             [sys.executable, str(probe)],
-            env=env, capture_output=True, text=True,
+            env={**env, "PYTHONIOENCODING": "utf-8"},
+            capture_output=True, text=True, encoding="utf-8",
         )
         assert r.returncode == 0, (
             f"{label} run failed (rc={r.returncode}):\n"

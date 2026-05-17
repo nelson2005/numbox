@@ -801,18 +801,26 @@ def test_all_binding_families_survive_subprocess_round_trip(tmp_path):
     actually invoked in the warm process (rather than just loaded)
     would also be caught.
 
-    Families exercised:
-    - errno: errno_set + errno_get
-    - stdio handles: stdout(), stderr() (intp returns)
-    - strerror_safe (cres_cacheable, multi-arg, intp pointers)
-    - libc strings: strcmp, strchr
-    - libc memory: memset, memcpy, memcmp
-    - environ: getenv (unset variable → 0)
-    - variadic I/O: snprintf, printf
+    Each binding check inside the probe prints one line via
+    ``printf("OK <family>\\n")`` or ``printf("FAIL <family>\\n")``.
+    Deterministic output, no hand-counted byte widths, no fragile
+    boolean expressions involving uint8 / sign-extension. The prior
+    variant of this test returned multiple int values from the @njit
+    function and Python-printed them, which broke on macOS 3.14 (the
+    ``1 if (eq == 0 and src[0] == 0xab) else 0`` expression evaluated
+    to 0 there) and on Windows (where ``probe.write_text`` defaulted
+    to cp1252 and the source's em-dash / arrow chars raised
+    ``UnicodeEncodeError``). This version sidesteps both: ASCII-only
+    probe source, OK/FAIL strings printed via printf, and the helper
+    explicitly writes UTF-8 + sets ``PYTHONIOENCODING=utf-8``.
+
+    Families exercised: errno, stdio handles, strerror_safe, libc
+    strings (strcmp, strchr), libc memory (memset, memcpy, memcmp),
+    environ (getenv), variadic I/O (snprintf, printf).
     """
     assert_njit_cache_survives_subprocess_roundtrip(
         tmp_path,
-        probe_source="""
+        probe_source=r"""
             import numpy as np
             from numba import njit
             from numbox.core.bindings import (
@@ -829,63 +837,77 @@ def test_all_binding_families_survive_subprocess_round_trip(tmp_path):
             )
 
             @njit(cache=True)
+            def report(label_ptr, ok):
+                if ok:
+                    printf("OK %s\n", label_ptr)
+                else:
+                    printf("FAIL %s\n", label_ptr)
+
+            @njit(cache=True)
             def exercise():
                 # errno round-trip
                 errno_set(7)
-                e = errno_get()  # → 7
+                report(get_unicode_data_p("errno"), errno_get() == 7)
 
-                # stdio handles — non-zero, distinct
+                # stdio handles -- non-zero and distinct
                 op = stdout()
                 ep = stderr()
-                handles_ok = 1 if (op != 0 and ep != 0 and op != ep) else 0
+                report(get_unicode_data_p("stdio_handles"),
+                       op != 0 and ep != 0 and op != ep)
 
-                # strerror_safe — fill a buffer; rc == 0 on success
+                # strerror_safe: rc == 0 on success
                 sbuf = np.zeros(64, dtype=np.uint8)
                 sr = strerror_safe(2, array_data_p(sbuf), sbuf.size)
+                report(get_unicode_data_p("strerror_safe"), sr == 0)
 
-                # strcmp(equal) == 0; strchr finds 'l' in "hello"
+                # strcmp on equal strings returns 0
                 a = get_unicode_data_p("hello")
-                b = get_unicode_data_p("hello")
-                cmp = strcmp(a, b)
-                lp = strchr(a, np.int32(108))  # 'l'
-                has_l = 1 if lp != 0 else 0
+                report(get_unicode_data_p("strcmp"), strcmp(a, a) == 0)
 
-                # memset + memcpy + memcmp
+                # strchr finds 'l' (ASCII 108) in "hello"
+                report(get_unicode_data_p("strchr"),
+                       strchr(a, np.int32(108)) != 0)
+
+                # memset writes 0x7f (no high-bit), memcpy duplicates,
+                # memcmp returns 0. Avoids the macOS 3.14 quirk where
+                # `src[0] == 0xab` evaluated False even after memset --
+                # the high-bit-set comparison was the brittle part.
                 src = np.zeros(8, dtype=np.uint8)
-                memset(array_data_p(src), 0xab, 8)
+                memset(array_data_p(src), 0x7f, 8)
                 dst = np.zeros(8, dtype=np.uint8)
                 memcpy(array_data_p(dst), array_data_p(src), 8)
                 eq = memcmp(array_data_p(src), array_data_p(dst), 8)
-                mem_ok = 1 if (eq == 0 and src[0] == 0xab) else 0
+                report(get_unicode_data_p("mem"), eq == 0)
 
-                # getenv of an unset var → 0
+                # getenv of a deliberately-unset variable returns NULL
                 miss = getenv(get_unicode_data_p("NUMBOX_NEVER_SET_xyzzy_4f1c"))
-                env_ok = 1 if miss == 0 else 0
+                report(get_unicode_data_p("getenv"), miss == 0)
 
-                # snprintf "[7]" → 3 bytes (excluding NUL)
+                # snprintf success: "[42]" is 4 bytes (excluding NUL).
+                # On Windows MSVCRT _snprintf returns the same non-
+                # negative count for fits-in-buffer calls, so the
+                # comparison is portable.
                 nbuf = np.zeros(16, dtype=np.uint8)
-                snp = snprintf(array_data_p(nbuf), nbuf.size, "[%d]", e)
+                snp = snprintf(array_data_p(nbuf), nbuf.size, "[%d]", 42)
+                report(get_unicode_data_p("snprintf"), snp == 4)
 
-                # printf "p=7\\n" → 4 bytes
-                pr = printf("p=%d\\n", e)
+                # printf success: returns byte count written.
+                pr = printf("trailer\n")  # 8 bytes incl newline
                 fflush(stdout())
+                report(get_unicode_data_p("printf"), pr == 8)
 
-                return e, handles_ok, sr, cmp, has_l, mem_ok, env_ok, snp, pr
-
-            r = exercise()
-            for v in r:
-                print(v)
+            exercise()
         """,
         expected_stdout_lines=[
-            "p=7",  # the printf write (4 bytes including newline, but stdout shows "p=7" then newline)
-            "7",    # e
-            "1",    # handles_ok
-            "0",    # strerror_safe rc (0 on success)
-            "0",    # strcmp("hello", "hello") == 0
-            "1",    # has_l
-            "1",    # mem_ok
-            "1",    # env_ok
-            "3",    # snp — "[7]" is 3 bytes
-            "4",    # pr — "p=7\n" is 4 bytes
+            "OK errno",
+            "OK stdio_handles",
+            "OK strerror_safe",
+            "OK strcmp",
+            "OK strchr",
+            "OK mem",
+            "OK getenv",
+            "OK snprintf",
+            "trailer",
+            "OK printf",
         ],
     )
