@@ -49,7 +49,7 @@ data symbols or accessor functions:
   `<stdio.h> <https://www.gnu.org/software/libc/manual/html_node/Standard-Streams.html>`_)
 - **macOS Darwin** — data symbols (``__stdoutp``, ``__stderrp``, ``__stdinp`` — what the libc headers'
   ``stdout`` / ``stderr`` / ``stdin`` macros expand to per
-  `Apple's stdio.h <https://opensource.apple.com/source/Libc/Libc-1439.40.11/include/stdio.h.auto.html>`_)
+  `Apple's _stdio.h <https://github.com/apple-oss-distributions/Libc/blob/main/include/_stdio.h#L218-L220>`_)
 - **Windows** — accessor function (`__acrt_iob_func(0|1|2)
   <https://learn.microsoft.com/en-us/cpp/c-runtime-library/internal-crt-globals-and-functions>`_);
   UCRT-only (Windows 10+ / VS 2015+)
@@ -62,9 +62,8 @@ Example — write to stderr from inside @njit:
 
 .. code-block:: python
 
-    from numba import njit, types
-    from numbox.core.bindings import stderr
-    from numbox.core.bindings._c import fputs, fflush
+    from numba import njit
+    from numbox.core.bindings import stderr, fputs, fflush
 
     @njit(cache=True)
     def log_to_stderr(msg_p):

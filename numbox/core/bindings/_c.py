@@ -22,7 +22,7 @@ responsible for liveness, alignment, and ownership of the underlying memory.
 Authoritative references for each binding's semantics:
 
 - POSIX / Linux glibc: `man7.org <https://man7.org/linux/man-pages/man3/>`_
-- macOS Darwin: `Apple Open Source <https://opensource.apple.com/source/Libc/>`_
+- macOS Darwin: `Apple Open Source Libc <https://github.com/apple-oss-distributions/Libc>`_
 - Windows UCRT: `Microsoft Learn
   <https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/>`_
 """
