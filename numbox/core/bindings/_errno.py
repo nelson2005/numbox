@@ -6,6 +6,7 @@ from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import platform_, load_lib
 from numbox.core.proxy.proxy import proxy
+from numbox.utils.lowlevel import load_at, store_at
 
 
 __all__ = ["errno_get", "errno_set"]
@@ -45,36 +46,6 @@ def _errno_ptr(typingctx):
     return intp(), codegen
 
 
-@intrinsic
-def _load_int32_at(typingctx, p_ty):
-    def codegen(context, builder, signature, arguments):
-        (p,) = arguments
-        i32_ptr = llir.IntType(32).as_pointer()
-        ptr = builder.inttoptr(p, i32_ptr)
-        return builder.load(ptr)
-    return int32(p_ty), codegen
-
-
-@intrinsic
-def _store_int32_at(typingctx, p_ty, v_ty):
-    # Defensive: the codegen below stores `v` into an i32*. If a caller
-    # ever passes a wider integer (e.g. int64 without an explicit cast),
-    # `builder.store(v, ptr)` would fail at IR generation with a cryptic
-    # type-mismatch error rather than a clean numba TypingError. Catch
-    # the mismatch at typing time. Currently only called from errno_set
-    # which passes `int32(v)`; this guard protects against future bypass.
-    if v_ty != int32:
-        raise TypingError(
-            f"_store_int32_at: v must be int32, got {v_ty!r}")
-
-    def codegen(context, builder, signature, arguments):
-        p, v = arguments
-        i32_ptr = llir.IntType(32).as_pointer()
-        ptr = builder.inttoptr(p, i32_ptr)
-        builder.store(v, ptr)
-    return void(p_ty, v_ty), codegen
-
-
 @proxy(int32(), jit_options={"cache": True})
 def errno_get():
     """Return the current thread's errno as int32.
@@ -85,7 +56,7 @@ def errno_get():
     function (same OS thread), but not errno set inside a parallel
     region's worker (different OS thread).
     """
-    return _load_int32_at(_errno_ptr())
+    return load_at(_errno_ptr(), int32)
 
 
 @proxy(void(int64), jit_options={"cache": True})
@@ -96,4 +67,4 @@ def errno_set(v):
     narrowed to int32 before being stored at the per-thread errno
     location, matching C's ``int errno``.
     """
-    _store_int32_at(_errno_ptr(), int32(v))
+    store_at(_errno_ptr(), int32(v))
