@@ -190,7 +190,7 @@ str.
 **Format string encoding: UTF-8.** Non-ASCII codepoints in the literal
 are encoded as UTF-8 byte sequences and embedded into the IR global.
 printf treats every non-``%`` byte as opaque pass-through, so the bytes
-flow through libc to stdout / FILE\\* / the snprintf buffer unmodified.
+flow through libc to stdout / ``FILE *`` / the snprintf buffer unmodified.
 Modern terminals, files, and Windows 10+ consoles all expect UTF-8.
 
   .. note::
@@ -257,10 +257,10 @@ in the simple C99 calling shape — declaring ``i32 @snprintf(...)`` in
 LLVM IR and letting the JIT linker resolve it crashes with an access
 violation on Windows.)
 
-**``fprintf`` to non-stdio FILE\\* in pure Python.** The Python impl
+**``fprintf`` to non-stdio ``FILE *`` in pure Python.** The Python impl
 caches the addresses of ``stdout()`` / ``stderr()`` / ``stdin()`` at
 first use and routes those handles to the corresponding ``sys.*``
-streams. ``fopen``-returned FILE\\* values can't be dereferenced from
+streams. ``fopen``-returned ``FILE *`` values can't be dereferenced from
 Python without ctypes, so they raise a clear ``RuntimeError`` in
 pure-Python mode (use ``open()`` + ``f.write()`` for Python-side file
 I/O, or wrap the call in ``@njit``).
@@ -280,7 +280,8 @@ or under pytest's ``capfd``).
 processes: each call site emits a direct extern reference to the libc
 symbol and a deterministic format-string global constant. The JIT
 linker resolves the libc symbol per-process, so the cached IR is
-ASLR-safe. No ``cres_cacheable`` indirection needed.
+ASLR-safe. No ``@proxy`` indirection needed — the variadic intrinsics
+inline the call directly into the caller.
 
 Example — log to stderr with `fprintf(3) <https://man7.org/linux/man-pages/man3/fprintf.3.html>`_,
 dual-mode:

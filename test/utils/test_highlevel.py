@@ -320,7 +320,7 @@ def _sole_compile_result(dispatcher):
     return dispatcher.get_compile_result(sigs[0])
 
 
-def test_cres_cacheable_zero_arg_caller_is_cacheable():
+def test_proxy_zero_arg_caller_is_cacheable():
     @njit(cache=True)
     def caller():
         return errno_get()
@@ -328,7 +328,7 @@ def test_cres_cacheable_zero_arg_caller_is_cacheable():
     assert not _sole_compile_result(caller).library.has_dynamic_globals
 
 
-def test_cres_cacheable_single_arg_caller_is_cacheable():
+def test_proxy_single_arg_caller_is_cacheable():
     @njit(cache=True)
     def caller(name_p):
         return getenv(name_p)
@@ -336,7 +336,7 @@ def test_cres_cacheable_single_arg_caller_is_cacheable():
     assert not _sole_compile_result(caller).library.has_dynamic_globals
 
 
-def test_cres_cacheable_multi_arg_caller_is_cacheable():
+def test_proxy_multi_arg_caller_is_cacheable():
     @njit(cache=True)
     def caller(dst, src):
         memcpy(array_data_p(dst), array_data_p(src), src.nbytes)
@@ -344,20 +344,21 @@ def test_cres_cacheable_multi_arg_caller_is_cacheable():
     assert not _sole_compile_result(caller).library.has_dynamic_globals
 
 
-def test_cres_cacheable_caller_survives_subprocess_round_trip(tmp_path):
-    """Real cross-process cache survival test for cres_cacheable.
+def test_proxy_caller_survives_subprocess_round_trip(tmp_path):
+    """Real cross-process cache survival test for @proxy-decorated bindings.
 
     The heuristic tests above (``has_dynamic_globals is False``) only prove
     cache *eligibility*. This test proves cache *correctness*: a caller
-    compiled with ``@njit(cache=True)`` against a ``cres_cacheable`` binding
+    compiled with ``@njit(cache=True)`` against an ``@proxy`` binding
     actually round-trips through the on-disk cache (.nbi/.nbc files), with
     the second process loading the cached IR and producing identical output
     to the cold-cache first process — and neither file is rewritten on the
     warm run (mtimes preserved).
 
-    This is the property ``cres_cacheable`` exists for: ASLR-safe cached
-    caller IR that survives across processes via the named-LLVM-global
-    address-slot pattern. See the
+    ``proxy`` declares the callee's ``llvm_cfunc_wrapper_name`` as an extern
+    in the caller's IR module; llvmlite's JIT linker resolves the symbol per
+    process at cache reload, so cached IR survives ASLR across processes
+    without baking in any runtime address. See the
     ``assert_njit_cache_survives_subprocess_roundtrip`` helper in
     ``test/auxiliary_utils.py`` for the full assertion contract.
     """
@@ -383,12 +384,12 @@ def test_cres_cacheable_caller_survives_subprocess_round_trip(tmp_path):
 def test_plain_cres_caller_trips_dynamic_globals():
     """Negative control: plain @cres bindings still trip has_dynamic_globals.
 
-    rand() is wrapped with plain @cres (not @cres_cacheable) in _c.py, so a
-    caller referencing it as a Python global routes through numba's
-    FunctionType lowering and gets has_dynamic_globals=True. This locks down
-    the test methodology: if this assertion ever fails, either rand was
-    upgraded to @cres_cacheable (delete this test) or numba changed how it
-    detects dynamic globals (revisit the cacheable tests above).
+    rand() is wrapped with plain @cres (not @proxy) in _c.py, so a caller
+    referencing it as a Python global routes through numba's FunctionType
+    lowering and gets has_dynamic_globals=True. This locks down the test
+    methodology: if this assertion ever fails, either rand was upgraded to
+    @proxy (delete this test) or numba changed how it detects dynamic
+    globals (revisit the cacheable tests above).
     """
     @njit(cache=True)
     def caller():

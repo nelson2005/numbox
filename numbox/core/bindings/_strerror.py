@@ -32,7 +32,7 @@ from numba.core.types import int32, int64, intp
 from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import platform_, load_lib
-from numbox.utils.highlevel import cres_cacheable
+from numbox.core.proxy.proxy import proxy
 
 
 __all__ = ["strerror_safe"]
@@ -111,7 +111,7 @@ def _render_ir_for_probe():
     return str(module)
 
 
-@cres_cacheable(int32(int64, intp, intp))
+@proxy(int32(int64, intp, intp), jit_options={"cache": True})
 def strerror_safe(errnum, buf, buflen):
     """Write the error message for errnum into buf (length buflen).
 

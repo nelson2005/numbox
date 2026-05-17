@@ -5,7 +5,7 @@ from numba.core.types import int32, int64, intp, void
 from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import platform_, load_lib
-from numbox.utils.highlevel import cres_cacheable
+from numbox.core.proxy.proxy import proxy
 
 
 __all__ = ["errno_get", "errno_set"]
@@ -75,7 +75,7 @@ def _store_int32_at(typingctx, p_ty, v_ty):
     return void(p_ty, v_ty), codegen
 
 
-@cres_cacheable(int32())
+@proxy(int32(), jit_options={"cache": True})
 def errno_get():
     """Return the current thread's errno as int32.
 
@@ -88,7 +88,7 @@ def errno_get():
     return _load_int32_at(_errno_ptr())
 
 
-@cres_cacheable(void(int64))
+@proxy(void(int64), jit_options={"cache": True})
 def errno_set(v):
     """Set the current thread's errno to v.
 

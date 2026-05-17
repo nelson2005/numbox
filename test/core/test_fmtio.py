@@ -10,9 +10,8 @@ Coverage:
 - TypingError on non-tuple args
 - Empty args tuple
 - UTF-8 format string acceptance
-- @njit(cache=True) survives a subprocess round-trip (no cres_cacheable
-  indirection — these intrinsics emit a direct libc extern call, JIT linker
-  resolves per process)
+- @njit(cache=True) survives a subprocess round-trip — these intrinsics
+  emit a direct libc extern call, JIT linker resolves per process
 - sscanf: parse-into-numpy roundtrip, multi-field, EOF, partial-match,
   intp-output enforcement
 """
@@ -793,13 +792,12 @@ def test_all_binding_families_survive_subprocess_round_trip(tmp_path):
     each binding's expected return value, then verifies the entire
     .nbc + .nbi cache is unchanged on the warm subprocess.
 
-    The implicit-mechanism test (``test_fmtio_caller_survives_subprocess_round_trip``
-    and ``test_cres_cacheable_caller_survives_subprocess_round_trip``)
-    already pin that EVERY binding's wrapper + setup function caches
-    cleanly at import time. This test adds explicit per-family CALL
-    coverage so a binding bug that only surfaces when the cached IR is
-    actually invoked in the warm process (rather than just loaded)
-    would also be caught.
+    The implicit-mechanism tests (``test_fmtio_caller_survives_subprocess_round_trip``
+    and ``test_proxy_caller_survives_subprocess_round_trip``) already pin
+    that the @proxy + variadic-intrinsic wrappers cache cleanly at import
+    time. This test adds explicit per-family CALL coverage so a binding
+    bug that only surfaces when the cached IR is actually invoked in the
+    warm process (rather than just loaded) would also be caught.
 
     Each binding check inside the probe prints one line via
     ``printf("OK <family>\\n")`` or ``printf("FAIL <family>\\n")``.

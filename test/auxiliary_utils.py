@@ -78,8 +78,8 @@ def assert_njit_cache_survives_subprocess_roundtrip(
         tmp_path, probe_source, expected_stdout_lines,
 ):
     """Verify ``@njit(cache=True)`` callers in *probe_source* survive a
-    process restart (the load-bearing property of ``cres_cacheable`` and
-    of the fmtio variadic-intrinsic dispatch).
+    process restart (the load-bearing property of ``@proxy``-wrapped
+    bindings and of the fmtio variadic-intrinsic dispatch).
 
     Mechanics:
 

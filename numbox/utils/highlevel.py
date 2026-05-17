@@ -7,7 +7,7 @@ from io import StringIO
 from pathlib import Path
 from numba import njit
 from numba.core.itanium_mangler import mangle_type_or_value
-from numba.core.types import Type, intp, void
+from numba.core.types import Type
 from numba.core.types.functions import Dispatcher
 from numba.core.types.function_type import CompileResultWAP
 from numba.core.typing.templates import Signature
@@ -19,11 +19,6 @@ from typing import Callable, Iterable, Optional
 
 from numbox.core.configurations import default_jit_options
 from numbox.utils.standard import make_params_strings
-from numbox.utils._addr_global import (
-    _load_addr_from_named_global,
-    _make_icall_for_sig,
-    _store_addr_to_named_global,
-)
 
 
 def _file_anchor():
@@ -43,130 +38,6 @@ def cres(sig, **kwargs):
         cres_wap = CompileResultWAP(func_cres)
         return cres_wap
     return _
-
-
-def _cres_cacheable_global_name(func):
-    """Stable cross-process LLVM-global symbol for ``func``'s entry-point address.
-
-    Uses ``__qualname__`` (not just ``__name__``) so that nested helpers like
-    ``outer.<locals>.inner`` or two methods of distinct classes named ``impl``
-    in the same module each get a distinct symbol. The full qualname goes
-    into the sha256 input (which is what guarantees injectivity); the
-    plaintext part of the symbol embeds a sanitized qualname (``<`` and ``>``
-    are not legal in unquoted LLVM identifiers, so we replace them with
-    ``_``) so the symbol stays human-readable in ``nm`` / debugger output.
-    ``.`` is a legal character in LLVM identifiers and in ELF / Mach-O /
-    PE-COFF symbol tables.
-    """
-    fqn_full = f"{func.__module__}.{func.__qualname__}"
-    fqn_safe = fqn_full.replace("<", "_").replace(">", "_")
-    digest = hashlib.sha256(fqn_full.encode("utf-8")).hexdigest()[:16]
-    return f"_numbox_cres_cacheable_addr_{fqn_safe}_{digest}"
-
-
-def cres_cacheable(sig, **njit_kwargs):
-    """Like ``cres``, but returns a ``CPUDispatcher`` that's cacheable from
-    ``@njit(cache=True)`` callers.
-
-    ``cres`` returns a ``CompileResultWAP`` (numba ``FunctionType`` value).
-    When a user ``@njit(cache=True)`` references one as a Python global,
-    numba's ``lower_constant_function_type`` materializes the value's
-    runtime address via ``add_dynamic_addr``, which sets
-    ``has_dynamic_globals`` on the caller's compiled IR and disables its
-    persistent cache: ``NumbaWarning: Cannot cache compiled function "..."
-    as it uses dynamic globals``.
-
-    ``cres_cacheable`` produces two parallel artifacts:
-
-    - An ``@cres`` ``CompileResultWAP``, attached as
-      ``wrapped.as_funcvalue``. External consumers that need a
-      ``FunctionType`` value (e.g. for storing in a struct field) still
-      have one.
-    - An ``@njit(sig, cache=True)`` dispatcher (this decorator's return
-      value) that loads the underlying function pointer from a named LLVM
-      global and indirect-calls through it. Cached caller IR references
-      only the symbol name, not a runtime address — callers cache cleanly.
-
-    Cross-process safety: a per-binding setup ``@njit(void(intp),
-    cache=True)`` runs once per process at module import and writes the
-    live ``CompileResultWAP`` address into the named global. The JIT
-    linker resolves the symbol per process, so cached caller IR survives
-    across processes and remains ASLR-correct.
-
-    See ``numbox/utils/_addr_global.py`` for the underlying intrinsics and
-    the CRE pattern they're adapted from.
-    """
-    if not isinstance(sig, Signature):
-        raise ValueError(
-            f"cres_cacheable: expected a single Signature, found "
-            f"{sig!r} of type {type(sig).__name__}"
-        )
-    njit_kwargs.setdefault("cache", True)
-    arg_tys = tuple(sig.args)
-    n_args = len(arg_tys)
-    ret_is_void = sig.return_type == void
-
-    def _decorator(func):
-        funcvalue = cres(sig, **njit_kwargs)(func)
-        global_name = _cres_cacheable_global_name(func)
-        _icall = _make_icall_for_sig(sig)
-        fqn_stem = f"{func.__module__}.{func.__name__}"
-
-        params = ", ".join(f"a{i}" for i in range(n_args))
-        if n_args == 0:
-            call_args = "_addr"
-        elif n_args == 1:
-            call_args = "_addr, a0"
-        else:
-            call_args = "_addr, (" + ", ".join(f"a{i}" for i in range(n_args)) + ")"
-        body = (
-            f"def _wrapper({params}):\n"
-            f"    _addr = _load_addr({global_name!r})\n"
-        )
-        body += "    " + ("" if ret_is_void else "return ") + f"_icall({call_args})\n"
-
-        # Anchor at a content-addressed real file (same defense as make_structref):
-        # numba's cache-save path may call inspect.getsource on dynamically-exec'd
-        # functions; on Python 3.13 a co_filename pointing at an unrelated real
-        # file (highlevel.py) returns wrong content per CPython #122981.
-        wrapper_anchor = _cres_cacheable_anchor_path(fqn_stem + ".wrapper", body)
-        _materialize_anchor(wrapper_anchor, body)
-        ns = {
-            "_load_addr": _load_addr_from_named_global,
-            "_icall": _icall,
-        }
-        exec(compile(body, str(wrapper_anchor), mode="exec"), ns)
-        wrapper = ns["_wrapper"]
-        wrapper.__name__ = func.__name__
-        wrapper.__qualname__ = getattr(func, "__qualname__", func.__name__)
-        wrapper.__module__ = func.__module__
-        wrapper.__doc__ = func.__doc__
-
-        compiled = njit(sig, **njit_kwargs)(wrapper)
-
-        # One-time setup: write the live cres address into the named global.
-        # The setup is itself @njit(cache=True) — cacheable because the addr
-        # comes in as an argument (no Python global is baked into its IR) and
-        # the global name is exec-inlined as a literal string.
-        setup_body = (
-            f"def _setup(addr):\n"
-            f"    _store_addr({global_name!r}, addr)\n"
-        )
-        setup_anchor = _cres_cacheable_anchor_path(fqn_stem + ".setup", setup_body)
-        _materialize_anchor(setup_anchor, setup_body)
-        setup_ns = {"_store_addr": _store_addr_to_named_global}
-        exec(compile(setup_body, str(setup_anchor), mode="exec"), setup_ns)
-        _setup_py = setup_ns["_setup"]
-        _setup_py.__name__ = f"_setup_for_{func.__name__}"
-        _setup_py.__qualname__ = _setup_py.__name__
-        _setup_py.__module__ = __name__
-        _setup = njit(void(intp), **njit_kwargs)(_setup_py)
-        _setup(funcvalue.address)
-
-        compiled.as_funcvalue = funcvalue
-        return compiled
-
-    return _decorator
 
 
 def cres_if_available(lib, sig, **kwargs):
@@ -324,7 +195,9 @@ def _anchor_path(subdir: str, stem: str, code_txt: str) -> Path:
     This sidesteps `CPython #122981
     <https://github.com/python/cpython/issues/122981>`_: on Python 3.13,
     ``inspect.getsource`` on an exec'd function whose ``co_filename``
-    anchors at an unrelated real file returns arbitrary other content.
+    anchors at an unrelated real file returns whatever happens to live in
+    that file at the recorded ``co_firstlineno`` — typically text that
+    has nothing to do with the actual generated source.
     """
     root = _anchor_root(subdir)
     root.mkdir(parents=True, exist_ok=True)
@@ -334,10 +207,6 @@ def _anchor_path(subdir: str, stem: str, code_txt: str) -> Path:
 
 def _structref_anchor_path(struct_name: str, code_txt: str) -> Path:
     return _anchor_path("numbox-structref", struct_name, code_txt)
-
-
-def _cres_cacheable_anchor_path(stem: str, code_txt: str) -> Path:
-    return _anchor_path("numbox-cres-cacheable", stem, code_txt)
 
 
 def _materialize_anchor(path: Path, code_txt: str) -> None:
@@ -373,7 +242,6 @@ def _orphan_anchor_sweep(subdir: str) -> None:
 
 
 _orphan_anchor_sweep("numbox-structref")
-_orphan_anchor_sweep("numbox-cres-cacheable")
 
 
 def make_structref(
@@ -408,11 +276,17 @@ def make_structref(
     The generated ``code_txt`` is written to a content-addressed file under
     numba's cache directory and that file — not ``highlevel.py`` — is used as
     the ``compile()`` anchor. Without this, numba's cache-save path calls
-    ``inspect.getsourcelines`` on the generated functions, which reads
-    arbitrary content from ``highlevel.py`` at the recorded ``co_firstlineno``;
-    on Python 3.13 ``inspect.getsource`` returns that wrong content (`CPython
-    #122981 <https://github.com/python/cpython/issues/122981>`_), and numba's
-    cache-save chokes on it. See ``_structref_anchor_path`` for the path scheme.
+    ``inspect.getsourcelines`` on the generated functions, and on Python
+    3.13 the readback returns whatever line of ``highlevel.py`` happens to
+    sit at the recorded ``co_firstlineno`` — unrelated content rather than
+    the actual exec'd source (`CPython #122981
+    <https://github.com/python/cpython/issues/122981>`_). The cache-save
+    path then chokes on the unrelated content (or, worse, silently
+    fingerprints a hash that drifts with every unrelated edit to
+    ``highlevel.py``). The structural fix isn't about *cache invalidation*
+    correctness — that would work fine if ``getsource`` returned the right
+    text — it's about ensuring ``getsource`` returns the *generated* text
+    in the first place. See ``_structref_anchor_path`` for the path scheme.
     """
     code_txt, fields_types = make_structref_code_txt(
         struct_name, struct_fields, struct_type_class, struct_methods

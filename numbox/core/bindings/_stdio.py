@@ -17,7 +17,7 @@ from numba.core.types import intp
 from numba.extending import intrinsic
 
 from numbox.core.bindings.utils import platform_, load_lib
-from numbox.utils.highlevel import cres_cacheable
+from numbox.core.proxy.proxy import proxy
 
 
 __all__ = ["stdout", "stderr", "stdin"]
@@ -75,19 +75,19 @@ def _stdio_handle(typingctx, name_ty):
     return sig, codegen
 
 
-@cres_cacheable(intp())
+@proxy(intp(), jit_options={"cache": True})
 def stdout():
     """Return the current process's stdout FILE* as intp. See module docstring."""
     return _stdio_handle("stdout")
 
 
-@cres_cacheable(intp())
+@proxy(intp(), jit_options={"cache": True})
 def stderr():
     """Return the current process's stderr FILE* as intp. See module docstring."""
     return _stdio_handle("stderr")
 
 
-@cres_cacheable(intp())
+@proxy(intp(), jit_options={"cache": True})
 def stdin():
     """Return the current process's stdin FILE* as intp. See module docstring."""
     return _stdio_handle("stdin")
