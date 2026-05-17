@@ -47,21 +47,21 @@ from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
 
 @njit(cache=True)
 def _printf_int(n):
-    rc = printf("got %d\n", (n,))
+    rc = printf("got %d\n", n)
     fflush(stdout())
     return rc
 
 
 @njit(cache=True)
 def _printf_no_args():
-    rc = printf("just literal\n", ())
+    rc = printf("just literal\n")
     fflush(stdout())
     return rc
 
 
 @njit(cache=True)
 def _printf_float64(x):
-    rc = printf("%.3f\n", (x,))
+    rc = printf("%.3f\n", x)
     fflush(stdout())
     return rc
 
@@ -69,14 +69,14 @@ def _printf_float64(x):
 @njit(cache=True)
 def _printf_float32(x):
     # float32 must be promoted to double for %f
-    rc = printf("%.3f\n", (np.float32(x),))
+    rc = printf("%.3f\n", np.float32(x))
     fflush(stdout())
     return rc
 
 
 @njit(cache=True)
 def _printf_int8():
-    rc = printf("[%d %d]\n", (np.int8(-7), np.int8(42)))
+    rc = printf("[%d %d]\n", np.int8(-7), np.int8(42))
     fflush(stdout())
     return rc
 
@@ -84,42 +84,55 @@ def _printf_int8():
 @njit(cache=True)
 def _printf_bool():
     # numba's Boolean type is i8 at the LLVM level (1 or 0); without
-    # explicit promotion to i32, printf reading %d would consume the
-    # i8 plus 3 bytes of garbage in the high bits of the register slot.
-    rc = printf("[%d %d]\n", (True, False))
+    # explicit promotion to int32+ in _promote_for_varargs, printf reading
+    # %d would consume the i8 plus garbage bytes in the high bits of the
+    # register slot.
+    rc = printf("[%d %d]\n", True, False)
     fflush(stdout())
     return rc
 
 
 @njit(cache=True)
-def _printf_string(s_p):
-    rc = printf("hi %s!\n", (s_p,))
+def _printf_string_via_pointer(s_p):
+    """User explicitly passes get_unicode_data_p — still supported for
+    backward compatibility and for cases where the user has a precomputed
+    intp pointer."""
+    rc = printf("hi %s!\n", s_p)
+    fflush(stdout())
+    return rc
+
+
+@njit(cache=True)
+def _printf_string_native(s):
+    """User passes a Python str directly — the @overload auto-converts
+    via get_unicode_data_p so libc sees a NUL-terminated C string."""
+    rc = printf("hi %s!\n", s)
     fflush(stdout())
     return rc
 
 
 @njit(cache=True)
 def _fprintf_stderr(n):
-    rc = fprintf(stderr(), "err %d\n", (n,))
+    rc = fprintf(stderr(), "err %d\n", n)
     fflush(stderr())
     return rc
 
 
 @njit(cache=True)
 def _fprintf_stdout(n):
-    rc = fprintf(stdout(), "out %d\n", (n,))
+    rc = fprintf(stdout(), "out %d\n", n)
     fflush(stdout())
     return rc
 
 
 @njit(cache=True)
 def _snprintf_into(buf, lo, hi):
-    return snprintf(array_data_p(buf), buf.size, "[%d:%d]", (lo, hi))
+    return snprintf(array_data_p(buf), buf.size, "[%d:%d]", lo, hi)
 
 
 @njit(cache=True)
 def _snprintf_no_args(buf):
-    return snprintf(array_data_p(buf), buf.size, "literal", ())
+    return snprintf(array_data_p(buf), buf.size, "literal")
 
 
 # Non-ASCII format-string helpers. "café=" + "%d" + "\n": the 'é' is U+00E9,
@@ -134,21 +147,21 @@ NON_ASCII_EXPECTED = "café=42\n".encode("utf-8")  # b'caf\xc3\xa9=42\n'
 
 @njit(cache=True)
 def _printf_utf8(n):
-    rc = printf(NON_ASCII_FMT, (n,))
+    rc = printf(NON_ASCII_FMT, n)
     fflush(stdout())
     return rc
 
 
 @njit(cache=True)
 def _fprintf_utf8(n):
-    rc = fprintf(stdout(), NON_ASCII_FMT, (n,))
+    rc = fprintf(stdout(), NON_ASCII_FMT, n)
     fflush(stdout())
     return rc
 
 
 @njit(cache=True)
 def _snprintf_utf8(buf, n):
-    return snprintf(array_data_p(buf), buf.size, NON_ASCII_FMT, (n,))
+    return snprintf(array_data_p(buf), buf.size, NON_ASCII_FMT, n)
 
 
 @pytest.mark.skipif(
@@ -236,12 +249,24 @@ def test_printf_bool_is_promoted_to_int32(capfd):
     reason="capfd does not reliably capture C-level stdio writes on Windows",
 )
 def test_printf_string_via_pointer(capfd):
-    """%s with a NUL-terminated string pointer (intp). At the variadic ABI
-    level, an int64 and a pointer occupy the same register/slot, so passing
-    the intp through unchanged works — libc's %s handler interprets the bits
-    as char*."""
+    """%s with a precomputed NUL-terminated string pointer (intp). Caller-
+    side get_unicode_data_p is still supported for backward compat and
+    for cases where the user has a precomputed pointer."""
     s_p = get_unicode_data_p("world")
-    _printf_string(s_p)
+    _printf_string_via_pointer(s_p)
+    out, _ = capfd.readouterr()
+    assert out == "hi world!\n", repr(out)
+
+
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level stdio writes on Windows",
+)
+def test_printf_string_native(capfd):
+    """%s with a numba unicode_type (Python str) — the @overload auto-
+    converts via get_unicode_data_p. User doesn't need to call it
+    themselves. This is the dual-mode-friendly idiom."""
+    _printf_string_native("world")
     out, _ = capfd.readouterr()
     assert out == "hi world!\n", repr(out)
 
@@ -337,7 +362,7 @@ def test_printf_non_literal_format_raises():
     """
     @njit
     def caller(fmt):
-        return printf(fmt, (1,))
+        return printf(fmt, 1)
 
     with pytest.raises(TypingError, match=r"printf.*literal"):
         caller("dynamic %d")
@@ -346,7 +371,7 @@ def test_printf_non_literal_format_raises():
 def test_fprintf_non_literal_format_raises():
     @njit
     def caller(fmt):
-        return fprintf(stderr(), fmt, (1,))
+        return fprintf(stderr(), fmt, 1)
 
     with pytest.raises(TypingError, match=r"fprintf.*literal"):
         caller("dynamic %d")
@@ -355,22 +380,11 @@ def test_fprintf_non_literal_format_raises():
 def test_snprintf_non_literal_format_raises():
     @njit
     def caller(buf, fmt):
-        return snprintf(array_data_p(buf), buf.size, fmt, (1,))
+        return snprintf(array_data_p(buf), buf.size, fmt, 1)
 
     buf = np.zeros(32, dtype=np.uint8)
     with pytest.raises(TypingError, match=r"snprintf.*literal"):
         caller(buf, "dynamic %d")
-
-
-def test_printf_non_tuple_args_raises():
-    """args MUST be a tuple. Passing a bare scalar (or anything that's not
-    a BaseTuple type at typing time) raises a clean TypingError."""
-    @njit
-    def caller():
-        return printf("got %d\n", 42)  # bare scalar instead of (42,)
-
-    with pytest.raises(TypingError, match=r"printf.*tuple"):
-        caller()
 
 
 def test_fprintf_rejects_non_intp_fp():
@@ -381,7 +395,7 @@ def test_fprintf_rejects_non_intp_fp():
     @njit
     def caller():
         # np.float64 in the FILE* slot — definitely not an intp pointer
-        return fprintf(np.float64(0.0), "x\n", ())
+        return fprintf(np.float64(0.0), "x\n")
 
     with pytest.raises(TypingError, match=r"fprintf.*fp.*intp"):
         caller()
@@ -391,7 +405,7 @@ def test_snprintf_rejects_non_intp_buf():
     """snprintf's destination buffer pointer must be intp."""
     @njit
     def caller():
-        return snprintf(np.float64(0.0), 32, "x", ())
+        return snprintf(np.float64(0.0), 32, "x")
 
     with pytest.raises(TypingError, match=r"snprintf.*buf.*intp"):
         caller()
@@ -404,7 +418,7 @@ def test_snprintf_rejects_non_intp_size():
     platforms."""
     @njit
     def caller(buf_p):
-        return snprintf(buf_p, np.int32(32), "x", ())
+        return snprintf(buf_p, np.int32(32), "x")
 
     with pytest.raises(TypingError, match=r"snprintf.*size.*intp"):
         # need a valid intp for buf so the failure is on size, not buf
@@ -417,27 +431,27 @@ def test_snprintf_rejects_non_intp_size():
 
 @njit(cache=True)
 def _sscanf_int(text_p, out_arr):
-    return sscanf(text_p, "%d", (array_data_p(out_arr),))
+    return sscanf(text_p, "%d", array_data_p(out_arr))
 
 
 @njit(cache=True)
 def _sscanf_int_long(text_p, out_arr):
-    return sscanf(text_p, "%lld", (array_data_p(out_arr),))
+    return sscanf(text_p, "%lld", array_data_p(out_arr))
 
 
 @njit(cache=True)
 def _sscanf_double(text_p, out_arr):
-    return sscanf(text_p, "%lf", (array_data_p(out_arr),))
+    return sscanf(text_p, "%lf", array_data_p(out_arr))
 
 
 @njit(cache=True)
 def _sscanf_pair(text_p, n_out, x_out):
-    return sscanf(text_p, "%d %lf", (array_data_p(n_out), array_data_p(x_out)))
+    return sscanf(text_p, "%d %lf", array_data_p(n_out), array_data_p(x_out))
 
 
 @njit(cache=True)
 def _sscanf_two_ints(text_p, a_out, b_out):
-    return sscanf(text_p, "%d %d", (array_data_p(a_out), array_data_p(b_out)))
+    return sscanf(text_p, "%d %d", array_data_p(a_out), array_data_p(b_out))
 
 
 def test_sscanf_int_roundtrip():
@@ -508,7 +522,7 @@ def test_sscanf_returns_eof_on_empty_input():
 def test_sscanf_non_literal_format_raises():
     @njit
     def caller(text_p, out_arr, fmt):
-        return sscanf(text_p, fmt, (array_data_p(out_arr),))
+        return sscanf(text_p, fmt, array_data_p(out_arr))
 
     out = np.zeros(1, dtype=np.int32)
     with pytest.raises(TypingError, match=r"sscanf.*literal"):
@@ -524,7 +538,7 @@ def test_sscanf_rejects_non_intp_output_arg():
     @njit
     def caller():
         # np.float64 value (not a pointer) in the output slot
-        return sscanf(get_unicode_data_p("42"), "%d", (np.float64(0.0),))
+        return sscanf(get_unicode_data_p("42"), "%d", np.float64(0.0))
 
     with pytest.raises(TypingError, match=r"sscanf.*intp"):
         caller()
@@ -537,7 +551,7 @@ def test_sscanf_rejects_non_intp_int_output_arg():
     """
     @njit
     def caller():
-        return sscanf(get_unicode_data_p("42"), "%d", (np.int32(7),))
+        return sscanf(get_unicode_data_p("42"), "%d", np.int32(7))
 
     with pytest.raises(TypingError, match=r"sscanf.*intp"):
         caller()
@@ -549,11 +563,158 @@ def test_sscanf_rejects_non_intp_buf():
     @njit
     def caller(out_arr):
         # Passing a unicode_type directly instead of get_unicode_data_p
-        return sscanf("42", "%d", (array_data_p(out_arr),))
+        return sscanf("42", "%d", array_data_p(out_arr))
 
     out = np.zeros(1, dtype=np.int32)
     with pytest.raises(TypingError, match=r"sscanf.*buf.*intp"):
         caller(out)
+
+
+# ============================================================================
+# Dual-mode coverage — the key contract: same source runs in both modes,
+# producing equivalent output. These tests exercise that promise directly.
+# ============================================================================
+
+
+def _dual_kernel_printf(n, label):
+    """A non-decorated kernel that we run both directly (pure Python)
+    and after applying @njit. The body uses *args syntax (no tuple) and
+    a string literal arg (gets auto-converted via get_unicode_data_p in
+    @njit; pure Python uses % natively)."""
+    printf("step %d: %s\n", n, label)
+    fflush(stdout())
+    return n * 2
+
+
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level stdio writes on Windows",
+)
+def test_dual_mode_printf_runs_same_source(capfd):
+    """The printf binding meets numba's dual-mode contract: the same kernel
+    source runs in plain Python and under @njit with identical observable
+    output. Pure-Python uses sys.stdout.write + Python's % operator;
+    @njit routes via _printf_intrinsic → libc printf. The user's *args
+    syntax stays unchanged."""
+    py_rc = _dual_kernel_printf(7, "before")
+    py_out, _ = capfd.readouterr()
+
+    njit_rc = njit(_dual_kernel_printf)(7, "before")
+    njit_out, _ = capfd.readouterr()
+
+    assert py_out == "step 7: before\n", repr(py_out)
+    assert njit_out == "step 7: before\n", repr(njit_out)
+    assert py_rc == njit_rc == 14
+
+
+def _dual_kernel_fprintf_to_stderr(code, msg):
+    fprintf(stderr(), "WARN [%d]: %s\n", code, msg)
+    fflush(stderr())
+
+
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level stdio writes on Windows",
+)
+def test_dual_mode_fprintf_stderr_runs_same_source(capfd):
+    """fprintf(stderr(), ...) dual-mode: routes via sys.stderr in pure
+    Python (address-cache lookup), via libc fprintf in @njit. Both must
+    land on stderr (not stdout) — guards against transposed handles."""
+    _dual_kernel_fprintf_to_stderr(7, "disk")
+    py_out, py_err = capfd.readouterr()
+
+    njit(_dual_kernel_fprintf_to_stderr)(7, "disk")
+    njit_out, njit_err = capfd.readouterr()
+
+    assert py_err == "WARN [7]: disk\n", repr(py_err)
+    assert njit_err == "WARN [7]: disk\n", repr(njit_err)
+    assert py_out == "" and njit_out == ""
+
+
+def _dual_kernel_snprintf(buf, lo, hi):
+    return snprintf(array_data_p(buf), buf.size, "[%d:%d]", lo, hi)
+
+
+def test_dual_mode_snprintf_runs_same_source():
+    """snprintf dual-mode: pure-Python uses ctypes.memmove into the
+    caller-allocated buffer; @njit uses libc snprintf. Both must produce
+    identical bytes for a fits-in-buffer call."""
+    buf_py = np.zeros(32, dtype=np.uint8)
+    py_n = _dual_kernel_snprintf(buf_py, 7, 11)
+    py_nul = buf_py.tolist().index(0)
+
+    buf_njit = np.zeros(32, dtype=np.uint8)
+    njit_n = njit(_dual_kernel_snprintf)(buf_njit, 7, 11)
+    njit_nul = buf_njit.tolist().index(0)
+
+    assert py_n == njit_n == len(b"[7:11]")
+    assert bytes(buf_py[:py_nul]) == b"[7:11]"
+    assert bytes(buf_njit[:njit_nul]) == b"[7:11]"
+
+
+def _dual_kernel_printf_lld_with_int32(x):
+    """Exercises the int32→int64 widening promotion: %lld reads 8 bytes,
+    x is int32 (4 bytes). Without widening, @njit would read 4 bytes of
+    garbage in the high half of the variadic register slot. With widening,
+    same source produces the same number in both modes."""
+    printf("%lld\n", x)
+    fflush(stdout())
+
+
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level stdio writes on Windows",
+)
+def test_dual_mode_int32_promotes_to_int64_for_lld(capfd):
+    """The int64-widening promotion in _promote_for_varargs ensures
+    `printf("%lld", int32_val)` works in @njit. Pure-Python's % operator
+    ignores length modifiers and uses the value's natural width, so it
+    works there too — dual-mode equivalence."""
+    _dual_kernel_printf_lld_with_int32(np.int32(7))
+    py_out, _ = capfd.readouterr()
+    njit(_dual_kernel_printf_lld_with_int32)(np.int32(7))
+    njit_out, _ = capfd.readouterr()
+    assert py_out == "7\n", repr(py_out)
+    assert njit_out == "7\n", repr(njit_out)
+
+
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level stdio writes on Windows",
+)
+def test_dual_mode_string_auto_conversion(capfd):
+    """The @overload's type-based str detection auto-wraps unicode_type
+    args with get_unicode_data_p so libc %s sees a NUL-terminated C
+    string. User code passes a raw str — no get_unicode_data_p
+    ceremony — and it works in both modes."""
+    def kernel(label):
+        printf("hello %s\n", label)
+        fflush(stdout())
+
+    kernel("world")
+    py_out, _ = capfd.readouterr()
+    njit(kernel)("world")
+    njit_out, _ = capfd.readouterr()
+    assert py_out == "hello world\n", repr(py_out)
+    assert njit_out == "hello world\n", repr(njit_out)
+
+
+def test_fprintf_pure_python_rejects_arbitrary_fp():
+    """fprintf in pure-Python mode only supports stdio handle FILE*
+    addresses (looked up in the address cache). Arbitrary FILE* (e.g.
+    fopen-returned) can't be dereferenced from Python without ctypes,
+    so the binding raises a clear error pointing the user at either
+    @njit or Python's open()."""
+    fake_fp = 0xdeadbeef
+    with pytest.raises(RuntimeError, match=r"fprintf.*pure-Python.*stdout"):
+        fprintf(fake_fp, "x\n")
+
+
+def test_sscanf_raises_in_pure_python():
+    """sscanf is @njit-only — direct call from Python raises a clear error."""
+    out = np.zeros(1, dtype=np.int32)
+    with pytest.raises(NotImplementedError, match=r"@njit-only"):
+        sscanf(int(get_unicode_data_p("42")), "%d", int(array_data_p(out)))
 
 
 @pytest.mark.skipif(
@@ -615,7 +776,7 @@ def test_fmtio_caller_survives_subprocess_round_trip(tmp_path):
         @njit(cache=True)
         def go():
             buf = np.zeros(32, dtype=np.uint8)
-            n = snprintf(array_data_p(buf), buf.size, "[%d]", (42,))
+            n = snprintf(array_data_p(buf), buf.size, "[%d]", 42)
             return n
 
         v = go()

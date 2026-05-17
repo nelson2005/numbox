@@ -146,94 +146,157 @@ Example — render the message for ``ENOENT`` (errno 2 on POSIX) into a buffer:
 Variadic formatted I/O — printf / fprintf / snprintf / sscanf
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-``printf``, ``fprintf``, ``snprintf``, and ``sscanf`` are ``@intrinsic``
-shells that emit direct extern variadic calls to libc. LLVM's backend handles the
-platform-specific variadic ABI (SysV x86-64 ``AL``-register convention,
-Win64 FP shadow, AAPCS64 named/anonymous split) automatically when the
-function is declared with ``var_arg=True``; the bindings handle C
-default-argument promotion, the pointer-as-``intp`` shape numbox uses
-throughout, and embedding the format string as a UTF-8 IR global constant.
+``printf``, ``fprintf``, ``snprintf`` (and ``sscanf`` for the parsing
+direction) are dual-mode bindings: each is a regular Python function with
+an ``@overload`` registration that routes to a private ``@intrinsic``
+codegen path when called inside ``@njit``. Same source runs unchanged
+in plain Python AND under ``@njit``, matching numba's own convention
+for builtins like ``print`` and ``range``.
 
-**Call convention.** Numba's ``@intrinsic`` doesn't accept Python-level
-``*args``, so the variadic arguments are passed as a **tuple literal** —
-the same idiom ``_call_lib_func`` uses elsewhere in the package::
+**Call convention** — C-like ``*args`` after the format string, no tuple
+wrapper at the call site::
 
-    printf("x = %d, ratio = %.3f\n", (n, ratio))
-    fprintf(stderr(), "warning: %s\n", (msg_p,))
-    snprintf(array_data_p(buf), buf.size, "[%d:%d]", (lo, hi))
-    printf("no args here\n", ())
+    printf("x = %d, ratio = %.3f\n", n, ratio)
+    fprintf(stderr(), "warning: %s\n", msg)
+    snprintf(array_data_p(buf), buf.size, "[%d:%d]", lo, hi)
+    sscanf(buf_p, "%d %lf", array_data_p(n_out), array_data_p(x_out))
+    printf("no args here\n")
 
-**Format string must be a literal.** Required to embed it as an IR global
-constant at typing time, the same constraint a C compiler operates under
-when emitting a format-checked printf call. A runtime-built ``unicode``
-raises a clean ``TypingError`` at call typing time.
+The internal ``@intrinsic`` still uses tuple-as-args because numba's
+``@intrinsic`` typing function doesn't accept Python-level ``*args``;
+the ``@overload`` impl bundles the user's ``*args`` into a tuple before
+calling the intrinsic.
+
+**Dual-mode in action:**
+
+.. code-block:: python
+
+    from numba import njit
+    from numbox.core.bindings import printf, fflush, stdout
+
+    def debug_kernel(x, label):
+        printf("step %d: %s\n", x, label)
+        fflush(stdout())
+        return x * 2
+
+    debug_kernel(7, "before")        # pure Python: writes via sys.stdout
+    njit(debug_kernel)(7, "before")  # jitted: writes via libc printf
+    # NUMBA_DISABLE_JIT=1 mode: also works (decorator becomes no-op)
+
+**Format string must be a literal in @njit.** Required to embed it as an
+IR global constant at typing time. A runtime-built ``unicode`` raises a
+clean ``TypingError``. In pure-Python mode the format string can be any
+str.
 
 **Format string encoding: UTF-8.** Non-ASCII codepoints in the literal
 are encoded as UTF-8 byte sequences and embedded into the IR global.
 printf treats every non-``%`` byte as opaque pass-through, so the bytes
 flow through libc to stdout / FILE\\* / the snprintf buffer unmodified.
-Modern terminals, files, and Windows 10+ consoles all expect UTF-8, so
-``printf("Цена: %d\n", (n,))`` renders correctly out of the box.
+Modern terminals, files, and Windows 10+ consoles all expect UTF-8.
 
   .. note::
      ``%-Ns`` width is byte-counted by printf in every libc, so non-ASCII
      output won't right-pad to a codepoint count. That's printf's
-     contract, not the binding's. Pad in numba-side string formatting
-     (``f"{s:<10}"``) before passing through ``%s`` if codepoint-counted
-     widths matter.
+     contract. Pad in numba-side string formatting (``f"{s:<10}"``)
+     before passing through ``%s`` if codepoint-counted widths matter.
 
-**C ABI default-argument promotion (handled by the binding):**
+**String args auto-conversion.** When the @overload sees an arg whose
+type is ``unicode_type`` or ``Literal[str]``, it auto-wraps the arg with
+``get_unicode_data_p`` so libc's ``%s`` receives a NUL-terminated C
+string. User code passes a raw Python str — no ``get_unicode_data_p``
+ceremony at the call site::
+
+    printf("hello %s\n", "world")  # works in both modes; no get_unicode_data_p
+
+The pre-conversion form (``printf("hello %s\n", get_unicode_data_p(s))``)
+is still supported for backward compat or when the user has a
+precomputed pointer.
+
+**Integer promotion to 64-bit.** The @njit impl widens every integer
+variadic arg to 64-bit before the libc call (``sext`` for signed, ``zext``
+for unsigned, ``bool``→``int64`` via ``zext``, ``float32``→``float64``
+via ``fpext``). This diverges from strict C ABI (C only promotes
+sub-int-width values) but makes ``%lld`` against ``int32`` work in
+@njit, matching pure-Python's ``%`` which ignores length modifiers and
+uses the value's natural width. The cost is one LLVM widening
+instruction per arg — free at runtime.
 
 ============   ============================
-Numba type     Promoted to (in varargs slot)
+Numba type     Widened to (in varargs slot)
 ============   ============================
 ``float32``    ``float64`` (``fpext``)
-``int8``       ``int32`` (``sext``)
-``int16``      ``int32`` (``sext``)
-``uint8``      ``int32`` (``zext``)
-``uint16``     ``int32`` (``zext``)
-``int32``      pass through
-``int64``      pass through
-``uint32``     pass through
-``uint64``     pass through
 ``float64``    pass through
-``intp``       pass through (use ``%s`` for char-pointer, ``%lld``/``%p`` for the integer)
+``bool``       ``int64`` (``zext``)
+``int8`` / ``int16`` / ``int32`` (signed)   ``int64`` (``sext``)
+``uint8`` / ``uint16`` / ``uint32`` (unsigned)   ``int64`` (``zext``)
+``int64`` / ``uint64`` / ``intp``   pass through
+``unicode_type`` / ``Literal[str]``   auto-converted via ``get_unicode_data_p`` → ``intp``
 ============   ============================
 
-The user is responsible for matching format specifiers to argument types
-the same way a C programmer is. For example, ``%lld`` for ``int64`` on
-LP64; ``%d`` for ``int32``; ``%s`` for an ``intp`` from ``get_unicode_data_p``;
-``%.3f`` for ``float64`` or ``float32`` (both promote to ``double``).
+**Pure-Python format-spec compatibility.** Python's ``str.__mod__`` is
+printf-derived but rejects C length modifiers (``%lld``, ``%ld``,
+``%lf``, ``%hd``, etc.) with ``ValueError``. The pure-Python impl
+strips length modifiers via a regex before formatting (``%lld``→``%d``,
+``%.3lf``→``%.3f``, etc.) so the same format string works in both modes.
 
-**Stdout buffering.** ``stdout`` is line-buffered when attached to a terminal
-and block-buffered when redirected (a pipe, file, or pytest's ``capfd``
-capture). Add an explicit ``fflush(stdout())`` after a ``printf`` if you
-need the output to appear before the process exits. ``stderr`` is
-traditionally unbuffered; ``fflush(stderr())`` is harmless.
+  .. warning::
+     ``%ld`` is the most common cross-platform footgun. On LP64 (Linux,
+     macOS) ``long`` is 8 bytes; on Win64 (LLP64) it's 4 bytes. In
+     @njit on Win64, ``printf("%ld", int64_val)`` truncates the high
+     32 bits. Pure-Python mode hides this because Python's ``%`` ignores
+     ``l``. Prefer ``%lld`` + ``int64`` for portable 8-byte width — and
+     test on Windows if you have any ``%ld`` in your format strings.
 
-**Caching.** ``@njit(cache=True)`` callers of ``printf`` / ``fprintf`` /
-``snprintf`` cache cleanly across processes: each call site emits a
-direct extern reference to the libc symbol and a deterministic format-
-string global constant. The JIT linker resolves the libc symbol at link
-time in each process, so the cached IR is ASLR-safe. No
-``cres_cacheable`` indirection is needed (unlike the fixed-arg bindings,
-these never route through a numba dispatcher whose ``id`` would be
-ASLR-randomized).
+**``snprintf`` truncation rc on Windows** diverges from C99/POSIX.
+Linux/macOS @njit and pure-Python all return the would-have-written
+count (excluding NUL); Windows @njit targets MSVCRT ``_snprintf`` which
+returns ``-1`` on truncation and doesn't guarantee NUL-termination.
+The portable check ``(rc < 0) or (rc >= size)`` works on every
+platform / mode. (UCRT's C99-compliant ``snprintf`` is a header-only
+inline over ``__stdio_common_vsnprintf`` and isn't directly linkable
+in the simple C99 calling shape — declaring ``i32 @snprintf(...)`` in
+LLVM IR and letting the JIT linker resolve it crashes with an access
+violation on Windows.)
 
-Example — log to stderr with `fprintf(3) <https://man7.org/linux/man-pages/man3/fprintf.3.html>`_:
+**``fprintf`` to non-stdio FILE\\* in pure Python.** The Python impl
+caches the addresses of ``stdout()`` / ``stderr()`` / ``stdin()`` at
+first use and routes those handles to the corresponding ``sys.*``
+streams. ``fopen``-returned FILE\\* values can't be dereferenced from
+Python without ctypes, so they raise a clear ``RuntimeError`` in
+pure-Python mode (use ``open()`` + ``f.write()`` for Python-side file
+I/O, or wrap the call in ``@njit``).
+
+**``sscanf`` is @njit-only.** Pure-Python parsing is better served by
+``int()``, ``float()``, or ``re``. Calling ``sscanf`` from pure Python
+raises ``NotImplementedError`` with a pointer at the alternatives.
+
+**Stdout buffering.** ``stdout`` is line-buffered to a terminal and
+block-buffered when redirected. The pure-Python impl auto-flushes
+``sys.stdout`` after each ``printf`` to mirror the line-buffer-to-tty
+behavior; @njit users should call ``fflush(stdout())`` explicitly when
+output needs to appear immediately (e.g. before a long-running compute
+or under pytest's ``capfd``).
+
+**Caching.** ``@njit(cache=True)`` callers cache cleanly across
+processes: each call site emits a direct extern reference to the libc
+symbol and a deterministic format-string global constant. The JIT
+linker resolves the libc symbol per-process, so the cached IR is
+ASLR-safe. No ``cres_cacheable`` indirection needed.
+
+Example — log to stderr with `fprintf(3) <https://man7.org/linux/man-pages/man3/fprintf.3.html>`_,
+dual-mode:
 
 .. code-block:: python
 
     from numba import njit
     from numbox.core.bindings import fprintf, fflush, stderr
-    from numbox.utils.lowlevel import get_unicode_data_p
 
-    @njit(cache=True)
-    def warn(code, msg_p):
-        fprintf(stderr(), "warning code=%d: %s\n", (code, msg_p))
+    def warn(code, msg):
+        fprintf(stderr(), "warning code=%d: %s\n", code, msg)
         fflush(stderr())
 
-    warn(7, get_unicode_data_p("disk getting full"))
+    warn(7, "disk getting full")        # plain Python
+    njit(warn)(7, "disk getting full")  # jitted — identical output
 
 Example — format into a buffer with `snprintf(3) <https://man7.org/linux/man-pages/man3/snprintf.3.html>`_,
 detect truncation, decode:
@@ -245,12 +308,11 @@ detect truncation, decode:
     from numbox.core.bindings import snprintf
     from numbox.utils.lowlevel import array_data_p
 
-    @njit(cache=True)
     def fmt_range(lo, hi, buf):
-        return snprintf(array_data_p(buf), buf.size, "[%d:%d]", (lo, hi))
+        return snprintf(array_data_p(buf), buf.size, "[%d:%d]", lo, hi)
 
     buf = np.zeros(64, dtype=np.uint8)
-    n = fmt_range(7, 11, buf)
+    n = njit(fmt_range)(7, 11, buf)
     # Portable truncation check (works on Linux/macOS C99 snprintf
     # *and* Windows MSVCRT _snprintf — see snprintf docstring):
     truncated = (n < 0) or (n >= buf.size)
@@ -277,19 +339,22 @@ buffer into caller-supplied output pointers. Shape differs from the writers:
 
 - ``buf`` is an ``intp`` pointing at the input bytes (e.g. from
   ``get_unicode_data_p``).
-- ``args`` is a tuple of ``intp`` *output pointers* — each one points at
+- Variadic ``*args`` are ``intp`` *output pointers* — each one points at
   writable storage that sscanf fills based on the corresponding format
   specifier. Typically obtained via ``array_data_p`` of a 1-element numpy
   array of the right dtype.
 - Returns the count of items successfully assigned (``int32``), or
   ``-1`` (``EOF``) on input failure before the first conversion.
 
-Unlike printf-family, there is **no default-argument promotion** for
-sscanf's variadic args (pointers don't promote). The binding validates
-only that every variadic arg has type ``intp``, so you can't accidentally
-pass an integer value where a pointer is expected. The pointed-to storage
-must still be the right size for the format spec — the binding cannot
-check that:
+Unlike printf-family, ``sscanf`` is **@njit-only** — pure-Python calls
+raise ``NotImplementedError`` pointing the user at Python's ``int()`` /
+``float()`` / ``re`` for native parsing. There is **no default-argument
+promotion** (pointers don't promote) and **no string auto-conversion**
+(args are output pointers, not values). The binding validates only that
+every variadic arg has type ``intp``, so you can't accidentally pass an
+integer value where a pointer is expected. The pointed-to storage must
+still be the right size for the format spec — the binding cannot check
+that:
 
 ================   =============================================
 Format spec        Required output points at
@@ -326,7 +391,7 @@ Example — parse a "<int> <double>" pair into typed numpy slots:
     @njit(cache=True)
     def parse_pair(text_p, n_out, x_out):
         return sscanf(text_p, "%d %lf",
-                      (array_data_p(n_out), array_data_p(x_out)))
+                      array_data_p(n_out), array_data_p(x_out))
 
     n_out = np.zeros(1, dtype=np.int32)
     x_out = np.zeros(1, dtype=np.float64)

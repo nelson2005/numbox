@@ -1,78 +1,129 @@
 """Variadic formatted I/O — ``printf``, ``fprintf``, ``snprintf``, ``sscanf``
-callable from @njit.
+callable from BOTH plain Python and ``@njit`` code.
 
-``sscanf`` is the inverse direction: parse fields from an input buffer into
-caller-supplied output pointers. Same Literal[str] format constraint, but
-no default-argument promotion (its variadic args are pointers, which don't
-promote). See ``sscanf``'s docstring for the pointer-vs-spec contract.
+The public bindings are regular Python functions; numba dispatches to a
+private ``@intrinsic`` codegen path via ``@overload`` when called inside
+``@njit``. Same source runs unchanged in either mode, matching numba's
+own convention for builtins like ``print`` and ``range``::
 
-These are ``@intrinsic`` shells that each emit a direct extern variadic
-call to libc — no delegation through ``numba.core.cgutils`` helpers, so
-the encoding and symbol choice live entirely in this module. LLVM's
-backend handles the platform-specific variadic ABI (SysV x86-64
-``AL``-register convention, Win64 FP shadow, AAPCS64 named/anonymous
-split) automatically.
+    def debug_kernel(x, label):
+        printf("step %d: %s\\n", x, label)
+        fflush(stdout())
+        return x * 2
 
-The format string must be a ``Literal[str]`` at the call site so it can
-be embedded as an IR global constant — the same constraint a C compiler
-operates under when emitting a format-checked printf call.
+    debug_kernel(7, "before")        # pure Python: writes via sys.stdout
+    njit(debug_kernel)(7, "before")  # jitted: writes via libc printf
 
-**Format string encoding: UTF-8.** Modern terminals, files, and Windows
-10+ consoles all expect UTF-8, and printf treats every non-``%`` byte
-as opaque pass-through. Literal format strings can therefore contain
-arbitrary Unicode characters (``"Цена: %d\\n"``, ``"caf\\u00e9 %s"``);
-the codepoints are encoded to UTF-8 bytes once at codegen time and
-flow through libc unmodified. Note that ``%-Ns`` width is byte-counted
-by printf in every libc, so non-ASCII output won't right-pad to a
-codepoint count — that's printf's contract, not ours.
+Call convention
+---------------
 
-User-call convention follows the same shape as ``_call_lib_func`` in this
-package: variadic args are passed as a **tuple literal**. ``@intrinsic``
-does not accept Python-level ``*args`` (its typing-function signature
-drives numba's arg folding directly), so the tuple-as-args idiom is the
-standard numba pattern for variadic shapes::
+User-facing API is C-like — positional ``*args`` after the format string;
+no tuple wrapper at the call site. Internally the @overload path bundles
+the args into a tuple before calling the private ``_xxx_intrinsic`` (the
+intrinsic itself still uses the tuple-as-args shape because numba's
+``@intrinsic`` typing function doesn't accept Python-level ``*args``)::
 
-    printf("x = %d, y = %.3f\\n", (n, ratio))
-    fprintf(stderr(), "warning: %s\\n", (msg_p,))
-    snprintf(buf_p, buf.size, "[%d:%d]", (lo, hi))
-    printf("hello\\n", ())             # zero args
+    printf("x = %d, ratio = %.3f\\n", n, ratio)
+    fprintf(stderr(), "warning: %s\\n", msg)
+    snprintf(array_data_p(buf), buf.size, "[%d:%d]", lo, hi)
+    sscanf(buf_p, "%d %lf", array_data_p(n_out), array_data_p(x_out))
+    printf("no args here\\n")
 
-C ABI default-argument promotion is applied so callers can pass numba's
-natural numeric types:
+Format string must be a literal in @njit
+----------------------------------------
 
-- ``float32`` → ``float64`` (``fpext``)
-- ``int8`` / ``int16`` → ``int32`` (signed: ``sext``; unsigned: ``zext``)
-- ``int32`` / ``int64`` / ``uint32`` / ``uint64`` / ``float64`` / pointers: pass through
+Required so the format string can be embedded as an IR global constant —
+the same constraint a C compiler operates under when emitting a
+format-checked printf call. A runtime-built ``unicode`` raises a clean
+``TypingError`` at call typing time. In pure-Python mode the format
+string can of course be any str.
 
-The user is otherwise responsible for matching format specifiers to argument
-types the same way a C programmer is (e.g. ``%lld`` for ``int64`` on LP64,
-``%d`` for ``int32``, ``%s`` for an ``intp`` pointing at a NUL-terminated
-C string).
+Format string encoding: UTF-8
+-----------------------------
 
-Caching: each call site emits a direct extern reference to the libc
-symbol and a deterministic UTF-8 format-string global. The JIT linker
-resolves the libc symbol per-process, the format-string global is
-content-deterministic, and no runtime pointer is baked into the IR.
-``@njit(cache=True)`` callers cache cleanly — no ``cres_cacheable``
-indirection needed (unlike fixed-arg bindings, these never route through
-a numba dispatcher whose ``id`` would be ASLR-randomized).
+Non-ASCII codepoints in the literal are encoded as UTF-8 byte sequences
+and embedded into the IR global. printf treats every non-``%`` byte as
+opaque pass-through, so the bytes flow through libc to stdout / FILE\\* /
+the snprintf buffer unmodified. Modern terminals, files, and Windows
+10+ consoles all expect UTF-8.
 
-References:
+.. note::
+   ``%-Ns`` width is byte-counted by printf in every libc, so non-ASCII
+   output won't right-pad to a codepoint count. That's printf's contract.
+   Pad in numba-side string formatting (``f"{s:<10}"``) before passing
+   through ``%s`` if codepoint-counted widths matter.
+
+Cross-mode caveats
+------------------
+
+1. **Length modifiers in format strings.** ``%lld``, ``%ld``, ``%lf``,
+   ``%hd``, etc. are valid in C printf but rejected by Python's ``%``
+   operator. The pure-Python impls strip length modifiers via a regex
+   before formatting (``%lld`` → ``%d``, ``%.3lf`` → ``%.3f``). The
+   stripped form produces identical output for typical values because
+   Python ints / floats carry the same width independent of the spec.
+
+2. **C-ABI auto-promotion of integer args to 64-bit.** The @njit impl
+   widens every integer variadic arg to 64-bit before the libc call
+   (sext / zext as appropriate). Without this, a user writing
+   ``printf("%lld", np.int32(7))`` in @njit would have libc read 8 bytes
+   from a 4-byte source — register garbage in the high bits. With the
+   widening, ``%lld`` against int32 / int16 / int8 / bool works
+   correctly. Diverges from C ABI (C doesn't promote int to long long)
+   but matches user expectations and the pure-Python ``%`` behavior.
+
+3. **String args + ``%s``.** Pure-Python's ``%`` handles strings
+   natively. The @njit @overload auto-converts ``unicode_type`` args
+   via ``get_unicode_data_p`` so libc sees a NUL-terminated C string.
+   Users no longer need to call ``get_unicode_data_p`` themselves at
+   the call site.
+
+4. **``%ld`` on Win64 (LLP64).** ``long`` is 4 bytes on Win64 but 8 on
+   LP64; ``%ld`` against int64 truncates the high 32 bits on Win64 in
+   @njit. Pure-Python mode hides this because Python's ``%`` ignores
+   length modifiers. Prefer ``%lld`` + int64 for portable 8-byte width.
+
+5. **``snprintf`` truncation rc on Windows.** Pure-Python and Linux/macOS
+   @njit follow C99 semantics (return would-have-written count).
+   Windows @njit targets MSVCRT ``_snprintf`` (returns ``-1`` on
+   truncation, no NUL-term guarantee). Portable check that works on
+   every platform: ``(rc < 0) or (rc >= size)``.
+
+6. **``fprintf`` to non-stdio FILE\\* in pure-Python.** The Python impl
+   routes ``stdout()`` / ``stderr()`` / ``stdin()`` handles to the
+   corresponding ``sys.*`` streams via an address cache. ``fopen``-
+   returned FILE\\* values aren't dereferenceable from Python without
+   a ctypes call, so they raise a clear error in pure-Python mode
+   (use ``open()`` + ``f.write()`` for Python-side file I/O).
+
+7. **``sscanf`` is @njit-only.** Pure-Python implementations of
+   sscanf-style parsing are usually better served by ``int()`` /
+   ``float()`` / ``re``; calling from pure-Python raises
+   ``NotImplementedError``.
+
+References
+----------
 
 - `printf(3) <https://man7.org/linux/man-pages/man3/printf.3.html>`_
 - `fprintf(3) <https://man7.org/linux/man-pages/man3/fprintf.3.html>`_
 - `snprintf(3) <https://man7.org/linux/man-pages/man3/snprintf.3.html>`_
+- `sscanf(3) <https://man7.org/linux/man-pages/man3/sscanf.3.html>`_
 - `Microsoft _snprintf
   <https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/snprintf-snprintf-snprintf-l-snwprintf-snwprintf-l>`_
 """
+import ctypes
+import re
+import sys
+
 from llvmlite import ir as llir
 from numba.core import cgutils
 from numba.core.cgutils import get_or_insert_function
 from numba.core.errors import TypingError
 from numba.core.types import (
-    BaseTuple, Boolean, Float, Integer, Literal, int32, intp,
+    BaseTuple, Boolean, Float, Integer, Literal, UnicodeType, int32, intp,
+    unliteral,
 )
-from numba.extending import intrinsic
+from numba.extending import intrinsic, overload
 
 from numbox.core.bindings.utils import load_lib, platform_
 
@@ -83,46 +134,66 @@ __all__ = ["printf", "fprintf", "snprintf", "sscanf"]
 load_lib("c")
 
 
-# Windows ships MSVCRT's "_snprintf" (returns -1 on truncation, no NUL guarantee).
-# UCRT's C99-compliant "snprintf" is exposed via the C headers as an inline
-# wrapper around `__stdio_common_vsnprintf`; declaring `i32 @snprintf(...)` in
-# LLVM IR and letting the JIT linker resolve it crashes with an access
-# violation. So on Windows we deliberately target the MSVCRT-legacy symbol
-# and document the non-C99 truncation contract (see snprintf docstring).
+# Windows MSVCRT exports "_snprintf" with non-C99 truncation semantics
+# (returns -1 on truncation, no NUL guarantee). UCRT's C99-compliant
+# "snprintf" is a header-only inline over __stdio_common_vsnprintf that
+# isn't directly linkable in the simple C99 calling shape — declaring
+# `i32 @snprintf(...)` in LLVM IR and letting the JIT linker resolve it
+# crashes with an access violation. So on Windows the @njit binding
+# deliberately targets MSVCRT (see snprintf module-docstring section on
+# cross-mode caveats); pure-Python uses POSIX/C99 semantics universally.
 _SNPRINTF_SYMBOL = "_snprintf" if platform_ == "Windows" else "snprintf"
 
 
+# C-printf length modifiers: 'hh', 'h', 'l', 'll', 'L'. Python's % operator
+# rejects them with `ValueError: unsupported format character`. Strip them
+# before pure-Python formatting; the stripped %d / %f produces equivalent
+# output for typical values (Python's % uses the value's natural width).
+_LENGTH_MODIFIER_RE = re.compile(
+    r'%([-+0# ]*[0-9*]*\.?[0-9*]*)(hh|ll|h|l|L)([diouxXfFeEgGaAcsp])'
+)
+
+
+def _python_fmt_compat(fmt):
+    """Strip C printf length modifiers so Python's % accepts the format."""
+    return _LENGTH_MODIFIER_RE.sub(r'%\1\3', fmt)
+
+
+# ---------------------------------------------------------------------------
+# Helpers for the @intrinsic codegen layer (private)
+# ---------------------------------------------------------------------------
+
+
 def _promote_for_varargs(builder, arg_ty, arg_val):
-    """Apply C default argument promotion for variadic arg passing.
+    """C-ABI promotion + opportunistic widening of all integer args to 64-bit.
 
-    - ``float32`` → ``double`` (``fpext``)
-    - ``bool`` → ``int32`` (``zext``; the numba ``Boolean`` type is a sibling
-      of ``Integer`` in the numba type hierarchy, not a subclass, so it has
-      to be handled explicitly — without this, a ``bool`` value lands in a
-      variadic slot as i8 and printf reading ``%d`` would see 3 bytes of
-      garbage in the high bits)
-    - ``int8`` / ``int16`` → ``int32`` (``sext`` if signed, ``zext`` if unsigned)
-    - Larger or already-promoted types pass through.
+    - ``float32`` → ``float64`` (fpext)
+    - ``bool`` → ``int64`` (zext)
+    - any signed ``Integer`` of width < 64 → ``int64`` (sext)
+    - any unsigned ``Integer`` of width < 64 → ``int64`` (zext)
+    - 64-bit ints, doubles, pointers — pass through
 
-    Matches what a C compiler does when an arg is passed to a variadic
-    function.
+    Widening to 64-bit (rather than just int32 per strict C ABI) is a
+    deliberate choice: it makes ``%lld + int32`` work in @njit, which
+    matches pure-Python's behavior (Python ignores length modifiers and
+    uses the value's natural width). The cost is a single LLVM sext /
+    zext / fpext per arg — free at runtime.
     """
-    i32_ll = llir.IntType(32)
+    i64_ll = llir.IntType(64)
     if isinstance(arg_ty, Float) and arg_ty.bitwidth == 32:
         return builder.fpext(arg_val, llir.DoubleType())
     if isinstance(arg_ty, Boolean):
-        return builder.zext(arg_val, i32_ll)
-    if isinstance(arg_ty, Integer) and arg_ty.bitwidth < 32:
+        return builder.zext(arg_val, i64_ll)
+    if isinstance(arg_ty, Integer) and arg_ty.bitwidth < 64:
         if arg_ty.signed:
-            return builder.sext(arg_val, i32_ll)
-        return builder.zext(arg_val, i32_ll)
+            return builder.sext(arg_val, i64_ll)
+        return builder.zext(arg_val, i64_ll)
     return arg_val
 
 
 def _literal_format_or_raise(name, fmt_ty):
     """Extract the Python str value of a Literal[str] format-string type
-    or raise a clean TypingError naming the binding.
-    """
+    or raise a clean TypingError naming the binding."""
     if not isinstance(fmt_ty, Literal):
         raise TypingError(
             f"{name}: format string must be a literal str, got {fmt_ty!r}"
@@ -136,11 +207,7 @@ def _literal_format_or_raise(name, fmt_ty):
 
 
 def _unpack_args_tuple(builder, args_ty, args_pack):
-    """Extract individual LLVM values from a tuple-of-args LLVM aggregate.
-
-    Returns a list of (numba type, LLVM value) pairs. Handles the empty
-    tuple ``()`` case (zero variadic args) where ``args_ty`` is ``Tuple()``.
-    """
+    """Extract individual LLVM values from a tuple-of-args LLVM aggregate."""
     arg_types = tuple(args_ty)
     return [
         (arg_types[i], builder.extract_value(args_pack, i))
@@ -149,72 +216,39 @@ def _unpack_args_tuple(builder, args_ty, args_pack):
 
 
 def _emit_variadic_call(builder, symbol, fmt_str, leading_vals, args_ty, args_pack):
-    """Emit IR for ``symbol(*leading_vals, fmt_p, *promoted_args) -> i32``.
-
-    - ``leading_vals`` is a list of LLVM values that come before the format
-      string in the call (FILE* for fprintf; buf, size for snprintf; empty
-      for printf). Their LLVM types are read off the values themselves.
-    - ``fmt_str`` is the Python str literal; encoded as UTF-8 + NUL and
-      embedded as an IR global. ``cgutils.global_constant`` auto-uniquifies
-      the global name across multiple call sites.
-    - ``args_ty`` + ``args_pack`` are the tuple-of-args at the typing
-      layer + the LLVM aggregate at the codegen layer; both come from the
-      tuple-as-args calling convention.
-
-    The variadic ABI (AL register on SysV, FP shadow on Win64, named/
-    anonymous split on AAPCS64) is handled automatically by LLVM when the
-    function is declared with ``var_arg=True``.
-    """
+    """Emit IR for ``symbol(*leading_vals, fmt_p, *promoted_args) -> i32``."""
     i8p = llir.IntType(8).as_pointer()
     i32_ll = llir.IntType(32)
     mod = builder.module
     fmt_bytes = cgutils.make_bytearray((fmt_str + '\x00').encode('utf-8'))
-    # Name collisions are not possible here even though we reuse
-    # f"{symbol}_format" across every call site of a given binding:
-    # cgutils.global_constant defaults to linkage='internal' and routes
-    # through add_global_variable → module.get_unique_name → scope.deduplicate,
-    # which auto-suffixes within a module (printf_format, printf_format.1, …).
-    # Across modules, internal-linkage globals are module-private (like
-    # C `static`); LLVM's linker further renames on merge into the shared
-    # MCJIT engine. So multiple call sites with identical or distinct
-    # format strings each get their own deduplicated global.
+    # cgutils.global_constant uses linkage='internal' and routes through
+    # module.get_unique_name → scope.deduplicate, which auto-suffixes when
+    # the same name is re-used within a module (printf_format,
+    # printf_format.1, ...). Across modules, internal-linkage globals are
+    # module-private; LLVM's linker further renames on merge into the
+    # shared MCJIT engine. So multiple call sites — same or distinct
+    # format strings — each get their own deduplicated global.
     global_fmt = cgutils.global_constant(mod, f"{symbol}_format", fmt_bytes)
     fmt_p = builder.bitcast(global_fmt, i8p)
     unpacked = _unpack_args_tuple(builder, args_ty, args_pack)
     promoted = [_promote_for_varargs(builder, t, v) for t, v in unpacked]
     leading_tys = [v.type for v in leading_vals]
-    fn_ty = llir.FunctionType(
-        i32_ll, leading_tys + [i8p], var_arg=True,
-    )
+    fn_ty = llir.FunctionType(i32_ll, leading_tys + [i8p], var_arg=True)
     fn = get_or_insert_function(mod, fn_ty, symbol)
     return builder.call(fn, list(leading_vals) + [fmt_p] + promoted)
 
 
-def _require_literal_fmt_and_tuple_args(name, fmt_ty, args_ty):
-    """Typing-time guards shared by all three bindings: literal format
-    string + tuple args. Returns the resolved Python format string."""
-    fmt_str = _literal_format_or_raise(name, fmt_ty)
-    if not isinstance(args_ty, BaseTuple):
-        raise TypingError(
-            f"{name}: args must be a tuple, got {args_ty!r}"
-        )
-    return fmt_str
+# ---------------------------------------------------------------------------
+# Private @intrinsics — the @njit codegen path
+# ---------------------------------------------------------------------------
 
 
 @intrinsic(prefer_literal=True)
-def printf(typingctx, fmt_ty, args_ty):
-    """libc ``printf(fmt, args)`` — write formatted text to stdout.
-
-    ``fmt`` must be a literal Python string at the call site. ``args`` is a
-    tuple of values (use ``()`` for zero args). Returns the number of
-    characters written (``int32``), or a negative value on error.
-
-    Example::
-
-        printf("count=%d ratio=%.3f\\n", (n, ratio))
-        printf("done\\n", ())
-    """
-    fmt_str = _require_literal_fmt_and_tuple_args("printf", fmt_ty, args_ty)
+def _printf_intrinsic(typingctx, fmt_ty, args_ty):
+    """libc printf via a tuple-of-args. Internal; user code calls printf()."""
+    fmt_str = _literal_format_or_raise("printf", fmt_ty)
+    if not isinstance(args_ty, BaseTuple):
+        raise TypingError(f"printf: args must be a tuple, got {args_ty!r}")
 
     def codegen(context, builder, sig, llvm_args):
         _, args_pack = llvm_args
@@ -225,19 +259,11 @@ def printf(typingctx, fmt_ty, args_ty):
 
 
 @intrinsic(prefer_literal=True)
-def fprintf(typingctx, fp_ty, fmt_ty, args_ty):
-    """libc ``fprintf(fp, fmt, args)`` — write formatted text to FILE\\* fp.
-
-    ``fp`` is the FILE\\* as ``intp`` (from ``stdout()`` / ``stderr()`` /
-    ``stdin()`` or ``fopen()``). ``fmt`` must be a literal Python string.
-    ``args`` is a tuple of values (use ``()`` for zero args).
-    Returns chars written (``int32``), or negative on error.
-
-    Example::
-
-        fprintf(stderr(), "error %d: %s\\n", (code, msg_p))
-    """
-    fmt_str = _require_literal_fmt_and_tuple_args("fprintf", fmt_ty, args_ty)
+def _fprintf_intrinsic(typingctx, fp_ty, fmt_ty, args_ty):
+    """libc fprintf via a tuple-of-args. Internal; user code calls fprintf()."""
+    fmt_str = _literal_format_or_raise("fprintf", fmt_ty)
+    if not isinstance(args_ty, BaseTuple):
+        raise TypingError(f"fprintf: args must be a tuple, got {args_ty!r}")
     if fp_ty != intp:
         raise TypingError(
             f"fprintf: fp must be intp (FILE* as pointer-as-int), got {fp_ty!r}"
@@ -254,137 +280,11 @@ def fprintf(typingctx, fp_ty, fmt_ty, args_ty):
 
 
 @intrinsic(prefer_literal=True)
-def sscanf(typingctx, buf_ty, fmt_ty, args_ty):
-    """libc ``sscanf(buf, fmt, args)`` — parse fields from a NUL-terminated
-    input buffer into caller-supplied output pointers.
-
-    Shape differs from printf/fprintf/snprintf:
-
-    - ``buf`` is an ``intp`` pointing at the NUL-terminated *input* bytes.
-    - ``fmt`` is a literal Python string (UTF-8 encoded in the IR global).
-    - ``args`` is a tuple of ``intp`` *output pointers* — each one points
-      at writable storage that sscanf will fill in based on the
-      corresponding format specifier.
-
-    Returns the number of items successfully assigned (``int32``), or
-    ``-1`` (``EOF``) on input failure before the first conversion.
-
-    **Pointer-vs-spec contract** is the user's responsibility, same as in C:
-
-    ===========   ====================================
-    Format spec   Required output pointer points at
-    ===========   ====================================
-    ``%hhd``      ``int8`` (1 byte)
-    ``%hd``       ``int16`` (2 bytes)
-    ``%d``        ``int32`` (4 bytes)
-    ``%ld``       ``int64`` on LP64 (Linux, macOS); ``int32`` on Win64 (LLP64) — ``long`` is 8 bytes on LP64 and 4 bytes on Win64
-    ``%lld``      ``int64`` (8 bytes — portable across LP64 and LLP64)
-    ``%u``        ``uint32``
-    ``%llu``      ``uint64``
-    ``%f``        ``float32`` (4 bytes — NOT double; ``%lf`` for double)
-    ``%lf``       ``float64`` (8 bytes)
-    ``%s``        ``char`` array (caller must ensure adequate size + NUL room)
-    ``%n``        caller-managed; the binding does not parse the format string,
-                  so libc's own behavior applies (glibc fortified builds disable
-                  ``%n`` in the printf family; scanf's ``%n`` writes the consumed
-                  byte count through the corresponding output pointer)
-    ===========   ====================================
-
-    The ``%ld`` row is the most common cross-platform footgun and the
-    project's own ``CLAUDE.md`` flags it explicitly. Prefer ``%lld`` with
-    an ``int64`` output slot when you want a portable 8-byte width.
-
-    Pointer-size mismatches corrupt memory silently. The binding validates
-    only that each variadic arg has type ``intp`` (so you can't accidentally
-    pass an integer value where a pointer is expected); it cannot validate
-    that the pointed-to storage is wide enough for the format spec.
-
-    Example::
-
-        import numpy as np
-        from numba import njit
-        from numbox.core.bindings import sscanf
-        from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
-
-        @njit(cache=True)
-        def parse_pair(text_p, n_out, x_out):
-            return sscanf(text_p, "%d %lf",
-                          (array_data_p(n_out), array_data_p(x_out)))
-
-        n_out = np.zeros(1, dtype=np.int32)
-        x_out = np.zeros(1, dtype=np.float64)
-        rc = parse_pair(get_unicode_data_p("42 3.14"), n_out, x_out)
-        # rc == 2; n_out[0] == 42; x_out[0] == 3.14
-    """
-    fmt_str = _require_literal_fmt_and_tuple_args("sscanf", fmt_ty, args_ty)
-    if buf_ty != intp:
-        raise TypingError(
-            f"sscanf: buf must be intp (pointer-as-int), got {buf_ty!r}"
-        )
-    # Every variadic output must be intp (a pointer). Pointers don't undergo
-    # default-argument promotion (they're already register-width), so we
-    # don't need the float32/intN<32 widening that printf-family uses — we
-    # just need to ensure the caller didn't pass a non-pointer value into a
-    # pointer slot, which would have sscanf write through whatever bits
-    # happen to be there.
-    for i, ty in enumerate(tuple(args_ty)):
-        if ty != intp:
-            raise TypingError(
-                f"sscanf: args[{i}] must be intp (output pointer), got {ty!r}"
-            )
-
-    def codegen(context, builder, sig, llvm_args):
-        i8p = llir.IntType(8).as_pointer()
-        buf_int, _, args_pack = llvm_args
-        buf_ptr = builder.inttoptr(buf_int, i8p)
-        # _emit_variadic_call applies _promote_for_varargs to each tuple
-        # element; for intp values that's a no-op (intp passes through),
-        # so the helper Just Works here. The pointer-vs-spec contract is
-        # documented in the docstring and the user's responsibility.
-        return _emit_variadic_call(
-            builder, "sscanf", fmt_str, [buf_ptr], args_ty, args_pack)
-
-    return int32(buf_ty, fmt_ty, args_ty), codegen
-
-
-@intrinsic(prefer_literal=True)
-def snprintf(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
-    """libc ``snprintf(buf, size, fmt, args)`` — format into a caller buffer.
-
-    ``buf`` is an ``intp`` pointer to the destination buffer (caller-owned).
-    ``size`` is the buffer size in bytes (``intp``). ``fmt`` must be a literal
-    Python string. ``args`` is a tuple of values (use ``()`` for zero args).
-
-    **Return value differs by platform**:
-
-    - **Linux glibc, Linux musl, macOS**: C99 / POSIX ``snprintf`` semantics.
-      Returns the number of characters that WOULD have been written if
-      ``size`` were unlimited, NOT counting the trailing NUL. The written
-      portion is always NUL-terminated when ``size > 0``. Detect truncation
-      via ``rc >= size``.
-    - **Windows**: MSVCRT ``_snprintf`` semantics. Returns the number of
-      bytes written on success (excluding NUL), or **-1 on truncation**.
-      The buffer is **not guaranteed to be NUL-terminated** when truncated.
-      Detect truncation via ``rc < 0``. UCRT's C99-compliant ``snprintf``
-      is a header-only inline over ``__stdio_common_vsnprintf`` rather
-      than a directly-linkable symbol, so we can't reach it through an
-      ``i32 @snprintf(...)`` LLVM declaration — the attempt crashed with
-      an access violation. The Windows binding therefore deliberately
-      targets the MSVCRT-legacy symbol.
-
-    A portable "did it fit?" check that works on every supported platform::
-
-        n = snprintf(array_data_p(buf), buf.size, fmt, args)
-        truncated = (n < 0) or (n >= buf.size)
-
-    Example::
-
-        buf = np.zeros(64, dtype=np.uint8)
-        n = snprintf(array_data_p(buf), buf.size, "[%d:%d]", (lo, hi))
-        # On Linux/macOS: n < buf.size means no truncation; bytes(buf[:n]) is the message.
-        # On Windows: n >= 0 means no truncation; bytes(buf[:n]) is the message.
-    """
-    fmt_str = _require_literal_fmt_and_tuple_args("snprintf", fmt_ty, args_ty)
+def _snprintf_intrinsic(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
+    """libc snprintf via a tuple-of-args. Internal; user code calls snprintf()."""
+    fmt_str = _literal_format_or_raise("snprintf", fmt_ty)
+    if not isinstance(args_ty, BaseTuple):
+        raise TypingError(f"snprintf: args must be a tuple, got {args_ty!r}")
     if buf_ty != intp:
         raise TypingError(
             f"snprintf: buf must be intp (pointer-as-int), got {buf_ty!r}"
@@ -403,3 +303,274 @@ def snprintf(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
             [buf_ptr, size_val], args_ty, args_pack)
 
     return int32(buf_ty, size_ty, fmt_ty, args_ty), codegen
+
+
+@intrinsic(prefer_literal=True)
+def _sscanf_intrinsic(typingctx, buf_ty, fmt_ty, args_ty):
+    """libc sscanf via a tuple-of-args. Internal; user code calls sscanf().
+
+    Args are intp output pointers; no default-arg promotion applies
+    (pointers don't promote). See sscanf() for the caller-facing contract.
+    """
+    fmt_str = _literal_format_or_raise("sscanf", fmt_ty)
+    if not isinstance(args_ty, BaseTuple):
+        raise TypingError(f"sscanf: args must be a tuple, got {args_ty!r}")
+    if buf_ty != intp:
+        raise TypingError(
+            f"sscanf: buf must be intp (pointer-as-int), got {buf_ty!r}"
+        )
+    for i, ty in enumerate(tuple(args_ty)):
+        if ty != intp:
+            raise TypingError(
+                f"sscanf: args[{i}] must be intp (output pointer), got {ty!r}"
+            )
+
+    def codegen(context, builder, sig, llvm_args):
+        i8p = llir.IntType(8).as_pointer()
+        buf_int, _, args_pack = llvm_args
+        buf_ptr = builder.inttoptr(buf_int, i8p)
+        return _emit_variadic_call(
+            builder, "sscanf", fmt_str, [buf_ptr], args_ty, args_pack)
+
+    return int32(buf_ty, fmt_ty, args_ty), codegen
+
+
+# ---------------------------------------------------------------------------
+# @overload helper: build an impl source string with str args auto-converted
+# ---------------------------------------------------------------------------
+
+
+def _build_args_tuple_expr_from_starargs(arg_tys):
+    """Build a Python source fragment ``(...)`` that constructs the args
+    tuple for the intrinsic call, indexing into the impl's ``*args`` and
+    auto-converting any ``UnicodeType`` arg via ``get_unicode_data_p``
+    so libc sees a NUL-terminated C string for ``%s``.
+
+    Numba requires the @overload's impl signature to match the typing
+    signature shape exactly — ``*args`` in typing must be ``*args`` in
+    impl. So we cannot expand per-arity explicit parameters; we have
+    to index into the ``args`` tuple from inside the impl.
+    """
+    n = len(arg_tys)
+    if n == 0:
+        return "()"
+    parts = []
+    for i, ty in enumerate(arg_tys):
+        # Both numba's runtime ``unicode_type`` and the compile-time
+        # ``Literal[str]`` (StringLiteral) need conversion. StringLiteral
+        # is NOT a UnicodeType subclass directly — its MRO is
+        # ``StringLiteral → Literal → Dummy → Type`` — so we use
+        # ``unliteral(ty)`` to strip any Literal wrapping before the check.
+        if isinstance(unliteral(ty), UnicodeType):
+            parts.append(f"get_unicode_data_p(args[{i}])")
+        else:
+            parts.append(f"args[{i}]")
+    inner = ", ".join(parts)
+    return f"({inner},)" if n == 1 else f"({inner})"
+
+
+def _build_overload_impl(name, fixed_params, args_tys, intrinsic_callable,
+                         get_unicode_data_p):
+    """Build an impl function via exec'd source that:
+
+    - Takes ``(fixed_params..., *args)`` — matching the typing-function shape
+    - Bundles ``*args`` into a tuple via index expressions, auto-converting
+      ``UnicodeType`` args via ``get_unicode_data_p``
+    - Calls the underlying intrinsic with the bundled tuple
+    """
+    args_tuple_expr = _build_args_tuple_expr_from_starargs(args_tys)
+    sig_params = ", ".join(list(fixed_params) + ["*args"])
+    intrinsic_args = ", ".join(list(fixed_params) + [args_tuple_expr])
+    src = f"def impl({sig_params}):\n    return _intr({intrinsic_args})\n"
+    ns = {"_intr": intrinsic_callable, "get_unicode_data_p": get_unicode_data_p}
+    exec(compile(src, f"<{name}-overload-impl>", "exec"), ns)
+    return ns["impl"]
+
+
+# Lazy import to avoid circular dependency at module load
+def _get_unicode_data_p_lazy():
+    from numbox.utils.lowlevel import get_unicode_data_p
+    return get_unicode_data_p
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python stdio-handle address cache (lazy init for fprintf routing)
+# ---------------------------------------------------------------------------
+
+
+_PY_STREAM_BY_FP = None
+
+
+def _ensure_py_stream_cache():
+    global _PY_STREAM_BY_FP
+    if _PY_STREAM_BY_FP is not None:
+        return
+    # Defer the imports to avoid a circular dep at module load — _fmtio is
+    # imported AFTER _stdio by numbox.core.bindings.__init__, but doing
+    # the calls here at first use guarantees the bindings are ready.
+    from numbox.core.bindings import stdout, stderr, stdin
+    _PY_STREAM_BY_FP = {
+        int(stdout()): sys.stdout,
+        int(stderr()): sys.stderr,
+        int(stdin()):  sys.stdin,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Public Python-callable wrappers + @overload registrations
+# ---------------------------------------------------------------------------
+
+
+def printf(fmt, *args):
+    """C-style ``printf(fmt, *args)`` — dual-mode (plain Python AND @njit).
+
+    From plain Python: writes to ``sys.stdout`` via ``str.__mod__`` after
+    stripping C length modifiers (``%lld`` → ``%d``, etc.).
+
+    From @njit: ``@overload`` below routes to the private ``_printf_intrinsic``
+    after auto-converting any ``unicode_type`` args via ``get_unicode_data_p``
+    so libc ``%s`` receives a NUL-terminated C string. Format string must be
+    a literal in @njit (see module docstring for caveats).
+
+    Returns the number of bytes written (or written-equivalent), as int32.
+    """
+    text = _python_fmt_compat(fmt) % args
+    sys.stdout.write(text)
+    sys.stdout.flush()
+    return len(text.encode('utf-8'))
+
+
+@overload(printf)
+def _overload_printf(fmt, *args):
+    fmt_str = _literal_format_or_raise("printf", fmt)
+    # fmt_str is unused in the impl body (literal embedded by intrinsic),
+    # but the call to _literal_format_or_raise here gives an early
+    # TypingError if fmt isn't literal.
+    del fmt_str
+    impl = _build_overload_impl(
+        "printf", ["fmt"], args, _printf_intrinsic,
+        _get_unicode_data_p_lazy(),
+    )
+    return impl
+
+
+def fprintf(fp, fmt, *args):
+    """C-style ``fprintf(fp, fmt, *args)`` — dual-mode.
+
+    ``fp`` is a FILE\\* as ``intp`` (from ``stdout()`` / ``stderr()`` /
+    ``stdin()`` or ``fopen()``).
+
+    From plain Python: routes ``stdout()`` / ``stderr()`` / ``stdin()``
+    handles to the corresponding ``sys.*`` streams via an address cache.
+    Arbitrary FILE\\* values (e.g. ``fopen``-returned) raise
+    ``RuntimeError`` — use ``open()`` + ``f.write()`` for Python-side
+    file I/O.
+
+    From @njit: routes to ``_fprintf_intrinsic`` with str auto-conversion.
+    """
+    _ensure_py_stream_cache()
+    py_stream = _PY_STREAM_BY_FP.get(int(fp))
+    if py_stream is None:
+        raise RuntimeError(
+            f"fprintf in pure-Python mode only supports stdout / stderr / "
+            f"stdin handles; got fp={int(fp):#x}. For arbitrary FILE* "
+            f"(e.g. fopen) use @njit, or use Python's open() + write()."
+        )
+    text = _python_fmt_compat(fmt) % args
+    py_stream.write(text)
+    py_stream.flush()
+    return len(text.encode('utf-8'))
+
+
+@overload(fprintf)
+def _overload_fprintf(fp, fmt, *args):
+    fmt_str = _literal_format_or_raise("fprintf", fmt)
+    del fmt_str
+    if fp != intp:
+        raise TypingError(
+            f"fprintf: fp must be intp (FILE* as pointer-as-int), got {fp!r}"
+        )
+    impl = _build_overload_impl(
+        "fprintf", ["fp", "fmt"], args, _fprintf_intrinsic,
+        _get_unicode_data_p_lazy(),
+    )
+    return impl
+
+
+def snprintf(buf_p, size, fmt, *args):
+    """C-style ``snprintf(buf_p, size, fmt, *args)`` — dual-mode.
+
+    ``buf_p`` is an ``intp`` pointer to the destination buffer (caller-
+    owned). Typically ``array_data_p(numpy_array)`` — that helper works
+    in both modes.
+
+    Returns the number of characters that WOULD have been written if
+    ``size`` were unlimited (excluding the trailing NUL), as int32. See
+    the module docstring for the Windows @njit truncation-rc divergence
+    (Python and Linux/macOS @njit follow C99; Windows @njit uses
+    MSVCRT ``_snprintf`` which returns ``-1`` on truncation).
+    """
+    text_bytes = (_python_fmt_compat(fmt) % args).encode('utf-8')
+    n_would_have = len(text_bytes)
+    if size > 0:
+        n_write = min(n_would_have, size - 1)
+        ctypes.memmove(buf_p, text_bytes + b'\x00', n_write + 1)
+    return n_would_have
+
+
+@overload(snprintf)
+def _overload_snprintf(buf_p, size, fmt, *args):
+    fmt_str = _literal_format_or_raise("snprintf", fmt)
+    del fmt_str
+    if buf_p != intp:
+        raise TypingError(
+            f"snprintf: buf must be intp (pointer-as-int), got {buf_p!r}"
+        )
+    if size != intp:
+        raise TypingError(
+            f"snprintf: size must be intp (size_t-as-int), got {size!r}"
+        )
+    impl = _build_overload_impl(
+        "snprintf", ["buf_p", "size", "fmt"], args, _snprintf_intrinsic,
+        _get_unicode_data_p_lazy(),
+    )
+    return impl
+
+
+def sscanf(buf, fmt, *args):
+    """C-style ``sscanf(buf, fmt, *args)`` — @njit-only.
+
+    Args are intp output pointers (typically ``array_data_p`` of a
+    1-element numpy array of the right dtype). See the @njit-only
+    docstring on ``_sscanf_intrinsic`` for the pointer-vs-spec contract.
+
+    Pure-Python users: this binding raises ``NotImplementedError``. For
+    parsing in pure Python use ``int()``, ``float()``, or ``re``.
+    """
+    raise NotImplementedError(
+        "sscanf is @njit-only; wrap the call in @njit, or use Python's "
+        "int() / float() / re for pure-Python parsing"
+    )
+
+
+@overload(sscanf)
+def _overload_sscanf(buf, fmt, *args):
+    fmt_str = _literal_format_or_raise("sscanf", fmt)
+    del fmt_str
+    if buf != intp:
+        raise TypingError(
+            f"sscanf: buf must be intp (pointer-as-int), got {buf!r}"
+        )
+    # sscanf args are output POINTERS — must all be intp. No auto-conversion;
+    # pointers don't promote. Build the impl by reusing the helper but
+    # without get_unicode_data_p (intp args pass through unchanged).
+    for i, ty in enumerate(args):
+        if ty != intp:
+            raise TypingError(
+                f"sscanf: args[{i}] must be intp (output pointer), got {ty!r}"
+            )
+    impl = _build_overload_impl(
+        "sscanf", ["buf", "fmt"], args, _sscanf_intrinsic,
+        _get_unicode_data_p_lazy(),  # unused (no UnicodeType in args)
+    )
+    return impl
