@@ -1,8 +1,3 @@
-import os
-import subprocess
-import sys
-import textwrap
-
 import numpy as np
 import pytest
 from numba import njit, typeof
@@ -23,7 +18,10 @@ from numbox.utils.highlevel import (
     make_structref_code_txt,
 )
 from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
-from test.auxiliary_utils import collect_and_run_tests
+from test.auxiliary_utils import (
+    assert_njit_cache_survives_subprocess_roundtrip,
+    collect_and_run_tests,
+)
 from test.common_structrefs import S1Type
 from test.utils.auxiliaries import aux_1
 from test.utils.common_struct_type_classes import S1TypeClass, S2TypeClass, S3TypeClass, S4TypeClass, S5TypeClass
@@ -354,71 +352,32 @@ def test_cres_cacheable_caller_survives_subprocess_round_trip(tmp_path):
     compiled with ``@njit(cache=True)`` against a ``cres_cacheable`` binding
     actually round-trips through the on-disk cache (.nbi/.nbc files), with
     the second process loading the cached IR and producing identical output
-    to the cold-cache first process. The .nbc mtime is the load-bearing
-    cache-hit signal — if the second run regenerates it, the cache failed.
+    to the cold-cache first process — and neither file is rewritten on the
+    warm run (mtimes preserved).
 
     This is the property ``cres_cacheable`` exists for: ASLR-safe cached
     caller IR that survives across processes via the named-LLVM-global
-    address-slot pattern (see ``cres_cacheable`` docstring).
+    address-slot pattern. See the
+    ``assert_njit_cache_survives_subprocess_roundtrip`` helper in
+    ``test/auxiliary_utils.py`` for the full assertion contract.
     """
-    # The probe must live in a real file (not `python -c`) — numba refuses
-    # to cache functions defined in `<string>` because no source locator
-    # exists for them.
-    probe = tmp_path / "probe.py"
-    probe.write_text(textwrap.dedent("""
-        from numba import njit
-        from numbox.core.bindings import errno_get, errno_set
+    assert_njit_cache_survives_subprocess_roundtrip(
+        tmp_path,
+        probe_source="""
+            from numba import njit
+            from numbox.core.bindings import errno_get, errno_set
 
-        @njit(cache=True)
-        def caller():
-            errno_set(42)
-            return errno_get()
+            @njit(cache=True)
+            def caller():
+                errno_set(42)
+                return errno_get()
 
-        v = caller()
-        assert v == 42, f"got {v!r}"
-        print(v)
-    """))
-    cache_dir = tmp_path / "numba-cache"
-    env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
-
-    r1 = subprocess.run(
-        [sys.executable, str(probe)], env=env, capture_output=True, text=True,
+            v = caller()
+            assert v == 42, f"got {v!r}"
+            print(v)
+        """,
+        expected_stdout_lines=["42"],
     )
-    assert r1.returncode == 0, f"run1 (cold) failed:\n{r1.stderr}"
-    assert r1.stdout.strip() == "42", f"cold run produced {r1.stdout!r}"
-
-    # Glob both .nbc (content) and .nbi (index) — empirical inspection on
-    # current numba shows neither is touched on cache hit, but checking
-    # both is strictly tighter: if a future numba release writes .nbi
-    # metadata on cache hit (e.g., a last-accessed timestamp), this
-    # catches it. The path-set equality below also catches the "new
-    # specialization added" case (different file path than the cold run
-    # produced).
-    cache_files_after_cold = sorted(cache_dir.rglob("*.nb[ci]"))
-    assert any(p.suffix == ".nbc" for p in cache_files_after_cold), (
-        f"cold run did not write any .nbc cache file under {cache_dir}; "
-        f"stderr was:\n{r1.stderr}"
-    )
-    cold_mtimes = {p: p.stat().st_mtime_ns for p in cache_files_after_cold}
-
-    r2 = subprocess.run(
-        [sys.executable, str(probe)], env=env, capture_output=True, text=True,
-    )
-    assert r2.returncode == 0, f"run2 (warm) failed:\n{r2.stderr}"
-    assert r2.stdout.strip() == "42", f"warm run produced {r2.stdout!r}"
-
-    # Load-bearing assertion: the .nbc + .nbi files were NOT rewritten on
-    # the warm run. If numba had to regenerate IR (cache miss), mtime
-    # moves; if a new specialization was added, the path set changes.
-    cache_files_after_warm = sorted(cache_dir.rglob("*.nb[ci]"))
-    assert cache_files_after_warm == cache_files_after_cold, (
-        f"warm run added/removed cache files; cold={cache_files_after_cold} "
-        f"warm={cache_files_after_warm}"
-    )
-    for p in cache_files_after_warm:
-        assert p.stat().st_mtime_ns == cold_mtimes[p], (
-            f"warm run rewrote cache file {p} — cache was not hit"
-        )
 
 
 def test_plain_cres_caller_trips_dynamic_globals():

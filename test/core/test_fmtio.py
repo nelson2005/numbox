@@ -16,11 +16,6 @@ Coverage:
 - sscanf: parse-into-numpy roundtrip, multi-field, EOF, partial-match,
   intp-output enforcement
 """
-import os
-import subprocess
-import sys
-import textwrap
-
 import numpy as np
 import pytest
 from numba import njit
@@ -37,6 +32,7 @@ from numbox.core.bindings import (
 )
 from numbox.core.bindings.utils import platform_
 from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
+from test.auxiliary_utils import assert_njit_cache_survives_subprocess_roundtrip
 
 
 # stdout is block-buffered when not a terminal (e.g. under pytest's capfd
@@ -761,61 +757,135 @@ def test_snprintf_accepts_utf8_format_literal():
 
 
 def test_fmtio_caller_survives_subprocess_round_trip(tmp_path):
-    """@njit(cache=True) callers of printf/snprintf survive a process
-    restart: the IR cached on disk references the libc extern symbol and a
-    deterministic format-string global constant, never a runtime address.
-    Re-running in a warm process re-uses the cached .nbc (mtime preserved).
+    """``@njit(cache=True)`` callers of the variadic formatted-I/O bindings
+    survive a process restart. Cached caller IR references the libc extern
+    symbol and a deterministic UTF-8 format-string global constant —
+    never a runtime address — so the warm subprocess loads the cached
+    code unchanged (mtimes preserved). See
+    ``assert_njit_cache_survives_subprocess_roundtrip`` in
+    ``test/auxiliary_utils.py`` for the assertion contract.
     """
-    probe = tmp_path / "probe.py"
-    probe.write_text(textwrap.dedent("""
-        import numpy as np
-        from numba import njit
-        from numbox.core.bindings import snprintf, printf
-        from numbox.utils.lowlevel import array_data_p
+    assert_njit_cache_survives_subprocess_roundtrip(
+        tmp_path,
+        probe_source="""
+            import numpy as np
+            from numba import njit
+            from numbox.core.bindings import snprintf
+            from numbox.utils.lowlevel import array_data_p
 
-        @njit(cache=True)
-        def go():
-            buf = np.zeros(32, dtype=np.uint8)
-            n = snprintf(array_data_p(buf), buf.size, "[%d]", 42)
-            return n
+            @njit(cache=True)
+            def go():
+                buf = np.zeros(32, dtype=np.uint8)
+                n = snprintf(array_data_p(buf), buf.size, "[%d]", 42)
+                return n
 
-        v = go()
-        assert v == 4, v
-        print(v)
-    """))
-    cache_dir = tmp_path / "numba-cache"
-    env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
-
-    r1 = subprocess.run(
-        [sys.executable, str(probe)], env=env, capture_output=True, text=True,
+            v = go()
+            assert v == 4, v
+            print(v)
+        """,
+        expected_stdout_lines=["4"],
     )
-    assert r1.returncode == 0, f"cold run failed:\n{r1.stderr}"
-    assert r1.stdout.strip() == "4"
 
-    # Glob both .nbc (content) and .nbi (index). Empirical inspection on
-    # current numba shows neither is touched on cache hit, but checking
-    # both is strictly tighter: if a future numba release writes .nbi
-    # metadata on cache hit (e.g., last-accessed timestamps), this catches
-    # it. The path-set equality below also catches the "new specialization
-    # added" case (different file path than the cold run produced).
-    cache_after_cold = sorted(cache_dir.rglob("*.nb[ci]"))
-    assert any(p.suffix == ".nbc" for p in cache_after_cold), (
-        f"no .nbc files written under {cache_dir}"
-    )
-    mtimes_cold = {p: p.stat().st_mtime_ns for p in cache_after_cold}
 
-    r2 = subprocess.run(
-        [sys.executable, str(probe)], env=env, capture_output=True, text=True,
-    )
-    assert r2.returncode == 0, f"warm run failed:\n{r2.stderr}"
-    assert r2.stdout.strip() == "4"
+def test_all_binding_families_survive_subprocess_round_trip(tmp_path):
+    """Fan-out cache-survival probe — exercises one binding from each of
+    the major families in a single @njit(cache=True) caller and asserts
+    each binding's expected return value, then verifies the entire
+    .nbc + .nbi cache is unchanged on the warm subprocess.
 
-    cache_after_warm = sorted(cache_dir.rglob("*.nb[ci]"))
-    assert cache_after_warm == cache_after_cold, (
-        f"warm run added/removed cache files; cold count={len(cache_after_cold)} "
-        f"warm count={len(cache_after_warm)}"
+    The implicit-mechanism test (``test_fmtio_caller_survives_subprocess_round_trip``
+    and ``test_cres_cacheable_caller_survives_subprocess_round_trip``)
+    already pin that EVERY binding's wrapper + setup function caches
+    cleanly at import time. This test adds explicit per-family CALL
+    coverage so a binding bug that only surfaces when the cached IR is
+    actually invoked in the warm process (rather than just loaded)
+    would also be caught.
+
+    Families exercised:
+    - errno: errno_set + errno_get
+    - stdio handles: stdout(), stderr() (intp returns)
+    - strerror_safe (cres_cacheable, multi-arg, intp pointers)
+    - libc strings: strcmp, strchr
+    - libc memory: memset, memcpy, memcmp
+    - environ: getenv (unset variable → 0)
+    - variadic I/O: snprintf, printf
+    """
+    assert_njit_cache_survives_subprocess_roundtrip(
+        tmp_path,
+        probe_source="""
+            import numpy as np
+            from numba import njit
+            from numbox.core.bindings import (
+                errno_get, errno_set,
+                stdout, stderr,
+                strerror_safe,
+                strcmp, strchr,
+                memset, memcpy, memcmp,
+                getenv,
+                snprintf, printf, fflush,
+            )
+            from numbox.utils.lowlevel import (
+                array_data_p, get_unicode_data_p,
+            )
+
+            @njit(cache=True)
+            def exercise():
+                # errno round-trip
+                errno_set(7)
+                e = errno_get()  # → 7
+
+                # stdio handles — non-zero, distinct
+                op = stdout()
+                ep = stderr()
+                handles_ok = 1 if (op != 0 and ep != 0 and op != ep) else 0
+
+                # strerror_safe — fill a buffer; rc == 0 on success
+                sbuf = np.zeros(64, dtype=np.uint8)
+                sr = strerror_safe(2, array_data_p(sbuf), sbuf.size)
+
+                # strcmp(equal) == 0; strchr finds 'l' in "hello"
+                a = get_unicode_data_p("hello")
+                b = get_unicode_data_p("hello")
+                cmp = strcmp(a, b)
+                lp = strchr(a, np.int32(108))  # 'l'
+                has_l = 1 if lp != 0 else 0
+
+                # memset + memcpy + memcmp
+                src = np.zeros(8, dtype=np.uint8)
+                memset(array_data_p(src), 0xab, 8)
+                dst = np.zeros(8, dtype=np.uint8)
+                memcpy(array_data_p(dst), array_data_p(src), 8)
+                eq = memcmp(array_data_p(src), array_data_p(dst), 8)
+                mem_ok = 1 if (eq == 0 and src[0] == 0xab) else 0
+
+                # getenv of an unset var → 0
+                miss = getenv(get_unicode_data_p("NUMBOX_NEVER_SET_xyzzy_4f1c"))
+                env_ok = 1 if miss == 0 else 0
+
+                # snprintf "[7]" → 3 bytes (excluding NUL)
+                nbuf = np.zeros(16, dtype=np.uint8)
+                snp = snprintf(array_data_p(nbuf), nbuf.size, "[%d]", e)
+
+                # printf "p=7\\n" → 4 bytes
+                pr = printf("p=%d\\n", e)
+                fflush(stdout())
+
+                return e, handles_ok, sr, cmp, has_l, mem_ok, env_ok, snp, pr
+
+            r = exercise()
+            for v in r:
+                print(v)
+        """,
+        expected_stdout_lines=[
+            "p=7",  # the printf write (4 bytes including newline, but stdout shows "p=7" then newline)
+            "7",    # e
+            "1",    # handles_ok
+            "0",    # strerror_safe rc (0 on success)
+            "0",    # strcmp("hello", "hello") == 0
+            "1",    # has_l
+            "1",    # mem_ok
+            "1",    # env_ok
+            "3",    # snp — "[7]" is 3 bytes
+            "4",    # pr — "p=7\n" is 4 bytes
+        ],
     )
-    for p in cache_after_warm:
-        assert p.stat().st_mtime_ns == mtimes_cold[p], (
-            f"warm run rewrote {p} — cache was not hit"
-        )
