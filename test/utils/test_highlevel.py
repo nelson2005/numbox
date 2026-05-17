@@ -387,12 +387,19 @@ def test_cres_cacheable_caller_survives_subprocess_round_trip(tmp_path):
     assert r1.returncode == 0, f"run1 (cold) failed:\n{r1.stderr}"
     assert r1.stdout.strip() == "42", f"cold run produced {r1.stdout!r}"
 
-    nbc_files_after_cold = sorted(cache_dir.rglob("*.nbc"))
-    assert nbc_files_after_cold, (
+    # Glob both .nbc (content) and .nbi (index) — empirical inspection on
+    # current numba shows neither is touched on cache hit, but checking
+    # both is strictly tighter: if a future numba release writes .nbi
+    # metadata on cache hit (e.g., a last-accessed timestamp), this
+    # catches it. The path-set equality below also catches the "new
+    # specialization added" case (different file path than the cold run
+    # produced).
+    cache_files_after_cold = sorted(cache_dir.rglob("*.nb[ci]"))
+    assert any(p.suffix == ".nbc" for p in cache_files_after_cold), (
         f"cold run did not write any .nbc cache file under {cache_dir}; "
         f"stderr was:\n{r1.stderr}"
     )
-    cold_mtimes = {p: p.stat().st_mtime_ns for p in nbc_files_after_cold}
+    cold_mtimes = {p: p.stat().st_mtime_ns for p in cache_files_after_cold}
 
     r2 = subprocess.run(
         [sys.executable, str(probe)], env=env, capture_output=True, text=True,
@@ -400,14 +407,15 @@ def test_cres_cacheable_caller_survives_subprocess_round_trip(tmp_path):
     assert r2.returncode == 0, f"run2 (warm) failed:\n{r2.stderr}"
     assert r2.stdout.strip() == "42", f"warm run produced {r2.stdout!r}"
 
-    # Load-bearing assertion: the .nbc files were NOT rewritten on the
-    # warm run. If numba had to regenerate IR (cache miss), mtime moves.
-    nbc_files_after_warm = sorted(cache_dir.rglob("*.nbc"))
-    assert nbc_files_after_warm == nbc_files_after_cold, (
-        f"warm run added/removed cache files; cold={nbc_files_after_cold} "
-        f"warm={nbc_files_after_warm}"
+    # Load-bearing assertion: the .nbc + .nbi files were NOT rewritten on
+    # the warm run. If numba had to regenerate IR (cache miss), mtime
+    # moves; if a new specialization was added, the path set changes.
+    cache_files_after_warm = sorted(cache_dir.rglob("*.nb[ci]"))
+    assert cache_files_after_warm == cache_files_after_cold, (
+        f"warm run added/removed cache files; cold={cache_files_after_cold} "
+        f"warm={cache_files_after_warm}"
     )
-    for p in nbc_files_after_warm:
+    for p in cache_files_after_warm:
         assert p.stat().st_mtime_ns == cold_mtimes[p], (
             f"warm run rewrote cache file {p} — cache was not hit"
         )

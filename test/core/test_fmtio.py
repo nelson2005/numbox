@@ -792,9 +792,17 @@ def test_fmtio_caller_survives_subprocess_round_trip(tmp_path):
     assert r1.returncode == 0, f"cold run failed:\n{r1.stderr}"
     assert r1.stdout.strip() == "4"
 
-    nbc_after_cold = sorted(cache_dir.rglob("*.nbc"))
-    assert nbc_after_cold, f"no .nbc files written under {cache_dir}"
-    mtimes_cold = {p: p.stat().st_mtime_ns for p in nbc_after_cold}
+    # Glob both .nbc (content) and .nbi (index). Empirical inspection on
+    # current numba shows neither is touched on cache hit, but checking
+    # both is strictly tighter: if a future numba release writes .nbi
+    # metadata on cache hit (e.g., last-accessed timestamps), this catches
+    # it. The path-set equality below also catches the "new specialization
+    # added" case (different file path than the cold run produced).
+    cache_after_cold = sorted(cache_dir.rglob("*.nb[ci]"))
+    assert any(p.suffix == ".nbc" for p in cache_after_cold), (
+        f"no .nbc files written under {cache_dir}"
+    )
+    mtimes_cold = {p: p.stat().st_mtime_ns for p in cache_after_cold}
 
     r2 = subprocess.run(
         [sys.executable, str(probe)], env=env, capture_output=True, text=True,
@@ -802,9 +810,12 @@ def test_fmtio_caller_survives_subprocess_round_trip(tmp_path):
     assert r2.returncode == 0, f"warm run failed:\n{r2.stderr}"
     assert r2.stdout.strip() == "4"
 
-    nbc_after_warm = sorted(cache_dir.rglob("*.nbc"))
-    assert nbc_after_warm == nbc_after_cold
-    for p in nbc_after_warm:
+    cache_after_warm = sorted(cache_dir.rglob("*.nb[ci]"))
+    assert cache_after_warm == cache_after_cold, (
+        f"warm run added/removed cache files; cold count={len(cache_after_cold)} "
+        f"warm count={len(cache_after_warm)}"
+    )
+    for p in cache_after_warm:
         assert p.stat().st_mtime_ns == mtimes_cold[p], (
             f"warm run rewrote {p} — cache was not hit"
         )
