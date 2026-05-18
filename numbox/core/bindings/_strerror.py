@@ -31,7 +31,7 @@ from numba.core.errors import TypingError
 from numba.core.types import int32, int64, intp
 from numba.extending import intrinsic
 
-from numbox.core.bindings.utils import platform_, load_lib
+from numbox.core.bindings.utils import intp_ll_type, platform_, load_lib
 from numbox.core.proxy.proxy import proxy
 
 
@@ -80,7 +80,7 @@ def _strerror_safe(typingctx, errnum_ty, buf_ty, buflen_ty):
         errnum, buf_p, buflen = arguments
         i32 = llir.IntType(32)
         i8p = llir.IntType(8).as_pointer()
-        size_t_ll = context.get_value_type(intp)
+        size_t_ll = intp_ll_type(context)
         buf = builder.inttoptr(buf_p, i8p)
         if platform_ == "Windows":
             func_ty = llir.FunctionType(i32, [i8p, size_t_ll, i32])
@@ -99,14 +99,17 @@ def _render_ir_for_probe():
     that when ll.address_of_symbol("__xpg_strerror_r") returns None,
     the chosen symbol is strerror_r and not __xpg_strerror_r. Bypasses
     end-to-end execution: direct text inspection is the safe verification.
+
+    Uses ``intp_ll_type(None)`` — the same shared helper the real codegen
+    uses with a ``context``, so both paths derive the size_t LLVM width
+    from one place. numba locks intp's lowering to ``IntType(intp.bitwidth)``,
+    so the context'd and contextless paths produce identical types.
     """
     module = llir.Module(name="probe")
     i32 = llir.IntType(32)
     i8p = llir.IntType(8).as_pointer()
     sym = _select_posix_symbol()
-    # intp.bitwidth mirrors _strerror_safe's context.get_value_type(intp)
-    # without needing a JIT context, which isn't available outside codegen.
-    func_ty = llir.FunctionType(i32, [i32, i8p, llir.IntType(intp.bitwidth)])
+    func_ty = llir.FunctionType(i32, [i32, i8p, intp_ll_type()])
     get_or_insert_function(module, func_ty, sym)
     return str(module)
 

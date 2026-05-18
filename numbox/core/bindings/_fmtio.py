@@ -125,7 +125,7 @@ from numba.core.types import (
 )
 from numba.extending import intrinsic, overload
 
-from numbox.core.bindings.utils import load_lib, platform_
+from numbox.core.bindings.utils import intp_ll_type, load_lib, platform_
 
 
 __all__ = ["printf", "fprintf", "snprintf", "sscanf"]
@@ -215,8 +215,19 @@ def _unpack_args_tuple(builder, args_ty, args_pack):
     ]
 
 
-def _emit_variadic_call(builder, symbol, fmt_str, leading_vals, args_ty, args_pack):
-    """Emit IR for ``symbol(*leading_vals, fmt_p, *promoted_args) -> i32``."""
+def _emit_variadic_call(builder, symbol, fmt_str, leading_vals, args_ty, args_pack, *, leading_tys):
+    """Emit IR for ``symbol(*leading_vals, fmt_p, *promoted_args) -> i32``.
+
+    ``leading_tys`` is the explicit list of LLVM types for the leading
+    positional args (size_t, FILE*, char*, etc. — anything that precedes
+    the format string in the libc signature). Callers pass it so the
+    function-type declaration documents the libc ABI contract at the
+    codegen call site, rather than implicitly reading
+    ``[v.type for v in leading_vals]`` and relying on numba's lowering to
+    produce the right LLVM types. The explicit form is what's needed for
+    size_t in snprintf — derive via ``intp_ll_type(context)`` to keep
+    consistency with numba's intp lowering API.
+    """
     i8p = llir.IntType(8).as_pointer()
     i32_ll = llir.IntType(32)
     mod = builder.module
@@ -232,8 +243,7 @@ def _emit_variadic_call(builder, symbol, fmt_str, leading_vals, args_ty, args_pa
     fmt_p = builder.bitcast(global_fmt, i8p)
     unpacked = _unpack_args_tuple(builder, args_ty, args_pack)
     promoted = [_promote_for_varargs(builder, t, v) for t, v in unpacked]
-    leading_tys = [v.type for v in leading_vals]
-    fn_ty = llir.FunctionType(i32_ll, leading_tys + [i8p], var_arg=True)
+    fn_ty = llir.FunctionType(i32_ll, list(leading_tys) + [i8p], var_arg=True)
     fn = get_or_insert_function(mod, fn_ty, symbol)
     return builder.call(fn, list(leading_vals) + [fmt_p] + promoted)
 
@@ -253,7 +263,8 @@ def _printf_intrinsic(typingctx, fmt_ty, args_ty):
     def codegen(context, builder, sig, llvm_args):
         _, args_pack = llvm_args
         return _emit_variadic_call(
-            builder, "printf", fmt_str, [], args_ty, args_pack)
+            builder, "printf", fmt_str, [], args_ty, args_pack,
+            leading_tys=[])
 
     return int32(fmt_ty, args_ty), codegen
 
@@ -274,7 +285,8 @@ def _fprintf_intrinsic(typingctx, fp_ty, fmt_ty, args_ty):
         fp_int, _, args_pack = llvm_args
         fp_ptr = builder.inttoptr(fp_int, i8p)
         return _emit_variadic_call(
-            builder, "fprintf", fmt_str, [fp_ptr], args_ty, args_pack)
+            builder, "fprintf", fmt_str, [fp_ptr], args_ty, args_pack,
+            leading_tys=[i8p])
 
     return int32(fp_ty, fmt_ty, args_ty), codegen
 
@@ -298,9 +310,14 @@ def _snprintf_intrinsic(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
         i8p = llir.IntType(8).as_pointer()
         buf_int, size_val, _, args_pack = llvm_args
         buf_ptr = builder.inttoptr(buf_int, i8p)
+        # size_t is pointer-width on all current 64-bit platforms; derive
+        # the LLVM type from numba's intp via the shared helper so the
+        # libc snprintf signature stays correct under platform changes and
+        # matches the typing-time `size_ty != intp` guard above.
         return _emit_variadic_call(
             builder, _SNPRINTF_SYMBOL, fmt_str,
-            [buf_ptr, size_val], args_ty, args_pack)
+            [buf_ptr, size_val], args_ty, args_pack,
+            leading_tys=[i8p, intp_ll_type(context)])
 
     return int32(buf_ty, size_ty, fmt_ty, args_ty), codegen
 
@@ -330,7 +347,8 @@ def _sscanf_intrinsic(typingctx, buf_ty, fmt_ty, args_ty):
         buf_int, _, args_pack = llvm_args
         buf_ptr = builder.inttoptr(buf_int, i8p)
         return _emit_variadic_call(
-            builder, "sscanf", fmt_str, [buf_ptr], args_ty, args_pack)
+            builder, "sscanf", fmt_str, [buf_ptr], args_ty, args_pack,
+            leading_tys=[i8p])
 
     return int32(buf_ty, fmt_ty, args_ty), codegen
 
