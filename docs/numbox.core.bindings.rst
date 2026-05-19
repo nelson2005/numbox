@@ -46,7 +46,7 @@ rather than module-level Python constants because the C library's stdio ``FILE *
 data symbols or accessor functions:
 
 - **Linux (glibc and musl)** — data symbols (``stdout``, ``stderr``, ``stdin`` global variables, declared in
-  `<stdio.h> <https://www.gnu.org/software/libc/manual/html_node/Standard-Streams.html>`_)
+  `<stdio.h> <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/stdio.h.html>`_)
 - **macOS Darwin** — data symbols (``__stdoutp``, ``__stderrp``, ``__stdinp`` — what the libc headers'
   ``stdout`` / ``stderr`` / ``stdin`` macros expand to per
   `Apple's _stdio.h <https://github.com/apple-oss-distributions/Libc/blob/main/include/_stdio.h#L218-L220>`_)
