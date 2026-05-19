@@ -1051,6 +1051,10 @@ def test_njit_sscanf_accepts_percent_n():
     assert pos_out[0] == 5
 
 
+@pytest.mark.skipif(
+    platform_ == "Windows",
+    reason="capfd does not reliably capture C-level stdio writes on Windows",
+)
 def test_njit_writer_accepts_literal_percent_percent_n(capfd):
     """``%%n`` is the literal characters `%n`, not a directive — must NOT
     be rejected."""
