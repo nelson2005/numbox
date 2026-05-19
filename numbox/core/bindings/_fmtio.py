@@ -178,17 +178,79 @@ def _promote_for_varargs(builder, arg_ty, arg_val):
     matches pure-Python's behavior (Python ignores length modifiers and
     uses the value's natural width). The cost is a single LLVM sext /
     zext / fpext per arg — free at runtime.
+
+    Arg-type validation is done at typing time via
+    ``_validate_writer_arg_type``; the ``else: raise`` here is
+    defense-in-depth — should typing-layer validation fail to filter
+    everything (e.g. a future numba changes how tuples flatten), the
+    codegen path stops rather than dropping garbage into libc's
+    variadic call.
     """
     i64_ll = llir.IntType(64)
-    if isinstance(arg_ty, Float) and arg_ty.bitwidth == 32:
-        return builder.fpext(arg_val, llir.DoubleType())
+    if isinstance(arg_ty, Float):
+        if arg_ty.bitwidth == 32:
+            return builder.fpext(arg_val, llir.DoubleType())
+        return arg_val
     if isinstance(arg_ty, Boolean):
         return builder.zext(arg_val, i64_ll)
-    if isinstance(arg_ty, Integer) and arg_ty.bitwidth < 64:
-        if arg_ty.signed:
-            return builder.sext(arg_val, i64_ll)
-        return builder.zext(arg_val, i64_ll)
-    return arg_val
+    if isinstance(arg_ty, Integer):
+        if arg_ty.bitwidth < 64:
+            if arg_ty.signed:
+                return builder.sext(arg_val, i64_ll)
+            return builder.zext(arg_val, i64_ll)
+        return arg_val
+    raise TypingError(
+        f"variadic arg of type {arg_ty!r} is not supported by printf-family "
+        f"bindings; allowed: Float, Integer, Boolean, or intp pointer"
+    )
+
+
+def _validate_writer_arg_type(name, idx, ty):
+    """Raise ``TypingError`` unless ``ty`` is a scalar type supported by
+    ``printf`` / ``fprintf`` / ``snprintf`` — Float, Integer (incl. intp
+    for raw pointers), Boolean, or a unicode type (which the @overload
+    layer auto-converts via ``get_unicode_data_p``).
+
+    Without this guard, ``_promote_for_varargs`` would silently
+    ``return arg_val`` for unsupported types, dropping numpy arrays,
+    complex numbers, tuples, etc. directly into libc's variadic call as
+    LLVM aggregates — silent miscompilation, not a clean error.
+    """
+    if isinstance(unliteral(ty), (Float, Integer, Boolean, UnicodeType)):
+        return
+    raise TypingError(
+        f"{name}: arg {idx} has unsupported type {ty!r}; allowed: Float, "
+        f"Integer, Boolean, unicode (auto-converted to char* via "
+        f"get_unicode_data_p), or intp (raw pointer / preconverted string)"
+    )
+
+
+_PERCENT_N_RE = re.compile(r'%[-+0# ]*[0-9*]*\.?[0-9*]*(?:hh|ll|h|l|L|j|z|t)?n')
+
+
+def _reject_percent_n_or_raise(name, fmt_str):
+    """Raise ``TypingError`` if ``fmt_str`` contains a ``%n`` directive
+    (with or without flags / width / precision / length modifier).
+
+    ``%n`` causes printf to write the byte-count-written-so-far through a
+    caller-supplied ``int*`` pointer. Allowing it would (a) be a memory
+    write through an arg that pure-Python's ``%`` operator rejects with
+    ``ValueError`` — breaking dual-mode equivalence — and (b) be a memory-
+    safety hazard widely flagged by static analyzers and disabled by
+    glibc's ``_FORTIFY_SOURCE`` for writable format strings.
+
+    ``%%n`` (a literal ``%`` followed by ``n``) is allowed: the regex
+    operates on the format string after stripping ``%%`` pairs to a
+    sentinel that the directive matcher cannot land on.
+    """
+    stripped = fmt_str.replace('%%', '\x00\x00')
+    if _PERCENT_N_RE.search(stripped):
+        raise TypingError(
+            f"{name}: %n directive in format string {fmt_str!r} is not "
+            f"allowed (writes byte-count-written through caller pointer; "
+            f"memory-safety hazard, also diverges from pure-Python behavior). "
+            f"Use sscanf if you need %n's read-position semantics."
+        )
 
 
 def _literal_format_or_raise(name, fmt_ty):
@@ -257,8 +319,11 @@ def _emit_variadic_call(builder, symbol, fmt_str, leading_vals, args_ty, args_pa
 def _printf_intrinsic(typingctx, fmt_ty, args_ty):
     """libc printf via a tuple-of-args. Internal; user code calls printf()."""
     fmt_str = _literal_format_or_raise("printf", fmt_ty)
+    _reject_percent_n_or_raise("printf", fmt_str)
     if not isinstance(args_ty, BaseTuple):
         raise TypingError(f"printf: args must be a tuple, got {args_ty!r}")
+    for i, ty in enumerate(tuple(args_ty)):
+        _validate_writer_arg_type("printf", i, ty)
 
     def codegen(context, builder, sig, llvm_args):
         _, args_pack = llvm_args
@@ -273,12 +338,15 @@ def _printf_intrinsic(typingctx, fmt_ty, args_ty):
 def _fprintf_intrinsic(typingctx, fp_ty, fmt_ty, args_ty):
     """libc fprintf via a tuple-of-args. Internal; user code calls fprintf()."""
     fmt_str = _literal_format_or_raise("fprintf", fmt_ty)
+    _reject_percent_n_or_raise("fprintf", fmt_str)
     if not isinstance(args_ty, BaseTuple):
         raise TypingError(f"fprintf: args must be a tuple, got {args_ty!r}")
     if fp_ty != intp:
         raise TypingError(
             f"fprintf: fp must be intp (FILE* as pointer-as-int), got {fp_ty!r}"
         )
+    for i, ty in enumerate(tuple(args_ty)):
+        _validate_writer_arg_type("fprintf", i, ty)
 
     def codegen(context, builder, sig, llvm_args):
         i8p = llir.IntType(8).as_pointer()
@@ -295,6 +363,7 @@ def _fprintf_intrinsic(typingctx, fp_ty, fmt_ty, args_ty):
 def _snprintf_intrinsic(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
     """libc snprintf via a tuple-of-args. Internal; user code calls snprintf()."""
     fmt_str = _literal_format_or_raise("snprintf", fmt_ty)
+    _reject_percent_n_or_raise("snprintf", fmt_str)
     if not isinstance(args_ty, BaseTuple):
         raise TypingError(f"snprintf: args must be a tuple, got {args_ty!r}")
     if buf_ty != intp:
@@ -305,6 +374,8 @@ def _snprintf_intrinsic(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
         raise TypingError(
             f"snprintf: size must be intp (size_t-as-int), got {size_ty!r}"
         )
+    for i, ty in enumerate(tuple(args_ty)):
+        _validate_writer_arg_type("snprintf", i, ty)
 
     def codegen(context, builder, sig, llvm_args):
         i8p = llir.IntType(8).as_pointer()
@@ -439,6 +510,23 @@ def _ensure_py_stream_cache():
 # ---------------------------------------------------------------------------
 
 
+def _reject_percent_n_in_python(name, fmt):
+    """Pure-Python equivalent of ``_reject_percent_n_or_raise``: raise
+    ``ValueError`` if ``%n`` appears in ``fmt``. Python's ``%`` operator
+    would itself raise on ``%n`` (it's an unsupported format character),
+    but the message is generic; this gives users the same clear error
+    message in both Python and @njit modes.
+    """
+    stripped = fmt.replace('%%', '\x00\x00')
+    if _PERCENT_N_RE.search(stripped):
+        raise ValueError(
+            f"{name}: %n directive in format string {fmt!r} is not allowed "
+            f"(writes byte-count-written through caller pointer; memory-"
+            f"safety hazard). Use sscanf if you need %n's read-position "
+            f"semantics."
+        )
+
+
 def printf(fmt, *args):
     """C-style ``printf(fmt, *args)`` — dual-mode (plain Python AND @njit).
 
@@ -450,8 +538,11 @@ def printf(fmt, *args):
     so libc ``%s`` receives a NUL-terminated C string. Format string must be
     a literal in @njit (see module docstring for caveats).
 
+    ``%n`` is rejected in both modes (see ``_reject_percent_n_or_raise``).
+
     Returns the number of bytes written (or written-equivalent), as int32.
     """
+    _reject_percent_n_in_python("printf", fmt)
     text = _python_fmt_compat(fmt) % args
     sys.stdout.write(text)
     sys.stdout.flush()
@@ -461,10 +552,13 @@ def printf(fmt, *args):
 @overload(printf)
 def _overload_printf(fmt, *args):
     fmt_str = _literal_format_or_raise("printf", fmt)
+    _reject_percent_n_or_raise("printf", fmt_str)
     # fmt_str is unused in the impl body (literal embedded by intrinsic),
     # but the call to _literal_format_or_raise here gives an early
     # TypingError if fmt isn't literal.
     del fmt_str
+    for i, ty in enumerate(args):
+        _validate_writer_arg_type("printf", i, ty)
     impl = _build_overload_impl(
         "printf", ["fmt"], args, _printf_intrinsic,
         _get_unicode_data_p_lazy(),
@@ -486,6 +580,7 @@ def fprintf(fp, fmt, *args):
 
     From @njit: routes to ``_fprintf_intrinsic`` with str auto-conversion.
     """
+    _reject_percent_n_in_python("fprintf", fmt)
     _ensure_py_stream_cache()
     py_stream = _PY_STREAM_BY_FP.get(int(fp))
     if py_stream is None:
@@ -503,11 +598,14 @@ def fprintf(fp, fmt, *args):
 @overload(fprintf)
 def _overload_fprintf(fp, fmt, *args):
     fmt_str = _literal_format_or_raise("fprintf", fmt)
+    _reject_percent_n_or_raise("fprintf", fmt_str)
     del fmt_str
     if fp != intp:
         raise TypingError(
             f"fprintf: fp must be intp (FILE* as pointer-as-int), got {fp!r}"
         )
+    for i, ty in enumerate(args):
+        _validate_writer_arg_type("fprintf", i, ty)
     impl = _build_overload_impl(
         "fprintf", ["fp", "fmt"], args, _fprintf_intrinsic,
         _get_unicode_data_p_lazy(),
@@ -528,6 +626,7 @@ def snprintf(buf_p, size, fmt, *args):
     (Python and Linux/macOS @njit follow C99; Windows @njit uses
     MSVCRT ``_snprintf`` which returns ``-1`` on truncation).
     """
+    _reject_percent_n_in_python("snprintf", fmt)
     text_bytes = (_python_fmt_compat(fmt) % args).encode('utf-8')
     n_would_have = len(text_bytes)
     if size > 0:
@@ -539,6 +638,7 @@ def snprintf(buf_p, size, fmt, *args):
 @overload(snprintf)
 def _overload_snprintf(buf_p, size, fmt, *args):
     fmt_str = _literal_format_or_raise("snprintf", fmt)
+    _reject_percent_n_or_raise("snprintf", fmt_str)
     del fmt_str
     if buf_p != intp:
         raise TypingError(
@@ -548,6 +648,8 @@ def _overload_snprintf(buf_p, size, fmt, *args):
         raise TypingError(
             f"snprintf: size must be intp (size_t-as-int), got {size!r}"
         )
+    for i, ty in enumerate(args):
+        _validate_writer_arg_type("snprintf", i, ty)
     impl = _build_overload_impl(
         "snprintf", ["buf_p", "size", "fmt"], args, _snprintf_intrinsic,
         _get_unicode_data_p_lazy(),

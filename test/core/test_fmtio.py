@@ -909,3 +909,182 @@ def test_all_binding_families_survive_subprocess_round_trip(tmp_path):
             "OK printf",
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Variadic arg-type and %n-rejection tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("fn_name", ["printf", "fprintf", "snprintf"])
+def test_njit_writer_rejects_array_arg(fn_name):
+    """numpy arrays passed directly as variadic args would silently flow
+    into libc as LLVM aggregates without ``_validate_writer_arg_type``;
+    libc would read garbage from the next stack slot. Both the typing-
+    function layer (intrinsic) and the @overload should reject."""
+    src = {
+        "printf": "from numbox.core.bindings import printf\n"
+                  "import numpy as np\n"
+                  "@njit\ndef k(a): printf('%d', a)\n",
+        "fprintf": "from numbox.core.bindings import fprintf, stdout\n"
+                   "import numpy as np\n"
+                   "@njit\ndef k(a): fprintf(stdout(), '%d', a)\n",
+        "snprintf": "from numbox.core.bindings import snprintf\n"
+                    "from numbox.utils.lowlevel import array_data_p\n"
+                    "import numpy as np\n"
+                    "@njit\ndef k(buf, a): snprintf(array_data_p(buf), buf.size, '%d', a)\n",
+    }[fn_name]
+    ns = {"njit": njit}
+    exec(src, ns)
+    arr = np.zeros(3, dtype=np.int32)
+    with pytest.raises(TypingError, match="unsupported type"):
+        if fn_name == "snprintf":
+            ns["k"](np.zeros(16, dtype=np.uint8), arr)
+        else:
+            ns["k"](arr)
+
+
+@pytest.mark.parametrize("fn_name", ["printf", "fprintf", "snprintf"])
+def test_njit_writer_rejects_complex_arg(fn_name):
+    src = {
+        "printf": "from numbox.core.bindings import printf\n"
+                  "@njit\ndef k(c): printf('%f', c)\n",
+        "fprintf": "from numbox.core.bindings import fprintf, stdout\n"
+                   "@njit\ndef k(c): fprintf(stdout(), '%f', c)\n",
+        "snprintf": "from numbox.core.bindings import snprintf\n"
+                    "from numbox.utils.lowlevel import array_data_p\n"
+                    "import numpy as np\n"
+                    "@njit\ndef k(buf, c): snprintf(array_data_p(buf), buf.size, '%f', c)\n",
+    }[fn_name]
+    ns = {"njit": njit}
+    exec(src, ns)
+    val = np.complex128(1 + 2j)
+    with pytest.raises(TypingError, match="unsupported type"):
+        if fn_name == "snprintf":
+            ns["k"](np.zeros(16, dtype=np.uint8), val)
+        else:
+            ns["k"](val)
+
+
+@pytest.mark.parametrize("fn_name", ["printf", "fprintf", "snprintf"])
+def test_njit_writer_rejects_tuple_arg(fn_name):
+    src = {
+        "printf": "from numbox.core.bindings import printf\n"
+                  "@njit\ndef k(t): printf('%d %d', t)\n",
+        "fprintf": "from numbox.core.bindings import fprintf, stdout\n"
+                   "@njit\ndef k(t): fprintf(stdout(), '%d %d', t)\n",
+        "snprintf": "from numbox.core.bindings import snprintf\n"
+                    "from numbox.utils.lowlevel import array_data_p\n"
+                    "import numpy as np\n"
+                    "@njit\ndef k(buf, t): snprintf(array_data_p(buf), buf.size, '%d %d', t)\n",
+    }[fn_name]
+    ns = {"njit": njit}
+    exec(src, ns)
+    with pytest.raises(TypingError, match="unsupported type"):
+        if fn_name == "snprintf":
+            ns["k"](np.zeros(16, dtype=np.uint8), (7, 8))
+        else:
+            ns["k"]((7, 8))
+
+
+@pytest.mark.parametrize(
+    "fmt", ["%n", "%ln", "%lln", "%hn", "%hhn", "%5n", "%5.3n", "before %n after"]
+)
+def test_njit_printf_rejects_percent_n(fmt):
+    """``%n`` writes the byte-count-written-so-far through a caller pointer
+    arg — memory-safety hazard, also diverges from pure-Python's `%`
+    operator which raises ValueError on ``%n``. Reject at typing time."""
+    src = f"""
+from numbox.core.bindings import printf
+from numbox.utils.lowlevel import array_data_p
+@njit
+def k(out):
+    printf({fmt!r}, array_data_p(out))
+"""
+    ns = {"njit": njit}
+    exec(src, ns)
+    out = np.zeros(1, dtype=np.intp)
+    with pytest.raises(TypingError, match="%n.*not allowed"):
+        ns["k"](out)
+
+
+@pytest.mark.parametrize("fn", ["printf", "fprintf", "snprintf"])
+def test_njit_writer_rejects_percent_n(fn):
+    if fn == "printf":
+        src = "from numbox.core.bindings import printf\n" \
+              "from numbox.utils.lowlevel import array_data_p\n" \
+              "@njit\ndef k(out): printf('count=%n', array_data_p(out))\n"
+    elif fn == "fprintf":
+        src = "from numbox.core.bindings import fprintf, stdout\n" \
+              "from numbox.utils.lowlevel import array_data_p\n" \
+              "@njit\ndef k(out): fprintf(stdout(), 'count=%n', array_data_p(out))\n"
+    else:
+        src = "from numbox.core.bindings import snprintf\n" \
+              "from numbox.utils.lowlevel import array_data_p\n" \
+              "import numpy as np\n" \
+              "@njit\ndef k(buf, out): snprintf(array_data_p(buf), buf.size, 'count=%n', array_data_p(out))\n"
+    ns = {"njit": njit}
+    exec(src, ns)
+    out = np.zeros(1, dtype=np.intp)
+    with pytest.raises(TypingError, match="%n.*not allowed"):
+        if fn == "snprintf":
+            ns["k"](np.zeros(16, dtype=np.uint8), out)
+        else:
+            ns["k"](out)
+
+
+def test_njit_sscanf_accepts_percent_n():
+    """``%n`` is legitimately useful in sscanf — it returns the read
+    position (how many characters were consumed so far), not a write
+    through a caller pointer. Allowed."""
+
+    @njit(cache=False)
+    def parse(buf_p, n_out, pos_out):
+        return sscanf(buf_p, "%d%n", array_data_p(n_out), array_data_p(pos_out))
+
+    buf = get_unicode_data_p("12345 rest")
+    n_out = np.zeros(1, dtype=np.intp)
+    pos_out = np.zeros(1, dtype=np.intp)
+    rc = parse(buf, n_out, pos_out)
+    assert rc == 1, f"sscanf returned {rc}, expected 1 successful conversion"
+    assert n_out[0] == 12345
+    assert pos_out[0] == 5
+
+
+def test_njit_writer_accepts_literal_percent_percent_n(capfd):
+    """``%%n`` is the literal characters `%n`, not a directive — must NOT
+    be rejected."""
+
+    @njit(cache=False)
+    def k():
+        rc = printf("100%%n done\n")
+        fflush(stdout())
+        return rc
+
+    rc = k()
+    assert rc == len("100%n done\n")
+    out, _ = capfd.readouterr()
+    assert out == "100%n done\n"
+
+
+def test_python_printf_rejects_percent_n():
+    with pytest.raises(ValueError, match="%n.*not allowed"):
+        printf("count=%n", 42)
+
+
+def test_python_fprintf_rejects_percent_n():
+    with pytest.raises(ValueError, match="%n.*not allowed"):
+        fprintf(stdout(), "count=%n", 42)
+
+
+def test_python_snprintf_rejects_percent_n():
+    buf = np.zeros(16, dtype=np.uint8)
+    with pytest.raises(ValueError, match="%n.*not allowed"):
+        snprintf(array_data_p(buf), buf.size, "count=%n", 42)
+
+
+def test_python_printf_accepts_literal_percent_percent_n(capfd):
+    rc = printf("100%%n done\n")
+    assert rc == len("100%n done\n")
+    out, _ = capfd.readouterr()
+    assert out == "100%n done\n"

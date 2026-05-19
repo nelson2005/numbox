@@ -232,6 +232,15 @@ Numba type     Widened to (in varargs slot)
 ``unicode_type`` / ``Literal[str]``   auto-converted via ``get_unicode_data_p`` → ``intp``
 ============   ============================
 
+**Unsupported types raise ``TypingError`` at compile time** — numpy
+arrays (``Array``), complex numbers (``Complex``), tuples
+(``UniTuple``/``Tuple``), records, and anything else outside the table
+above. Without that guard, an aggregate LLVM value would flow straight
+into libc's variadic call and the printf would read scrambled bytes
+from neighboring stack slots — silent miscompilation rather than a
+clean error. Pass the field you want explicitly (``arr[0]``, ``c.real``,
+``t[0]``).
+
 **Pure-Python format-spec compatibility.** Python's ``str.__mod__`` is
 printf-derived but rejects C length modifiers (``%lld``, ``%ld``,
 ``%lf``, ``%hd``, etc.) with ``ValueError``. The pure-Python impl
@@ -369,10 +378,13 @@ Format spec        Required output points at
 ``%f``             ``float32`` (4 bytes — NOT double, ``%lf`` is for that)
 ``%lf``            ``float64`` (8 bytes)
 ``%s``             ``char`` buffer (caller responsible for size + NUL room)
-``%n``             caller-managed; the binding does not parse the format string, so libc's own
-                   behavior applies (glibc fortified builds disable ``%n`` in the printf family;
-                   ``sscanf`` interprets ``%n`` as "write byte-count consumed so far to the
-                   corresponding output pointer")
+``%n``             accepted in ``sscanf`` only — writes the byte-count consumed so far to the
+                   corresponding output pointer. ``printf`` / ``fprintf`` / ``snprintf`` reject
+                   ``%n`` at compile time (``TypingError``) — it's a memory-write hazard widely
+                   flagged by static analyzers and disabled by glibc's ``_FORTIFY_SOURCE``;
+                   pure-Python's ``%`` operator also rejects it, so rejecting matches dual-mode
+                   behavior. Use ``snprintf`` + ``len()`` if you need byte counts in the writer
+                   family. ``%%n`` (a literal ``%`` followed by ``n``) is allowed.
 ================   =============================================
 
 The ``%ld`` row is the most common cross-platform footgun and the

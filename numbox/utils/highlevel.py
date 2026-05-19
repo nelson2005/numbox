@@ -2,6 +2,7 @@ import hashlib
 import os
 import re
 import tempfile
+import time
 from inspect import getmodule, getsource
 from io import StringIO
 from pathlib import Path
@@ -223,18 +224,30 @@ def _materialize_anchor(path: Path, code_txt: str) -> None:
         raise
 
 
+_ORPHAN_AGE_SECONDS = 60
+
+
 def _orphan_anchor_sweep(subdir: str) -> None:
     """Best-effort cleanup of orphaned ``.tmp-*`` anchor files from SIGKILL'd
     writers. Called at module import; failures are silent (the orphan is at
     worst harmless disk usage).
+
+    Only sweeps files whose ``mtime`` is older than ``_ORPHAN_AGE_SECONDS``
+    so a concurrent ``_materialize_anchor`` call in another process —
+    which has the same ``.tmp-*`` shape between ``mkstemp`` and
+    ``replace`` — isn't unlinked mid-flight (the resulting
+    ``FileNotFoundError`` on the in-progress writer's ``replace`` would
+    abort its caller's import).
     """
     try:
         root = _anchor_root(subdir)
         if not root.exists():
             return
+        cutoff = time.time() - _ORPHAN_AGE_SECONDS
         for orphan in root.glob("*.tmp-*"):
             try:
-                orphan.unlink()
+                if orphan.stat().st_mtime < cutoff:
+                    orphan.unlink()
             except OSError:
                 pass
     except Exception:

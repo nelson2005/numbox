@@ -1,3 +1,6 @@
+import os
+import time
+
 import numpy as np
 import pytest
 from numba import njit, typeof
@@ -11,6 +14,9 @@ from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib_path
 from numbox.utils.highlevel import (
+    _ORPHAN_AGE_SECONDS,
+    _anchor_root,
+    _orphan_anchor_sweep,
     cres,
     cres_if_available,
     determine_field_index,
@@ -379,6 +385,30 @@ def test_proxy_caller_survives_subprocess_round_trip(tmp_path):
         """,
         expected_stdout_lines=["42"],
     )
+
+
+def test_orphan_anchor_sweep_spares_fresh_tmp_files():
+    """Concurrent-import race protection: ``_orphan_anchor_sweep`` must not
+    unlink ``.tmp-*`` files that another process just created via
+    ``_materialize_anchor``'s ``mkstemp`` and is about to ``replace`` into
+    place. The age filter (``_ORPHAN_AGE_SECONDS``) ensures only stale
+    files get unlinked.
+    """
+    root = _anchor_root("numbox-structref")
+    root.mkdir(parents=True, exist_ok=True)
+    fresh = root / "test_sweep_race.py.tmp-FRESH"
+    aged = root / "test_sweep_race.py.tmp-AGED"
+    fresh.write_text("fresh content")
+    aged.write_text("aged content")
+    aged_mtime = time.time() - _ORPHAN_AGE_SECONDS - 5
+    os.utime(aged, (aged_mtime, aged_mtime))
+    try:
+        _orphan_anchor_sweep("numbox-structref")
+        assert fresh.exists(), "fresh .tmp-* file was unlinked — race with concurrent writer"
+        assert not aged.exists(), "aged .tmp-* file was NOT unlinked — sweep is broken"
+    finally:
+        fresh.unlink(missing_ok=True)
+        aged.unlink(missing_ok=True)
 
 
 def test_plain_cres_caller_trips_dynamic_globals():
