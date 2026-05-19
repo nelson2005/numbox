@@ -41,10 +41,10 @@ def proxy(sig, jit_options: Optional[dict] = None):
     that the first signature is the 'main' one while the other ones are supplied to
     allow for the `Omitted` types with default values for (some of) the parameters.
 
-    The returned dispatcher also exposes ``.as_funcvalue``: a ``CompileResultWAP``
+    The returned dispatcher also exposes ``.as_func``: a ``CompileResultWAP``
     (numba ``FunctionType`` value) for the main signature. Use it when a binding
     must be passed as a callback argument or stored in a struct field — the
-    dispatcher itself is the call-site form. Referencing ``.as_funcvalue`` as a
+    dispatcher itself is the call-site form. Referencing ``.as_func`` as a
     Python global from ``@njit(cache=True)`` triggers
     ``lower_constant_function_type`` → ``add_dynamic_addr`` and disables that
     caller's cache, same as plain ``@cres``; call the dispatcher directly for
@@ -101,6 +101,6 @@ def {func_proxy_name}({func_args_str}):
         code = compile(code_txt, str(anchor), mode='exec')
         exec(code, ns)
         dispatcher = ns[func_proxy_name]
-        dispatcher.as_funcvalue = CompileResultWAP(func_jit.get_compile_result(main_sig))
+        dispatcher.as_func = CompileResultWAP(func_jit.get_compile_result(main_sig))
         return dispatcher
     return wrap

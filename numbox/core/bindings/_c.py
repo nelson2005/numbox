@@ -4,21 +4,11 @@ Every binding here uses extern-symbol references via `_call_lib_func`, so the
 ABI dispatch is ASLR-safe. Pointer arguments are typed as `intp` — caller is
 responsible for liveness, alignment, and ownership of the underlying memory.
 
-**Cacheability** is per-binding:
-
-- Wrappers decorated with `@proxy` (everything below other than
-  `rand`/`srand`/`strlen`) are safe to reference from a user
-  `@njit(cache=True)` caller — `proxy` declares the callee's
-  ``llvm_cfunc_wrapper_name`` as an extern in the caller's module and lets
-  llvmlite's JIT linker resolve it per process, so cached caller IR
-  re-resolves the function pointer correctly under ASLR.
-- Wrappers still decorated with plain `@cres` (`rand`, `srand`, `strlen` —
-  retained for backward compatibility with pre-`proxy` consumers) fall
-  through `numba.experimental.function_type.lower_constant_function_type`
-  → `add_dynamic_addr`, which sets `has_dynamic_globals` on the caller and
-  disables that caller's cache. Convert to `@proxy` if cacheability
-  matters; see `test_plain_cres_caller_trips_dynamic_globals` in
-  `test/utils/test_highlevel.py` for the negative-control proof.
+All wrappers are decorated with `@proxy` — safe to reference from a user
+`@njit(cache=True)` caller. `proxy` declares the callee's
+``llvm_cfunc_wrapper_name`` as an extern in the caller's module and lets
+llvmlite's JIT linker resolve it per process, so cached caller IR re-resolves
+the function pointer correctly under ASLR.
 
 Authoritative references for each binding's semantics:
 
@@ -27,7 +17,6 @@ Authoritative references for each binding's semantics:
 - Windows UCRT: `Microsoft Learn
   <https://learn.microsoft.com/en-us/cpp/c-runtime-library/c-run-time-library-reference>`_
 """
-from numbox.utils.highlevel import cres
 from numbox.core.proxy.proxy import proxy
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
@@ -37,21 +26,21 @@ from numbox.core.bindings.utils import load_lib
 load_lib("c")
 
 
-@cres(signatures.get("rand"), cache=True)
+@proxy(signatures.get("rand"), jit_options={"cache": True})
 def rand():
     """POSIX `rand() <https://man7.org/linux/man-pages/man3/rand.3.html>`_:
     pseudo-random int in [0, RAND_MAX]. Not thread-safe."""
     return _call_lib_func("rand", ())
 
 
-@cres(signatures.get("srand"), cache=True)
+@proxy(signatures.get("srand"), jit_options={"cache": True})
 def srand(s):
     """POSIX `srand(seed) <https://man7.org/linux/man-pages/man3/rand.3.html>`_:
     seed the rand() generator."""
     return _call_lib_func("srand", (s,))
 
 
-@cres(signatures.get("strlen"), cache=True)
+@proxy(signatures.get("strlen"), jit_options={"cache": True})
 def strlen(s):
     """POSIX `strlen(s) <https://man7.org/linux/man-pages/man3/strlen.3.html>`_:
     number of bytes in the C string at `s` up to (but excluding) the trailing NUL.

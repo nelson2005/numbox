@@ -9,7 +9,7 @@ from numba.core.types.function_type import CompileResultWAP, FunctionType
 from numba.core.types.functions import Dispatcher
 from numpy import isclose
 
-from numbox.core.bindings import errno_get, getenv, memcpy, rand
+from numbox.core.bindings import errno_get, getenv, memcpy
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib_path
@@ -409,23 +409,6 @@ def test_orphan_anchor_sweep_spares_fresh_tmp_files():
     finally:
         fresh.unlink(missing_ok=True)
         aged.unlink(missing_ok=True)
-
-
-def test_plain_cres_caller_trips_dynamic_globals():
-    """Negative control: plain @cres bindings still trip has_dynamic_globals.
-
-    rand() is wrapped with plain @cres (not @proxy) in _c.py, so a caller
-    referencing it as a Python global routes through numba's FunctionType
-    lowering and gets has_dynamic_globals=True. This locks down the test
-    methodology: if this assertion ever fails, either rand was upgraded to
-    @proxy (delete this test) or numba changed how it detects dynamic
-    globals (revisit the cacheable tests above).
-    """
-    @njit(cache=True)
-    def caller():
-        return rand()
-    caller()
-    assert _sole_compile_result(caller).library.has_dynamic_globals
 
 
 if __name__ == '__main__':
