@@ -119,8 +119,8 @@ libc drops ``__xpg_strerror_r``, but the fallback is currently unreachable on ev
 The Linux selector logic is verified by an IR-inspection test (Linux-only) that monkeypatches
 ``ll.address_of_symbol`` to drive the fallback branch. The musl symbol layout (``strerror_r``
 and ``__xpg_strerror_r`` both exported, both resolving to the same address via musl's weak
-alias) is a runtime invariant the binding depends on; downstream forks may wish to add an
-Alpine-container CI canary that pins the assumption via ``nm -D``.
+alias) is a runtime invariant the binding depends on; an Alpine-container CI canary that pins
+the assumption via ``nm -D`` is a straightforward way to verify it.
 
 Example — render the message for ``ENOENT`` (errno 2 on POSIX) into a buffer:
 
