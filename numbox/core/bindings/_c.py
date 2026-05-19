@@ -25,7 +25,7 @@ Authoritative references for each binding's semantics:
 - POSIX / Linux glibc: `man7.org <https://man7.org/linux/man-pages/man3/>`_
 - macOS Darwin: `Apple Open Source Libc <https://github.com/apple-oss-distributions/Libc>`_
 - Windows UCRT: `Microsoft Learn
-  <https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/>`_
+  <https://learn.microsoft.com/en-us/cpp/c-runtime-library/c-run-time-library-reference>`_
 """
 from numbox.utils.highlevel import cres
 from numbox.core.proxy.proxy import proxy
