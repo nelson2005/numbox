@@ -8,11 +8,7 @@ from numba.extending import intrinsic  # noqa: F401
 from types import FunctionType as PyFunctionType
 from typing import List, Optional, Tuple
 
-from numbox.utils.highlevel import _anchor_path, _materialize_anchor, _orphan_anchor_sweep
 from numbox.utils.standard import make_params_strings
-
-
-_orphan_anchor_sweep("numbox-proxy")
 
 
 def make_proxy_name(name):
@@ -88,17 +84,33 @@ def {func_proxy_name}({func_args_str}):
         }
         if ns.get(func_proxy_name) is not None:
             raise ValueError(f"Name {func_proxy_name} in module {inspect.getmodule(func)} is reserved")
-        # Anchor at a content-addressed real file rather than ``inspect.getfile(func)``.
-        # numba's cache-save path calls ``str(self.type_annotation)`` →
-        # ``inspect.getsourcelines(wrapper)``; on Python 3.13 a co_filename pointing
-        # at the user's source file with co_firstlineno landing inside that file's
-        # docstring (or any multi-line string / comment with apostrophes) raises
-        # tokenize.TokenError per CPython #122981. A content-addressed anchor whose
-        # contents match the exec'd code line-for-line makes getsourcelines return
-        # the actual generated source.
-        anchor = _anchor_path("numbox-proxy", f"{func.__module__}.{func.__name__}", code_txt)
-        _materialize_anchor(anchor, code_txt)
-        code = compile(code_txt, str(anchor), mode='exec')
+        # Anchor the exec'd wrapper at the original decorated function's source
+        # line in the user's .py file. Prepended blank lines push the wrapper's
+        # ``@njit`` decorator (which is what Python records as the wrapper's
+        # ``co_firstlineno``) to ``func.__code__.co_firstlineno`` — the user's
+        # ``@proxy`` decorator line. ``inspect.findsource(wrapper)`` then
+        # matches that ``@proxy`` line on its very first check (the regex
+        # ``r'^(\s*@)'``) and tokenization starts from real, syntactically
+        # valid Python at that line. This sidesteps CPython #122981 (a
+        # co_firstlineno landing inside a multi-line docstring used to raise
+        # tokenize.TokenError) AND avoids a subtler hazard: ``findsource``
+        # scans backward from co_firstlineno looking for any line that starts
+        # with ``@``, and a docstring containing the text ``@njit(...)`` or
+        # similar would be matched as if it were a real decorator, with the
+        # tokenizer then trying to parse the docstring content as code.
+        # numba's source stamp for a file-backed cached @njit is
+        # ``(st_mtime, st_size)`` of co_filename, so user edits to the file
+        # correctly invalidate the cache. Stale-cache risk exists only when
+        # this template itself changes without a corresponding edit to the
+        # user file — treated as developer-managed (clear ``~/.cache/numba/``
+        # when shipping a proxy wrapper-template change).
+        code_lines = code_txt.split('\n')
+        njit_lineno_in_txt = next(
+            i + 1 for i, line in enumerate(code_lines) if line.startswith('@njit(')
+        )
+        prepend = max(0, func.__code__.co_firstlineno - njit_lineno_in_txt)
+        prefixed = '\n' * prepend + code_txt
+        code = compile(prefixed, inspect.getfile(func), mode='exec')
         exec(code, ns)
         dispatcher = ns[func_proxy_name]
         dispatcher.as_func = CompileResultWAP(func_jit.get_compile_result(main_sig))
