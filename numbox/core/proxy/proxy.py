@@ -104,6 +104,18 @@ def {func_proxy_name}({func_args_str}):
         # this template itself changes without a corresponding edit to the
         # user file — treated as developer-managed (clear ``~/.cache/numba/``
         # when shipping a proxy wrapper-template change).
+        #
+        # Multi-decorator support: when the user stacks decorators above
+        # ``@proxy(sig)``, ``func.__code__.co_firstlineno`` is the line of the
+        # TOPMOST decorator (Python records the first line of a decorated
+        # function as its outermost decorator's line). ``findsource`` matches
+        # that line directly because it begins with ``@``. Verified for
+        # single-decorator, double-, and triple-stack outer decorators.
+        # ``@proxy`` must be the innermost decorator (closest to ``def``);
+        # any wrapping decorator between ``@proxy`` and ``def`` would hand
+        # ``@proxy`` a wrapped function whose ``__code__`` lives in the
+        # wrapping decorator's source file, and would also break numba's
+        # ability to JIT-compile through the intermediate Python wrapper.
         code_lines = code_txt.split('\n')
         njit_lineno_in_txt = next(
             i + 1 for i, line in enumerate(code_lines) if line.startswith('@njit(')
