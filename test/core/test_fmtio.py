@@ -1087,6 +1087,18 @@ def test_python_snprintf_rejects_percent_n():
         snprintf(array_data_p(buf), buf.size, "count=%n", 42)
 
 
+def test_python_snprintf_truncation_nul_terminates():
+    """Pure-Python snprintf must NUL-terminate the buffer even when output
+    is truncated (C99 / POSIX semantics). Regression test: with a buffer
+    of size 8 and an 11-char output, buf should hold 7 content bytes +
+    NUL terminator at index 7, not 8 content bytes with no terminator."""
+    buf = np.zeros(8, dtype=np.uint8)
+    rc = snprintf(array_data_p(buf), buf.size, "hello world")
+    assert rc == 11
+    assert bytes(buf[:7]) == b"hello w"
+    assert buf[7] == 0, f"expected NUL at index 7, got {buf[7]}"
+
+
 def test_python_printf_accepts_literal_percent_percent_n(capfd):
     rc = printf("100%%n done\n")
     assert rc == len("100%n done\n")

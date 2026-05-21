@@ -618,7 +618,13 @@ def snprintf(buf_p, size, fmt, *args):
     n_would_have = len(text_bytes)
     if size > 0:
         n_write = min(n_would_have, size - 1)
-        ctypes.memmove(buf_p, text_bytes + b'\x00', n_write + 1)
+        # Slice content BEFORE appending NUL so the NUL is always at the
+        # correct position even when truncating. The previous form
+        # ``memmove(buf_p, text_bytes + b'\x00', n_write + 1)`` left the
+        # NUL out of the copied prefix when truncating — buf got
+        # n_write content bytes with no terminator.
+        src = text_bytes[:n_write] + b'\x00'
+        ctypes.memmove(buf_p, src, len(src))
     return n_would_have
 
 
