@@ -71,10 +71,10 @@ def _call_lib_func(typingctx, func_name_ty, args_ty=NoneType):
     func_name = extract_literal_str("_call_lib_func", func_name_ty, field="func_name")
     func_p_as_int = ll.address_of_symbol(func_name)
     if func_p_as_int is None:
-        raise RuntimeError(f"{func_name} is unavailable in the LLVM context")
+        raise TypingError(f"{func_name} is unavailable in the LLVM context")
     func_sig = signatures.get(func_name, None)
     if func_sig is None:
-        raise ValueError(f"Undefined signature for {func_name}")
+        raise TypingError(f"Undefined signature for {func_name}")
 
     ret_ty = func_sig.return_type
     ret_class = _classify(ret_ty)
@@ -288,7 +288,7 @@ def _call_lib_func_byval(typingctx, func_name_ty, arg_ty):
     func_name = extract_literal_str("_call_lib_func_byval", func_name_ty, field="func_name")
     func_sig = signatures.get(func_name, None)
     if func_sig is None:
-        raise ValueError(f"Undefined signature for {func_name}")
+        raise TypingError(f"Undefined signature for {func_name}")
 
     def codegen(context, builder, signature, arguments):
         _, arg = arguments
