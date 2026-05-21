@@ -540,10 +540,6 @@ def printf(fmt, *args):
 def _overload_printf(fmt, *args):
     fmt_str = extract_literal_str("printf", fmt, field="format string")
     _reject_percent_n_or_raise("printf", fmt_str)
-    # fmt_str is unused in the impl body (literal embedded by intrinsic),
-    # but the call to extract_literal_str here gives an early
-    # TypingError if fmt isn't literal.
-    del fmt_str
     for i, ty in enumerate(args):
         _validate_writer_arg_type("printf", i, ty)
     impl = _build_overload_impl(
@@ -586,7 +582,6 @@ def fprintf(fp, fmt, *args):
 def _overload_fprintf(fp, fmt, *args):
     fmt_str = extract_literal_str("fprintf", fmt, field="format string")
     _reject_percent_n_or_raise("fprintf", fmt_str)
-    del fmt_str
     if fp != intp:
         raise TypingError(
             f"fprintf: fp must be intp (FILE* as pointer-as-int), got {fp!r}"
@@ -632,7 +627,6 @@ def snprintf(buf_p, size, fmt, *args):
 def _overload_snprintf(buf_p, size, fmt, *args):
     fmt_str = extract_literal_str("snprintf", fmt, field="format string")
     _reject_percent_n_or_raise("snprintf", fmt_str)
-    del fmt_str
     if buf_p != intp:
         raise TypingError(
             f"snprintf: buf must be intp (pointer-as-int), got {buf_p!r}"
@@ -668,8 +662,7 @@ def sscanf(buf, fmt, *args):
 
 @overload(sscanf)
 def _overload_sscanf(buf, fmt, *args):
-    fmt_str = extract_literal_str("sscanf", fmt, field="format string")
-    del fmt_str
+    extract_literal_str("sscanf", fmt, field="format string")  # validates Literal[str]
     if buf != intp:
         raise TypingError(
             f"sscanf: buf must be intp (pointer-as-int), got {buf!r}"
