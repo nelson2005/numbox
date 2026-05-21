@@ -38,13 +38,8 @@ def proxy(sig, jit_options: Optional[dict] = None):
     allow for the `Omitted` types with default values for (some of) the parameters.
 
     The returned dispatcher also exposes ``.as_func``: a ``CompileResultWAP``
-    (numba ``FunctionType`` value) for the main signature. Use it when a binding
-    must be passed as a callback argument or stored in a struct field — the
-    dispatcher itself is the call-site form. Referencing ``.as_func`` as a
-    Python global from ``@njit(cache=True)`` triggers
-    ``lower_constant_function_type`` → ``add_dynamic_addr`` and disables that
-    caller's cache, same as plain ``@cres``; call the dispatcher directly for
-    cacheable usage.
+    for the main signature. Cacheable as a called jitted function (via the
+    dispatcher); passable as a function-type argument (via ``.as_func``).
 
     See tests for some examples of the use cases.
     """
@@ -84,38 +79,11 @@ def {func_proxy_name}({func_args_str}):
         }
         if ns.get(func_proxy_name) is not None:
             raise ValueError(f"Name {func_proxy_name} in module {inspect.getmodule(func)} is reserved")
-        # Anchor the exec'd wrapper at the original decorated function's source
-        # line in the user's .py file. Prepended blank lines push the wrapper's
-        # ``@njit`` decorator (which is what Python records as the wrapper's
-        # ``co_firstlineno``) to ``func.__code__.co_firstlineno`` — the user's
-        # ``@proxy`` decorator line. ``inspect.findsource(wrapper)`` then
-        # matches that ``@proxy`` line on its very first check (the regex
-        # ``r'^(\s*@)'``) and tokenization starts from real, syntactically
-        # valid Python at that line. This sidesteps CPython #122981 (a
-        # co_firstlineno landing inside a multi-line docstring used to raise
-        # tokenize.TokenError) AND avoids a subtler hazard: ``findsource``
-        # scans backward from co_firstlineno looking for any line that starts
-        # with ``@``, and a docstring containing the text ``@njit(...)`` or
-        # similar would be matched as if it were a real decorator, with the
-        # tokenizer then trying to parse the docstring content as code.
-        # numba's source stamp for a file-backed cached @njit is
-        # ``(st_mtime, st_size)`` of co_filename, so user edits to the file
-        # correctly invalidate the cache. Stale-cache risk exists only when
-        # this template itself changes without a corresponding edit to the
-        # user file — treated as developer-managed (clear ``~/.cache/numba/``
-        # when shipping a proxy wrapper-template change).
-        #
-        # Multi-decorator support: when the user stacks decorators above
-        # ``@proxy(sig)``, ``func.__code__.co_firstlineno`` is the line of the
-        # TOPMOST decorator (Python records the first line of a decorated
-        # function as its outermost decorator's line). ``findsource`` matches
-        # that line directly because it begins with ``@``. Verified for
-        # single-decorator, double-, and triple-stack outer decorators.
-        # ``@proxy`` must be the innermost decorator (closest to ``def``);
-        # any wrapping decorator between ``@proxy`` and ``def`` would hand
-        # ``@proxy`` a wrapped function whose ``__code__`` lives in the
-        # wrapping decorator's source file, and would also break numba's
-        # ability to JIT-compile through the intermediate Python wrapper.
+        # Anchor the wrapper at func's source file: prepend blank lines so the
+        # wrapper's @njit decorator lands at func.__code__.co_firstlineno (the
+        # user's @proxy decorator line). See docs/numbox.core.proxy.rst —
+        # section "Cache-anchor mechanism" — for the design rationale + the
+        # findsource-finds-@-in-docstring hazard this avoids.
         code_lines = code_txt.split('\n')
         njit_lineno_in_txt = next(
             i + 1 for i, line in enumerate(code_lines) if line.startswith('@njit(')
