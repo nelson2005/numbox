@@ -10,7 +10,7 @@ All wrappers are decorated with `@proxy` — safe to reference from a user
 llvmlite's JIT linker resolve it per process, so cached caller IR re-resolves
 the function pointer correctly under ASLR.
 
-Authoritative references for each binding's semantics:
+References for each binding's semantics:
 
 - POSIX / Linux glibc: `man7.org <https://man7.org/linux/man-pages/man3/>`_
 - macOS Darwin: `Apple Open Source Libc <https://github.com/apple-oss-distributions/Libc>`_
