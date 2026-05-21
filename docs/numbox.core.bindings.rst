@@ -16,6 +16,30 @@ Analogous technique can be expanded as needed for the user custom code.
 
 .. [#f1] See `numbsql <https://github.com/cpcloud/numbsql>`_ for previous work on jit-wrapping FFI imported functions.
 
+Bindings module conventions
++++++++++++++++++++++++++++
+
+Every binding in the ``numbox.core.bindings`` family (``_c``, ``_math``,
+``_sqlite``, ``_stdio``, ``_errno``, ``_strerror``, ``_fmtio``) uses
+extern-symbol references via
+:func:`~numbox.core.bindings.call._call_lib_func`, so the ABI dispatch is
+ASLR-safe. Pointer arguments are typed as ``intp`` -- the caller is
+responsible for liveness, alignment, and ownership of the underlying memory.
+
+All wrappers are decorated with :func:`~numbox.core.proxy.proxy.proxy` --
+safe to reference from a user ``@njit(cache=True)`` caller. ``proxy``
+declares the callee's ``llvm_cfunc_wrapper_name`` as an extern in the
+caller's module and lets llvmlite's JIT linker resolve it per process, so
+cached caller IR re-resolves the function pointer correctly under ASLR.
+
+References for individual binding semantics:
+
+- POSIX / Linux glibc: `man7.org <https://man7.org/linux/man-pages/man3/>`_
+- macOS Darwin: `Apple Open Source Libc
+  <https://github.com/apple-oss-distributions/Libc>`_
+- Windows UCRT: `Microsoft Learn
+  <https://learn.microsoft.com/en-us/cpp/c-runtime-library/c-run-time-library-reference>`_
+
 ABI dispatch
 ++++++++++++
 

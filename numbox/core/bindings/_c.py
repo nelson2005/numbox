@@ -1,21 +1,8 @@
 """libc wrappers callable from numba `@njit` code.
 
-Every binding here uses extern-symbol references via `_call_lib_func`, so the
-ABI dispatch is ASLR-safe. Pointer arguments are typed as `intp` — caller is
-responsible for liveness, alignment, and ownership of the underlying memory.
-
-All wrappers are decorated with `@proxy` — safe to reference from a user
-`@njit(cache=True)` caller. `proxy` declares the callee's
-``llvm_cfunc_wrapper_name`` as an extern in the caller's module and lets
-llvmlite's JIT linker resolve it per process, so cached caller IR re-resolves
-the function pointer correctly under ASLR.
-
-References for each binding's semantics:
-
-- POSIX / Linux glibc: `man7.org <https://man7.org/linux/man-pages/man3/>`_
-- macOS Darwin: `Apple Open Source Libc <https://github.com/apple-oss-distributions/Libc>`_
-- Windows UCRT: `Microsoft Learn
-  <https://learn.microsoft.com/en-us/cpp/c-runtime-library/c-run-time-library-reference>`_
+See "Bindings module conventions" in ``docs/numbox.core.bindings.rst``
+for the ABI-safety, ``@proxy`` caching, and reference-source conventions
+shared across all binding modules.
 """
 from numbox.core.proxy.proxy import proxy
 from numbox.core.bindings.call import _call_lib_func

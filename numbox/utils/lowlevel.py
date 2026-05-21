@@ -90,10 +90,9 @@ def _store_at(typingctx: Context, p_ty, v_ty):
 def store_at(p, v):
     """Store ``v`` at raw pointer ``p`` (LLVM type derived from ``v``'s numba type).
 
-    Generalizes the int32-specific store pattern used by ``errno_set``. Caller
-    is responsible for ``p`` pointing at a writable region of memory whose
-    LLVM layout matches ``v``'s type, and for casting ``v`` to the intended
-    width (e.g. ``store_at(p, int32(value))`` to write 4 bytes).
+    Caller is responsible for ``p`` pointing at a writable region of memory
+    whose LLVM layout matches ``v``'s type, and for casting ``v`` to the
+    intended width (e.g. ``store_at(p, int32(value))`` to write 4 bytes).
     """
     return _store_at(p, v)
 

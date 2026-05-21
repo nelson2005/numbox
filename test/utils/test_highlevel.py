@@ -12,14 +12,16 @@ from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib_path
 from numbox.utils.highlevel import (
-    _ORPHAN_AGE_SECONDS,
-    _anchor_root,
-    _orphan_anchor_sweep,
     cres,
     cres_if_available,
     determine_field_index,
     make_structref,
     make_structref_code_txt,
+)
+from numbox.utils.preprocessing import (
+    _ORPHAN_AGE_SECONDS,
+    _anchor_root,
+    _orphan_anchor_sweep,
 )
 from test.auxiliary_utils import collect_and_run_tests
 from test.common_structrefs import S1Type
