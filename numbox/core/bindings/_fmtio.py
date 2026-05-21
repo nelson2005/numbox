@@ -120,12 +120,14 @@ from numba.core import cgutils
 from numba.core.cgutils import get_or_insert_function
 from numba.core.errors import TypingError
 from numba.core.types import (
-    BaseTuple, Boolean, Float, Integer, Literal, UnicodeType, int32, intp,
+    BaseTuple, Boolean, Float, Integer, UnicodeType, int32, intp,
     unliteral,
 )
 from numba.extending import intrinsic, overload
 
-from numbox.core.bindings.utils import intp_ll_type, load_lib, platform_
+from numbox.core.bindings.utils import (
+    extract_literal_str, intp_ll_type, load_lib, platform_,
+)
 
 
 __all__ = ["printf", "fprintf", "snprintf", "sscanf"]
@@ -253,21 +255,6 @@ def _reject_percent_n_or_raise(name, fmt_str):
         )
 
 
-def _literal_format_or_raise(name, fmt_ty):
-    """Extract the Python str value of a Literal[str] format-string type
-    or raise a clean TypingError naming the binding."""
-    if not isinstance(fmt_ty, Literal):
-        raise TypingError(
-            f"{name}: format string must be a literal str, got {fmt_ty!r}"
-        )
-    val = fmt_ty.literal_value
-    if not isinstance(val, str):
-        raise TypingError(
-            f"{name}: format string must be a Python str, got {type(val).__name__}"
-        )
-    return val
-
-
 def _unpack_args_tuple(builder, args_ty, args_pack):
     """Extract individual LLVM values from a tuple-of-args LLVM aggregate."""
     arg_types = tuple(args_ty)
@@ -318,7 +305,7 @@ def _emit_variadic_call(builder, symbol, fmt_str, leading_vals, args_ty, args_pa
 @intrinsic(prefer_literal=True)
 def _printf_intrinsic(typingctx, fmt_ty, args_ty):
     """libc printf via a tuple-of-args. Internal; user code calls printf()."""
-    fmt_str = _literal_format_or_raise("printf", fmt_ty)
+    fmt_str = extract_literal_str("printf", fmt_ty, field="format string")
     _reject_percent_n_or_raise("printf", fmt_str)
     if not isinstance(args_ty, BaseTuple):
         raise TypingError(f"printf: args must be a tuple, got {args_ty!r}")
@@ -337,7 +324,7 @@ def _printf_intrinsic(typingctx, fmt_ty, args_ty):
 @intrinsic(prefer_literal=True)
 def _fprintf_intrinsic(typingctx, fp_ty, fmt_ty, args_ty):
     """libc fprintf via a tuple-of-args. Internal; user code calls fprintf()."""
-    fmt_str = _literal_format_or_raise("fprintf", fmt_ty)
+    fmt_str = extract_literal_str("fprintf", fmt_ty, field="format string")
     _reject_percent_n_or_raise("fprintf", fmt_str)
     if not isinstance(args_ty, BaseTuple):
         raise TypingError(f"fprintf: args must be a tuple, got {args_ty!r}")
@@ -362,7 +349,7 @@ def _fprintf_intrinsic(typingctx, fp_ty, fmt_ty, args_ty):
 @intrinsic(prefer_literal=True)
 def _snprintf_intrinsic(typingctx, buf_ty, size_ty, fmt_ty, args_ty):
     """libc snprintf via a tuple-of-args. Internal; user code calls snprintf()."""
-    fmt_str = _literal_format_or_raise("snprintf", fmt_ty)
+    fmt_str = extract_literal_str("snprintf", fmt_ty, field="format string")
     _reject_percent_n_or_raise("snprintf", fmt_str)
     if not isinstance(args_ty, BaseTuple):
         raise TypingError(f"snprintf: args must be a tuple, got {args_ty!r}")
@@ -400,7 +387,7 @@ def _sscanf_intrinsic(typingctx, buf_ty, fmt_ty, args_ty):
     Args are intp output pointers; no default-arg promotion applies
     (pointers don't promote). See sscanf() for the caller-facing contract.
     """
-    fmt_str = _literal_format_or_raise("sscanf", fmt_ty)
+    fmt_str = extract_literal_str("sscanf", fmt_ty, field="format string")
     if not isinstance(args_ty, BaseTuple):
         raise TypingError(f"sscanf: args must be a tuple, got {args_ty!r}")
     if buf_ty != intp:
@@ -551,10 +538,10 @@ def printf(fmt, *args):
 
 @overload(printf)
 def _overload_printf(fmt, *args):
-    fmt_str = _literal_format_or_raise("printf", fmt)
+    fmt_str = extract_literal_str("printf", fmt, field="format string")
     _reject_percent_n_or_raise("printf", fmt_str)
     # fmt_str is unused in the impl body (literal embedded by intrinsic),
-    # but the call to _literal_format_or_raise here gives an early
+    # but the call to extract_literal_str here gives an early
     # TypingError if fmt isn't literal.
     del fmt_str
     for i, ty in enumerate(args):
@@ -597,7 +584,7 @@ def fprintf(fp, fmt, *args):
 
 @overload(fprintf)
 def _overload_fprintf(fp, fmt, *args):
-    fmt_str = _literal_format_or_raise("fprintf", fmt)
+    fmt_str = extract_literal_str("fprintf", fmt, field="format string")
     _reject_percent_n_or_raise("fprintf", fmt_str)
     del fmt_str
     if fp != intp:
@@ -637,7 +624,7 @@ def snprintf(buf_p, size, fmt, *args):
 
 @overload(snprintf)
 def _overload_snprintf(buf_p, size, fmt, *args):
-    fmt_str = _literal_format_or_raise("snprintf", fmt)
+    fmt_str = extract_literal_str("snprintf", fmt, field="format string")
     _reject_percent_n_or_raise("snprintf", fmt_str)
     del fmt_str
     if buf_p != intp:
@@ -675,7 +662,7 @@ def sscanf(buf, fmt, *args):
 
 @overload(sscanf)
 def _overload_sscanf(buf, fmt, *args):
-    fmt_str = _literal_format_or_raise("sscanf", fmt)
+    fmt_str = extract_literal_str("sscanf", fmt, field="format string")
     del fmt_str
     if buf != intp:
         raise TypingError(

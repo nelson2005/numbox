@@ -16,7 +16,7 @@ from numba.core.errors import TypingError
 from numba.core.types import intp
 from numba.extending import intrinsic
 
-from numbox.core.bindings.utils import platform_, load_lib
+from numbox.core.bindings.utils import extract_literal_str, load_lib, platform_
 from numbox.core.proxy.proxy import proxy
 
 
@@ -44,9 +44,7 @@ def _get_or_insert_global(module, ll_ty, name):
 
 @intrinsic(prefer_literal=True)
 def _stdio_handle(typingctx, name_ty):
-    if not hasattr(name_ty, "literal_value"):
-        raise TypingError("_stdio_handle: name must be a literal string")
-    name = name_ty.literal_value
+    name = extract_literal_str("_stdio_handle", name_ty, field="name")
     if name not in ("stdout", "stderr", "stdin"):
         raise TypingError(
             f"_stdio_handle: name must be one of stdout/stderr/stdin, got {name!r}"

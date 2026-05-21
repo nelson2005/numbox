@@ -3,10 +3,31 @@ from ctypes.util import find_library
 from platform import system
 
 from llvmlite import ir as llir
-from numba.core.types import intp
+from numba.core.errors import TypingError
+from numba.core.types import Literal, intp
 
 
 platform_ = system()
+
+
+def extract_literal_str(binding_name, ty, *, field="argument"):
+    """Extract the Python str value of a ``Literal[str]`` type, or raise
+    a clean ``TypingError`` naming the binding and the field.
+
+    Used by intrinsics that require a compile-time string (e.g. printf
+    format strings, libc function names, stdio handle names). ``field``
+    labels the offending argument in the error message.
+    """
+    if not isinstance(ty, Literal):
+        raise TypingError(
+            f"{binding_name}: {field} must be a literal str, got {ty!r}"
+        )
+    val = ty.literal_value
+    if not isinstance(val, str):
+        raise TypingError(
+            f"{binding_name}: {field} must be a Python str, got {type(val).__name__}"
+        )
+    return val
 
 
 def intp_ll_type(context=None):
