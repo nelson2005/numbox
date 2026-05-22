@@ -988,7 +988,8 @@ def test_njit_writer_rejects_tuple_arg(fn_name):
 
 
 @pytest.mark.parametrize(
-    "fmt", ["%n", "%ln", "%lln", "%hn", "%hhn", "%5n", "%5.3n", "before %n after"]
+    "fmt", ["%n", "%ln", "%lln", "%hn", "%hhn", "%5n", "%5.3n", "before %n after",
+            "%qn", "%I32n", "%I64n"]
 )
 def test_njit_printf_rejects_percent_n(fmt):
     """``%n`` writes the byte-count-written-so-far through a caller pointer
