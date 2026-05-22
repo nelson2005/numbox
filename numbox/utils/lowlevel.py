@@ -67,9 +67,8 @@ def _load_at(typingctx: Context, p_ty, ty_ref: TypeRef):
 def load_at(p, ty):
     """Load a value of type ``ty`` from raw pointer ``p`` (carried as ``intp``).
 
-    Generalizes the int32-specific load pattern used by ``errno_get``. Caller
-    is responsible for ``p`` pointing at a live region of memory whose LLVM
-    layout matches ``ty``.
+    Caller is responsible for ``p`` pointing at a live region of memory whose
+    LLVM layout matches ``ty``.
     """
     return _load_at(p, ty)
 
