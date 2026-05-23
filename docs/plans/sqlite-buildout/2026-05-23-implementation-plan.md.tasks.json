@@ -45,7 +45,7 @@
     {
       "id": 13,
       "subject": "SQLite Task 6: _sqlite_blob.py + test_sqlite_blob.py",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Bind 6 BLOB incremental I/O functions (blob_open, _close, _bytes, _read, _write, _reopen).\n\n**See plan section:** [Task 6](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_blob.py\", \"test/core/test_sqlite_blob.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_blob.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_blob.py test/core/test_sqlite_blob.py\", \"acceptanceCriteria\": [\"6 blob wrappers callable from @njit\", \"blob_open returns OK with non-zero handle\", \"read/write roundtrip works on READWRITE blob\", \"blob_bytes matches declared length\", \"blob_reopen retargets rowid\", \"bad column returns error\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
       "blockedBy": [
         10
@@ -105,5 +105,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-05-23T23:20:01Z"
+  "lastUpdated": "2026-05-23T23:32:11Z"
 }
