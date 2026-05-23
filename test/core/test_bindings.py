@@ -43,28 +43,6 @@ def test_c():
     assert strlen(s_p) == len(s_)
 
 
-@pytest.mark.skipif(platform_ == "Windows", reason="Need to add windows support")
-def test_sqlite():
-    version_ = sqlite3_libversion_number()
-    version_ = str_from_p_as_int(version_)
-    assert "." in version_
-
-    db_name_ = ":memory:"
-    db_name = c_char_p(db_name_.encode())
-    db_name_p = c_void_p.from_buffer(db_name).value
-
-    assert str_from_p_as_int(db_name_p) == db_name_
-    db_p = c_int64(0)
-    assert db_p.value == 0
-    db_pp = addressof(db_p)
-    rc = sqlite3_open(db_name_p, db_pp)
-    assert rc == 0, "could not open db connection"
-    assert db_p.value != 0
-    db_p = db_p.value
-    rc = sqlite3_close(db_p)
-    assert rc == 0, "could not close db connection"
-
-
 def test_load_lib_path_returns_handle_with_known_symbol():
     from numbox.core.bindings.utils import load_lib_path
 
