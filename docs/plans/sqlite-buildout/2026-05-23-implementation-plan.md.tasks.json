@@ -54,7 +54,7 @@
     {
       "id": 14,
       "subject": "SQLite Task 7: _sqlite_hooks.py + test_sqlite_hooks.py",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Bind 6 callback-hook APIs (update_hook, progress_handler, busy_handler, commit_hook, rollback_hook, trace_v2) with module-scope @cfunc tests.\n\n**See plan section:** [Task 7](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_hooks.py\", \"test/core/test_sqlite_hooks.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_hooks.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_hooks.py test/core/test_sqlite_hooks.py\", \"acceptanceCriteria\": [\"6 hook wrappers callable from @njit\", \"update_hook records op codes correctly\", \"progress_handler aborts via nonzero return\", \"commit_hook vetoes\", \"rollback_hook fires\", \"trace_v2 fires for STMT events\", \"tests gated by importorskip until Task 9 lands\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
       "blockedBy": [
         10
@@ -105,5 +105,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-05-23T23:32:11Z"
+  "lastUpdated": "2026-05-23T23:41:19Z"
 }
