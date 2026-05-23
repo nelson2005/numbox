@@ -16,7 +16,7 @@
     {
       "id": 10,
       "subject": "SQLite Task 3: _sqlite_conn.py + test_sqlite_conn.py",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Bind 17 connection-group functions (3 retained + 14 new, including 2 via proxy_if_available). Initialize sqlite3_lib module-level CDLL handle. Move existing test_sqlite into new file without Windows skip.\n\n**See plan section:** [Task 3](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_conn.py\", \"test/core/test_sqlite_conn.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_conn.py test/core/test_bindings.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_conn.py test/core/test_sqlite_conn.py\", \"acceptanceCriteria\": [\"14 new connection wrappers callable from @njit\", \"libversion rename + libversion_number new wrapper both work\", \"open_v2 with READWRITE|CREATE works on tmp_path\", \"db_filename/db_readonly/threadsafe/extended_errcode covered\", \"changes64/total_changes64 hasattr-guarded tests\", \"no Windows skipif\", \"sqlite3_lib module-level handle exported\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
       "blockedBy": [
         8,
@@ -105,5 +105,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-05-23T22:46:57Z"
+  "lastUpdated": "2026-05-23T23:00:45Z"
 }
