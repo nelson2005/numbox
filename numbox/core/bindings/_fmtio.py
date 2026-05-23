@@ -227,7 +227,7 @@ def _validate_writer_arg_type(name, idx, ty):
     )
 
 
-_PERCENT_N_RE = re.compile(r'%[-+0# ]*[0-9*]*\.?[0-9*]*(?:hh|ll|h|l|L|j|z|t|q|I32|I64)?n')
+_PERCENT_N_RE = re.compile(r'%(?:[0-9]+\$)?[-+0# ]*[0-9*]*\.?[0-9*]*(?:hh|ll|h|l|L|j|z|t|q|I32|I64)?n')
 
 
 def _reject_percent_n_or_raise(name, fmt_str):
