@@ -291,5 +291,28 @@ def test_store_at_rejects_non_intp_pointer():
             store_at(p, v)
 
 
+def test_load_at_accepts_integer_literal_pointer():
+    """Integer literals in ``@njit`` are typed as ``IntegerLiteral``, not
+    ``intp``. The guard uses ``unliteral()`` so callers can pass literal
+    pointers (e.g. compile-time-known addresses) without hitting a
+    spurious TypingError. We only compile — calling a literal-zero
+    pointer would segfault, but compilation is enough to exercise the
+    typing-time guard."""
+    from numba import int32, njit
+    @njit("int32()")
+    def kernel():
+        return load_at(0, int32)
+    assert kernel is not None
+
+
+def test_store_at_accepts_integer_literal_pointer():
+    """Parallel literal-acceptance for ``store_at``."""
+    from numba import int32, njit
+    @njit("void()")
+    def kernel():
+        store_at(0, int32(42))
+    assert kernel is not None
+
+
 if __name__ == '__main__':
     collect_and_run_tests(__name__)
