@@ -35,7 +35,7 @@
     {
       "id": 12,
       "subject": "SQLite Task 5: _sqlite_bind.py + test_sqlite_bind.py",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Bind 9 parameter-binding functions (bind_int/int64/double/text/blob/null + parameter_count/index/name).\n\n**See plan section:** [Task 5](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_bind.py\", \"test/core/test_sqlite_bind.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_bind.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_bind.py test/core/test_sqlite_bind.py\", \"acceptanceCriteria\": [\"9 bind wrappers callable from @njit\", \"bind_text/blob/null all return SQLITE_OK\", \"parameter_count returns 3 for SELECT ?1,?2,?3\", \"named parameter index/name round trip works\", \"out-of-range bind returns SQLITE_RANGE\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
       "blockedBy": [
         10,
@@ -105,5 +105,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-05-23T23:12:21Z"
+  "lastUpdated": "2026-05-23T23:20:01Z"
 }
