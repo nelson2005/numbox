@@ -63,7 +63,7 @@
     {
       "id": 15,
       "subject": "SQLite Task 8: _sqlite_column.py + test_sqlite_column.py",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Bind 13 column accessors (column_int/int64/double/text/blob/bytes/type/count/name/decltype + 3 metadata accessors via proxy_if_available).\n\n**See plan section:** [Task 8](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_column.py\", \"test/core/test_sqlite_column.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_column.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_column.py test/core/test_sqlite_column.py\", \"acceptanceCriteria\": [\"13 column wrappers callable from @njit\", \"scalar/text/blob/null roundtrip correct\", \"all 5 column_type codes return\", \"column_count matches SELECT arity\", \"name/decltype work\", \"metadata accessors hasattr-guarded\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
       "blockedBy": [
         10,
@@ -105,5 +105,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-05-23T23:41:19Z"
+  "lastUpdated": "2026-05-23T23:54:35Z"
 }
