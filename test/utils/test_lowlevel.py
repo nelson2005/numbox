@@ -256,7 +256,7 @@ def test_array_data_p_njit():
 def test_load_at_store_at_int32_roundtrip():
     """Positive path: store an int32 at an intp pointer, load it back."""
     import numpy
-    from numba import int32, intp, njit
+    from numba import int32, njit
     from numbox.utils.lowlevel import array_data_p
 
     @njit
