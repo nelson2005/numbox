@@ -4,7 +4,7 @@
     {
       "id": 8,
       "subject": "SQLite Task 1: Refactor load_lib + Windows bundled-DLL fallback",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Refactor `load_lib` into `_resolve_lib_path` + `load_lib_with_handle`; add a generic `_windows_bundled_dll_path` fallback.\n\n**See plan section:** [Task 1](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/utils.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_bindings.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/utils.py\", \"acceptanceCriteria\": [\"_resolve_lib_path('c') returns non-None on all platforms\", \"_resolve_lib_path('sqlite3') returns non-None on Linux/macOS/Windows (via bundled-DLL fallback)\", \"load_lib('c') is backwards compatible\", \"load_lib_with_handle('c') returns CDLL where hasattr(handle, 'strlen') is True\", \"existing test_bindings.py tests still pass\"], \"model\": \"opus\", \"effort\": \"max\"}\n```"
     },
     {
@@ -105,5 +105,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-05-23T22:07:55Z"
+  "lastUpdated": "2026-05-23T22:35:29Z"
 }
