@@ -24,6 +24,27 @@ venv/bin/pytest -x --durations=20 -q      # expect ~439 pass (baseline)
 
 If pytest doesn't pass cleanly, stop and investigate; do not start Task 1 on a broken baseline.
 
+## Pre-flight reading (mandatory before any task; subagent dispatchers MUST include this list in each prompt)
+
+The buildout follows the established libc bindings pattern verbatim. **Before writing any new wrapper, read these files end-to-end** so the patterns are grounded in actual code rather than imagination. The numbduck article-campaign session learned this the hard way (drafts hallucinated library APIs until rewritten from a direct read of the source) — the same failure mode applies here. If a subagent reports "I'm not sure how X is structured" or "should this be Y or Z?", the answer is almost always in one of the files below; re-check before guessing.
+
+**Required reading:**
+
+1. [`numbox/core/bindings/_c.py`](../../../numbox/core/bindings/_c.py) — canonical `@proxy(sig, jit_options={"cache": True})` + `_call_lib_func("name", (args,))` shape. ~12 wrappers, very short, the model every new wrapper follows.
+2. [`numbox/core/bindings/_stdio.py`](../../../numbox/core/bindings/_stdio.py) — module-scope `load_lib("c")`, signatures dict access, multi-function file structure.
+3. [`numbox/core/bindings/signatures.py`](../../../numbox/core/bindings/signatures.py) — current `signatures_sqlite` shape and the `signatures = {**signatures_c, **signatures_m, **signatures_sqlite}` merge.
+4. [`numbox/core/bindings/utils.py`](../../../numbox/core/bindings/utils.py) — current `load_lib` shape (Task 1 refactors this) + `load_lib_path` + `extract_literal_str` + `intp_ll_type`. Task 1's refactor extends this file; understand what's already there before editing.
+5. [`numbox/core/bindings/call.py`](../../../numbox/core/bindings/call.py) — `_call_lib_func` itself, the platform-aware ABI dispatcher. **You don't need to understand the ABI logic** — just confirm the call shape is `_call_lib_func("name", (arg1, arg2, ...))`. The "Bindings: implementation gotchas" section in CLAUDE.md explains why the extern-ref pattern matters.
+6. [`numbox/core/proxy/proxy.py`](../../../numbox/core/proxy/proxy.py) — `proxy(sig, jit_options=...)` workhorse AND `proxy_if_available(lib, sig, jit_options=...)`. **Read both docstrings fully** — they explain the `.as_func` contract that callers must guard with `hasattr(binding, "as_func")` for stubbed-out symbols.
+7. [`numbox/utils/lowlevel.py`](../../../numbox/utils/lowlevel.py) — **per the project's own CLAUDE.md rule, "before designing anything that touches strings, pointers, or buffer ownership, read this file end-to-end first."** SQLite touches all three. Key utilities used in the test files: `array_data_p`, `get_str_from_p_as_int`, `get_unicode_data_p`.
+8. [`CLAUDE.md`](../../../CLAUDE.md) — specifically the "Bindings: implementation gotchas" section (extern refs vs literal addresses, lifetime, platform-variable C types) and "Adding a New Binding" (the canonical 4-step procedure). The `long` / `time_t` / `size_t` warnings DON'T apply here (SQLite's C API uses `int` and `sqlite3_int64` explicit everywhere) — but knowing why they don't apply is part of being grounded.
+9. [`docs/plans/sqlite-buildout/2026-05-23-design.md`](2026-05-23-design.md) — the design spec this plan implements. The function inventory tables (§2) and the cross-cutting design choices (§3) are the source of truth for signatures and patterns.
+
+**Test-helper patterns (skim, not full read):**
+
+- [`test/core/test_bindings.py`](../../../test/core/test_bindings.py) — the existing `test_sqlite`, `test_c_stdio`, `test_c_strings`, `test_c_env` show the test helper patterns this plan reuses verbatim: `_cstr` builder (returns `(keepalive, intp_address)`), `addressof(c_int64(0))` for out-params, `array_data_p` for numpy buffer addresses, `get_str_from_p_as_int` / `str_from_p_as_int` for C-string decode (njit-side vs Python-side).
+- [`test/core/test_stdio_handles.py`](../../../test/core/test_stdio_handles.py) and [`test/core/test_errno.py`](../../../test/core/test_errno.py) — per-group test file pattern this buildout mirrors (one test file per wrapper file).
+
 ---
 
 ## Task 1: Refactor `load_lib` into `_resolve_lib_path` + `load_lib_with_handle`; add Windows bundled-DLL fallback
