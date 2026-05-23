@@ -10,7 +10,7 @@
     {
       "id": 9,
       "subject": "SQLite Task 2: signatures.py expansion + _sqlite_constants.py",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Expand signatures_sqlite from 3 entries to 60; create _sqlite_constants.py with all SQLITE_* numeric constants.\n\n**See plan section:** [Task 2](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_sqlite_constants.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/python -c 'from numbox.core.bindings.signatures import signatures_sqlite; assert len(signatures_sqlite) == 60' && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/signatures.py numbox/core/bindings/_sqlite_constants.py\", \"acceptanceCriteria\": [\"signatures_sqlite has exactly 60 entries\", \"no long/time_t/size_t in any signature\", \"_sqlite_constants exposes all required SQLITE_* constants as int\", \"star-import works\"], \"model\": \"opus\", \"effort\": \"max\"}\n```"
     },
     {
@@ -105,5 +105,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-05-23T22:35:29Z"
+  "lastUpdated": "2026-05-23T22:46:57Z"
 }
