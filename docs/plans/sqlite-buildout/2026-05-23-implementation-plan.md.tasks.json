@@ -1,0 +1,109 @@
+{
+  "planPath": "docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md",
+  "tasks": [
+    {
+      "id": 8,
+      "subject": "SQLite Task 1: Refactor load_lib + Windows bundled-DLL fallback",
+      "status": "pending",
+      "description": "**Goal:** Refactor `load_lib` into `_resolve_lib_path` + `load_lib_with_handle`; add a generic `_windows_bundled_dll_path` fallback.\n\n**See plan section:** [Task 1](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/utils.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_bindings.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/utils.py\", \"acceptanceCriteria\": [\"_resolve_lib_path('c') returns non-None on all platforms\", \"_resolve_lib_path('sqlite3') returns non-None on Linux/macOS/Windows (via bundled-DLL fallback)\", \"load_lib('c') is backwards compatible\", \"load_lib_with_handle('c') returns CDLL where hasattr(handle, 'strlen') is True\", \"existing test_bindings.py tests still pass\"], \"model\": \"opus\", \"effort\": \"max\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "SQLite Task 2: signatures.py expansion + _sqlite_constants.py",
+      "status": "pending",
+      "description": "**Goal:** Expand signatures_sqlite from 3 entries to 60; create _sqlite_constants.py with all SQLITE_* numeric constants.\n\n**See plan section:** [Task 2](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_sqlite_constants.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/python -c 'from numbox.core.bindings.signatures import signatures_sqlite; assert len(signatures_sqlite) == 60' && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/signatures.py numbox/core/bindings/_sqlite_constants.py\", \"acceptanceCriteria\": [\"signatures_sqlite has exactly 60 entries\", \"no long/time_t/size_t in any signature\", \"_sqlite_constants exposes all required SQLITE_* constants as int\", \"star-import works\"], \"model\": \"opus\", \"effort\": \"max\"}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "SQLite Task 3: _sqlite_conn.py + test_sqlite_conn.py",
+      "status": "pending",
+      "description": "**Goal:** Bind 17 connection-group functions (3 retained + 14 new, including 2 via proxy_if_available). Initialize sqlite3_lib module-level CDLL handle. Move existing test_sqlite into new file without Windows skip.\n\n**See plan section:** [Task 3](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_conn.py\", \"test/core/test_sqlite_conn.py\", \"test/core/test_bindings.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_conn.py test/core/test_bindings.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_conn.py test/core/test_sqlite_conn.py\", \"acceptanceCriteria\": [\"14 new connection wrappers callable from @njit\", \"libversion rename + libversion_number new wrapper both work\", \"open_v2 with READWRITE|CREATE works on tmp_path\", \"db_filename/db_readonly/threadsafe/extended_errcode covered\", \"changes64/total_changes64 hasattr-guarded tests\", \"no Windows skipif\", \"sqlite3_lib module-level handle exported\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
+      "blockedBy": [
+        8,
+        9
+      ]
+    },
+    {
+      "id": 11,
+      "subject": "SQLite Task 4: _sqlite_stmt.py + test_sqlite_stmt.py",
+      "status": "pending",
+      "description": "**Goal:** Bind 7 statement-lifecycle functions (prepare_v2, finalize, reset, step, sql, expanded_sql, stmt_busy).\n\n**See plan section:** [Task 4](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_stmt.py\", \"test/core/test_sqlite_stmt.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_stmt.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_stmt.py test/core/test_sqlite_stmt.py\", \"acceptanceCriteria\": [\"7 stmt wrappers callable from @njit\", \"prepare_v2 out-params work\", \"step ROW/DONE semantics correct\", \"reset replays query\", \"sql/expanded_sql decoded correctly\", \"stmt_busy nonzero mid-iteration\", \"expanded_sql test guarded by importorskip until Task 9\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
+      "blockedBy": [
+        10
+      ]
+    },
+    {
+      "id": 12,
+      "subject": "SQLite Task 5: _sqlite_bind.py + test_sqlite_bind.py",
+      "status": "pending",
+      "description": "**Goal:** Bind 9 parameter-binding functions (bind_int/int64/double/text/blob/null + parameter_count/index/name).\n\n**See plan section:** [Task 5](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_bind.py\", \"test/core/test_sqlite_bind.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_bind.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_bind.py test/core/test_sqlite_bind.py\", \"acceptanceCriteria\": [\"9 bind wrappers callable from @njit\", \"bind_text/blob/null all return SQLITE_OK\", \"parameter_count returns 3 for SELECT ?1,?2,?3\", \"named parameter index/name round trip works\", \"out-of-range bind returns SQLITE_RANGE\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
+      "blockedBy": [
+        10,
+        11
+      ]
+    },
+    {
+      "id": 13,
+      "subject": "SQLite Task 6: _sqlite_blob.py + test_sqlite_blob.py",
+      "status": "pending",
+      "description": "**Goal:** Bind 6 BLOB incremental I/O functions (blob_open, _close, _bytes, _read, _write, _reopen).\n\n**See plan section:** [Task 6](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_blob.py\", \"test/core/test_sqlite_blob.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_blob.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_blob.py test/core/test_sqlite_blob.py\", \"acceptanceCriteria\": [\"6 blob wrappers callable from @njit\", \"blob_open returns OK with non-zero handle\", \"read/write roundtrip works on READWRITE blob\", \"blob_bytes matches declared length\", \"blob_reopen retargets rowid\", \"bad column returns error\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
+      "blockedBy": [
+        10
+      ]
+    },
+    {
+      "id": 14,
+      "subject": "SQLite Task 7: _sqlite_hooks.py + test_sqlite_hooks.py",
+      "status": "pending",
+      "description": "**Goal:** Bind 6 callback-hook APIs (update_hook, progress_handler, busy_handler, commit_hook, rollback_hook, trace_v2) with module-scope @cfunc tests.\n\n**See plan section:** [Task 7](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_hooks.py\", \"test/core/test_sqlite_hooks.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_hooks.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_hooks.py test/core/test_sqlite_hooks.py\", \"acceptanceCriteria\": [\"6 hook wrappers callable from @njit\", \"update_hook records op codes correctly\", \"progress_handler aborts via nonzero return\", \"commit_hook vetoes\", \"rollback_hook fires\", \"trace_v2 fires for STMT events\", \"tests gated by importorskip until Task 9 lands\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
+      "blockedBy": [
+        10
+      ]
+    },
+    {
+      "id": 15,
+      "subject": "SQLite Task 8: _sqlite_column.py + test_sqlite_column.py",
+      "status": "pending",
+      "description": "**Goal:** Bind 13 column accessors (column_int/int64/double/text/blob/bytes/type/count/name/decltype + 3 metadata accessors via proxy_if_available).\n\n**See plan section:** [Task 8](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_column.py\", \"test/core/test_sqlite_column.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_column.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_column.py test/core/test_sqlite_column.py\", \"acceptanceCriteria\": [\"13 column wrappers callable from @njit\", \"scalar/text/blob/null roundtrip correct\", \"all 5 column_type codes return\", \"column_count matches SELECT arity\", \"name/decltype work\", \"metadata accessors hasattr-guarded\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
+      "blockedBy": [
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "id": 16,
+      "subject": "SQLite Task 9: _sqlite_exec.py + test_sqlite_exec.py",
+      "status": "pending",
+      "description": "**Goal:** Bind sqlite3_exec + sqlite3_free with end-to-end callback test. Unblocks the importorskip-gated tests in stmt/hooks.\n\n**See plan section:** [Task 9](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_exec.py\", \"test/core/test_sqlite_exec.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_exec.py test/core/test_sqlite_stmt.py test/core/test_sqlite_blob.py test/core/test_sqlite_hooks.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_exec.py test/core/test_sqlite_exec.py\", \"acceptanceCriteria\": [\"sqlite3_exec null-callback DDL succeeds\", \"callback fires per row, ctx-backed numpy array captures count\", \"nonzero callback return aborts with SQLITE_ABORT\", \"invalid SQL errmsg decoded + freed\", \"previously-skipped tests in stmt/hooks now run end-to-end\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
+      "blockedBy": [
+        10
+      ]
+    },
+    {
+      "id": 17,
+      "subject": "SQLite Task 10: Retire legacy _sqlite.py; rewire __init__.py",
+      "status": "pending",
+      "description": "**Goal:** Delete the legacy _sqlite.py; update __init__.py to star-import from the seven new _sqlite_* modules + constants.\n\n**See plan section:** [Task 10](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite.py\", \"numbox/core/bindings/__init__.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/python -c 'import numbox.core.bindings as nb; [getattr(nb, n) for n in (\\\"sqlite3_open\\\", \\\"sqlite3_prepare_v2\\\", \\\"sqlite3_exec\\\", \\\"sqlite3_blob_open\\\", \\\"sqlite3_update_hook\\\", \\\"SQLITE_OK\\\", \\\"SQLITE_TRANSIENT\\\")]' && venv/bin/pytest -x --durations=20 -q && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/__init__.py\", \"acceptanceCriteria\": [\"_sqlite.py deleted from disk\", \"all SQLite wrappers reachable via star-import\", \"all SQLITE_* constants reachable via star-import\", \"full pytest suite passes (~494 tests)\", \"import order: constants, conn, then others\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
+      "blockedBy": [
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ]
+    },
+    {
+      "id": 18,
+      "subject": "SQLite Task 11: CLAUDE.md Project Status entry + Key Paths",
+      "status": "pending",
+      "description": "**Goal:** Document the buildout in CLAUDE.md: Project Status entry with four lifetime gotchas, Key Paths additions, Follow-ups for deferred items.\n\n**See plan section:** [Task 11](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"CLAUDE.md\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && git diff CLAUDE.md\", \"acceptanceCriteria\": [\"Project Status entry added after 0.5.12 libc entry\", \"all 4 lifetime gotchas documented\", \"cfunc -> exec callback example included\", \"Key Paths gets 8 entries, removes _sqlite.py\", \"Follow-ups gets 5 deferred items\", \"no formatting drift in surrounding sections\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
+      "blockedBy": [
+        17
+      ]
+    }
+  ],
+  "lastUpdated": "2026-05-23T22:07:55Z"
+}
