@@ -122,6 +122,8 @@ def proxy_if_available(lib, sig, jit_options: Optional[dict] = None):
 
         def stub(*args, **_kwargs):
             raise NotImplementedError(f"{func.__name__} is not available")
-        stub.__name__ = func.__name__
+        stub.__name__ = make_proxy_name(func.__name__)
+        stub.__qualname__ = func.__qualname__
+        stub.__doc__ = func.__doc__
         return stub
     return _

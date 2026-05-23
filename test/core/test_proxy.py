@@ -148,7 +148,14 @@ def test_proxy_if_available_present_symbol_returns_real_proxy():
 def test_proxy_if_available_missing_symbol_returns_stub():
     """When the C symbol is absent, ``proxy_if_available`` returns a
     Python stub that raises ``NotImplementedError`` on call. The stub
-    intentionally lacks ``.as_func`` (see helper docstring)."""
+    intentionally lacks ``.as_func`` (see helper docstring).
+
+    Stub metadata matches the real ``@proxy`` dispatcher where applicable:
+    ``__name__`` is prefixed via :func:`make_proxy_name` (so callers
+    that ``repr()`` or log the binding see the same shape regardless
+    of whether the symbol was available); ``__qualname__`` and
+    ``__doc__`` preserve the user-side function for debugging.
+    """
     lib_path = _locate_libm()
     if lib_path is None:
         pytest.skip("No suitable math/C runtime library discoverable")
@@ -156,9 +163,12 @@ def test_proxy_if_available_missing_symbol_returns_stub():
 
     @proxy_if_available(lib, float64(float64))
     def nonexistent_fn(x):
+        """Docstring on the stub-target for metadata-preservation check."""
         return x
 
-    assert nonexistent_fn.__name__ == "nonexistent_fn"
+    assert nonexistent_fn.__name__ == make_proxy_name("nonexistent_fn")
+    assert nonexistent_fn.__qualname__.endswith("nonexistent_fn")
+    assert nonexistent_fn.__doc__ == "Docstring on the stub-target for metadata-preservation check."
     assert not hasattr(nonexistent_fn, "as_func")
     with pytest.raises(NotImplementedError, match="nonexistent_fn is not available"):
         nonexistent_fn(1.0)
