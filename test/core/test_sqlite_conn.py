@@ -91,11 +91,11 @@ def test_open_v2_bad_path_returns_cantopen(tmp_path):
 
 def test_db_filename_returns_main_path(tmp_path):
     db_file = tmp_path / "named.sqlite"
-    _, name_p = _cstr(str(db_file))
+    name_buf, name_p = _cstr(str(db_file))
     db_p = c_int64(0)
     sqlite3_open_v2(name_p, addressof(db_p),
                     SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0)
-    _, main_p = _cstr("main")
+    main_buf, main_p = _cstr("main")
     got_p = sqlite3_db_filename(db_p.value, main_p)
     got = str_from_p_as_int(got_p)
     assert got == str(db_file), (got, str(db_file))
@@ -104,11 +104,11 @@ def test_db_filename_returns_main_path(tmp_path):
 
 def test_db_readonly_zero_for_writable(tmp_path):
     db_file = tmp_path / "rw.sqlite"
-    _, name_p = _cstr(str(db_file))
+    name_buf, name_p = _cstr(str(db_file))
     db_p = c_int64(0)
     sqlite3_open_v2(name_p, addressof(db_p),
                     SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0)
-    _, main_p = _cstr("main")
+    main_buf, main_p = _cstr("main")
     assert sqlite3_db_readonly(db_p.value, main_p) == 0
     sqlite3_close(db_p.value)
 

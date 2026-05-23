@@ -96,17 +96,17 @@ def test_bind_out_of_range_returns_sqlite_range(stmt_three_params):
 
 
 def test_bind_parameter_index_by_name():
-    _, name_p = _cstr(":memory:")
+    name_buf, name_p = _cstr(":memory:")
     db_p = c_int64(0)
     assert sqlite3_open(name_p, addressof(db_p)) == SQLITE_OK
     try:
-        _, sql_p = _cstr("SELECT :foo, :bar")
+        sql_buf, sql_p = _cstr("SELECT :foo, :bar")
         stmt_p = c_int64(0)
         tail_p = c_int64(0)
         sqlite3_prepare_v2(db_p.value, sql_p, -1,
                            addressof(stmt_p), addressof(tail_p))
-        _, foo_p = _cstr(":foo")
-        _, bar_p = _cstr(":bar")
+        foo_buf, foo_p = _cstr(":foo")
+        bar_buf, bar_p = _cstr(":bar")
         assert sqlite3_bind_parameter_index(stmt_p.value, foo_p) == 1
         assert sqlite3_bind_parameter_index(stmt_p.value, bar_p) == 2
         # name lookup round trip
