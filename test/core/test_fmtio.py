@@ -1105,3 +1105,18 @@ def test_python_printf_accepts_literal_percent_percent_n(capfd):
     assert rc == len("100%n done\n")
     out, _ = capfd.readouterr()
     assert out == "100%n done\n"
+
+
+@pytest.mark.parametrize("modifier", ["z", "j", "t", "q", "I32", "I64"])
+def test_python_printf_strips_extended_length_modifiers(modifier, capfd):
+    """Pure-Python printf must strip C length modifiers ``j``/``z``/``t``/
+    ``q``/``I32``/``I64`` (parallel to the existing ``hh``/``ll``/``h``/
+    ``l``/``L`` set) so the resulting format string is acceptable to
+    Python's ``%`` operator. Without stripping, Python raises
+    ``ValueError`` on the unrecognized format spec — breaking the dual-
+    mode equivalence promise with the ``@njit`` path (which accepts all
+    of these via the libc binding)."""
+    rc = printf(f"%{modifier}d\n", 42)
+    out, _ = capfd.readouterr()
+    assert out == "42\n", repr(out)
+    assert rc == 3

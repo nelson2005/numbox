@@ -152,7 +152,7 @@ _SNPRINTF_SYMBOL = "_snprintf" if platform_ == "Windows" else "snprintf"
 # before pure-Python formatting; the stripped %d / %f produces equivalent
 # output for typical values (Python's % uses the value's natural width).
 _LENGTH_MODIFIER_RE = re.compile(
-    r'%([-+0# ]*[0-9*]*\.?[0-9*]*)(hh|ll|h|l|L)([diouxXfFeEgGaAcsp])'
+    r'%([-+0# ]*[0-9*]*\.?[0-9*]*)(hh|ll|h|l|L|j|z|t|q|I32|I64)([diouxXfFeEgGaAcsp])'
 )
 
 
