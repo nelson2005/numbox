@@ -2,12 +2,12 @@ import errno
 
 import numpy as np
 import pytest
-from ctypes import addressof, c_char_p, c_int64, c_void_p
+from ctypes import c_char_p, c_void_p
 from numba import njit
 from numbox.core.bindings import *
 from numbox.core.bindings.utils import platform_
 from numbox.utils.lowlevel import array_data_p, get_unicode_data_p, get_str_from_p_as_int
-from test.auxiliary_utils import collect_and_run_tests, str_from_p_as_int
+from test.auxiliary_utils import collect_and_run_tests
 
 
 @njit(cache=True)
