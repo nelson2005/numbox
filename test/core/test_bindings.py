@@ -80,6 +80,19 @@ def test_load_lib_path_returns_handle_with_known_symbol():
     assert hasattr(lib, "cos")
 
 
+def test_load_lib_with_handle_returns_queryable_handle():
+    """load_lib_with_handle must return a CDLL the caller can hasattr-query —
+    that's the whole point of the refactor (proxy_if_available uses hasattr)."""
+    from numbox.core.bindings.utils import load_lib_with_handle, platform_
+    name = "c" if platform_ != "Windows" else "c"
+    handle = load_lib_with_handle(name)
+    assert handle is not None
+    # strlen is in libc on every supported platform
+    assert hasattr(handle, "strlen")
+    # A symbol that doesn't exist returns False
+    assert not hasattr(handle, "definitely_not_a_real_symbol_xyzzy")
+
+
 def test_c_stdio(tmp_path):
     path = tmp_path / "rt.bin"
     payload = b"hello-from-njit\x00\x01\x02"
