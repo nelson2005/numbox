@@ -26,10 +26,13 @@ def make_params_strings(func):
 
     Default-argument values are formatted via ``repr(default)`` —
     primitives whose ``repr()`` is a valid Python expression (ints,
-    floats, strings, ``None``, booleans, tuples thereof) round-trip;
-    complex objects whose ``repr()`` is e.g. ``"<MyClass object at 0x...>"``
-    render to invalid source and raise ``SyntaxError`` / ``NameError`` at
-    exec time — a visible failure, not a silent miscompile.
+    finite floats, strings, ``None``, booleans, tuples thereof) round-
+    trip. Non-round-tripping exceptions: ``float('nan')`` /
+    ``float('inf')`` render as bare identifiers ``nan`` / ``inf`` and
+    ``NameError`` at exec time; complex objects whose ``repr()`` is e.g.
+    ``"<MyClass object at 0x...>"`` likewise render to invalid source and
+    raise ``SyntaxError`` / ``NameError``. These are visible failures,
+    not silent miscompiles.
     """
     func_params = inspect.signature(func).parameters
     for name, p in func_params.items():

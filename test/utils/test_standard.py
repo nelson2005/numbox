@@ -94,5 +94,20 @@ def test_make_params_strings_none_default_round_trips():
     assert namespace["wrapper"]() is None
 
 
+@pytest.mark.parametrize("bad_float", [float('nan'), float('inf'), float('-inf')])
+def test_make_params_strings_nan_inf_floats_documented_no_roundtrip(bad_float):
+    """nan/inf floats render via repr() to bare identifiers (``nan`` /
+    ``inf`` / ``-inf``) which are not valid Python expressions and raise
+    NameError at exec time. The docstring documents this as a known
+    limitation. Pin the behavior so the gotcha stays visible if the
+    codepath ever changes."""
+    def f(x=bad_float):
+        pass
+    sig, _ = make_params_strings(f)
+    namespace = {}
+    with pytest.raises(NameError):
+        exec(f"def wrapper({sig}): return x", namespace)
+
+
 if __name__ == '__main__':
     collect_and_run_tests(__name__)
