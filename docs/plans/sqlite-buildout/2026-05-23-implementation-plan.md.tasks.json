@@ -83,7 +83,7 @@
     {
       "id": 17,
       "subject": "SQLite Task 10: Retire legacy _sqlite.py; rewire __init__.py",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Delete the legacy _sqlite.py; update __init__.py to star-import from the seven new _sqlite_* modules + constants.\n\n**See plan section:** [Task 10](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite.py\", \"numbox/core/bindings/__init__.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/python -c 'import numbox.core.bindings as nb; [getattr(nb, n) for n in (\\\"sqlite3_open\\\", \\\"sqlite3_prepare_v2\\\", \\\"sqlite3_exec\\\", \\\"sqlite3_blob_open\\\", \\\"sqlite3_update_hook\\\", \\\"SQLITE_OK\\\", \\\"SQLITE_TRANSIENT\\\")]' && venv/bin/pytest -x --durations=20 -q && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/__init__.py\", \"acceptanceCriteria\": [\"_sqlite.py deleted from disk\", \"all SQLite wrappers reachable via star-import\", \"all SQLITE_* constants reachable via star-import\", \"full pytest suite passes (~494 tests)\", \"import order: constants, conn, then others\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
       "blockedBy": [
         10,
@@ -105,5 +105,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-05-24T00:03:52Z"
+  "lastUpdated": "2026-05-24T00:11:55Z"
 }
