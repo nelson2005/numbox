@@ -20,10 +20,57 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # DEBUG-ITERATION: restricted to macos-only while debugging the
-        # pysqlite_bridge segfault. Restore the full matrix once the fix
-        # is verified.
+        python-version: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
+        numba-version: [ "0.65.1" ]
+        arch: [ "ubuntu-latest", "ubuntu-24.04-arm", "windows-latest" ]
+        exclude:
+          - arch: "windows-latest"
+            python-version: "3.11"
+          - arch: "windows-latest"
+            python-version: "3.12"
+          - arch: "windows-latest"
+            python-version: "3.13"
         include:
+          # min numba for 3.10-3.12 (0.60.0)
+          - python-version: "3.10"
+            numba-version: "0.60.0"
+            arch: "ubuntu-latest"
+          - python-version: "3.10"
+            numba-version: "0.60.0"
+            arch: "ubuntu-24.04-arm"
+          - python-version: "3.10"
+            numba-version: "0.60.0"
+            arch: "windows-latest"
+          - python-version: "3.11"
+            numba-version: "0.60.0"
+            arch: "ubuntu-latest"
+          - python-version: "3.11"
+            numba-version: "0.60.0"
+            arch: "ubuntu-24.04-arm"
+          - python-version: "3.12"
+            numba-version: "0.60.0"
+            arch: "ubuntu-latest"
+          - python-version: "3.12"
+            numba-version: "0.60.0"
+            arch: "ubuntu-24.04-arm"
+          # min numba for 3.13 (0.61.0)
+          - python-version: "3.13"
+            numba-version: "0.61.0"
+            arch: "ubuntu-latest"
+          - python-version: "3.13"
+            numba-version: "0.61.0"
+            arch: "ubuntu-24.04-arm"
+          # min numba for 3.14 (0.63.0)
+          - python-version: "3.14"
+            numba-version: "0.63.0"
+            arch: "ubuntu-latest"
+          - python-version: "3.14"
+            numba-version: "0.63.0"
+            arch: "ubuntu-24.04-arm"
+          - python-version: "3.14"
+            numba-version: "0.63.0"
+            arch: "windows-latest"
+          # macOS
           - python-version: "3.14"
             numba-version: "0.65.1"
             arch: "macos-latest"
