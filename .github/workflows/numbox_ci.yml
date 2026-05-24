@@ -20,60 +20,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
-        numba-version: [ "0.65.1" ]
-        arch: [ "ubuntu-latest", "ubuntu-24.04-arm", "windows-latest" ]
-        exclude:
-          - arch: "windows-latest"
-            python-version: "3.11"
-          - arch: "windows-latest"
-            python-version: "3.12"
-          - arch: "windows-latest"
-            python-version: "3.13"
+        # DEBUG ITERATION — matrix restricted to one Windows + one Ubuntu sanity job
+        # for the SQLite Windows access-violation investigation. Restore full
+        # matrix from git history (e.g. commit fa1173b) before merging.
         include:
-          # min numba for 3.10-3.12 (0.60.0)
           - python-version: "3.10"
-            numba-version: "0.60.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.10"
-            numba-version: "0.60.0"
-            arch: "ubuntu-24.04-arm"
-          - python-version: "3.10"
-            numba-version: "0.60.0"
-            arch: "windows-latest"
-          - python-version: "3.11"
-            numba-version: "0.60.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.11"
-            numba-version: "0.60.0"
-            arch: "ubuntu-24.04-arm"
-          - python-version: "3.12"
-            numba-version: "0.60.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.12"
-            numba-version: "0.60.0"
-            arch: "ubuntu-24.04-arm"
-          # min numba for 3.13 (0.61.0)
-          - python-version: "3.13"
-            numba-version: "0.61.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.13"
-            numba-version: "0.61.0"
-            arch: "ubuntu-24.04-arm"
-          # min numba for 3.14 (0.63.0)
-          - python-version: "3.14"
-            numba-version: "0.63.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.14"
-            numba-version: "0.63.0"
-            arch: "ubuntu-24.04-arm"
-          - python-version: "3.14"
-            numba-version: "0.63.0"
-            arch: "windows-latest"
-          # macOS
-          - python-version: "3.14"
             numba-version: "0.65.1"
-            arch: "macos-latest"
+            arch: "windows-latest"
+          - python-version: "3.12"
+            numba-version: "0.65.1"
+            arch: "ubuntu-latest"
     runs-on: "${{ matrix.arch }}"
 
     steps:
@@ -107,6 +63,17 @@ jobs:
         flake8 . --count --exclude=test/core/random_image_ref.py --select=E9,F63,F7,F82,F401 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    - name: SQLite Windows fresh-subprocess probe (DEBUG iteration)
+      if: matrix.arch == 'windows-latest'
+      continue-on-error: true
+      run: |
+        python -c "from numbox.core.bindings.utils import _resolve_lib_path, _windows_bundled_dll_path, platform_; import sys, os; print('platform_:', platform_); print('_resolve_lib_path:', _resolve_lib_path('sqlite3')); print('_windows_bundled_dll_path:', _windows_bundled_dll_path('sqlite3')); print('sys.prefix:', sys.prefix); print('sys.base_prefix:', sys.base_prefix); print('DLLs entries containing sqlite:', [f for d in [os.path.join(sys.prefix,'DLLs'), os.path.join(sys.base_prefix,'DLLs')] if os.path.isdir(d) for f in os.listdir(d) if 'sqlite' in f.lower()])"
+        python -c "from numbox.core.bindings._sqlite_conn import sqlite3_lib; print('name:', sqlite3_lib._name); print('handle:', sqlite3_lib._handle); [print('has', s, ':', hasattr(sqlite3_lib, s)) for s in ('sqlite3_open', 'sqlite3_close', 'sqlite3_libversion', 'sqlite3_prepare_v2', 'sqlite3_step')]"
+        python -c "from numbox.core.bindings._sqlite_conn import sqlite3_lib; import ctypes; sqlite3_lib.sqlite3_libversion.restype = ctypes.c_char_p; print('libversion (direct ctypes):', sqlite3_lib.sqlite3_libversion())"
+        python -c "from numbox.core.bindings._sqlite_conn import sqlite3_libversion; from test.auxiliary_utils import str_from_p_as_int; print('libversion (via @proxy):', str_from_p_as_int(sqlite3_libversion()))"
+        python -c "from numbox.core.bindings._sqlite_conn import sqlite3_lib, sqlite3_close as proxy_close; import ctypes; sqlite3_lib.sqlite3_open.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]; sqlite3_lib.sqlite3_open.restype = ctypes.c_int; db = ctypes.c_void_p(); rc = sqlite3_lib.sqlite3_open(b':memory:', ctypes.byref(db)); print('sqlite3_open (direct ctypes) rc:', rc, 'db:', db.value); sqlite3_lib.sqlite3_close(db) if db.value else None"
+        python -c "from numbox.core.bindings._sqlite_conn import sqlite3_open, sqlite3_close; from ctypes import c_int64, c_char_p, c_void_p, addressof; buf = c_char_p(b':memory:'); name_p = c_void_p.from_buffer(buf).value; db_p = c_int64(0); rc = sqlite3_open(name_p, addressof(db_p)); print('sqlite3_open (via @proxy) rc:', rc, 'db_p:', db_p.value); sqlite3_close(db_p.value) if db_p.value else None"
+
     - name: Test with pytest
       run: |
         pytest --durations=20 --cov=numbox --cov-report=term-missing
