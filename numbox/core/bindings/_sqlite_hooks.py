@@ -17,6 +17,11 @@ from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.proxy.proxy import proxy
 
+__all__ = [
+    "sqlite3_update_hook", "sqlite3_progress_handler", "sqlite3_busy_handler",
+    "sqlite3_commit_hook", "sqlite3_rollback_hook", "sqlite3_trace_v2",
+]
+
 
 @proxy(signatures.get("sqlite3_update_hook"), jit_options={"cache": True})
 def sqlite3_update_hook(db_p, cb_p, ctx_p):

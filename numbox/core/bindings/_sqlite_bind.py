@@ -12,6 +12,13 @@ from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.proxy.proxy import proxy
 
+__all__ = [
+    "sqlite3_bind_int", "sqlite3_bind_int64", "sqlite3_bind_double",
+    "sqlite3_bind_text", "sqlite3_bind_blob", "sqlite3_bind_null",
+    "sqlite3_bind_parameter_count", "sqlite3_bind_parameter_index",
+    "sqlite3_bind_parameter_name",
+]
+
 
 @proxy(signatures.get("sqlite3_bind_int"), jit_options={"cache": True})
 def sqlite3_bind_int(stmt_p, idx, val):

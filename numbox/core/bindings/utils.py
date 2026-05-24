@@ -137,7 +137,7 @@ def get_loaded_lib(name):
     or for ``hasattr(handle, func_name)`` symbol-presence checks. Storing
     in ``_loaded_libs`` pins the handle for the process lifetime so other
     modules can share it without cross-module imports (avoids coupling
-    e.g. ``_sqlite_column`` to ``_sqlite_conn`` just to get ``sqlite3_lib``).
+    e.g. ``_sqlite_column`` to ``_sqlite_conn`` just to get ``_sqlite3_lib``).
     """
     handle = _loaded_libs.get(name)
     if handle is None:

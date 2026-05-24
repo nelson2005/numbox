@@ -3,7 +3,7 @@
 Resolves the shared library via ``get_loaded_lib("sqlite3")`` from
 ``utils._loaded_libs``. Other ``_sqlite_*.py`` modules (currently
 ``_sqlite_column``) call the same getter rather than importing
-``sqlite3_lib`` from here, so there's no cross-module dependency on
+``_sqlite3_lib`` from here, so there's no cross-module dependency on
 which file happens to load the library first.
 
 Two functions are decorated with ``proxy_if_available``:
@@ -17,8 +17,18 @@ from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import get_loaded_lib
 from numbox.core.proxy.proxy import proxy, proxy_if_available
 
+__all__ = [
+    "sqlite3_open", "sqlite3_open_v2", "sqlite3_close",
+    "sqlite3_libversion", "sqlite3_libversion_number",
+    "sqlite3_errmsg", "sqlite3_errcode", "sqlite3_extended_errcode",
+    "sqlite3_threadsafe",
+    "sqlite3_db_handle", "sqlite3_db_filename", "sqlite3_db_readonly",
+    "sqlite3_changes", "sqlite3_last_insert_rowid", "sqlite3_total_changes",
+    "sqlite3_changes64", "sqlite3_total_changes64",
+]
 
-sqlite3_lib = get_loaded_lib("sqlite3")
+
+_sqlite3_lib = get_loaded_lib("sqlite3")
 
 
 @proxy(signatures.get("sqlite3_open"), jit_options={"cache": True})
@@ -97,11 +107,11 @@ def sqlite3_total_changes(db_p):
 
 
 # SQLite 3.37+; stubbed via proxy_if_available on older library versions.
-@proxy_if_available(sqlite3_lib, signatures.get("sqlite3_changes64"), jit_options={"cache": True})
+@proxy_if_available(_sqlite3_lib, signatures.get("sqlite3_changes64"), jit_options={"cache": True})
 def sqlite3_changes64(db_p):
     return _call_lib_func("sqlite3_changes64", (db_p,))
 
 
-@proxy_if_available(sqlite3_lib, signatures.get("sqlite3_total_changes64"), jit_options={"cache": True})
+@proxy_if_available(_sqlite3_lib, signatures.get("sqlite3_total_changes64"), jit_options={"cache": True})
 def sqlite3_total_changes64(db_p):
     return _call_lib_func("sqlite3_total_changes64", (db_p,))

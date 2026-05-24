@@ -22,6 +22,10 @@ from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.proxy.proxy import proxy
 
+__all__ = [
+    "sqlite3_exec", "sqlite3_free",
+]
+
 
 @proxy(signatures.get("sqlite3_exec"), jit_options={"cache": True})
 def sqlite3_exec(db_p, sql_p, cb_p, ctx_p, errmsg_pp):

@@ -10,6 +10,11 @@ from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.proxy.proxy import proxy
 
+__all__ = [
+    "sqlite3_prepare_v2", "sqlite3_finalize", "sqlite3_reset", "sqlite3_step",
+    "sqlite3_sql", "sqlite3_expanded_sql", "sqlite3_stmt_busy",
+]
+
 
 @proxy(signatures.get("sqlite3_prepare_v2"), jit_options={"cache": True})
 def sqlite3_prepare_v2(db_p, sql_p, n_byte, stmt_pp, tail_pp):

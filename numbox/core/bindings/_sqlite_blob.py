@@ -8,6 +8,11 @@ from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.proxy.proxy import proxy
 
+__all__ = [
+    "sqlite3_blob_open", "sqlite3_blob_close", "sqlite3_blob_bytes",
+    "sqlite3_blob_read", "sqlite3_blob_write", "sqlite3_blob_reopen",
+]
+
 
 @proxy(signatures.get("sqlite3_blob_open"), jit_options={"cache": True})
 def sqlite3_blob_open(db_p, db_name_p, table_p, col_p, rowid, flags, blob_pp):

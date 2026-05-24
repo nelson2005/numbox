@@ -13,8 +13,17 @@ from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import get_loaded_lib
 from numbox.core.proxy.proxy import proxy, proxy_if_available
 
+__all__ = [
+    "sqlite3_column_int", "sqlite3_column_int64", "sqlite3_column_double",
+    "sqlite3_column_text", "sqlite3_column_blob", "sqlite3_column_bytes",
+    "sqlite3_column_type", "sqlite3_column_count", "sqlite3_column_name",
+    "sqlite3_column_decltype",
+    "sqlite3_column_database_name", "sqlite3_column_table_name",
+    "sqlite3_column_origin_name",
+]
 
-sqlite3_lib = get_loaded_lib("sqlite3")
+
+_sqlite3_lib = get_loaded_lib("sqlite3")
 
 
 @proxy(signatures.get("sqlite3_column_int"), jit_options={"cache": True})
@@ -68,16 +77,16 @@ def sqlite3_column_decltype(stmt_p, idx):
 
 
 # Compile-flag-gated (SQLITE_ENABLE_COLUMN_METADATA)
-@proxy_if_available(sqlite3_lib, signatures.get("sqlite3_column_database_name"), jit_options={"cache": True})
+@proxy_if_available(_sqlite3_lib, signatures.get("sqlite3_column_database_name"), jit_options={"cache": True})
 def sqlite3_column_database_name(stmt_p, idx):
     return _call_lib_func("sqlite3_column_database_name", (stmt_p, idx))
 
 
-@proxy_if_available(sqlite3_lib, signatures.get("sqlite3_column_table_name"), jit_options={"cache": True})
+@proxy_if_available(_sqlite3_lib, signatures.get("sqlite3_column_table_name"), jit_options={"cache": True})
 def sqlite3_column_table_name(stmt_p, idx):
     return _call_lib_func("sqlite3_column_table_name", (stmt_p, idx))
 
 
-@proxy_if_available(sqlite3_lib, signatures.get("sqlite3_column_origin_name"), jit_options={"cache": True})
+@proxy_if_available(_sqlite3_lib, signatures.get("sqlite3_column_origin_name"), jit_options={"cache": True})
 def sqlite3_column_origin_name(stmt_p, idx):
     return _call_lib_func("sqlite3_column_origin_name", (stmt_p, idx))
