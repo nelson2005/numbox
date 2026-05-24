@@ -32,7 +32,7 @@ The bindings subsystem wraps C library functions for use inside numba `@njit` co
 1. Add signature to `signatures.py` in the appropriate sub-dict
 2. Add wrapper to the corresponding `_*.py` file following this pattern:
 ```python
-@cres(signatures.get("func_name"), cache=True)
+@proxy(signatures.get("func_name"), jit_options={"cache": True})
 def func_name(x):
     return _call_lib_func("func_name", (x,))
 ```
@@ -53,7 +53,7 @@ These have caught cleanly-reasoned designs more than once. Apply to all new bind
 
 These are the canonical primitives for C-string interop. New bindings should compose them, not reimplement byte loops or pointer casts. **Before designing anything that touches strings, pointers, or buffer ownership, read [`numbox/utils/lowlevel.py`](numbox/utils/lowlevel.py) end-to-end first.**
 
-**Public surface is star-imported.** [`numbox/core/bindings/__init__.py`](numbox/core/bindings/__init__.py) does `from numbox.core.bindings._c import *` (and same for `_math`, `_sqlite`). Anything at top level without a leading underscore is part of the public API. Keep new intrinsics private (`_`-prefixed); keep user-facing wrappers public.
+**Public surface is star-imported.** [`numbox/core/bindings/__init__.py`](numbox/core/bindings/__init__.py) does `from numbox.core.bindings._c import *` (and same for `_math`, `_sqlite_*`). Anything at top level without a leading underscore is part of the public API. Keep new intrinsics private (`_`-prefixed); keep user-facing wrappers public.
 
 **Platform-variable C types — `long`, `time_t`, `size_t`.** `long` is 64-bit on POSIX (LP64) but 32-bit on Windows x64 (LLP64); `time_t` size varies historically; `size_t` is 64-bit on all current 64-bit CI platforms. A `signatures` entry that uses `int64` for `long` will silently corrupt registers on Windows. Functions affected: `fseek`/`ftell`/`fsetpos`/`fgetpos`, `time`/`clock`, `strtol`/`strtoul`. Either dispatch per platform (option-(ii) style: different symbol or signature per platform) or omit the function from the batch and document as a follow-up. Don't ship a uniform-`int64` signature that's correct on POSIX and wrong on Windows.
 
@@ -133,7 +133,7 @@ Cross-project preferences live in the user's MEMORY.md. Only numbox-specific wor
   **Four lifetime gotchas worth memorizing:**
   1. **`bind_text` / `bind_blob` destructor** — pass `SQLITE_TRANSIENT` (= -1) for SQLite to copy. `SQLITE_STATIC` (= 0) assumes the buffer outlives the statement.
   2. **`sqlite3_errmsg` lifetime** — SQLite-owned pointer, valid only until the next API call on the same connection. Decode via `get_str_from_p_as_int` immediately.
-  3. **`sqlite3_expanded_sql` cleanup** — caller must release with `sqlite3_free()` (both bound in `_sqlite_exec.py`).
+  3. **`sqlite3_expanded_sql` cleanup** — caller must release with `sqlite3_free()` (`sqlite3_expanded_sql` bound in `_sqlite_stmt.py`; `sqlite3_free` in `_sqlite_exec.py`).
   4. **cfunc lifetime for hook APIs** — registered cfunc must outlive the hook registration. Keep the cfunc at module scope in the caller.
 
   Callback wiring pattern for `sqlite3_exec` and the six hook APIs:
