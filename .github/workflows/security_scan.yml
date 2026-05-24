@@ -34,7 +34,7 @@ jobs:
           pip install -e .
 
       - name: bandit (source-code security linter)
-        run: bandit -r numbox -ll -c pyproject.toml
+        run: bandit -r numbox -ll
 
       - name: pip-audit (dependency CVE scan)
         run: pip-audit

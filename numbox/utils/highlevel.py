@@ -232,7 +232,7 @@ def make_structref(
     anchor = _structref_anchor_path(struct_name, code_txt)
     _materialize_anchor(anchor, code_txt)
     code = compile(code_txt, str(anchor), mode="exec")
-    exec(code, ns)
+    exec(code, ns)  # nosec B102 - JIT codegen of internal source
     return ns[struct_name]
 
 
