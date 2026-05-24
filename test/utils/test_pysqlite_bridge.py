@@ -1,9 +1,9 @@
 import ctypes
 import ctypes.util
+import os
 import platform as plat
 import sqlite3
 import sys
-import sysconfig
 
 import pytest
 
@@ -18,70 +18,83 @@ _macos_skip = pytest.mark.skipif(
 
 
 def test_macos_diagnostic():
-    """Captures everything we need to diagnose the macOS arm64 Py 3.14 segfault.
+    """Round 2 diagnostic: confirm whether _sqlite3.so exports sqlite3_* symbols
+    (since Python's libsqlite3 is statically linked into it on macOS Py 3.14).
 
-    Performs no sqlite3 function calls on the extracted ``db_ptr`` — only
-    reads raw bytes at offsets and calls libversion (no-arg, safe). Always
-    fails so the captured diagnostic shows in pytest output.
+    Tests three loading strategies for _sqlite3.so and checks which exposes
+    sqlite3_libversion. Also searches the Python framework lib dir for any
+    libsqlite3* file.
     """
     lines = []
     lines.append(f"sys.version = {sys.version}")
-    lines.append(f"platform.platform() = {plat.platform()}")
-    lines.append(f"platform.machine() = {plat.machine()}")
-    lines.append(f"Py_GIL_DISABLED = {sysconfig.get_config_var('Py_GIL_DISABLED')!r}")
-    lines.append(f"Py_DEBUG = {sysconfig.get_config_var('Py_DEBUG')!r}")
     lines.append(f"sys.abiflags = {sys.abiflags!r}")
-    lines.append(f"sqlite3.Connection.__basicsize__ = {sqlite3.Connection.__basicsize__}")
     lines.append(f"sqlite3.sqlite_version = {sqlite3.sqlite_version!r}")
 
-    sqlite_images = []
-    if _IS_MACOS:
-        libsystem = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
-        libsystem._dyld_image_count.restype = ctypes.c_uint32
-        libsystem._dyld_image_count.argtypes = []
-        libsystem._dyld_get_image_name.restype = ctypes.c_char_p
-        libsystem._dyld_get_image_name.argtypes = [ctypes.c_uint32]
-        for i in range(libsystem._dyld_image_count()):
-            n = libsystem._dyld_get_image_name(i)
-            if n and b"sqlite" in n.lower():
-                sqlite_images.append(n.decode())
-    lines.append(f"loaded sqlite dylibs (macOS): {sqlite_images}")
+    import _sqlite3
+    sqlite3_so_path = _sqlite3.__file__
+    lines.append(f"_sqlite3.__file__ = {sqlite3_so_path!r}")
+    lines.append(f"_sqlite3 file size = {os.path.getsize(sqlite3_so_path)} bytes")
 
-    find_lib_path = ctypes.util.find_library("sqlite3")
-    lines.append(f"ctypes.util.find_library('sqlite3') = {find_lib_path!r}")
-
-    for label, path in [("first dyld sqlite image", sqlite_images[0] if sqlite_images else None),
-                        ("find_library result", find_lib_path)]:
-        if path is None:
-            lines.append(f"libversion via {label}: (no path)")
+    # Look for any libsqlite3 file in or near the Python install
+    py_root = sys.prefix
+    lines.append(f"sys.prefix = {py_root!r}")
+    found_libs = []
+    for root in [py_root, "/Library/Frameworks/Python.framework"]:
+        if not os.path.isdir(root):
             continue
+        for dirpath, dirs, files in os.walk(root):
+            for f in files:
+                if "libsqlite" in f.lower() and (f.endswith(".dylib") or f.endswith(".a")):
+                    found_libs.append(os.path.join(dirpath, f))
+    lines.append(f"libsqlite* files near Python install: {found_libs}")
+
+    # Try loading _sqlite3.so via ctypes and checking for sqlite3_libversion
+    for mode_label, mode in [("default (RTLD_LAZY|RTLD_LOCAL)", 0),
+                             ("RTLD_GLOBAL", os.RTLD_GLOBAL if hasattr(os, 'RTLD_GLOBAL') else 0x8)]:
         try:
-            lib = ctypes.CDLL(path)
-            lib.sqlite3_libversion.restype = ctypes.c_char_p
-            lib.sqlite3_libversion.argtypes = []
-            ver = lib.sqlite3_libversion().decode()
-            lines.append(f"libversion via {label} ({path}): {ver!r}")
+            lib = ctypes.CDLL(sqlite3_so_path, mode=mode)
+            try:
+                lib.sqlite3_libversion.restype = ctypes.c_char_p
+                lib.sqlite3_libversion.argtypes = []
+                ver = lib.sqlite3_libversion().decode()
+                lines.append(f"_sqlite3.so sqlite3_libversion ({mode_label}): {ver!r}")
+            except AttributeError as e:
+                lines.append(f"_sqlite3.so sqlite3_libversion ({mode_label}): symbol not exported ({e})")
         except Exception as e:
-            lines.append(f"libversion via {label} ({path}): error {e!r}")
+            lines.append(f"_sqlite3.so load ({mode_label}): error {e!r}")
 
+    # Also try dlsym(RTLD_DEFAULT) for sqlite3_libversion to see what current
+    # resolution returns
     try:
-        from numbox.core.bindings._sqlite_conn import sqlite3_libversion as numbox_libversion
-        ver_p = numbox_libversion()
-        ver = ctypes.c_char_p(ver_p).value.decode() if ver_p else "(null)"
-        lines.append(f"libversion via numbox @njit binding: {ver!r}")
+        rtld_default_lib = ctypes.CDLL(None)
+        rtld_default_lib.sqlite3_libversion.restype = ctypes.c_char_p
+        rtld_default_lib.sqlite3_libversion.argtypes = []
+        ver = rtld_default_lib.sqlite3_libversion().decode()
+        lines.append(f"dlsym(RTLD_DEFAULT) sqlite3_libversion: {ver!r}")
     except Exception as e:
-        lines.append(f"libversion via numbox @njit binding: error {e!r}")
+        lines.append(f"dlsym(RTLD_DEFAULT) sqlite3_libversion: error {e!r}")
 
-    conn = sqlite3.connect(":memory:")
-    lines.append(f"id(conn) = 0x{id(conn):016x}")
-    lines.append(f"conn.__sizeof__() = {conn.__sizeof__()}")
-    for off in range(0, 65, 8):
-        v = ctypes.c_void_p.from_address(id(conn) + off).value or 0
-        lines.append(f"  offset +{off:3d}: 0x{v:016x}")
-    conn.close()
+    # Check if there's a way to introspect _sqlite3.so's symbol table via
+    # /usr/bin/nm (might give us hint about visibility)
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["/usr/bin/nm", "-gU", sqlite3_so_path],
+            capture_output=True, text=True, timeout=10
+        )
+        exported_sqlite3 = [
+            line.strip() for line in result.stdout.splitlines()
+            if "sqlite3_" in line
+        ]
+        lines.append("nm -gU _sqlite3.so | grep sqlite3_ (top 10):")
+        for s in exported_sqlite3[:10]:
+            lines.append(f"  {s}")
+        lines.append(f"  ... total exported sqlite3_* symbols: {len(exported_sqlite3)}")
+    except Exception as e:
+        lines.append(f"nm: error {e!r}")
 
     report = "\n".join(lines)
-    assert False, f"\n\nMACOS PYSQLITE_BRIDGE DIAGNOSTIC:\n{report}\n"
+    assert False, f"\n\nMACOS DIAGNOSTIC ROUND 2:\n{report}\n"
 
 
 @_macos_skip
