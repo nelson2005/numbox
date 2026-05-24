@@ -60,7 +60,8 @@ def _prepare_and_step(db_p, sql):
     _, sql_p = cstr(sql)
     stmt_p = c_int64(0)
     tail_p = c_int64(0)
-    sqlite3_prepare_v2(db_p, sql_p, -1, addressof(stmt_p), addressof(tail_p))
+    rc = sqlite3_prepare_v2(db_p, sql_p, -1, addressof(stmt_p), addressof(tail_p))
+    assert rc == SQLITE_OK, f"prepare failed: rc={rc}"
     rc = sqlite3_step(stmt_p.value)
     assert rc == SQLITE_ROW
     return stmt_p.value

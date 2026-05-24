@@ -1,14 +1,13 @@
 """Statement-lifecycle binding tests for the SQLite buildout."""
 from ctypes import addressof, c_int64
 
-import pytest
-
 from numbox.core.bindings._sqlite_conn import sqlite3_db_handle
 from numbox.core.bindings._sqlite_constants import (
     SQLITE_DONE,
     SQLITE_OK,
     SQLITE_ROW,
 )
+from numbox.core.bindings._sqlite_exec import sqlite3_free
 from numbox.core.bindings._sqlite_stmt import (
     sqlite3_expanded_sql,
     sqlite3_finalize,
@@ -54,9 +53,6 @@ def test_sql_returns_original_text(memory_db):
 
 
 def test_expanded_sql_substitutes_and_must_free(memory_db):
-    # _sqlite_exec.py is created in Task 9; until then this test skips cleanly.
-    pytest.importorskip("numbox.core.bindings._sqlite_exec")
-    from numbox.core.bindings._sqlite_exec import sqlite3_free
     original = "SELECT 1"
     stmt_p = _prepare(memory_db, original)
     expanded_p = sqlite3_expanded_sql(stmt_p)

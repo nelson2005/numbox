@@ -2537,7 +2537,7 @@ Insert this entry into `CLAUDE.md`'s "## Project Status" section, immediately af
   sqlite3_exec(db_p, sql_p, _row_cb.address, ctx_p, 0)
   ```
 
-  Design spec at [docs/plans/sqlite-buildout/2026-05-23-design.md](docs/plans/sqlite-buildout/2026-05-23-design.md).
+  Design spec at [docs/plans/sqlite-buildout/2026-05-23-design.md](2026-05-23-design.md).
 ```
 
 - [ ] **Step 2: Update Key Paths**
