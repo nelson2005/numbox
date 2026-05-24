@@ -38,6 +38,7 @@ def func_name(x):
 ```
 3. Function names must match the C library names exactly
 4. Args passed as tuple literal to `_call_lib_func`
+5. **Docs:** for a wrapper added to an existing `_*.py` module, the `automodule` directive in `docs/numbox.core.bindings.rst` picks it up automatically — nothing to edit. For a **new** `_*.py` module, OR if you rename / delete an existing module, also update `docs/numbox.core.bindings.rst`: the "Bindings module conventions" family list AND add / remove / rename the per-module `automodule` section under "Modules". Then run `cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html` and confirm exit 0 (warning count stable is OK).
 
 ### Bindings: implementation gotchas
 
