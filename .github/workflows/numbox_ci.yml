@@ -58,7 +58,7 @@ jobs:
       run: flake8 . --count --show-source --statistics
     - name: Test with pytest
       run: |
-        pytest test/utils/test_pysqlite_bridge.py -v --durations=20
+        pytest --durations=20 --cov=numbox --cov-report=term-missing
     - name: Install build dependencies
       run: |
         pip install build==1.2.2.post1 wheel==0.45.0
