@@ -42,6 +42,49 @@ References for individual binding semantics:
 - Windows UCRT: `Microsoft Learn
   <https://learn.microsoft.com/en-us/cpp/c-runtime-library/c-run-time-library-reference>`_
 
+Library availability at import time
++++++++++++++++++++++++++++++++++++
+
+Every binding module in this family resolves and loads its underlying
+library at *import time*, via ``load_lib(<name>)``:
+
+- ``_c``, ``_stdio``, ``_errno``, ``_strerror``, ``_fmtio`` load ``c``
+- ``_math`` loads ``m``
+- All eight ``_sqlite_*`` modules load ``sqlite3``
+
+The eager load is what guarantees the library's symbols are present in
+the process's global LLVM symbol table before the first ``@proxy``-
+wrapped wrapper is JITed. If the library cannot be resolved, the import
+fails immediately with ``RuntimeError: Could not find shared library
+for <name>``.
+
+In practice this is invisible: ``libc`` and ``libm`` are present on
+every supported platform, and SQLite is too in nearly every CPython
+install -- Linux and macOS link against the system library via
+``ctypes.util.find_library``, and Windows uses the CPython-bundled
+``sqlite3.dll`` (a hard prerequisite of every working Python on
+Windows). The failure mode bites only minimal-container or
+stripped-distribution setups.
+
+**Open design question (not resolved here): should users be able to
+use numbox without SQLite?** The current convention treats SQLite as
+a hard prerequisite of importing the bindings package: even
+``from numbox.core.bindings import strlen`` (a libc wrapper)
+transitively loads ``sqlite3`` because ``__init__.py`` star-imports
+the SQLite modules. Making SQLite optional would mean answering
+two follow-on questions:
+
+- Should *all* binding families lazy-load (for consistency), or
+  should SQLite be singled out as the one optional family?
+- When a user calls a binding whose library failed to load, what
+  should happen -- a clean ``RuntimeError`` at the call site, a
+  probe API (``hasattr(bindings, "sqlite3_open")``), or silent
+  partial init?
+
+Neither has an obvious right answer, and departing from the eager-load
+convention for SQLite alone creates an asymmetry future maintainers
+have to remember. The question is flagged here for whoever picks it up.
+
 ABI dispatch
 ++++++++++++
 
