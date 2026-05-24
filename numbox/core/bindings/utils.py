@@ -74,12 +74,21 @@ def _windows_bundled_dll_path(name):
 def _resolve_lib_path(name):
     """Resolve a library name to a CDLL-loadable path.
 
-    Per-platform logic (same as the original load_lib, plus the Windows
-    bundled-DLL fallback):
+    Per-platform logic:
     - Linux / Darwin: ctypes.util.find_library(name)
-    - Windows: for "c"/"m", find_msvcrt(); otherwise find_library(name) with
-      _windows_bundled_dll_path(name) as a fallback for DLLs Python ships in
-      its DLLs/ directory but doesn't put on PATH (notably sqlite3.dll).
+    - Windows: for "c"/"m", find_msvcrt(); otherwise prefer
+      _windows_bundled_dll_path(name) (the Python-distribution-bundled
+      DLL in <prefix>/DLLs/ or <prefix>/Library/bin/) over PATH-based
+      find_library(name). PATH lookup goes last because PATH on Windows
+      may contain third-party-shipped copies of common DLLs that are
+      statically configured for that tool's internal use and AV on
+      external calls. The motivating example: GitHub Actions
+      windows-latest runners ship AWS CLI v2, whose
+      C:\\Program Files\\Amazon\\AWSCLIV2\\sqlite3.dll is on PATH,
+      exports the full SQLite symbol surface, but writes to NULL inside
+      sqlite3_open when called from a process other than aws.exe.
+      CPython's bundled sqlite3.dll is the canonical SQLite for the
+      Python ecosystem on Windows, so prefer it whenever it's present.
 
     Returns the path string, or None if no path can be resolved.
     """
@@ -89,10 +98,10 @@ def _resolve_lib_path(name):
         from ctypes.util import find_msvcrt
         if name in ("c", "m"):
             return find_msvcrt()
-        path = find_library(name)
-        if path is None:
-            path = _windows_bundled_dll_path(name)
-        return path
+        bundled = _windows_bundled_dll_path(name)
+        if bundled is not None:
+            return bundled
+        return find_library(name)
     return None
 
 
