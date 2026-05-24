@@ -98,12 +98,12 @@
     {
       "id": 18,
       "subject": "SQLite Task 11: CLAUDE.md Project Status entry + Key Paths",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Document the buildout in CLAUDE.md: Project Status entry with four lifetime gotchas, Key Paths additions, Follow-ups for deferred items.\n\n**See plan section:** [Task 11](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"CLAUDE.md\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && git diff CLAUDE.md\", \"acceptanceCriteria\": [\"Project Status entry added after 0.5.12 libc entry\", \"all 4 lifetime gotchas documented\", \"cfunc -> exec callback example included\", \"Key Paths gets 8 entries, removes _sqlite.py\", \"Follow-ups gets 5 deferred items\", \"no formatting drift in surrounding sections\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
       "blockedBy": [
         17
       ]
     }
   ],
-  "lastUpdated": "2026-05-24T00:11:55Z"
+  "lastUpdated": "2026-05-24T00:24:13Z"
 }
