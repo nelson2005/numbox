@@ -99,6 +99,13 @@ def _resolve_lib_path(name):
         if name in ("c", "m"):
             return find_msvcrt()
         bundled = _windows_bundled_dll_path(name)
+        if name == "sqlite3":
+            # _sqlite3.pyd is dynamically linked to <prefix>/DLLs/sqlite3.dll,
+            # so that DLL is a hard prerequisite of every working Python on
+            # Windows. Never fall back to find_library — third-party tools
+            # may ship statically-configured sqlite3.dll copies that AV on
+            # external callers (AWS CLI v2 is the motivating example).
+            return bundled
         if bundled is not None:
             return bundled
         return find_library(name)
