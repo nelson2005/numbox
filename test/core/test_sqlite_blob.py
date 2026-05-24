@@ -1,5 +1,5 @@
 """BLOB incremental I/O tests for the SQLite buildout."""
-from ctypes import addressof, c_char_p, c_int64, c_void_p
+from ctypes import addressof, c_int64
 
 import numpy as np
 import pytest
@@ -18,11 +18,7 @@ from numbox.core.bindings._sqlite_constants import (
     SQLITE_BLOB_READWRITE,
     SQLITE_OK,
 )
-
-
-def _cstr(s):
-    buf = c_char_p(s.encode())
-    return buf, c_void_p.from_buffer(buf).value
+from test.auxiliary_utils import cstr
 
 
 @pytest.fixture
@@ -40,7 +36,7 @@ def populated_db(tmp_path):
     )
     conn.commit()
     conn.close()
-    name_buf, name_p = _cstr(str(db_file))
+    name_buf, name_p = cstr(str(db_file))
     db_p = c_int64(0)
     assert sqlite3_open(name_p, addressof(db_p)) == SQLITE_OK
     yield db_p.value
@@ -51,9 +47,9 @@ def _blob_open(db_p, rowid, flags):
     # Retain buffer refs to keep them alive across the sqlite3_blob_open call —
     # binding to `_` only keeps the last call's buffer, and SQLite reads the
     # name strings inside the call, not just stores their addresses.
-    main_buf, main_p = _cstr("main")
-    table_buf, table_p = _cstr("t")
-    col_buf, col_p = _cstr("b")
+    main_buf, main_p = cstr("main")
+    table_buf, table_p = cstr("t")
+    col_buf, col_p = cstr("b")
     blob_p = c_int64(0)
     rc = sqlite3_blob_open(db_p, main_p, table_p, col_p, rowid, flags,
                            addressof(blob_p))
@@ -105,9 +101,9 @@ def test_blob_reopen_to_different_rowid(populated_db):
 
 def test_blob_open_bad_column_returns_error(populated_db):
     # Retain buffer refs (see _blob_open helper above).
-    main_buf, main_p = _cstr("main")
-    table_buf, table_p = _cstr("t")
-    bad_col_buf, bad_col_p = _cstr("nonexistent_column")
+    main_buf, main_p = cstr("main")
+    table_buf, table_p = cstr("t")
+    bad_col_buf, bad_col_p = cstr("nonexistent_column")
     blob_p = c_int64(0)
     rc = sqlite3_blob_open(populated_db, main_p, table_p, bad_col_p,
                            1, SQLITE_BLOB_READONLY, addressof(blob_p))

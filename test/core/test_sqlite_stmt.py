@@ -1,13 +1,9 @@
 """Statement-lifecycle binding tests for the SQLite buildout."""
-from ctypes import addressof, c_char_p, c_int64, c_void_p
+from ctypes import addressof, c_int64
 
 import pytest
 
-from numbox.core.bindings._sqlite_conn import (
-    sqlite3_close,
-    sqlite3_db_handle,
-    sqlite3_open,
-)
+from numbox.core.bindings._sqlite_conn import sqlite3_db_handle
 from numbox.core.bindings._sqlite_constants import (
     SQLITE_DONE,
     SQLITE_OK,
@@ -22,27 +18,11 @@ from numbox.core.bindings._sqlite_stmt import (
     sqlite3_step,
     sqlite3_stmt_busy,
 )
-from test.auxiliary_utils import collect_and_run_tests, str_from_p_as_int
-
-
-def _cstr(s):
-    buf = c_char_p(s.encode())
-    return buf, c_void_p.from_buffer(buf).value
-
-
-@pytest.fixture
-def memory_db():
-    """Open a fresh ':memory:' database via the raw bindings and yield db_p.
-    Tear-down closes the connection."""
-    _, name_p = _cstr(":memory:")
-    db_p = c_int64(0)
-    assert sqlite3_open(name_p, addressof(db_p)) == SQLITE_OK
-    yield db_p.value
-    sqlite3_close(db_p.value)
+from test.auxiliary_utils import collect_and_run_tests, cstr, str_from_p_as_int
 
 
 def _prepare(db_p, sql):
-    _, sql_p = _cstr(sql)
+    _, sql_p = cstr(sql)
     stmt_p = c_int64(0)
     tail_p = c_int64(0)
     rc = sqlite3_prepare_v2(db_p, sql_p, -1, addressof(stmt_p), addressof(tail_p))
@@ -95,7 +75,7 @@ def test_stmt_busy_is_nonzero_mid_iteration(memory_db):
 
 
 def test_prepare_invalid_sql_returns_error(memory_db):
-    _, sql_p = _cstr("SELECT FROM WHERE")  # garbage
+    _, sql_p = cstr("SELECT FROM WHERE")  # garbage
     stmt_p = c_int64(0)
     tail_p = c_int64(0)
     rc = sqlite3_prepare_v2(memory_db, sql_p, -1,

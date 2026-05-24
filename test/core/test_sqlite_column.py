@@ -1,5 +1,5 @@
 """Column accessor tests for the SQLite buildout."""
-from ctypes import addressof, c_char_p, c_int64, c_ubyte, c_void_p
+from ctypes import addressof, c_int64, c_ubyte
 
 import pytest
 
@@ -33,12 +33,7 @@ from numbox.core.bindings._sqlite_stmt import (
     sqlite3_prepare_v2,
     sqlite3_step,
 )
-from test.auxiliary_utils import collect_and_run_tests, str_from_p_as_int
-
-
-def _cstr(s):
-    buf = c_char_p(s.encode())
-    return buf, c_void_p.from_buffer(buf).value
+from test.auxiliary_utils import collect_and_run_tests, cstr, str_from_p_as_int
 
 
 @pytest.fixture
@@ -54,7 +49,7 @@ def populated_table(tmp_path):
     )
     conn.commit()
     conn.close()
-    _, name_p = _cstr(str(db_file))
+    _, name_p = cstr(str(db_file))
     db_p = c_int64(0)
     assert sqlite3_open(name_p, addressof(db_p)) == SQLITE_OK
     yield db_p.value
@@ -62,7 +57,7 @@ def populated_table(tmp_path):
 
 
 def _prepare_and_step(db_p, sql):
-    _, sql_p = _cstr(sql)
+    _, sql_p = cstr(sql)
     stmt_p = c_int64(0)
     tail_p = c_int64(0)
     sqlite3_prepare_v2(db_p, sql_p, -1, addressof(stmt_p), addressof(tail_p))

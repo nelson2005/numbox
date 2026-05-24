@@ -1,5 +1,5 @@
 """Parameter-binding tests for the SQLite buildout."""
-from ctypes import addressof, c_char_p, c_int64, c_void_p
+from ctypes import addressof, c_int64
 
 import numpy as np
 import pytest
@@ -25,23 +25,18 @@ from numbox.core.bindings._sqlite_stmt import (
     sqlite3_finalize,
     sqlite3_prepare_v2,
 )
-from test.auxiliary_utils import collect_and_run_tests, str_from_p_as_int
-
-
-def _cstr(s):
-    buf = c_char_p(s.encode())
-    return buf, c_void_p.from_buffer(buf).value
+from test.auxiliary_utils import collect_and_run_tests, cstr, str_from_p_as_int
 
 
 @pytest.fixture
 def stmt_three_params():
     """Open :memory: db, prepare 'SELECT ?1, ?2, ?3', yield (db_p, stmt_p),
     teardown finalizes + closes."""
-    _, name_p = _cstr(":memory:")
+    _, name_p = cstr(":memory:")
     db_p = c_int64(0)
     assert sqlite3_open(name_p, addressof(db_p)) == SQLITE_OK
 
-    _, sql_p = _cstr("SELECT ?1, ?2, ?3")
+    _, sql_p = cstr("SELECT ?1, ?2, ?3")
     stmt_p = c_int64(0)
     tail_p = c_int64(0)
     assert sqlite3_prepare_v2(db_p.value, sql_p, -1,
@@ -68,7 +63,7 @@ def test_bind_double_returns_ok(stmt_three_params):
 
 def test_bind_text_transient_returns_ok(stmt_three_params):
     _, stmt_p = stmt_three_params
-    _, text_p = _cstr("hello")
+    _, text_p = cstr("hello")
     assert sqlite3_bind_text(stmt_p, 1, text_p, -1, SQLITE_TRANSIENT) == SQLITE_OK
 
 
@@ -96,17 +91,17 @@ def test_bind_out_of_range_returns_sqlite_range(stmt_three_params):
 
 
 def test_bind_parameter_index_by_name():
-    name_buf, name_p = _cstr(":memory:")
+    name_buf, name_p = cstr(":memory:")
     db_p = c_int64(0)
     assert sqlite3_open(name_p, addressof(db_p)) == SQLITE_OK
     try:
-        sql_buf, sql_p = _cstr("SELECT :foo, :bar")
+        sql_buf, sql_p = cstr("SELECT :foo, :bar")
         stmt_p = c_int64(0)
         tail_p = c_int64(0)
         sqlite3_prepare_v2(db_p.value, sql_p, -1,
                            addressof(stmt_p), addressof(tail_p))
-        foo_buf, foo_p = _cstr(":foo")
-        bar_buf, bar_p = _cstr(":bar")
+        foo_buf, foo_p = cstr(":foo")
+        bar_buf, bar_p = cstr(":bar")
         assert sqlite3_bind_parameter_index(stmt_p.value, foo_p) == 1
         assert sqlite3_bind_parameter_index(stmt_p.value, bar_p) == 2
         # name lookup round trip
