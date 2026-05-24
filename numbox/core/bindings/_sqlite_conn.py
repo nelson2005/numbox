@@ -1,9 +1,10 @@
 """SQLite connection + metadata bindings.
 
-Initializes the module-level ``sqlite3_lib`` CDLL handle via
-``load_lib_with_handle("sqlite3")``. Subsequent ``_sqlite_*.py`` modules
-import ``sqlite3_lib`` from here for their own ``proxy_if_available`` calls,
-ensuring a single load of the shared library across the suite.
+Resolves the shared library via ``get_loaded_lib("sqlite3")`` from
+``utils._loaded_libs``. Other ``_sqlite_*.py`` modules (currently
+``_sqlite_column``) call the same getter rather than importing
+``sqlite3_lib`` from here, so there's no cross-module dependency on
+which file happens to load the library first.
 
 Two functions are decorated with ``proxy_if_available``:
 ``sqlite3_changes64`` and ``sqlite3_total_changes64``, both added in
@@ -13,11 +14,11 @@ to decide whether to use them or fall back to the int32 variants.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
-from numbox.core.bindings.utils import load_lib_with_handle
+from numbox.core.bindings.utils import get_loaded_lib
 from numbox.core.proxy.proxy import proxy, proxy_if_available
 
 
-sqlite3_lib = load_lib_with_handle("sqlite3")
+sqlite3_lib = get_loaded_lib("sqlite3")
 
 
 @proxy(signatures.get("sqlite3_open"), jit_options={"cache": True})

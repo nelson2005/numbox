@@ -112,18 +112,48 @@ def _resolve_lib_path(name):
     return None
 
 
+_loaded_libs = {}
+
+
 def load_lib(name):
-    """Load library `name` in global symbol mode. Legacy contract: returns None."""
-    load_lib_with_handle(name)
+    """Load library ``name`` in global symbol mode; cache + retain the
+    CDLL handle in ``_loaded_libs`` so it survives any single caller's
+    scope. Legacy contract: returns None.
+
+    Caching matters because ``ctypes.CDLL.__del__`` calls ``dlclose`` /
+    ``FreeLibrary``; if the only reference is a local variable in this
+    function, the OS-level reference count drops to zero on return and
+    the library can be unloaded — invalidating any extern-ref symbols
+    LLVM's JIT linker already resolved into module IR.
+    """
+    get_loaded_lib(name)
+
+
+def get_loaded_lib(name):
+    """Cached form of ``load_lib_with_handle``. Loads on first call,
+    returns the cached CDLL handle on subsequent calls.
+
+    Use this whenever a module needs the handle for ``proxy_if_available``
+    or for ``hasattr(handle, func_name)`` symbol-presence checks. Storing
+    in ``_loaded_libs`` pins the handle for the process lifetime so other
+    modules can share it without cross-module imports (avoids coupling
+    e.g. ``_sqlite_column`` to ``_sqlite_conn`` just to get ``sqlite3_lib``).
+    """
+    handle = _loaded_libs.get(name)
+    if handle is None:
+        handle = load_lib_with_handle(name)
+        _loaded_libs[name] = handle
+    return handle
 
 
 def load_lib_with_handle(name):
-    """Load library `name` in global symbol mode AND return the CDLL handle.
+    """Load library ``name`` in global symbol mode AND return the CDLL handle.
 
-    Returning the handle enables proxy_if_available / cres_if_available to
-    query symbol presence via hasattr(handle, name). The handle is also kept
-    alive by the caller, preventing the OS from unloading the library after
-    the symbol registration completes.
+    Returning the handle enables ``proxy_if_available`` to query symbol
+    presence via ``hasattr(handle, func_name)``. The caller is responsible
+    for keeping the returned handle alive — for shared-across-modules
+    use, prefer ``get_loaded_lib(name)`` which caches it in a
+    module-level dict so it outlives any single caller's scope.
     """
     path = _resolve_lib_path(name)
     if path is None:

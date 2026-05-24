@@ -8,10 +8,13 @@ them out when absent so callers can hasattr-guard or fall back.
 
 All other accessors are universally available across the matrix.
 """
-from numbox.core.bindings._sqlite_conn import sqlite3_lib
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
+from numbox.core.bindings.utils import get_loaded_lib
 from numbox.core.proxy.proxy import proxy, proxy_if_available
+
+
+sqlite3_lib = get_loaded_lib("sqlite3")
 
 
 @proxy(signatures.get("sqlite3_column_int"), jit_options={"cache": True})
