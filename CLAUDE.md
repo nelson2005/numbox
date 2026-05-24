@@ -25,7 +25,7 @@ The bindings subsystem wraps C library functions for use inside numba `@njit` co
 1. **`utils.py`** — loads shared libraries via `ctypes.CDLL` with `RTLD_GLOBAL` so symbols are visible to LLVM
 2. **`signatures.py`** — flat dict mapping C function names to numba type signatures (e.g., `"cos": float64(float64)`). Organized by library: `signatures_c`, `signatures_m`, `signatures_sqlite`
 3. **`call.py`** — `@numba.extending.intrinsic` that generates LLVM IR to call native functions directly via `llvmlite`
-4. **`_math.py`, `_c.py`, `_sqlite.py`** — thin Python wrappers using `@cres(signatures.get("func"), cache=True)`
+4. **`_math.py`, `_c.py`, `_sqlite_*.py`** — thin Python wrappers using `@proxy(signatures.get("func"), jit_options={"cache": True})`
 
 ### Adding a New Binding
 
@@ -80,7 +80,14 @@ These are the canonical primitives for C-string interop. New bindings should com
 - `numbox/core/bindings/signatures.py` — all native function type signatures
 - `numbox/core/bindings/_math.py` — libm wrappers (33 single-arg + 9 two-arg float64 functions)
 - `numbox/core/bindings/_c.py` — libc wrappers
-- `numbox/core/bindings/_sqlite.py` — libsqlite3 wrappers
+- `numbox/core/bindings/_sqlite_conn.py` — connection + metadata wrappers; initializes module-level `sqlite3_lib`
+- `numbox/core/bindings/_sqlite_stmt.py` — statement lifecycle
+- `numbox/core/bindings/_sqlite_bind.py` — parameter binding
+- `numbox/core/bindings/_sqlite_column.py` — column accessors
+- `numbox/core/bindings/_sqlite_exec.py` — exec + free
+- `numbox/core/bindings/_sqlite_blob.py` — BLOB incremental I/O
+- `numbox/core/bindings/_sqlite_hooks.py` — callback hooks
+- `numbox/core/bindings/_sqlite_constants.py` — SQLite result codes, type codes, flags, destructor sentinels
 - `numbox/utils/clock.py` — cross-platform monotonic nanosecond clock intrinsic
 - `test/core/` — tests for all core modules
 
@@ -121,7 +128,29 @@ Cross-project preferences live in the user's MEMORY.md. Only numbox-specific wor
   3. **Content-addressed cache anchors** for `make_structref` extracted to [`numbox/utils/preprocessing.py`](numbox/utils/preprocessing.py) (anchor root + materialization + orphan sweep with 60s age filter). Works around both CPython [#122981](https://github.com/python/cpython/issues/122981) AND numba `co_consts` cache-key collisions (numba hashes `co_code` but not `co_consts`; pure-numeric-literal body changes don't shift `co_code` because `LOAD_CONST` encodes an index into `co_consts`).
 
   Follow-up upstream commit [`48d63e3`](https://github.com/Goykhman/numbox/commit/48d63e3) renamed `default_jit_options → jit_options` across the codebase (dict-keyword shape kept; only the symbol renamed).
+- **SQLite bindings buildout** — Expands `signatures_sqlite` from 3 entries to 60 (57 new) across [_sqlite_conn.py](numbox/core/bindings/_sqlite_conn.py), [_sqlite_stmt.py](numbox/core/bindings/_sqlite_stmt.py), [_sqlite_bind.py](numbox/core/bindings/_sqlite_bind.py), [_sqlite_column.py](numbox/core/bindings/_sqlite_column.py), [_sqlite_exec.py](numbox/core/bindings/_sqlite_exec.py), [_sqlite_blob.py](numbox/core/bindings/_sqlite_blob.py), [_sqlite_hooks.py](numbox/core/bindings/_sqlite_hooks.py), and [_sqlite_constants.py](numbox/core/bindings/_sqlite_constants.py). Adds Windows support via a new generic `_windows_bundled_dll_path` fallback in [utils.py](numbox/core/bindings/utils.py) (locates `sqlite3.dll` in CPython's `<base_prefix>/DLLs/` and conda's `<base_prefix>/Library/bin/`). Refactors `load_lib` into `_resolve_lib_path` + `load_lib_with_handle` so `proxy_if_available` has access to the CDLL handle. Five functions are decorated with `proxy_if_available`: `sqlite3_changes64` / `sqlite3_total_changes64` (SQLite 3.37+; Python 3.10 ships 3.34) and `sqlite3_column_database_name` / `_table_name` / `_origin_name` (compile-time `SQLITE_ENABLE_COLUMN_METADATA`).
+
+  **Four lifetime gotchas worth memorizing:**
+  1. **`bind_text` / `bind_blob` destructor** — pass `SQLITE_TRANSIENT` (= -1) for SQLite to copy. `SQLITE_STATIC` (= 0) assumes the buffer outlives the statement.
+  2. **`sqlite3_errmsg` lifetime** — SQLite-owned pointer, valid only until the next API call on the same connection. Decode via `get_str_from_p_as_int` immediately.
+  3. **`sqlite3_expanded_sql` cleanup** — caller must release with `sqlite3_free()` (both bound in `_sqlite_exec.py`).
+  4. **cfunc lifetime for hook APIs** — registered cfunc must outlive the hook registration. Keep the cfunc at module scope in the caller.
+
+  Callback wiring pattern for `sqlite3_exec` and the six hook APIs:
+  ```python
+  @cfunc(types.int32(types.voidptr, types.int32, types.intp, types.intp))
+  def _row_cb(ctx, ncol, values_pp, names_pp):
+      return 0
+  sqlite3_exec(db_p, sql_p, _row_cb.address, ctx_p, 0)
+  ```
+
+  Design spec at [docs/plans/sqlite-buildout/2026-05-23-design.md](docs/plans/sqlite-buildout/2026-05-23-design.md).
 
 ## Follow-ups
 
 - **`Vector` vs `List` benchmark in [`stress_work_runner`](test/stress_work_runner.py).** Goykhman flagged this as an interesting comparison in the [#9 review thread](https://github.com/Goykhman/numbox/pull/9#discussion_r3139779580): [`Work`](numbox/core/work/work.py#L52)/[`Node`](numbox/core/work/node.py#L62) currently use numba's reflected `List` for uniformly-cast inputs, and `Vector`'s contiguous-storage + geometric-growth shape may outperform on push-heavy workloads at large N. Prototype by swapping the `List` site, then compare timings from `stress_work_runner`.
+- **User-defined SQL functions** — `sqlite3_create_function_v2` + the `sqlite3_value_*` / `sqlite3_result_*` API surface. Its own significant buildout; relevant for numbduck-style consumers but separate scope.
+- **Backup API** — `sqlite3_backup_init` / `_step` / `_finish` / `_pagecount` / `_remaining`. Six functions plus the progress callback shape.
+- **Serialize / deserialize** — `sqlite3_serialize` / `sqlite3_deserialize` for in-memory snapshots.
+- **Higher-level structref wrappers** — `Connection` / `Statement` structrefs if a downstream consumer needs ergonomic types.
+- **Drop `proxy_if_available` gate on `changes64` / `total_changes64`** once Python 3.10 drops out of the support matrix (Python 3.11+ all ship SQLite 3.37+).
