@@ -89,8 +89,9 @@ def test_column_text_decodes_utf8(populated_table):
 def test_column_blob_matches_inserted(populated_table):
     stmt_p = _prepare_and_step(populated_table, "SELECT b FROM t")
     blob_p = sqlite3_column_blob(stmt_p, 0)
-    n = int(sqlite3_column_bytes(stmt_p, 0))
+    n = sqlite3_column_bytes(stmt_p, 0)
     assert n == 4
+    # c_ubyte (not np.uint8) — np.uint8 is a numpy scalar dtype, not a ctypes type.
     buf = bytes((c_ubyte * n).from_address(blob_p))
     assert buf == bytes([1, 2, 3, 4])
     sqlite3_finalize(stmt_p)

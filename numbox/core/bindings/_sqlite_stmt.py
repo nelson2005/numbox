@@ -13,9 +13,7 @@ from numbox.core.proxy.proxy import proxy
 
 @proxy(signatures.get("sqlite3_prepare_v2"), jit_options={"cache": True})
 def sqlite3_prepare_v2(db_p, sql_p, n_byte, stmt_pp, tail_pp):
-    return _call_lib_func(
-        "sqlite3_prepare_v2", (db_p, sql_p, n_byte, stmt_pp, tail_pp)
-    )
+    return _call_lib_func("sqlite3_prepare_v2", (db_p, sql_p, n_byte, stmt_pp, tail_pp))
 
 
 @proxy(signatures.get("sqlite3_finalize"), jit_options={"cache": True})

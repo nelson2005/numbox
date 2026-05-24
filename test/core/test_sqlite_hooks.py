@@ -82,7 +82,7 @@ def populated_db(tmp_path):
     )
     conn.commit()
     conn.close()
-    _, name_p = _cstr(str(db_file))
+    name_buf, name_p = _cstr(str(db_file))
     db_p = c_int64(0)
     assert sqlite3_open(name_p, addressof(db_p)) == SQLITE_OK
     yield db_p.value
@@ -90,11 +90,11 @@ def populated_db(tmp_path):
 
 
 def test_update_hook_records_ops(populated_db):
+    pytest.importorskip("numbox.core.bindings._sqlite_exec")
+    from numbox.core.bindings._sqlite_exec import sqlite3_exec
     # ctx layout: arr[0..63] = op log, arr[64] = next-write index
     ctx = np.zeros(128, dtype=np.int64)
     sqlite3_update_hook(populated_db, _update_cb.address, ctx.ctypes.data)
-    pytest.importorskip("numbox.core.bindings._sqlite_exec")
-    from numbox.core.bindings._sqlite_exec import sqlite3_exec
     _, sql_p = _cstr("INSERT INTO t VALUES (99); DELETE FROM t WHERE a=99;")
     rc = sqlite3_exec(populated_db, sql_p, 0, 0, 0)
     assert rc == SQLITE_OK
