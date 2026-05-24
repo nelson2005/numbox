@@ -74,7 +74,7 @@
     {
       "id": 16,
       "subject": "SQLite Task 9: _sqlite_exec.py + test_sqlite_exec.py",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Bind sqlite3_exec + sqlite3_free with end-to-end callback test. Unblocks the importorskip-gated tests in stmt/hooks.\n\n**See plan section:** [Task 9](docs/plans/sqlite-buildout/2026-05-23-implementation-plan.md) for full code blocks, verify command, acceptance criteria, and step-by-step instructions. The pre-flight reading list at the top of the plan is MANDATORY before starting any task. Use max reasoning effort.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_exec.py\", \"test/core/test_sqlite_exec.py\"], \"verifyCommand\": \"cd /home/erik/projects/numbox && venv/bin/pytest test/core/test_sqlite_exec.py test/core/test_sqlite_stmt.py test/core/test_sqlite_blob.py test/core/test_sqlite_hooks.py -x --durations=20 -v && venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_exec.py test/core/test_sqlite_exec.py\", \"acceptanceCriteria\": [\"sqlite3_exec null-callback DDL succeeds\", \"callback fires per row, ctx-backed numpy array captures count\", \"nonzero callback return aborts with SQLITE_ABORT\", \"invalid SQL errmsg decoded + freed\", \"previously-skipped tests in stmt/hooks now run end-to-end\"], \"model\": \"opus\", \"effort\": \"max\"}\n```",
       "blockedBy": [
         10
@@ -105,5 +105,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-05-23T23:54:35Z"
+  "lastUpdated": "2026-05-24T00:03:52Z"
 }
