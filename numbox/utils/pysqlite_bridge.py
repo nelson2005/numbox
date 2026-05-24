@@ -6,70 +6,112 @@ sits inside a Python ``sqlite3.Connection``. Mirrors the pattern in
 `numbduck.pybridge <https://github.com/Goykhman/numbduck/blob/main/numbduck/pybridge.py>`_,
 which does the same for DuckDB.
 
-**macOS library coordination.** macOS python.org framework builds
-link the stdlib ``_sqlite3`` extension against Homebrew's
-``libsqlite3.dylib``, not the system ``/usr/lib/libsqlite3.dylib``.
-See `actions/python-versions' macos-python-builder.psm1
-<https://github.com/actions/python-versions/blob/main/builders/macos-python-builder.psm1>`_
--- it adds ``-L$(brew --prefix sqlite3)/lib`` to ``LDFLAGS``.
-Calling sqlite3 C API functions from one libsqlite3 instance on a
-``sqlite3*`` pointer allocated by another is undefined behavior --
-the two libraries can have different versions with incompatible
-internal struct layouts, causing segfaults.
+**macOS library coordination.** On macOS, python.org framework Python
+*statically* links libsqlite3 into ``_sqlite3.cpython-3X-darwin.so`` --
+the actions/python-versions builder runs the configure step with
+``-L$(brew --prefix sqlite3)/lib``, so the resulting extension carries
+its own copy of sqlite3 (typically a newer version than ``/usr/lib``).
+Meanwhile ``ctypes.util.find_library("sqlite3")`` resolves to the
+system ``/usr/lib/libsqlite3.dylib``, often an older release. A
+``sqlite3*`` allocated by Python's bundled sqlite has a struct layout
+incompatible with the system sqlite's functions; calling
+``sqlite3_errmsg(db_p)`` from the wrong library crashes.
 
-To avoid this hazard, importing this module on macOS preloads
-Python's ``libsqlite3.dylib`` with ``RTLD_GLOBAL`` *before*
-``numbox.core.bindings._sqlite_conn`` loads its own copy. macOS dyld
-resolves symbols in load order under ``RTLD_GLOBAL``, so subsequent
-numba JIT compiles resolve sqlite3 symbols to the same shared library
-Python uses.
+Naively preloading Python's libsqlite3 with ``RTLD_GLOBAL`` doesn't
+help -- macOS dyld's shared cache resolves system libraries through
+``dlsym(RTLD_DEFAULT)`` regardless of user load order.
 
-Linux and Windows already coordinate naturally: glibc's
-``find_library("sqlite3")`` resolves to the system ``libsqlite3.so``
-that Python also links against, and Windows uses CPython's bundled
-``sqlite3.dll`` for both.
+Importing this module on macOS extracts Python's ``sqlite3_*`` symbol
+*addresses* from ``_sqlite3.so`` (its 275 sqlite3_* symbols are
+exported globally; ``nm -gU`` confirms) and registers them with
+:func:`llvmlite.binding.add_symbol`. LLVM's JIT linker consults its
+add_symbol registry *before* falling back to ``dlsym(RTLD_DEFAULT)``,
+so numbox's eager-compiled ``@proxy`` bindings link to Python's
+addresses regardless of dyld's shared-cache resolution.
 
-**Import order.** Import this module before
-``numbox.core.bindings._sqlite_*`` or anything that triggers them, so
-the preload lands before the system libsqlite3 is loaded by
-``load_lib("sqlite3")``.
+**Order constraint.** ``@proxy`` compiles eagerly at decoration time
+(see ``numbox.core.proxy.proxy``: *"The original function func will be
+eagerly JIT-compiled with the given signature(s)"*). The patch must
+run *before* any ``numbox.core.bindings._sqlite_*`` import. This
+module guarantees that by registering symbols at module load before
+its own ``from numbox.core.bindings._sqlite_conn import ...`` line.
+Callers must import :mod:`numbox.utils.pysqlite_bridge` before any
+direct or transitive import of ``numbox.core.bindings._sqlite_*``.
 """
 import ctypes
 import sqlite3  # noqa: F401  -- triggers _sqlite3 + libsqlite3 dependency load
 from platform import system
 
-from numbox.core.bindings.utils import load_lib_path
+
+_NUMBOX_SQLITE_SYMBOLS = (
+    # Connection (numbox/core/bindings/_sqlite_conn.py)
+    "sqlite3_open", "sqlite3_open_v2", "sqlite3_close",
+    "sqlite3_libversion", "sqlite3_libversion_number",
+    "sqlite3_errmsg", "sqlite3_errcode", "sqlite3_extended_errcode",
+    "sqlite3_threadsafe", "sqlite3_db_handle", "sqlite3_db_filename",
+    "sqlite3_db_readonly",
+    "sqlite3_changes", "sqlite3_total_changes",
+    "sqlite3_changes64", "sqlite3_total_changes64",
+    "sqlite3_last_insert_rowid",
+    # Statement
+    "sqlite3_prepare_v2", "sqlite3_finalize", "sqlite3_reset",
+    "sqlite3_step", "sqlite3_sql", "sqlite3_expanded_sql",
+    "sqlite3_stmt_busy",
+    # Bind
+    "sqlite3_bind_int", "sqlite3_bind_int64", "sqlite3_bind_double",
+    "sqlite3_bind_text", "sqlite3_bind_blob", "sqlite3_bind_null",
+    "sqlite3_bind_parameter_count", "sqlite3_bind_parameter_index",
+    "sqlite3_bind_parameter_name",
+    # Column
+    "sqlite3_column_int", "sqlite3_column_int64", "sqlite3_column_double",
+    "sqlite3_column_text", "sqlite3_column_blob", "sqlite3_column_bytes",
+    "sqlite3_column_type", "sqlite3_column_count",
+    "sqlite3_column_name", "sqlite3_column_decltype",
+    "sqlite3_column_database_name", "sqlite3_column_table_name",
+    "sqlite3_column_origin_name",
+    # Exec
+    "sqlite3_exec", "sqlite3_free",
+    # Blob
+    "sqlite3_blob_open", "sqlite3_blob_close", "sqlite3_blob_bytes",
+    "sqlite3_blob_read", "sqlite3_blob_write", "sqlite3_blob_reopen",
+    # Hooks
+    "sqlite3_update_hook", "sqlite3_progress_handler",
+    "sqlite3_busy_handler", "sqlite3_commit_hook",
+    "sqlite3_rollback_hook", "sqlite3_trace_v2",
+)
 
 
-def _find_loaded_libsqlite3():
-    """Return the absolute path of the libsqlite3 currently loaded by
-    Python's sqlite3 module, or None if not determinable.
+def _patch_numbox_sqlite_for_python_libsqlite3():
+    """Redirect numbox's @njit sqlite3_* bindings to Python's bundled
+    libsqlite3 via :func:`llvmlite.binding.add_symbol`.
 
-    Uses macOS's `dyld image enumeration
-    <https://developer.apple.com/documentation/kernel/dyld>`_
-    (``_dyld_image_count`` / ``_dyld_get_image_name``) to inspect
-    currently-loaded dylibs. Must be called after ``import sqlite3``
-    has triggered ``_sqlite3.so`` to load its libsqlite3 dependency.
+    macOS only. See module docstring for the full rationale and the
+    order constraint.
     """
-    libsystem = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
-    libsystem._dyld_image_count.restype = ctypes.c_uint32
-    libsystem._dyld_image_count.argtypes = []
-    libsystem._dyld_get_image_name.restype = ctypes.c_char_p
-    libsystem._dyld_get_image_name.argtypes = [ctypes.c_uint32]
-    for i in range(libsystem._dyld_image_count()):
-        name = libsystem._dyld_get_image_name(i)
-        if name and b"libsqlite3" in name:
-            return name.decode()
-    return None
+    if system() != "Darwin":
+        return
+
+    import _sqlite3
+    from llvmlite import binding as llvm_binding
+
+    py_sqlite = ctypes.CDLL(_sqlite3.__file__)
+    for sym in _NUMBOX_SQLITE_SYMBOLS:
+        func = getattr(py_sqlite, sym, None)
+        if func is None:
+            continue
+        addr = ctypes.cast(func, ctypes.c_void_p).value
+        if addr:
+            llvm_binding.add_symbol(sym, addr)
 
 
-_preloaded_libsqlite3_handle = None
-if system() == "Darwin":
-    _python_libsqlite3 = _find_loaded_libsqlite3()
-    if _python_libsqlite3 is not None:
-        _preloaded_libsqlite3_handle = load_lib_path(_python_libsqlite3)
+_patch_numbox_sqlite_for_python_libsqlite3()
 
 
+# CRITICAL: must come AFTER the patch above. @proxy decoration in
+# _sqlite_conn eagerly JIT-compiles each binding, baking the resolved
+# symbol address into the compiled code. Without the prior add_symbol
+# registration, sqlite3_* externs would resolve via dlsym(RTLD_DEFAULT)
+# to the system /usr/lib/libsqlite3.dylib on macOS.
 from numbox.core.bindings._sqlite_conn import sqlite3_errmsg  # noqa: E402
 
 
@@ -91,8 +133,8 @@ def extract_connection_ptr(conn):
     The extracted pointer is validated by calling
     :func:`~numbox.core.bindings._sqlite_conn.sqlite3_errmsg` against
     it: a healthy connection returns ``"not an error"``. See the
-    module docstring for how the macOS library-coordination hazard is
-    handled.
+    module docstring for how macOS coordinates Python's libsqlite3
+    with numbox's bindings.
 
     Parameters
     ----------
