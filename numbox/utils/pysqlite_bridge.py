@@ -135,7 +135,7 @@ def _patch_numbox_sqlite_for_python_libsqlite3():
     # the primary mechanism for symbol redirection).
     py_sqlite = ctypes.CDLL(_sqlite3.__file__, mode=RTLD_GLOBAL)
 
-    # (1) Make numbox's get_loaded_lib("sqlite3") return Python's lib.
+    # (1) Make numbox's load_lib("sqlite3") return Python's lib.
     # ``proxy_if_available`` decorators in _sqlite_conn / _sqlite_column
     # will then check hasattr against this handle; symbols absent from
     # Python's lib (e.g., column-metadata accessors when Python's sqlite
@@ -159,7 +159,7 @@ _patch_numbox_sqlite_for_python_libsqlite3()
 
 
 # Triggers numbox.core.bindings.__init__.py star-imports. Each _sqlite_*
-# module does `_sqlite3_lib = get_loaded_lib("sqlite3")` which now returns
+# module does `_sqlite3_lib = load_lib("sqlite3")` which now returns
 # our pre-populated Python-lib handle, and each @proxy decoration's JIT
 # compile resolves sqlite3_* externs against our add_symbol-registered
 # addresses.
