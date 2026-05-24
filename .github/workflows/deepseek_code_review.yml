@@ -10,8 +10,9 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: hustcer/deepseek-review@v1
+      - uses: hustcer/deepseek-review@90c887892350e87fdcf517ddc41b3b826941614b # v1
         with:
           chat-token: ${{ secrets.CHAT_TOKEN }}
           model: deepseek-v4-pro
