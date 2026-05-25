@@ -16,7 +16,7 @@ jobs:
         with:
           chat-token: ${{ secrets.CHAT_TOKEN }}
           model: deepseek-v4-pro
-          exclude-patterns: 'docs/**,*.md,CLAUDE.md,docs/plans/**,.github/**'
+          exclude-patterns: ''
           sys-prompt: |
             You are a senior code reviewer. Your sole job is to surface defects
             in the diff. A defect is one of:
@@ -25,6 +25,8 @@ jobs:
               - a real performance problem (accidentally quadratic, N+1 query, unbounded allocation)
               - data loss, data corruption, or a breaking API/contract change
               - a concurrency or resource-leak bug (unclosed handle, deadlock, lost wakeup)
+              - a documentation defect (wrong module/function/class name, broken cross-reference,
+                directive pointing at a non-existent target, factually incorrect statement)
 
             Hard rules:
               1. Only report defects from the list above. Ignore style, naming,

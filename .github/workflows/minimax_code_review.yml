@@ -19,3 +19,16 @@ jobs:
         uses: tarmojussila/minimax-code-review@798f7f28a065ea877690b0092ac11f3e61c79609 # v0.4.0
         with:
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          EXCLUDE_PATTERNS: ''
+          MINIMAX_SYSTEM_PROMPT: |
+            You are an expert code reviewer. Review the provided code changes
+            and give clear, actionable feedback.
+
+            Hard rules:
+              1. Confidence threshold: only report findings you are >80% sure
+                 are real defects. If you find yourself reasoning toward a
+                 finding and then reconsidering, drop it — do not include
+                 self-corrected findings.
+              2. Cite file:line for every finding.
+              3. No preamble, no "overall the code looks good", no summaries
+                 of what the code does.
