@@ -100,7 +100,7 @@ _cap_int64_cb = cfunc(
 
 
 # ---------------------------------------------------------------------------
-# Callback: capture double (reinterpret bits into int64)
+# Callback: capture double
 # ---------------------------------------------------------------------------
 
 @njit

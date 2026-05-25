@@ -182,7 +182,7 @@ signatures_sqlite = {
     "sqlite3_value_numeric_type": int32(intp),
     "sqlite3_value_nochange": int32(intp),
     "sqlite3_value_frombind": int32(intp),
-    "sqlite3_value_subtype": int32(intp),
+    "sqlite3_value_subtype": uint32(intp),
     "sqlite3_value_dup": intp(intp),
     "sqlite3_value_free": void(intp),
     # -- result setters (write UDF return value) --
