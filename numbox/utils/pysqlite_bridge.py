@@ -92,6 +92,25 @@ _NUMBOX_SQLITE_SYMBOLS = (
     "sqlite3_update_hook", "sqlite3_progress_handler",
     "sqlite3_busy_handler", "sqlite3_commit_hook",
     "sqlite3_rollback_hook", "sqlite3_trace_v2",
+    # Value accessors (UDF argument reading)
+    "sqlite3_value_blob", "sqlite3_value_bytes", "sqlite3_value_double",
+    "sqlite3_value_dup", "sqlite3_value_free", "sqlite3_value_frombind",
+    "sqlite3_value_int", "sqlite3_value_int64", "sqlite3_value_nochange",
+    "sqlite3_value_numeric_type", "sqlite3_value_subtype",
+    "sqlite3_value_text", "sqlite3_value_type",
+    # Result setters (UDF return values)
+    "sqlite3_result_blob", "sqlite3_result_blob64",
+    "sqlite3_result_double", "sqlite3_result_error",
+    "sqlite3_result_error_code", "sqlite3_result_error_nomem",
+    "sqlite3_result_error_toobig", "sqlite3_result_int",
+    "sqlite3_result_int64", "sqlite3_result_null",
+    "sqlite3_result_subtype", "sqlite3_result_text",
+    "sqlite3_result_text64", "sqlite3_result_value",
+    "sqlite3_result_zeroblob", "sqlite3_result_zeroblob64",
+    # UDF registration + aggregate context
+    "sqlite3_create_function_v2", "sqlite3_create_window_function",
+    "sqlite3_aggregate_context", "sqlite3_user_data",
+    "sqlite3_context_db_handle",
 )
 
 
