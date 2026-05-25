@@ -21,8 +21,8 @@ Bindings module conventions
 
 Every binding in the ``numbox.core.bindings`` family (``_c``, ``_math``,
 ``_sqlite_conn`` / ``_stmt`` / ``_bind`` / ``_column`` / ``_exec`` /
-``_blob`` / ``_hooks`` / ``_constants`` / ``_value`` / ``_result`` /
-``_udf``, ``_stdio``, ``_errno``,
+``_blob`` / ``_hooks`` / ``_constants`` / ``_sqlite_value`` / ``_sqlite_result`` /
+``_sqlite_udf``, ``_stdio``, ``_errno``,
 ``_strerror``, ``_fmtio``) uses
 extern-symbol references via
 :func:`~numbox.core.bindings.call._call_lib_func`, so the ABI dispatch is
