@@ -28,6 +28,7 @@ __all__ = [
     "SQLITE_TRACE_STMT", "SQLITE_TRACE_PROFILE", "SQLITE_TRACE_ROW",
     "SQLITE_TRACE_CLOSE",
     "SQLITE_STATIC", "SQLITE_TRANSIENT",
+    "SQLITE_UTF8", "SQLITE_DETERMINISTIC", "SQLITE_DIRECTONLY", "SQLITE_INNOCUOUS",
 ]
 
 # === Primary result codes (sqlite3.h) ===
@@ -94,3 +95,9 @@ SQLITE_TRACE_CLOSE = 0x08
 # === Destructor sentinels for sqlite3_bind_text / sqlite3_bind_blob ===
 SQLITE_STATIC = 0
 SQLITE_TRANSIENT = -1
+
+# === sqlite3_create_function_v2 / sqlite3_create_window_function flags ===
+SQLITE_UTF8 = 1
+SQLITE_DETERMINISTIC = 0x000000800
+SQLITE_DIRECTONLY = 0x000080000
+SQLITE_INNOCUOUS = 0x000200000
