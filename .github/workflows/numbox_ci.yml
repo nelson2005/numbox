@@ -20,56 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
-        numba-version: [ "0.65.1" ]
-        arch: [ "ubuntu-latest", "ubuntu-24.04-arm", "windows-latest" ]
-        exclude:
-          - arch: "windows-latest"
-            python-version: "3.11"
-          - arch: "windows-latest"
-            python-version: "3.12"
-          - arch: "windows-latest"
-            python-version: "3.13"
+        # DEBUG: macOS-only — restore full matrix after diagnostic
         include:
-          # min numba for 3.10-3.12 (0.60.0)
-          - python-version: "3.10"
-            numba-version: "0.60.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.10"
-            numba-version: "0.60.0"
-            arch: "ubuntu-24.04-arm"
-          - python-version: "3.10"
-            numba-version: "0.60.0"
-            arch: "windows-latest"
-          - python-version: "3.11"
-            numba-version: "0.60.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.11"
-            numba-version: "0.60.0"
-            arch: "ubuntu-24.04-arm"
-          - python-version: "3.12"
-            numba-version: "0.60.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.12"
-            numba-version: "0.60.0"
-            arch: "ubuntu-24.04-arm"
-          # min numba for 3.13 (0.61.0)
-          - python-version: "3.13"
-            numba-version: "0.61.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.13"
-            numba-version: "0.61.0"
-            arch: "ubuntu-24.04-arm"
-          # min numba for 3.14 (0.63.0)
-          - python-version: "3.14"
-            numba-version: "0.63.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.14"
-            numba-version: "0.63.0"
-            arch: "ubuntu-24.04-arm"
-          - python-version: "3.14"
-            numba-version: "0.63.0"
-            arch: "windows-latest"
           # macOS — python.org framework build (static sqlite)
           - python-version: "3.14"
             numba-version: "0.65.1"
@@ -114,6 +66,52 @@ jobs:
         pip install flake8 pytest pytest-cov
         pip install "numba==${{ matrix.numba-version }}"
         pip install -e .
+    - name: SQLite library diagnostic (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        python -c "
+        import ctypes, ctypes.util, sys, subprocess
+        print('=== Python build ===')
+        print(f'executable: {sys.executable}')
+        print(f'_sqlite3 location:')
+        import _sqlite3
+        print(f'  {_sqlite3.__file__}')
+        print()
+        print('=== otool -L _sqlite3.so ===')
+        subprocess.run(['otool', '-L', _sqlite3.__file__])
+        print()
+        print('=== find_library ===')
+        path = ctypes.util.find_library('sqlite3')
+        print(f'  find_library(\"sqlite3\") = {path!r}')
+        print()
+        print('=== dlopen probe ===')
+        from ctypes import CDLL
+        from os import RTLD_GLOBAL
+        lib_via_find = CDLL(path, mode=RTLD_GLOBAL)
+        lib_via_ext = CDLL(_sqlite3.__file__, mode=RTLD_GLOBAL)
+        print(f'  CDLL(find_library) handle: {lib_via_find._handle:#x}')
+        print(f'  CDLL(_sqlite3.__file__) handle: {lib_via_ext._handle:#x}')
+        print()
+        print('=== symbol addresses ===')
+        for name in ['sqlite3_open', 'sqlite3_errmsg', 'sqlite3_changes']:
+            addr_find = ctypes.cast(getattr(lib_via_find, name, None), ctypes.c_void_p).value
+            addr_ext = ctypes.cast(getattr(lib_via_ext, name, None), ctypes.c_void_p).value
+            match = 'SAME' if addr_find == addr_ext else 'DIFFERENT'
+            print(f'  {name}: find_library={addr_find:#x} _sqlite3={addr_ext:#x} [{match}]')
+        print()
+        print('=== sqlite3 versions ===')
+        ver_find = ctypes.c_char_p(lib_via_find.sqlite3_libversion()).value
+        ver_ext = ctypes.c_char_p(lib_via_ext.sqlite3_libversion()).value
+        print(f'  find_library sqlite: {ver_find}')
+        print(f'  _sqlite3.so sqlite:  {ver_ext}')
+        print(f'  match: {ver_find == ver_ext}')
+        print()
+        print('=== llvmlite dlsym(RTLD_DEFAULT) ===')
+        from llvmlite import binding as ll
+        for name in ['sqlite3_open', 'sqlite3_errmsg', 'sqlite3_changes']:
+            addr = ll.address_of_symbol(name)
+            print(f'  {name}: {addr:#x}' if addr else f'  {name}: None')
+        "
     - name: Lint with flake8
       run: flake8 . --count --show-source --statistics
     - name: Test with pytest
