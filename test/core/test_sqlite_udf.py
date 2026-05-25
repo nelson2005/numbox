@@ -380,7 +380,7 @@ def test_window_running_sum():
     @njit
     def _wcap_impl(ctx, argc, argv_pp):
         ud = sqlite3_user_data(ctx)
-        meta = carray(_cast_int_to_void_p(ud), (7,), dtype=np.int64)
+        meta = carray(_cast_int_to_void_p(ud), (6,), dtype=np.int64)
         i = meta[0]
         args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
         meta[1 + i] = sqlite3_value_int64(args[0])
