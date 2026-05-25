@@ -70,18 +70,31 @@ jobs:
           - python-version: "3.14"
             numba-version: "0.63.0"
             arch: "windows-latest"
-          # macOS
+          # macOS — python.org framework build (static sqlite)
           - python-version: "3.14"
             numba-version: "0.65.1"
             arch: "macos-latest"
+            python-source: "framework"
+          # macOS — Homebrew build (dynamic sqlite)
+          - python-version: "3.14"
+            numba-version: "0.65.1"
+            arch: "macos-latest"
+            python-source: "homebrew"
     runs-on: "${{ matrix.arch }}"
 
     steps:
     - uses: actions/checkout@v6
-    - name: Set up Python
+    - name: Set up Python (framework)
+      if: matrix.python-source != 'homebrew'
       uses: actions/setup-python@v6
       with:
         python-version: "${{ matrix.python-version }}"
+    - name: Set up Python (Homebrew)
+      if: matrix.python-source == 'homebrew'
+      run: |
+        brew install python@${{ matrix.python-version }}
+        brew link --overwrite python@${{ matrix.python-version }}
+        echo "/opt/homebrew/opt/python@${{ matrix.python-version }}/bin" >> $GITHUB_PATH
     - name: Determine version
       shell: bash
       id: version
