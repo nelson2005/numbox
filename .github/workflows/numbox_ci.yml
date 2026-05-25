@@ -46,7 +46,14 @@ jobs:
       run: |
         brew install python@${{ matrix.python-version }}
         brew link --overwrite python@${{ matrix.python-version }}
+        echo "/opt/homebrew/opt/python@${{ matrix.python-version }}/libexec/bin" >> $GITHUB_PATH
         echo "/opt/homebrew/opt/python@${{ matrix.python-version }}/bin" >> $GITHUB_PATH
+    - name: Verify Homebrew Python
+      if: matrix.python-source == 'homebrew'
+      run: |
+        which python3
+        python3 -c "import sys; print(sys.executable)"
+        python3 -c "import _sqlite3; print(_sqlite3.__file__)"
     - name: Determine version
       shell: bash
       id: version
@@ -68,49 +75,34 @@ jobs:
         pip install -e .
     - name: SQLite library diagnostic (macOS)
       if: runner.os == 'macOS'
+      shell: bash
       run: |
-        python -c "
-        import ctypes, ctypes.util, sys, subprocess
-        print('=== Python build ===')
-        print(f'executable: {sys.executable}')
-        print(f'_sqlite3 location:')
+        python3 -u -c "
+        import ctypes, ctypes.util, sys, subprocess, os
+        F = sys.stdout.flush
+        print('=== Python build ==='); F()
+        print(f'executable: {sys.executable}'); F()
         import _sqlite3
-        print(f'  {_sqlite3.__file__}')
-        print()
-        print('=== otool -L _sqlite3.so ===')
+        print(f'_sqlite3: {_sqlite3.__file__}'); F()
         subprocess.run(['otool', '-L', _sqlite3.__file__])
-        print()
-        print('=== find_library ===')
+        F()
         path = ctypes.util.find_library('sqlite3')
-        print(f'  find_library(\"sqlite3\") = {path!r}')
-        print()
-        print('=== dlopen probe ===')
-        from ctypes import CDLL
-        from os import RTLD_GLOBAL
-        lib_via_find = CDLL(path, mode=RTLD_GLOBAL)
-        lib_via_ext = CDLL(_sqlite3.__file__, mode=RTLD_GLOBAL)
-        print(f'  CDLL(find_library) handle: {lib_via_find._handle:#x}')
-        print(f'  CDLL(_sqlite3.__file__) handle: {lib_via_ext._handle:#x}')
-        print()
-        print('=== symbol addresses ===')
+        print(f'find_library: {path!r}'); F()
+        lib_find = ctypes.CDLL(path, mode=os.RTLD_GLOBAL)
+        lib_ext = ctypes.CDLL(_sqlite3.__file__, mode=os.RTLD_GLOBAL)
+        print(f'handle find_library: {lib_find._handle:#x}'); F()
+        print(f'handle _sqlite3.so: {lib_ext._handle:#x}'); F()
         for name in ['sqlite3_open', 'sqlite3_errmsg', 'sqlite3_changes']:
-            addr_find = ctypes.cast(getattr(lib_via_find, name, None), ctypes.c_void_p).value
-            addr_ext = ctypes.cast(getattr(lib_via_ext, name, None), ctypes.c_void_p).value
-            match = 'SAME' if addr_find == addr_ext else 'DIFFERENT'
-            print(f'  {name}: find_library={addr_find:#x} _sqlite3={addr_ext:#x} [{match}]')
-        print()
-        print('=== sqlite3 versions ===')
-        ver_find = ctypes.c_char_p(lib_via_find.sqlite3_libversion()).value
-        ver_ext = ctypes.c_char_p(lib_via_ext.sqlite3_libversion()).value
-        print(f'  find_library sqlite: {ver_find}')
-        print(f'  _sqlite3.so sqlite:  {ver_ext}')
-        print(f'  match: {ver_find == ver_ext}')
-        print()
-        print('=== llvmlite dlsym(RTLD_DEFAULT) ===')
+            f1 = getattr(lib_find, name, None)
+            f2 = getattr(lib_ext, name, None)
+            a1 = ctypes.cast(f1, ctypes.c_void_p).value if f1 else None
+            a2 = ctypes.cast(f2, ctypes.c_void_p).value if f2 else None
+            tag = 'SAME' if a1 == a2 else 'DIFFERENT'
+            print(f'{name}: find={a1:#x if a1 else \"None\"} ext={a2:#x if a2 else \"None\"} [{tag}]'); F()
         from llvmlite import binding as ll
         for name in ['sqlite3_open', 'sqlite3_errmsg', 'sqlite3_changes']:
             addr = ll.address_of_symbol(name)
-            print(f'  {name}: {addr:#x}' if addr else f'  {name}: None')
+            print(f'dlsym {name}: {addr:#x}' if addr else f'dlsym {name}: None'); F()
         "
     - name: Lint with flake8
       run: flake8 . --count --show-source --statistics
