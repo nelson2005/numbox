@@ -89,6 +89,9 @@ These are the canonical primitives for C-string interop. New bindings should com
 - `numbox/core/bindings/_sqlite_blob.py` — BLOB incremental I/O
 - `numbox/core/bindings/_sqlite_hooks.py` — callback hooks
 - `numbox/core/bindings/_sqlite_constants.py` — SQLite result codes, type codes, flags, destructor sentinels
+- `numbox/core/bindings/_sqlite_value.py` — value accessors for reading UDF arguments
+- `numbox/core/bindings/_sqlite_result.py` — result setters for writing UDF return values
+- `numbox/core/bindings/_sqlite_udf.py` — UDF registration + aggregate context
 - `numbox/utils/clock.py` — cross-platform monotonic nanosecond clock intrinsic
 - `test/core/` — tests for all core modules
 
@@ -146,6 +149,7 @@ Cross-project preferences live in the user's MEMORY.md. Only numbox-specific wor
   ```
 
   Design spec at [docs/plans/sqlite-buildout/2026-05-23-design.md](docs/plans/sqlite-buildout/2026-05-23-design.md).
+- **SQLite UDF/UDAF/window function bindings** — Adds 34 new bindings enabling user-defined scalar, aggregate, and window functions from `@njit` code. Three new modules: [`_sqlite_value.py`](numbox/core/bindings/_sqlite_value.py) (13 value accessors for reading UDF arguments), [`_sqlite_result.py`](numbox/core/bindings/_sqlite_result.py) (16 result setters for writing UDF return values including 64-bit variants), and [`_sqlite_udf.py`](numbox/core/bindings/_sqlite_udf.py) (5 registration + context functions: `sqlite3_create_function_v2`, `sqlite3_create_window_function`, `sqlite3_aggregate_context`, `sqlite3_user_data`, `sqlite3_context_db_handle`). Aggregate and window UDFs use structref-backed state via `sqlite3_aggregate_context` (SQLite-owned 8 bytes storing a meminfo pointer) + `export_meminfo` / `borrow_structref` / `release_meminfo` from [`numbox/utils/meminfo.py`](numbox/utils/meminfo.py) — same pattern as numbduck's UDAF bridge. Four new constants in `_sqlite_constants.py`: `SQLITE_UTF8`, `SQLITE_DETERMINISTIC`, `SQLITE_DIRECTONLY`, `SQLITE_INNOCUOUS`.
 
 ## Follow-ups
 
@@ -155,3 +159,6 @@ Cross-project preferences live in the user's MEMORY.md. Only numbox-specific wor
 - **Serialize / deserialize** — `sqlite3_serialize` / `sqlite3_deserialize` for in-memory snapshots.
 - **Higher-level structref wrappers** — `Connection` / `Statement` structrefs if a downstream consumer needs ergonomic types.
 - **Drop `proxy_if_available` gate on `changes64` / `total_changes64`** once Python 3.10 drops out of the support matrix (Python 3.11+ all ship SQLite 3.37+).
+- **Higher-level UDAF registration helper** — convenience that takes a structref type + step/final functions and wires the `sqlite3_create_function_v2` + meminfo bridge boilerplate automatically.
+- **`sqlite3_set_auxdata` / `sqlite3_get_auxdata`** — per-argument caching across UDF invocations. 2 functions.
+- **Virtual table interface** — `sqlite3_module` / `sqlite3_create_module`. The heaviest remaining SQLite surface; its own major design.
