@@ -67,6 +67,11 @@ jobs:
     - name: Write version to __init__.py
       shell: bash
       run: echo "__version__ = '${{ env.VERSION }}'" > numbox/__init__.py
+    - name: Create venv (Homebrew)
+      if: matrix.python-source == 'homebrew'
+      run: |
+        python3 -m venv venv
+        echo "$PWD/venv/bin" >> $GITHUB_PATH
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -98,7 +103,9 @@ jobs:
             a1 = ctypes.cast(f1, ctypes.c_void_p).value if f1 else None
             a2 = ctypes.cast(f2, ctypes.c_void_p).value if f2 else None
             tag = 'SAME' if a1 == a2 else 'DIFFERENT'
-            print(f'{name}: find={a1:#x if a1 else \"None\"} ext={a2:#x if a2 else \"None\"} [{tag}]'); F()
+            s1 = f'{a1:#x}' if a1 else 'None'
+            s2 = f'{a2:#x}' if a2 else 'None'
+            print(f'{name}: find={s1} ext={s2} [{tag}]'); F()
         from llvmlite import binding as ll
         for name in ['sqlite3_open', 'sqlite3_errmsg', 'sqlite3_changes']:
             addr = ll.address_of_symbol(name)
