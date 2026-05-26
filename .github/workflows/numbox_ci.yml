@@ -313,6 +313,25 @@ jobs:
         " || echo "TEST L3 CRASHED"
         echo ""
 
+        echo "===== TEST L4: after numba init + CDLL RTLD_GLOBAL ====="
+        python3 -u -c "
+        import ctypes, ctypes.util, os, sys
+        F = sys.stdout.flush
+        import numba
+        print(f'numba version: {numba.__version__}'); F()
+        from llvmlite import binding as ll
+        for name in ['sqlite3_open', 'sqlite3_changes']:
+            addr = ll.address_of_symbol(name)
+            print(f'after numba import, before CDLL: {name}: {addr}'); F()
+        path = ctypes.util.find_library('sqlite3')
+        lib = ctypes.CDLL(path, mode=os.RTLD_GLOBAL)
+        for name in ['sqlite3_open', 'sqlite3_changes']:
+            addr = ll.address_of_symbol(name)
+            s = f'{addr:#x}' if addr else 'None'
+            print(f'after numba import + CDLL: {name}: {s}'); F()
+        " || echo "TEST L4 CRASHED"
+        echo ""
+
         echo "===== INVESTIGATION COMPLETE (Linux) ====="
     - name: Lint with flake8
       run: flake8 . --count --show-source --statistics
