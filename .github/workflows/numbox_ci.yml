@@ -231,6 +231,40 @@ jobs:
         " || echo "TEST 7 CRASHED"
         echo ""
 
+        echo "===== TEST 8: what does LLVM resolve after pybridge runs? ====="
+        python3 -u -c "
+        import sys, ctypes, ctypes.util, os
+        F = sys.stdout.flush
+        import _sqlite3
+        from llvmlite import binding as ll
+        print('before pybridge:'); F()
+        for name in ['sqlite3_errmsg', 'sqlite3_changes']:
+            addr = ll.address_of_symbol(name)
+            print(f'  {name}: {addr}'); F()
+        print('running pybridge...'); F()
+        import numbox.utils.pysqlite_bridge
+        print('after pybridge:'); F()
+        for name in ['sqlite3_errmsg', 'sqlite3_changes']:
+            addr = ll.address_of_symbol(name)
+            s = f'{addr:#x}' if addr else 'None'
+            print(f'  {name}: {s}'); F()
+        print(); F()
+        sys_lib = ctypes.CDLL(ctypes.util.find_library('sqlite3'), mode=os.RTLD_GLOBAL)
+        ext_lib = ctypes.CDLL(_sqlite3.__file__, mode=os.RTLD_GLOBAL)
+        for name in ['sqlite3_errmsg', 'sqlite3_changes']:
+            f_sys = getattr(sys_lib, name, None)
+            f_ext = getattr(ext_lib, name, None)
+            a_sys = ctypes.cast(f_sys, ctypes.c_void_p).value if f_sys else None
+            a_ext = ctypes.cast(f_ext, ctypes.c_void_p).value if f_ext else None
+            a_ll = ll.address_of_symbol(name)
+            ss = f'{a_sys:#x}' if a_sys else 'None'
+            se = f'{a_ext:#x}' if a_ext else 'None'
+            sl = f'{a_ll:#x}' if a_ll else 'None'
+            match = 'SYSTEM' if a_ll == a_sys else ('HOMEBREW' if a_ll == a_ext else 'UNKNOWN')
+            print(f'{name}: system={ss} ext={se} llvm={sl} -> {match}'); F()
+        " || echo "TEST 8 CRASHED"
+        echo ""
+
         echo "===== INVESTIGATION COMPLETE ====="
     - name: Lint with flake8
       run: flake8 . --count --show-source --statistics
