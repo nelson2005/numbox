@@ -67,9 +67,16 @@ def _patch_numbox_sqlite_for_python_libsqlite3():
     """Coordinate numbox's sqlite3 bindings with Python's libsqlite3 on macOS.
 
     See module docstring for the full rationale. Two-part fix:
-    (1) pre-populate numbox's ``_loaded_libs`` so symbol-availability
-    checks use Python's library; (2) register Python's symbol addresses
-    with llvmlite so the JIT linker resolves to them.
+
+    (1) Pre-populate ``_loaded_libs["sqlite3"]`` with a ctypes handle to
+    ``_sqlite3.so`` so ``proxy_if_available``'s ``hasattr`` checks
+    reflect Python's sqlite symbol availability.
+
+    (2) Call ``load_library_permanently`` to register ``_sqlite3.so``
+    with LLVM's private symbol registry. LLVM's JIT linker does not
+    use the OS ``dlsym(RTLD_DEFAULT)`` — it only searches libraries
+    loaded via its own ``DynamicLibrary`` API. New bindings are picked
+    up automatically; no manual symbol list is needed.
     """
     if system() != "Darwin":
         return
@@ -78,19 +85,18 @@ def _patch_numbox_sqlite_for_python_libsqlite3():
     import importlib.util
     import os
     import sys
-    from os import RTLD_GLOBAL
 
     from llvmlite import binding as llvm_binding
 
     import numbox  # safe -- numbox/__init__.py only sets __version__
 
-    # Load numbox.core.bindings.utils and .signatures directly via
-    # importlib.util. Going through ``from numbox.core.bindings import``
-    # would trigger ``__init__.py`` which star-imports the ``_sqlite_*``
-    # modules and eager-compiles them with the wrong library.
-    bindings_dir = os.path.join(numbox.__path__[0], "core", "bindings")
-
-    utils_path = os.path.join(bindings_dir, "utils.py")
+    # Load numbox.core.bindings.utils directly via importlib.util.
+    # Going through ``from numbox.core.bindings import`` would trigger
+    # ``__init__.py`` which star-imports the ``_sqlite_*`` modules and
+    # eager-compiles them with the wrong library.
+    utils_path = os.path.join(
+        numbox.__path__[0], "core", "bindings", "utils.py"
+    )
     spec = importlib.util.spec_from_file_location(
         "numbox.core.bindings.utils", utils_path
     )
@@ -98,39 +104,19 @@ def _patch_numbox_sqlite_for_python_libsqlite3():
     sys.modules["numbox.core.bindings.utils"] = utils_mod
     spec.loader.exec_module(utils_mod)
 
-    sigs_path = os.path.join(bindings_dir, "signatures.py")
-    sigs_spec = importlib.util.spec_from_file_location(
-        "numbox.core.bindings.signatures", sigs_path
-    )
-    sigs_mod = importlib.util.module_from_spec(sigs_spec)
-    sys.modules["numbox.core.bindings.signatures"] = sigs_mod
-    sigs_spec.loader.exec_module(sigs_mod)
-
-    # RTLD_GLOBAL: promote Python's sqlite3_* symbols to the global
-    # namespace as a defensive measure (the add_symbol path below is
-    # the primary mechanism for symbol redirection).
-    py_sqlite = ctypes.CDLL(_sqlite3.__file__, mode=RTLD_GLOBAL)
-
-    # (1) Make numbox's load_lib("sqlite3") return Python's lib.
-    # ``proxy_if_available`` decorators in _sqlite_conn / _sqlite_column
-    # will then check hasattr against this handle; symbols absent from
-    # Python's lib (e.g., column-metadata accessors when Python's sqlite
-    # lacks SQLITE_ENABLE_COLUMN_METADATA) are stubbed out cleanly.
+    # (1) Pre-populate _loaded_libs so proxy_if_available checks use
+    # Python's library. Symbols absent from Python's sqlite (e.g.,
+    # column-metadata accessors gated by SQLITE_ENABLE_COLUMN_METADATA)
+    # are stubbed out cleanly instead of compiling against the system
+    # library.
+    py_sqlite = ctypes.CDLL(_sqlite3.__file__, mode=os.RTLD_GLOBAL)
     utils_mod._loaded_libs["sqlite3"] = py_sqlite
 
-    # (2) Register sqlite3_* addresses for numba's JIT linker. macOS
-    # dyld's shared-cache resolution returns the system sqlite's symbols
-    # via ``dlsym(RTLD_DEFAULT)`` regardless of RTLD_GLOBAL load order;
-    # add_symbol overrides that for LLVM-compiled JIT modules.
-    # Symbol list derived from signatures_sqlite so new bindings are
-    # picked up automatically without maintaining a separate list.
-    for sym in sigs_mod.signatures_sqlite:
-        func = getattr(py_sqlite, sym, None)
-        if func is None:
-            continue   # symbol absent in this sqlite version / build
-        addr = ctypes.cast(func, ctypes.c_void_p).value
-        if addr:
-            llvm_binding.add_symbol(sym, addr)
+    # (2) Register _sqlite3.so with LLVM's symbol registry. On both
+    # python.org (static sqlite) and Homebrew (dynamic dependency on
+    # /opt/homebrew/.../libsqlite3.dylib), this makes all sqlite3_*
+    # symbols findable by address_of_symbol / the JIT linker.
+    llvm_binding.load_library_permanently(_sqlite3.__file__)
 
 
 _patch_numbox_sqlite_for_python_libsqlite3()
