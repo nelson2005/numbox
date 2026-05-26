@@ -40,9 +40,19 @@ def func_name(x):
 4. Args passed as tuple literal to `_call_lib_func`
 5. **Docs:** for a wrapper added to an existing `_*.py` module, the `automodule` directive in `docs/numbox.core.bindings.rst` picks it up automatically — nothing to edit. For a **new** `_*.py` module, OR if you rename / delete an existing module, also update `docs/numbox.core.bindings.rst`: the "Bindings module conventions" family list AND add / remove / rename the per-module `automodule` section under "Modules". Then run `cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html` and confirm exit 0 (warning count stable is OK).
 
-### Bindings: implementation gotchas
+### LLVM symbol resolution and macOS
 
-These have caught cleanly-reasoned designs more than once. Apply to all new bindings, intrinsics, and platform-aware additions.
+LLVM's JIT linker resolves extern symbols via `llvm::sys::DynamicLibrary::SearchForAddressOfSymbol`. This checks, in order: (1) the `ExplicitSymbols` map (populated by `llvmlite.binding.add_symbol`), (2) handles loaded via `LoadLibraryPermanently`, (3) `dlsym(process_handle, name)` after the process handle is registered (which happens on the first `@njit` compile). The process handle is equivalent to `dlsym(RTLD_DEFAULT, ...)` — it searches all Mach-O images / ELF objects in load order and returns the first match.
+
+On **Linux**, `RTLD_GLOBAL` via `ctypes.CDLL` is sufficient: there is typically one copy of any given library, so `dlsym(RTLD_DEFAULT)` finds the right one after JIT init.
+
+On **macOS**, the system sqlite is in the [dyld shared cache](https://developer.apple.com/documentation/kernel/os_dyld_shared_cache_header), mapped into every process at launch — before any user `dlopen`. `dlsym(RTLD_DEFAULT, "sqlite3_open")` returns the shared-cache address (system sqlite), not the Homebrew or framework-bundled version that Python's `_sqlite3.so` actually uses. `RTLD_GLOBAL` and `load_library_permanently` cannot change this — the shared cache is always first in load order.
+
+The fix: [`numbox/utils/pysqlite_bridge.py`](numbox/utils/pysqlite_bridge.py) reads the correct addresses from `_sqlite3.so` via `ctypes.CDLL(handle).symbol` (which uses `dlsym(handle, name)` — searches the library + its dependencies, respecting two-level namespace) and registers them with `add_symbol`. LLVM checks `ExplicitSymbols` before any `dlsym` fallback, so the correct addresses win.
+
+This applies to **any** library where macOS ships a system copy in the shared cache (sqlite, libz, libxml2, etc.). If a future binding wraps a library that has both a system and a user-installed version on macOS, the same `add_symbol` pattern from `pysqlite_bridge.py` is needed.
+
+### Bindings: implementation notes
 
 **Symbol resolution must use extern refs, not literal addresses.** [`ll.address_of_symbol(name)`](https://llvmlite.readthedocs.io/en/latest/user-guide/binding/modules.html) at lowering time returns the *current process's* runtime address — useful only as a presence check. Baking that int into LLVM IR breaks `cache=True` because ASLR randomizes the address per process and cached objects are meant to survive across runs and machines. The correct pattern, used by [`_call_lib_func`](numbox/core/bindings/call.py) itself: emit an extern declaration with [`get_or_insert_function(builder.module, func_ll_ty, func_name)`](numbox/core/bindings/call.py#L185) and let llvmlite's JIT linker resolve the name at link time. The [literal-address check](numbox/core/bindings/call.py#L76) earlier in the intrinsic is *only* a presence assertion; `func_p_as_int` is never consumed by codegen. The same extern-ref pattern works for data symbols (`@stdout = external global ptr`) and for accessor functions whose return value is per-thread ([`__errno_location`](https://man7.org/linux/man-pages/man3/errno.3.html), `__error`, `_errno`).
 

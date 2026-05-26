@@ -20,15 +20,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # DEBUG: Homebrew macOS + one Linux
+        # DEBUG: both macOS variants
         include:
           - python-version: "3.14"
             numba-version: "0.65.1"
             arch: "macos-latest"
-            python-source: "homebrew"
+            python-source: "framework"
           - python-version: "3.14"
             numba-version: "0.65.1"
-            arch: "ubuntu-latest"
+            arch: "macos-latest"
+            python-source: "homebrew"
     runs-on: "${{ matrix.arch }}"
 
     steps:
