@@ -196,6 +196,41 @@ jobs:
         " || echo "TEST 6 CRASHED (segfault calling cross-library function)"
         echo ""
 
+        echo "===== TEST 7: load_library_permanently(_sqlite3.__file__) ====="
+        python3 -u -c "
+        import ctypes, os, sys, sqlite3, _sqlite3
+        F = sys.stdout.flush
+        from llvmlite import binding as ll
+        print(f'before load_library_permanently:'); F()
+        for name in ['sqlite3_open', 'sqlite3_changes', 'sqlite3_errmsg']:
+            addr = ll.address_of_symbol(name)
+            print(f'  {name}: {addr}'); F()
+        print(f'calling load_library_permanently({_sqlite3.__file__!r})'); F()
+        ll.load_library_permanently(_sqlite3.__file__)
+        print(f'after load_library_permanently:'); F()
+        for name in ['sqlite3_open', 'sqlite3_changes', 'sqlite3_errmsg']:
+            addr = ll.address_of_symbol(name)
+            s = f'{addr:#x}' if addr else 'None'
+            print(f'  {name}: {s}'); F()
+        print(); F()
+        print('calling sqlite3_changes on Python connection via numbox bindings...'); F()
+        from numbox.utils.pysqlite_bridge import _PysqliteConnection
+        conn = sqlite3.connect(':memory:')
+        conn.execute('CREATE TABLE t(x INT)')
+        conn.execute('INSERT INTO t VALUES (42)')
+        conn.commit()
+        db_ptr = _PysqliteConnection.from_address(id(conn)).db
+        lib = ctypes.CDLL(_sqlite3.__file__, mode=os.RTLD_GLOBAL)
+        lib.sqlite3_changes.restype = ctypes.c_int
+        lib.sqlite3_changes.argtypes = [ctypes.c_void_p]
+        print(f'sqlite3_changes(db_ptr) = {lib.sqlite3_changes(db_ptr)}'); F()
+        lib.sqlite3_errmsg.restype = ctypes.c_char_p
+        lib.sqlite3_errmsg.argtypes = [ctypes.c_void_p]
+        print(f'sqlite3_errmsg(db_ptr) = {lib.sqlite3_errmsg(db_ptr)}'); F()
+        conn.close()
+        " || echo "TEST 7 CRASHED"
+        echo ""
+
         echo "===== INVESTIGATION COMPLETE ====="
     - name: Lint with flake8
       run: flake8 . --count --show-source --statistics
