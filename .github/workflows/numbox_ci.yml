@@ -332,6 +332,24 @@ jobs:
         " || echo "TEST L4 CRASHED"
         echo ""
 
+        echo "===== TEST L5: after importing numbox sqlite bindings ====="
+        python3 -u -c "
+        import sys
+        F = sys.stdout.flush
+        from llvmlite import binding as ll
+        print('before numbox import:'); F()
+        for name in ['sqlite3_open', 'sqlite3_changes']:
+            addr = ll.address_of_symbol(name)
+            print(f'  {name}: {addr}'); F()
+        from numbox.core.bindings import sqlite3_open, sqlite3_changes
+        print('after numbox import:'); F()
+        for name in ['sqlite3_open', 'sqlite3_changes']:
+            addr = ll.address_of_symbol(name)
+            s = f'{addr:#x}' if addr else 'None'
+            print(f'  {name}: {s}'); F()
+        " || echo "TEST L5 CRASHED"
+        echo ""
+
         echo "===== INVESTIGATION COMPLETE (Linux) ====="
     - name: Lint with flake8
       run: flake8 . --count --show-source --statistics
