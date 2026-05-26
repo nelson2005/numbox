@@ -20,12 +20,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # DEBUG: Homebrew-only — reproduce Goykhman's scenario
+        # DEBUG: Homebrew macOS + one Linux
         include:
           - python-version: "3.14"
             numba-version: "0.65.1"
             arch: "macos-latest"
             python-source: "homebrew"
+          - python-version: "3.14"
+            numba-version: "0.65.1"
+            arch: "ubuntu-latest"
     runs-on: "${{ matrix.arch }}"
 
     steps:
@@ -265,7 +268,52 @@ jobs:
         " || echo "TEST 8 CRASHED"
         echo ""
 
-        echo "===== INVESTIGATION COMPLETE ====="
+        echo "===== INVESTIGATION COMPLETE (macOS) ====="
+    - name: Linux sqlite library investigation
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        echo "===== TEST L1: baseline ====="
+        python3 -u -c "
+        import ctypes, ctypes.util, sys, _sqlite3, sqlite3
+        F = sys.stdout.flush
+        print(f'python: {sys.executable}'); F()
+        print(f'_sqlite3.so: {_sqlite3.__file__}'); F()
+        print(f'python sqlite version: {sqlite3.sqlite_version}'); F()
+        path = ctypes.util.find_library('sqlite3')
+        print(f'find_library: {path!r}'); F()
+        " || echo "TEST L1 CRASHED"
+        echo ""
+
+        echo "===== TEST L2: before any load ====="
+        python3 -u -c "
+        import sys
+        F = sys.stdout.flush
+        from llvmlite import binding as ll
+        for name in ['sqlite3_open', 'sqlite3_changes']:
+            addr = ll.address_of_symbol(name)
+            print(f'{name}: {addr}'); F()
+        " || echo "TEST L2 CRASHED"
+        echo ""
+
+        echo "===== TEST L3: after CDLL RTLD_GLOBAL ====="
+        python3 -u -c "
+        import ctypes, ctypes.util, os, sys
+        F = sys.stdout.flush
+        from llvmlite import binding as ll
+        path = ctypes.util.find_library('sqlite3')
+        print(f'loading {path} with RTLD_GLOBAL'); F()
+        lib = ctypes.CDLL(path, mode=os.RTLD_GLOBAL)
+        for name in ['sqlite3_open', 'sqlite3_changes']:
+            f = getattr(lib, name, None)
+            ca = f'{ctypes.cast(f, ctypes.c_void_p).value:#x}' if f else 'None'
+            la_val = ll.address_of_symbol(name)
+            la = f'{la_val:#x}' if la_val else 'None'
+            print(f'{name}: ctypes={ca} llvmlite={la}'); F()
+        " || echo "TEST L3 CRASHED"
+        echo ""
+
+        echo "===== INVESTIGATION COMPLETE (Linux) ====="
     - name: Lint with flake8
       run: flake8 . --count --show-source --statistics
     - name: Test with pytest
