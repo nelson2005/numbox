@@ -72,60 +72,131 @@ jobs:
         pip install flake8 pytest pytest-cov
         pip install "numba==${{ matrix.numba-version }}"
         pip install -e .
-    - name: Reproduce Goykhman scenario (macOS, no pybridge)
+    - name: macOS sqlite library investigation
       if: runner.os == 'macOS'
       shell: bash
       run: |
+        echo "===== TEST 1: baseline — what is where ====="
         python3 -u -c "
-        import ctypes, ctypes.util, os, subprocess, sys, sqlite3
+        import ctypes, ctypes.util, os, subprocess, sys, sqlite3, _sqlite3
         F = sys.stdout.flush
-        import _sqlite3
         print(f'python: {sys.executable}'); F()
-        print(f'_sqlite3: {_sqlite3.__file__}'); F()
+        print(f'_sqlite3.so: {_sqlite3.__file__}'); F()
+        print(f'python sqlite version: {sqlite3.sqlite_version}'); F()
         subprocess.run(['otool', '-L', _sqlite3.__file__]); F()
         path = ctypes.util.find_library('sqlite3')
         print(f'find_library: {path!r}'); F()
-        print(); F()
-        print('--- step 1: load_lib scenario (RTLD_GLOBAL on find_library result) ---'); F()
-        lib = ctypes.CDLL(path, mode=os.RTLD_GLOBAL)
+        " || echo "TEST 1 CRASHED"
+        echo ""
+
+        echo "===== TEST 2: ctypes getattr vs llvmlite address_of_symbol — no RTLD_GLOBAL ====="
+        python3 -u -c "
+        import ctypes, ctypes.util, os, sys
+        F = sys.stdout.flush
         from llvmlite import binding as ll
-        for name in ['sqlite3_open', 'sqlite3_errmsg', 'sqlite3_changes']:
+        for name in ['sqlite3_open', 'sqlite3_changes']:
             addr = ll.address_of_symbol(name)
-            print(f'  address_of_symbol({name}): {addr:#x}' if addr else f'  address_of_symbol({name}): None'); F()
-        print(); F()
-        print('--- step 2: open connection via Python stdlib ---'); F()
+            print(f'before any load — address_of_symbol({name}): {addr}'); F()
+        " || echo "TEST 2 CRASHED"
+        echo ""
+
+        echo "===== TEST 3: load system sqlite (find_library) with RTLD_GLOBAL ====="
+        python3 -u -c "
+        import ctypes, ctypes.util, os, sys
+        F = sys.stdout.flush
+        from llvmlite import binding as ll
+        path = ctypes.util.find_library('sqlite3')
+        print(f'loading {path} with RTLD_GLOBAL'); F()
+        lib = ctypes.CDLL(path, mode=os.RTLD_GLOBAL)
+        print(f'handle: {lib._handle:#x}'); F()
+        lib.sqlite3_libversion.restype = ctypes.c_char_p
+        lib.sqlite3_libversion.argtypes = []
+        print(f'version via ctypes getattr: {lib.sqlite3_libversion()}'); F()
+        for name in ['sqlite3_open', 'sqlite3_changes']:
+            f = getattr(lib, name, None)
+            ctypes_addr = ctypes.cast(f, ctypes.c_void_p).value if f else None
+            ll_addr = ll.address_of_symbol(name)
+            ca = f'{ctypes_addr:#x}' if ctypes_addr else 'None'
+            la = f'{ll_addr:#x}' if ll_addr else 'None'
+            print(f'{name}: ctypes={ca} llvmlite={la}'); F()
+        " || echo "TEST 3 CRASHED"
+        echo ""
+
+        echo "===== TEST 4: load _sqlite3.so with RTLD_GLOBAL ====="
+        python3 -u -c "
+        import ctypes, os, sys, _sqlite3
+        F = sys.stdout.flush
+        from llvmlite import binding as ll
+        print(f'loading {_sqlite3.__file__} with RTLD_GLOBAL'); F()
+        lib = ctypes.CDLL(_sqlite3.__file__, mode=os.RTLD_GLOBAL)
+        print(f'handle: {lib._handle:#x}'); F()
+        for name in ['sqlite3_open', 'sqlite3_changes']:
+            f = getattr(lib, name, None)
+            ctypes_addr = ctypes.cast(f, ctypes.c_void_p).value if f else None
+            ll_addr = ll.address_of_symbol(name)
+            ca = f'{ctypes_addr:#x}' if ctypes_addr else 'None'
+            la = f'{ll_addr:#x}' if ll_addr else 'None'
+            print(f'{name}: ctypes={ca} llvmlite={la}'); F()
+        " || echo "TEST 4 CRASHED"
+        echo ""
+
+        echo "===== TEST 5: load Homebrew sqlite by full path with RTLD_GLOBAL ====="
+        python3 -u -c "
+        import ctypes, os, sys
+        F = sys.stdout.flush
+        from llvmlite import binding as ll
+        brew_path = '/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'
+        print(f'loading {brew_path} with RTLD_GLOBAL'); F()
+        lib = ctypes.CDLL(brew_path, mode=os.RTLD_GLOBAL)
+        print(f'handle: {lib._handle:#x}'); F()
+        lib.sqlite3_libversion.restype = ctypes.c_char_p
+        lib.sqlite3_libversion.argtypes = []
+        print(f'version via ctypes getattr: {lib.sqlite3_libversion()}'); F()
+        for name in ['sqlite3_open', 'sqlite3_changes']:
+            f = getattr(lib, name, None)
+            ctypes_addr = ctypes.cast(f, ctypes.c_void_p).value if f else None
+            ll_addr = ll.address_of_symbol(name)
+            ca = f'{ctypes_addr:#x}' if ctypes_addr else 'None'
+            la = f'{ll_addr:#x}' if ll_addr else 'None'
+            print(f'{name}: ctypes={ca} llvmlite={la}'); F()
+        " || echo "TEST 5 CRASHED"
+        echo ""
+
+        echo "===== TEST 6: call each library's sqlite3_changes on a Python connection ptr ====="
+        python3 -u -c "
+        import ctypes, ctypes.util, os, sys, sqlite3
+        F = sys.stdout.flush
+        import _sqlite3
+        from numbox.utils.pysqlite_bridge import _PysqliteConnection
         conn = sqlite3.connect(':memory:')
         conn.execute('CREATE TABLE t(x INT)')
         conn.execute('INSERT INTO t VALUES (42)')
         conn.commit()
-        print(f'  Python sqlite3.sqlite_version: {sqlite3.sqlite_version}'); F()
-        print(); F()
-        print('--- step 3: extract connection pointer ---'); F()
-        from numbox.utils.pysqlite_bridge import _PysqliteConnection
         db_ptr = _PysqliteConnection.from_address(id(conn)).db
-        print(f'  db_ptr: {db_ptr:#x}'); F()
+        print(f'db_ptr: {db_ptr:#x}'); F()
+        print(f'python sqlite version: {sqlite3.sqlite_version}'); F()
         print(); F()
-        print('--- step 4: call system sqlite functions on Python connection ptr ---'); F()
-        print('  calling sqlite3_changes...'); F()
-        lib.sqlite3_changes.restype = ctypes.c_int
-        lib.sqlite3_changes.argtypes = [ctypes.c_void_p]
-        result = lib.sqlite3_changes(db_ptr)
-        print(f'  sqlite3_changes(db_ptr) = {result}'); F()
-        print('  calling sqlite3_errmsg...'); F()
-        lib.sqlite3_errmsg.restype = ctypes.c_char_p
-        lib.sqlite3_errmsg.argtypes = [ctypes.c_void_p]
-        msg = lib.sqlite3_errmsg(db_ptr)
-        print(f'  sqlite3_errmsg(db_ptr) = {msg}'); F()
-        print(); F()
-        print('--- step 5: version comparison ---'); F()
-        lib.sqlite3_libversion.restype = ctypes.c_char_p
-        lib.sqlite3_libversion.argtypes = []
-        sys_ver = lib.sqlite3_libversion()
-        print(f'  system (find_library): {sys_ver}'); F()
-        print(f'  Python (stdlib):       {sqlite3.sqlite_version}'); F()
-        print(f'  match: {sys_ver.decode() == sqlite3.sqlite_version}'); F()
+        brew_path = '/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'
+        sys_path = ctypes.util.find_library('sqlite3')
+        for label, path in [('homebrew', brew_path), ('system', sys_path), ('_sqlite3.so', _sqlite3.__file__)]:
+            print(f'--- {label}: {path} ---'); F()
+            try:
+                lib = ctypes.CDLL(path, mode=os.RTLD_GLOBAL)
+                lib.sqlite3_libversion.restype = ctypes.c_char_p
+                lib.sqlite3_libversion.argtypes = []
+                print(f'  version: {lib.sqlite3_libversion()}'); F()
+                lib.sqlite3_changes.restype = ctypes.c_int
+                lib.sqlite3_changes.argtypes = [ctypes.c_void_p]
+                print(f'  calling sqlite3_changes(db_ptr)...'); F()
+                result = lib.sqlite3_changes(db_ptr)
+                print(f'  result: {result}'); F()
+            except Exception as e:
+                print(f'  exception: {e}'); F()
         conn.close()
-        " || true
+        " || echo "TEST 6 CRASHED (segfault calling cross-library function)"
+        echo ""
+
+        echo "===== INVESTIGATION COMPLETE ====="
     - name: Lint with flake8
       run: flake8 . --count --show-source --statistics
     - name: Test with pytest
