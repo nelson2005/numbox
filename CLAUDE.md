@@ -157,6 +157,8 @@ Cross-project preferences live in the user's MEMORY.md. Only numbox-specific wor
 
   Design spec at [docs/plans/sqlite-buildout/2026-05-23-design.md](docs/plans/sqlite-buildout/2026-05-23-design.md).
 
+  macOS symbol resolution writeup with CI evidence: [gist](https://gist.github.com/nelson2005/203d078fb0e6cdd3f2ff16a7cce7a77d).
+
 ## Follow-ups
 
 - **`Vector` vs `List` benchmark in [`stress_work_runner`](test/stress_work_runner.py).** Goykhman flagged this as an interesting comparison in the [#9 review thread](https://github.com/Goykhman/numbox/pull/9#discussion_r3139779580): [`Work`](numbox/core/work/work.py#L52)/[`Node`](numbox/core/work/node.py#L62) currently use numba's reflected `List` for uniformly-cast inputs, and `Vector`'s contiguous-storage + geometric-growth shape may outperform on push-heavy workloads at large N. Prototype by swapping the `List` site, then compare timings from `stress_work_runner`.
