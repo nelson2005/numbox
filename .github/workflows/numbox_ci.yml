@@ -350,6 +350,37 @@ jobs:
         " || echo "TEST L5 CRASHED"
         echo ""
 
+        echo "===== TEST L6: narrow down when address_of_symbol starts working ====="
+        python3 -u -c "
+        import sys
+        F = sys.stdout.flush
+        from llvmlite import binding as ll
+        print(f'1. bare llvmlite: {ll.address_of_symbol(\"sqlite3_open\")}'); F()
+        import numba
+        print(f'2. after import numba: {ll.address_of_symbol(\"sqlite3_open\")}'); F()
+        import ctypes, ctypes.util, os
+        path = ctypes.util.find_library('sqlite3')
+        lib = ctypes.CDLL(path, mode=os.RTLD_GLOBAL)
+        print(f'3. after CDLL RTLD_GLOBAL: {ll.address_of_symbol(\"sqlite3_open\")}'); F()
+        from numba import njit
+        print(f'4. after import njit: {ll.address_of_symbol(\"sqlite3_open\")}'); F()
+        @njit
+        def dummy():
+            return 0
+        dummy()
+        print(f'5. after first njit compile+run: {ll.address_of_symbol(\"sqlite3_open\")}'); F()
+        from numbox.core.bindings.utils import load_lib
+        print(f'6. after import load_lib: {ll.address_of_symbol(\"sqlite3_open\")}'); F()
+        load_lib('sqlite3')
+        print(f'7. after load_lib(sqlite3): {ll.address_of_symbol(\"sqlite3_open\")}'); F()
+        from numbox.core.bindings.call import _call_lib_func
+        print(f'8. after import _call_lib_func: {ll.address_of_symbol(\"sqlite3_open\")}'); F()
+        from numbox.core.bindings import sqlite3_open
+        addr = ll.address_of_symbol('sqlite3_open')
+        print(f'9. after import sqlite3_open: {addr:#x}' if addr else '9. after import sqlite3_open: None'); F()
+        " || echo "TEST L6 CRASHED"
+        echo ""
+
         echo "===== INVESTIGATION COMPLETE (Linux) ====="
     - name: Lint with flake8
       run: flake8 . --count --show-source --statistics
