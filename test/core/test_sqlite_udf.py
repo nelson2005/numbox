@@ -121,6 +121,8 @@ _capture_cb = cfunc(types.void(types.intp, types.int32, types.intp))(_capture_im
 @njit
 def _sum_step_impl(ctx, argc, argv_pp):
     agg_ptr = sqlite3_aggregate_context(ctx, 8)
+    if agg_ptr == 0:  # NULL on OOM; carray on a NULL pointer would segfault
+        return
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
     val = sqlite3_value_int64(args[0])
     slot = carray(_cast_int_to_void_p(agg_ptr), (1,), dtype=np.intp)
@@ -161,6 +163,8 @@ _sum_final_cb = cfunc(types.void(types.intp))(_sum_final_impl)
 @njit
 def _wsum_step_impl(ctx, argc, argv_pp):
     agg_ptr = sqlite3_aggregate_context(ctx, 8)
+    if agg_ptr == 0:  # NULL on OOM; carray on a NULL pointer would segfault
+        return
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
     val = sqlite3_value_int64(args[0])
     slot = carray(_cast_int_to_void_p(agg_ptr), (1,), dtype=np.intp)
@@ -179,6 +183,8 @@ _wsum_step_cb = cfunc(
 @njit
 def _wsum_inverse_impl(ctx, argc, argv_pp):
     agg_ptr = sqlite3_aggregate_context(ctx, 8)
+    if agg_ptr == 0:  # NULL on OOM; carray on a NULL pointer would segfault
+        return
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
     val = sqlite3_value_int64(args[0])
     slot = carray(_cast_int_to_void_p(agg_ptr), (1,), dtype=np.intp)
