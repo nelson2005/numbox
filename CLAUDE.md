@@ -46,7 +46,7 @@ LLVM's JIT linker resolves extern symbols via `llvm::sys::DynamicLibrary::Search
 
 On **Linux**, `RTLD_GLOBAL` via `ctypes.CDLL` is sufficient: there is typically one copy of any given library, so `dlsym(RTLD_DEFAULT)` finds the right one after JIT init.
 
-On **macOS**, the system sqlite is in the [dyld shared cache](https://developer.apple.com/documentation/kernel/os_dyld_shared_cache_header), mapped into every process at launch — before any user `dlopen`. `dlsym(RTLD_DEFAULT, "sqlite3_open")` returns the shared-cache address (system sqlite), not the Homebrew or framework-bundled version that Python's `_sqlite3.so` actually uses. `RTLD_GLOBAL` and `load_library_permanently` cannot change this — the shared cache is always first in load order.
+On **macOS**, the system sqlite is in the [dyld shared cache](https://keith.github.io/xcode-man-pages/dyld.1.html), mapped into every process at launch — before any user `dlopen`. `dlsym(RTLD_DEFAULT, "sqlite3_open")` returns the shared-cache address (system sqlite), not the Homebrew or framework-bundled version that Python's `_sqlite3.so` actually uses. `RTLD_GLOBAL` and `load_library_permanently` cannot change this — the shared cache is always first in load order.
 
 The fix: [`numbox/utils/pysqlite_bridge.py`](numbox/utils/pysqlite_bridge.py) reads the correct addresses from `_sqlite3.so` via `ctypes.CDLL(handle).symbol` (which uses `dlsym(handle, name)` — searches the library + its dependencies, respecting two-level namespace) and registers them with `add_symbol`. LLVM checks `ExplicitSymbols` before any `dlsym` fallback, so the correct addresses win.
 
