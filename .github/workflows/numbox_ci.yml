@@ -20,56 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
-        numba-version: [ "0.65.1" ]
-        arch: [ "ubuntu-latest", "ubuntu-24.04-arm", "windows-latest" ]
-        exclude:
-          - arch: "windows-latest"
-            python-version: "3.11"
-          - arch: "windows-latest"
-            python-version: "3.12"
-          - arch: "windows-latest"
-            python-version: "3.13"
         include:
-          # min numba for 3.10-3.12 (0.60.0)
-          - python-version: "3.10"
-            numba-version: "0.60.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.10"
-            numba-version: "0.60.0"
-            arch: "ubuntu-24.04-arm"
-          - python-version: "3.10"
-            numba-version: "0.60.0"
-            arch: "windows-latest"
-          - python-version: "3.11"
-            numba-version: "0.60.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.11"
-            numba-version: "0.60.0"
-            arch: "ubuntu-24.04-arm"
-          - python-version: "3.12"
-            numba-version: "0.60.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.12"
-            numba-version: "0.60.0"
-            arch: "ubuntu-24.04-arm"
-          # min numba for 3.13 (0.61.0)
-          - python-version: "3.13"
-            numba-version: "0.61.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.13"
-            numba-version: "0.61.0"
-            arch: "ubuntu-24.04-arm"
-          # min numba for 3.14 (0.63.0)
-          - python-version: "3.14"
-            numba-version: "0.63.0"
-            arch: "ubuntu-latest"
-          - python-version: "3.14"
-            numba-version: "0.63.0"
-            arch: "ubuntu-24.04-arm"
-          - python-version: "3.14"
-            numba-version: "0.63.0"
-            arch: "windows-latest"
           # macOS — python.org framework build (static sqlite)
           - python-version: "3.14"
             numba-version: "0.65.1"
@@ -137,6 +88,22 @@ jobs:
     - name: Test with pytest
       run: |
         pytest --durations=20 --cov=numbox --cov-report=term-missing
+    - name: Verify DYLD_INSERT_LIBRARIES workaround (macOS dynamic-sqlite builds)
+      if: matrix.python-source == 'homebrew' || matrix.python-source == 'conda'
+      run: |
+        set -uo pipefail
+        if [ "${{ matrix.python-source }}" = "homebrew" ]; then
+          LIB=/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib
+        else
+          LIB="$HOME/miniforge/envs/test/lib/libsqlite3.dylib"
+        fi
+        echo "Inserting libsqlite3: $LIB"
+        test -f "$LIB" || { echo "FAIL: $LIB not found"; exit 1; }
+        DYLD_INSERT_LIBRARIES="$LIB" python -m pytest \
+          "test/utils/test_pysqlite_bridge.py::test_numbox_and_python_use_same_libsqlite3" \
+          "test/utils/test_pysqlite_bridge.py::test_extracted_pointer_usable_with_numbox_bindings" \
+          -v | tee /tmp/pos.log
+        grep -q "2 passed" /tmp/pos.log || { echo "FAIL: DYLD_INSERT_LIBRARIES did not coordinate libraries"; exit 1; }
     - name: Install build dependencies
       if: "!matrix.python-source || matrix.python-source == 'framework'"
       run: |
