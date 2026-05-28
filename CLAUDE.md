@@ -155,8 +155,6 @@ Cross-project preferences live in the user's MEMORY.md. Only numbox-specific wor
   sqlite3_exec(db_p, sql_p, _row_cb.address, ctx_p, 0)
   ```
 
-  Design spec at [docs/plans/sqlite-buildout/2026-05-23-design.md](docs/plans/sqlite-buildout/2026-05-23-design.md).
-
   macOS symbol resolution writeup with CI evidence: [gist](https://gist.github.com/nelson2005/203d078fb0e6cdd3f2ff16a7cce7a77d).
 
 ## Follow-ups
