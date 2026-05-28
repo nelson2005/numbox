@@ -11,11 +11,17 @@ import numpy as np
 from numba import carray, cfunc, njit, types
 from numba.core import types as nb_types
 
-from numbox.core.bindings._sqlite_conn import sqlite3_close, sqlite3_open
+from numbox.core.bindings._sqlite_conn import (
+    sqlite3_close,
+    sqlite3_libversion_number,
+    sqlite3_open,
+)
 from numbox.core.bindings._sqlite_constants import (
     SQLITE_NOMEM,
     SQLITE_NULL,
     SQLITE_OK,
+    SQLITE_RESULT_SUBTYPE,
+    SQLITE_SUBTYPE,
     SQLITE_TOOBIG,
     SQLITE_TRANSIENT,
     SQLITE_UTF8,
@@ -69,10 +75,10 @@ def _open_memory():
     return db_p.value
 
 
-def _register(db_p, name, narg, cb_address, ud_ptr):
+def _register(db_p, name, narg, cb_address, ud_ptr, flags=SQLITE_UTF8):
     with c_string(name) as name_p:
         rc = sqlite3_create_function_v2(
-            db_p, name_p, narg, SQLITE_UTF8, ud_ptr,
+            db_p, name_p, narg, flags, ud_ptr,
             cb_address, 0, 0, 0)
     assert rc == SQLITE_OK
 
@@ -541,8 +547,15 @@ def test_result_error_toobig():
 def test_result_subtype():
     db_p = _open_memory()
     out = np.zeros(1, dtype=np.int64)
-    _register(db_p, "rsub", 0, _result_subtype_cb.address, 0)
-    _register(db_p, "cap_sub", 1, _cap_subtype_cb.address, out.ctypes.data)
+    # sqlite >= 3.45 built with -DSQLITE_STRICT_SUBTYPE=1 (e.g. conda-forge)
+    # errors unless the producer declares SQLITE_RESULT_SUBTYPE and the consumer
+    # declares SQLITE_SUBTYPE; both flags are ignored on older sqlite.
+    ver = sqlite3_libversion_number()
+    rsub_flags = SQLITE_UTF8 | (SQLITE_RESULT_SUBTYPE if ver >= 3045000 else 0)
+    cap_flags = SQLITE_UTF8 | (SQLITE_SUBTYPE if ver >= 3030000 else 0)
+    _register(db_p, "rsub", 0, _result_subtype_cb.address, 0, flags=rsub_flags)
+    _register(db_p, "cap_sub", 1, _cap_subtype_cb.address, out.ctypes.data,
+              flags=cap_flags)
     with c_string("SELECT cap_sub(rsub())") as sql_p:
         rc = sqlite3_exec(db_p, sql_p, 0, 0, 0)
     assert rc == SQLITE_OK
