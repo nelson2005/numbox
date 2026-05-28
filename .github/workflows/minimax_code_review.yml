@@ -11,10 +11,11 @@ jobs:
   review:
     name: MiniMax Code Review
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - name: Code Review
-        uses: tarmojussila/minimax-code-review@v0.4.0
+        uses: tarmojussila/minimax-code-review@798f7f28a065ea877690b0092ac11f3e61c79609 # v0.4.0
         with:
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}

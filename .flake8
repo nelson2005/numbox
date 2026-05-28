@@ -1,0 +1,5 @@
+[flake8]
+max-line-length = 127
+exclude = test/core/random_image_ref.py,venv,venv313,build,dist,.git
+per-file-ignores =
+    test/core/test_bindings.py:F403,F405

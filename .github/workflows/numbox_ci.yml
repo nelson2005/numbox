@@ -70,18 +70,44 @@ jobs:
           - python-version: "3.14"
             numba-version: "0.63.0"
             arch: "windows-latest"
-          # macOS
+          # macOS — python.org framework build (static sqlite)
           - python-version: "3.14"
             numba-version: "0.65.1"
             arch: "macos-latest"
+            python-source: "framework"
+          # macOS — Homebrew build (dynamic sqlite)
+          - python-version: "3.14"
+            numba-version: "0.65.1"
+            arch: "macos-latest"
+            python-source: "homebrew"
+          # macOS — conda-forge build (shared sqlite at $CONDA_PREFIX/lib/)
+          - python-version: "3.12"
+            numba-version: "0.65.1"
+            arch: "macos-latest"
+            python-source: "conda"
     runs-on: "${{ matrix.arch }}"
 
     steps:
     - uses: actions/checkout@v6
-    - name: Set up Python
+    - name: Set up Python (framework)
+      if: matrix.python-source != 'homebrew' && matrix.python-source != 'conda'
       uses: actions/setup-python@v6
       with:
         python-version: "${{ matrix.python-version }}"
+    - name: Set up Python (conda-forge)
+      if: matrix.python-source == 'conda'
+      run: |
+        curl -fsSL https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh -o miniforge.sh
+        bash miniforge.sh -b -p $HOME/miniforge
+        $HOME/miniforge/bin/conda create -n test python=${{ matrix.python-version }} -y
+        echo "$HOME/miniforge/envs/test/bin" >> $GITHUB_PATH
+    - name: Set up Python (Homebrew)
+      if: matrix.python-source == 'homebrew'
+      run: |
+        brew install python@${{ matrix.python-version }}
+        brew link --overwrite python@${{ matrix.python-version }}
+        echo "/opt/homebrew/opt/python@${{ matrix.python-version }}/libexec/bin" >> $GITHUB_PATH
+        echo "/opt/homebrew/opt/python@${{ matrix.python-version }}/bin" >> $GITHUB_PATH
     - name: Determine version
       shell: bash
       id: version
@@ -95,6 +121,11 @@ jobs:
     - name: Write version to __init__.py
       shell: bash
       run: echo "__version__ = '${{ env.VERSION }}'" > numbox/__init__.py
+    - name: Create venv (Homebrew)
+      if: matrix.python-source == 'homebrew'
+      run: |
+        python3 -m venv venv
+        echo "$PWD/venv/bin" >> $GITHUB_PATH
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -102,18 +133,32 @@ jobs:
         pip install "numba==${{ matrix.numba-version }}"
         pip install -e .
     - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors, undefined names, or unused imports
-        flake8 . --count --exclude=test/core/random_image_ref.py --select=E9,F63,F7,F82,F401 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      run: flake8 . --count --show-source --statistics
     - name: Test with pytest
       run: |
         pytest --durations=20 --cov=numbox --cov-report=term-missing
+    - name: Verify DYLD_INSERT_LIBRARIES workaround (macOS dynamic-sqlite builds)
+      if: matrix.python-source == 'homebrew' || matrix.python-source == 'conda'
+      run: |
+        set -uo pipefail
+        if [ "${{ matrix.python-source }}" = "homebrew" ]; then
+          LIB=/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib
+        else
+          LIB="$HOME/miniforge/envs/test/lib/libsqlite3.dylib"
+        fi
+        echo "Inserting libsqlite3: $LIB"
+        test -f "$LIB" || { echo "FAIL: $LIB not found"; exit 1; }
+        DYLD_INSERT_LIBRARIES="$LIB" python -m pytest \
+          "test/utils/test_pysqlite_bridge.py::test_numbox_and_python_use_same_libsqlite3" \
+          "test/utils/test_pysqlite_bridge.py::test_extracted_pointer_usable_with_numbox_bindings" \
+          -v | tee /tmp/pos.log
+        grep -q "2 passed" /tmp/pos.log || { echo "FAIL: DYLD_INSERT_LIBRARIES did not coordinate libraries"; exit 1; }
     - name: Install build dependencies
+      if: "!matrix.python-source || matrix.python-source == 'framework'"
       run: |
         pip install build==1.2.2.post1 wheel==0.45.0
     - name: Build wheel
+      if: "!matrix.python-source || matrix.python-source == 'framework'"
       run: |
         git clean -Xfd
         python -m build --wheel
