@@ -417,6 +417,37 @@ def test_window_running_sum():
     sqlite3_close(db_p)
 
 
+def test_udaf_no_meminfo_leak():
+    """Regression guard for the structref-state lifecycle.
+
+    The aggregate/window state is kept alive across callbacks by
+    ``export_meminfo``'s +1 incref and freed by a single ``release_meminfo``
+    in xFinal. If export stopped increffing, the state would be freed early
+    (use-after-free); if release were dropped, it would leak. Either shows up
+    as an imbalance between meminfo allocations and frees.
+    """
+    from numba.core.runtime import nrt
+    _nrt = nrt._nrt
+    if not hasattr(_nrt, "memsys_enable_stats"):
+        import pytest
+        pytest.skip("NRT allocation stats unavailable")
+    _nrt.memsys_enable_stats()
+    # warm up JIT / one-time allocations before measuring steady state
+    test_udaf_sum_structref()
+    test_window_running_sum()
+    test_udaf_empty_group()
+    before = nrt.rtsys.get_allocation_stats()
+    for _ in range(10):
+        test_udaf_sum_structref()
+        test_window_running_sum()
+        test_udaf_empty_group()
+    after = nrt.rtsys.get_allocation_stats()
+    allocated = after.mi_alloc - before.mi_alloc
+    freed = after.mi_free - before.mi_free
+    assert allocated == freed, (
+        f"meminfo imbalance: {allocated} allocated, {freed} freed")
+
+
 # ---------------------------------------------------------------------------
 # Context helper tests
 # ---------------------------------------------------------------------------
