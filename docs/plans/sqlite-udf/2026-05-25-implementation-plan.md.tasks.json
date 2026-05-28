@@ -5,7 +5,7 @@
       "id": 0,
       "nativeId": "7",
       "subject": "Task 0: Add signatures + constants",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** Add 34 new entries to `signatures_sqlite` and 4 new constants to `_sqlite_constants.py`.\n\n**Files:**\n- Modify: `numbox/core/bindings/signatures.py`\n- Modify: `numbox/core/bindings/_sqlite_constants.py`\n\n**Acceptance Criteria:**\n- [ ] 34 new signature entries with correct numba types\n- [ ] 4 new constants exported\n- [ ] flake8 clean\n\n**Verify:** `/home/erik/projects/numbox/venv/bin/python -c \"from numbox.core.bindings.signatures import signatures; print(len([k for k in signatures if k.startswith('sqlite3_')]))\"` → `94`\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_sqlite_constants.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"from numbox.core.bindings.signatures import signatures; print(len([k for k in signatures if k.startswith('sqlite3_')]))\\\"\", \"acceptanceCriteria\": [\"34 new signature entries\", \"4 new constants exported\", \"flake8 clean\"], \"model\": \"opus\"}\n```"
     },
@@ -13,7 +13,7 @@
       "id": 1,
       "nativeId": "8",
       "subject": "Task 1: Value accessor bindings + tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "model": "opus",
       "description": "**Goal:** Create `_sqlite_value.py` with 13 value accessor wrappers and `test_sqlite_value.py`.\n\n**Files:**\n- Create: `numbox/core/bindings/_sqlite_value.py`\n- Create: `test/core/test_sqlite_value.py`\n\n**Acceptance Criteria:**\n- [ ] 13 value accessors wrapped with `@proxy` and listed in `__all__`\n- [ ] Test file created\n- [ ] flake8 clean\n\n**Verify:** `/home/erik/projects/numbox/venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_value.py`\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_value.py\", \"test/core/test_sqlite_value.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_value.py\", \"acceptanceCriteria\": [\"13 value accessors wrapped\", \"test file created\", \"flake8 clean\"], \"model\": \"opus\"}\n```"
@@ -22,7 +22,7 @@
       "id": 2,
       "nativeId": "9",
       "subject": "Task 2: Result setter bindings",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "model": "opus",
       "description": "**Goal:** Create `_sqlite_result.py` with 16 result setter wrappers.\n\n**Files:**\n- Create: `numbox/core/bindings/_sqlite_result.py`\n\n**Acceptance Criteria:**\n- [ ] 16 result setters wrapped with `@proxy` and listed in `__all__`\n- [ ] flake8 clean\n\n**Verify:** `/home/erik/projects/numbox/venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_result.py`\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_result.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/flake8 --max-line-length=127 numbox/core/bindings/_sqlite_result.py\", \"acceptanceCriteria\": [\"16 result setters wrapped\", \"flake8 clean\"], \"model\": \"opus\"}\n```"
@@ -31,7 +31,7 @@
       "id": 3,
       "nativeId": "10",
       "subject": "Task 3: UDF registration + context bindings, __init__.py rewire, and full test run",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2],
       "model": "opus",
       "description": "**Goal:** Create `_sqlite_udf.py` with 5 registration/context wrappers, rewire `__init__.py`, create `test_sqlite_result.py` and `test_sqlite_udf.py`, and run the full test suite.\n\n**Files:**\n- Create: `numbox/core/bindings/_sqlite_udf.py`\n- Modify: `numbox/core/bindings/__init__.py`\n- Create: `test/core/test_sqlite_result.py`\n- Create: `test/core/test_sqlite_udf.py`\n\n**Acceptance Criteria:**\n- [ ] 5 UDF wrappers present with `@proxy` and `__all__`\n- [ ] `__init__.py` rewired\n- [ ] Result tests pass\n- [ ] UDF integration tests pass including structref UDAF and window\n- [ ] Full suite no regressions\n- [ ] flake8 clean\n\n**Verify:** `/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_value.py test/core/test_sqlite_result.py test/core/test_sqlite_udf.py -v --durations=20`\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_udf.py\", \"numbox/core/bindings/__init__.py\", \"test/core/test_sqlite_result.py\", \"test/core/test_sqlite_udf.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_value.py test/core/test_sqlite_result.py test/core/test_sqlite_udf.py -v --durations=20\", \"acceptanceCriteria\": [\"5 UDF wrappers present\", \"__init__.py rewired\", \"result tests pass\", \"UDF integration tests pass including structref UDAF and window\", \"full suite no regressions\"], \"model\": \"opus\"}\n```"
@@ -40,11 +40,11 @@
       "id": 4,
       "nativeId": "11",
       "subject": "Task 4: Documentation + CLAUDE.md update",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "model": "opus",
       "description": "**Goal:** Update `CLAUDE.md` with the phase 2 project status entry and key paths.\n\n**Files:**\n- Modify: `CLAUDE.md`\n\n**Acceptance Criteria:**\n- [ ] New Project Status entry describing 34 new bindings\n- [ ] 3 new key paths added\n- [ ] New follow-ups listed\n\n**Verify:** `grep -c 'sqlite_udf\\|sqlite_value\\|sqlite_result' /home/erik/projects/numbox/CLAUDE.md`\n\n```json:metadata\n{\"files\": [\"CLAUDE.md\"], \"verifyCommand\": \"grep -c 'sqlite_udf|sqlite_value|sqlite_result' /home/erik/projects/numbox/CLAUDE.md\", \"acceptanceCriteria\": [\"Project Status entry present\", \"3 key paths added\", \"follow-ups listed\"], \"model\": \"opus\"}\n```"
     }
   ],
-  "lastUpdated": "2026-05-25T06:30:00Z"
+  "lastUpdated": "2026-05-28T19:57:07Z"
 }
