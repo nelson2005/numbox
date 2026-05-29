@@ -1,7 +1,7 @@
 # SQLite UDAF Registration Helper — Design
 
 **Date:** 2026-05-29
-**Status:** Design approved; pending spec review → implementation plan
+**Status:** Design approved; mechanism spike resolved (B selected, 2026-05-29); pending spec review → implementation plan
 **Builds on:** Phase 2 SQLite UDF/UDAF/window bindings (currently on `feat/sqlite-udf`; upstream PR #17 BLOCKED)
 
 ## Goal
@@ -33,7 +33,7 @@ state logic (`init` / `step` / `finalize`, plus `inverse` / `value` for windows)
 | Abstraction level | **Thin (lifecycle-only)** — user does their own value reads / result writes |
 | Scope | **Aggregate + window** (window's release-in-`xFinal`-only rule is the highest-value case) |
 | Entry-point shape | **Two functions** returning a **keep-alive handle** |
-| Wrapper mechanism | **C-primary** (shared cached lifecycle + thin trampolines); **B fallback** (anchored codegen), gated by a spike |
+| Wrapper mechanism | **B — content-addressed anchored codegen** (selected by spike 2026-05-29). C (shared lifecycle + dispatcher args) rejected: no stable cross-process cache |
 | Caching | **Yes** — consistent with every phase-1/phase-2 binding |
 | Empty groups | Helper finalizes a fresh `init()` state; user's `finalize`/`value` always receives a valid state |
 
@@ -126,84 +126,64 @@ regression guards.
 
 ## Mechanism
 
-### C-primary: shared cached lifecycle + thin trampolines
+**Selected: B — content-addressed anchored codegen.** Resolved by the spike on
+2026-05-29 (results below); C (a shared lifecycle parameterized by dispatcher args)
+was rejected because its overloads have no stable cross-process cache key.
 
-Four **static** `@njit(cache=True)` functions live in the helper module — the
-lifecycle, parameterized by `state_type` (a `TypeRef` argument, exactly as
-`borrow_structref` already takes it) and the user functions (passed as values):
+For each registration the helper generates the callback source as text per UDAF,
+**baking `state_type` and the user's `init`/`step`/`finalize` (+ `inverse`/`value` for
+windows) as constants** — so the user-fn calls **inline** (full per-row speed, finding
+2 below) — injects those into the exec namespace, and writes the source to a
+**content-addressed anchor file** via `numbox/utils/preprocessing.py`'s
+`_anchor_path`/`_materialize_anchor` (new subdir `numbox-sqlite-udaf`). Each distinct
+UDAF therefore gets a stable, bounded cross-process cache key. The generated callbacks
+are `cfunc(cache=True)`. The lifecycle bodies are exactly the four bullets under "What
+the helper owns".
 
-```python
-_agg_step(state_type, init, step,      ctx, argc, argv_pp)
-_agg_inverse(state_type, inverse,      ctx, argc, argv_pp)
-_agg_value(state_type, init, value,    ctx)
-_agg_final(state_type, init, finalize, ctx)
-```
-
-Because `state_type`/`init`/`step` are **arguments**, numba specializes each UDAF
-into a **distinct overload** (distinct `TypeRef`, distinct function types) under the
-module's own filename, so numba's **normal per-overload cache** handles it — no
-content-addressing, no anchor files. Invalidation is **automatic**: the user
-functions are genuine compile dependencies, so editing `step` restamps and recompiles.
-The expensive compilation (lifecycle + the user's `@njit(cache=True)` logic) is cached
-across cold starts.
-
-Per registration, the helper builds the trivial `cfunc`s SQLite needs — each binds
-this UDAF's `state_type` + user fns and forwards into the cached lifecycle:
-
-```python
-_step_cb = cfunc(types.void(types.intp, types.int32, types.intp))(
-    lambda ctx, argc, argv: _agg_step(state_type, init, step, ctx, argc, argv))
-```
-
-These trampolines share an identical C signature across UDAFs, so they cannot be
-cache-shared — they are **`cache=False`**. That is acceptable: each body is a single
-forwarding call and the callee loads from cache, so per-process recompile cost is
-negligible. Registration then calls `sqlite3_create_function_v2` (aggregate) or
+Registration then calls `sqlite3_create_function_v2` (aggregate) or
 `sqlite3_create_window_function` (window) with
 `flags = SQLITE_UTF8 | (SQLITE_DETERMINISTIC if deterministic)`, `p_app=0`,
 `xDestroy=0`; the handle keeps the `cfunc`s and user-fn references alive.
 
-### Why this resolves the caching hazard
+### Correctness requirement: invalidation (validated as necessary by the spike)
 
-Dynamically generated numba callbacks collide in the cache because numba keys an
-overload on `(filename, firstlineno, bytecode, signature)`, and **all four callbacks
-share the identical C signature** `void(intp, int32, intp)` (or `void(intp)`). A naive
-closure makes it worse — the wrapper's *code object is byte-identical* across every
-UDAF, only the captured freevars differ — so numba would serve the wrong cached
-machine code. C **dissolves** this by lifting the per-UDAF variation into
-signature-differentiating arguments. (The alternative, B, *works around* the symptom
-with content-addressed filenames.)
+The content-address digest **must fold in a hash of the user functions' bytecode plus
+the `state_type` repr** — two reasons: (1) two byte-identical generated blocks for
+different UDAFs must not collide; (2) the user functions are **inlined** into the
+wrapper but live in the *user's* module, not the anchor file, so without the dep-hash,
+editing `step` would not change the anchor file and numba would serve a stale wrapper
+that inlined the old `step`. (`make_structref` needs no such hash because its generated
+code is self-contained; the UDAF wrapper inlines external deps, so it does.)
 
-### B fallback: anchored codegen
+### Rejected alternative: C — shared lifecycle + dispatcher args
 
-If the spike rules C out, fall back to generating each callback's source as text per
-UDAF, injecting `state_type`/user fns into the exec namespace, writing to a
-content-addressed anchor file via `numbox/utils/preprocessing.py`'s
-`_anchor_path`/`_materialize_anchor` (new subdir `numbox-sqlite-udaf`), and
-`cfunc(cache=True)`. **Correctness requirement:** the digest must fold in a hash of
-the user functions' bytecode + the `state_type` repr, both so two byte-identical
-generated blocks don't collide and so editing `step` invalidates — numba will not see
-the user fns as dependencies of generated text on its own.
+A single shared `@njit(cache=True)` lifecycle parameterized by `state_type` (a
+`TypeRef` arg) and the user fns (dispatcher args), with thin per-UDAF `cfunc`
+trampolines forwarding into it. Far less machinery, and the spike showed it composes
+and inlines at full speed — but it has **no stable cross-process cache key**: the
+lifecycle recompiles on every cold start and the on-disk cache grows unbounded.
+Caching is a core repo convention and an explicit goal here, so C's simplicity does
+not justify losing it.
 
-The **public API and user contract are identical** under C or B; the choice is purely
-internal.
+### Spike results (resolved 2026-05-29, numba 0.65.1)
 
-### Spike (first implementation task) and decision rule
+Built the C skeleton (sum aggregate, real sqlite) and measured:
 
-C rests on numba behavior to be **verified, not assumed**. Build the C skeleton for a
-`sum` aggregate and measure:
+1. **Composition — PASS.** Two distinct UDAFs sharing one `state_type` register and
+   compute correctly (15, 30); the shared lifecycle specializes per function identity
+   (2 overloads, no cross-UDAF collision).
+2. **Per-row cost — baked constants inline at full speed.** Tight-loop ns/iter:
+   baked-global **0.829**; dispatcher-arg **0.829** (1.00×, fully inlined);
+   FunctionType (`.as_func`) **1.845** (2.23×, indirect). ⇒ never use `.as_func` for
+   the callbacks; B's baked constants inline exactly like a global.
+3. **Cross-process caching — the decider** (`NUMBA_DEBUG_CACHE=1`, cold then warm
+   process): a dispatcher-arg lifecycle **misses** on the warm run and appends a new
+   `.nbc` (unstable key, unbounded growth); a baked-global lifecycle (the shape B
+   generates) **hits** the warm run and reuses its single `.nbc`.
 
-1. **Composition + caching** — a `cfunc` trampoline calling a cached `@njit` lifecycle
-   with `TypeRef` + function-value args composes, runs correctly, and the lifecycle
-   *loads from cache* on a second process.
-2. **Per-row cost** — whether the user-fn call inlines or is indirect. Passing the user
-   fns as **njit dispatchers** (each its own compile-time `Dispatcher` type) may yield
-   both clean caching *and* an inlinable direct call; passing them as `.as_func`
-   function-values is definitely indirect. Measure the per-row delta on a realistic
-   aggregate.
-
-**Decision rule:** ship **C** unless the spike shows it cannot compose, or the
-indirect-call cost is material on a realistic aggregate — in which case fall back to **B**.
+**Decision: implement B** — it gets both inlining (finding 2) and stable, bounded
+cross-process caching (finding 3), at the cost of the anchor machinery numbox already
+ships for `make_structref`.
 
 ## Placement
 
@@ -223,9 +203,8 @@ indirect-call cost is material on a realistic aggregate — in which case fall b
   `sqlite3_errmsg(db)` decoded immediately (phase-2 errmsg-lifetime gotcha).
 - **Input validation (raised at registration, clear messages):** `state_type` is a
   structref instance type; `register_window` received all five callbacks; the user
-  functions are passable into the lifecycle (if the spike selects the dispatcher path
-  and a function lacks the required form, say so explicitly rather than emit a cryptic
-  numba typing error).
+  functions are `@njit` and bakeable into the generated wrapper (raise a clear error
+  rather than emit a cryptic numba typing error from the generated code).
 - **Runtime (inside callbacks):** NULL `aggregate_context` (OOM) ⇒ early return, matching
   the phase-2 tests. Empty group is **not** an error — it is the `init()`-fresh-state path.
 - **Keep-alive:** the handle docstring states loudly that dropping it frees the callback
@@ -251,7 +230,8 @@ safety.
 6. **flake8 clean** at `--max-line-length=127`; runs in existing `numbox_ci`
    (which already includes `--durations=20`).
 
-Tests 4–5 plus the spike are the C-vs-B decision evidence.
+Tests 4–5 are the regression guards for B's per-UDAF specialization and stable
+cross-process caching (the spike that selected B is recorded under "Mechanism").
 
 ## Dependencies & sequencing
 
