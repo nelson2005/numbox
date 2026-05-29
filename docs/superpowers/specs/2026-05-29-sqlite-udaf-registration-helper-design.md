@@ -1,7 +1,7 @@
 # SQLite UDAF Registration Helper — Design
 
 **Date:** 2026-05-29
-**Status:** Design approved; mechanism spike resolved (B selected, 2026-05-29); pending spec review → implementation plan
+**Status:** Design approved; mechanism re-reviewed in depth across numbox/numbduck/CRE and verified by spikes S1–S4 (B selected, 2026-05-29); pending spec review → implementation plan
 **Builds on:** Phase 2 SQLite UDF/UDAF/window bindings (currently on `feat/sqlite-udf`; upstream PR #17 BLOCKED)
 
 ## Goal
@@ -145,45 +145,104 @@ Registration then calls `sqlite3_create_function_v2` (aggregate) or
 `flags = SQLITE_UTF8 | (SQLITE_DETERMINISTIC if deterministic)`, `p_app=0`,
 `xDestroy=0`; the handle keeps the `cfunc`s and user-fn references alive.
 
-### Correctness requirement: invalidation (validated as necessary by the spike)
+### Correctness requirement: invalidation (validated by spike S3)
 
-The content-address digest **must fold in a hash of the user functions' bytecode plus
-the `state_type` repr** — two reasons: (1) two byte-identical generated blocks for
-different UDAFs must not collide; (2) the user functions are **inlined** into the
-wrapper but live in the *user's* module, not the anchor file, so without the dep-hash,
-editing `step` would not change the anchor file and numba would serve a stale wrapper
-that inlined the old `step`. (`make_structref` needs no such hash because its generated
-code is self-contained; the UDAF wrapper inlines external deps, so it does.)
+The content-address digest **must fold in a co_consts-sensitive serialization of the
+user functions — `inspect.getsource(fn)` or `cloudpickle.dumps(fn)`, NOT bare
+`fn.__code__.co_code`** — plus the `state_type` repr and the numbox + numba versions.
+Two reasons: (1) two distinct UDAFs must not collide; (2) the user functions are
+**inlined** into the wrapper but live in the *user's* module, not the anchor file, so
+without folding their definition into the digest, editing `step` would not change the
+anchor file and numba would serve a stale wrapper that inlined the old `step`.
+
+`co_code` is **not** sufficient and is a real correctness trap (spike S3, confirmed on
+numba 0.65.1): a numeric-literal-only edit such as `state.total += x*2` → `x*3` leaves
+`co_code` **byte-identical** (the literal moves in `co_consts`, which `LOAD_CONST`
+indexes), so a `co_code` digest produces a **false warm cache HIT that runs stale `*2`
+machine code** (observed: result 30 where 45 was expected). `cloudpickle.dumps` /
+`inspect.getsource` capture `co_consts` and invalidate correctly while still HITting for
+an unchanged body. This is the same `co_consts` blind spot that `preprocessing.py`'s
+anchor mechanism exists to defeat for the *generated* source; the user fns are an
+*external* dependency, so they need the dependency-hash explicitly. (CRE's
+`unique_hash_v` / `_py_func_unq` does exactly this — folds `co_code` **and** cloudpickle
+bytes **and** `cre.__version__`; it only walks first-level deps, so document that a user
+`step` calling other `@njit` helpers is only invalidated to first level unless the hash
+recurses.)
+
+### B implementation requirements (validated by spikes S1/S3)
+
+1. **Exec namespace must carry `__name__`** (S1). Exec-ing the generated source into a
+   bare `{}` writes the cold `.nbc` but **crashes on warm reload** —
+   `Environment._rebuild_env` → `importlib.import_module(None)` → `AttributeError`,
+   because `Environment.can_cache()` is False when `'__name__'` is absent from globals.
+   Mirror numbox's `make_structref` / `@proxy` exec pattern, which seeds the namespace
+   with `inspect.getmodule(func).__dict__` (so `__name__` and the real module globals
+   are present).
+2. **The user's `state_type` must live in an importable module** with a stable
+   `__module__` (not `__main__`). This is a precondition for *any* cached approach —
+   numbduck's `irr.py` documents that a `__main__`-defined state type warm-fails type
+   inference ("No conversion from …StateType"). Validate or document.
+3. **Orphan sweep:** register the new `numbox-sqlite-udaf` anchor subdir with
+   `preprocessing.py`'s `_orphan_anchor_sweep`, and consider an age-based sweep of
+   *superseded* `_<oldhash>.py` anchors — repeated edits to `step` accrete one stale
+   anchor + `.nbc` per edit (unbounded across edits; CRE has the same growth and does
+   not sweep, so this is a "nice to have", not a blocker).
 
 ### Rejected alternative: C — shared lifecycle + dispatcher args
 
 A single shared `@njit(cache=True)` lifecycle parameterized by `state_type` (a
 `TypeRef` arg) and the user fns (dispatcher args), with thin per-UDAF `cfunc`
-trampolines forwarding into it. Far less machinery, and the spike showed it composes
-and inlines at full speed — but it has **no stable cross-process cache key**: the
-lifecycle recompiles on every cold start and the on-disk cache grows unbounded.
-Caching is a core repo convention and an explicit goal here, so C's simplicity does
-not justify losing it.
+trampolines. Far less machinery, and it composes and inlines at full speed — but it is
+**structurally uncacheable cross-process** (spike S2). `str(typeof(step))` literally
+embeds `hex(id(step.py_func))` — the ASLR-randomized heap address of the function — and
+numba folds that into the overload **index key** (the signature tuple), so every process
+computes a different key → guaranteed warm miss + unbounded `.nbc` growth. No cache
+stamp or custom locator can fix this: the broken piece is the index key, not the
+validity stamp. (Passing the user fns as `FunctionType` / `.as_func` values *does* give
+a stable key, but then the call is **indirect** — see mechanism E. You get stable-cache
+XOR inlining, never both, from any argument-passing form.)
 
-### Spike results (resolved 2026-05-29, numba 0.65.1)
+### Verification record — deep re-review (2026-05-29, numba 0.65.1)
 
-Built the C skeleton (sum aggregate, real sqlite) and measured:
+The mechanism space was mapped across numbox, numbduck, and DannyWeitekamp's
+Cognitive-Rule-Engine (CRE), then verified with live spikes:
 
-1. **Composition — PASS.** Two distinct UDAFs sharing one `state_type` register and
-   compute correctly (15, 30); the shared lifecycle specializes per function identity
-   (2 overloads, no cross-UDAF collision).
-2. **Per-row cost — baked constants inline at full speed.** Tight-loop ns/iter:
-   baked-global **0.829**; dispatcher-arg **0.829** (1.00×, fully inlined);
-   FunctionType (`.as_func`) **1.845** (2.23×, indirect). ⇒ never use `.as_func` for
-   the callbacks; B's baked constants inline exactly like a global.
-3. **Cross-process caching — the decider** (`NUMBA_DEBUG_CACHE=1`, cold then warm
-   process): a dispatcher-arg lifecycle **misses** on the warm run and appends a new
-   `.nbc` (unstable key, unbounded growth); a baked-global lifecycle (the shape B
-   generates) **hits** the warm run and reuses its single `.nbc`.
+- **CRE precedent.** `define_CREFunc` (`cre/func.py:2187`) — "user supplies a function,
+  wrap+cache it", the exact analog of this helper — *is* mechanism B: it codegens source,
+  writes it to a content-hash-named file (`source_to_cache`), `import_from_cached`s it,
+  with the hash folding the user fns' bytecode + cloudpickle + `cre.__version__`
+  (`unique_hash_v`, `_py_func_unq`). CRE uses the indirect first-class-function path
+  **only** for runtime *composition* of CREFunc instances (which can't be codegen'd at
+  define time, and which it amortizes over a composition tree); our registration is a
+  define-time operation, so B is the right analog.
+- **numbduck precedent.** `irr.py` / Welford UDAFs already hand-write exactly the
+  per-callback `@njit`-impl + `@cfunc`-trampoline shape that B generates.
 
-**Decision: implement B** — it gets both inlining (finding 2) and stable, bounded
-cross-process caching (finding 3), at the cost of the anchor machinery numbox already
-ships for `make_structref`.
+Spikes (all on numba 0.65.1, isolated `NUMBA_CACHE_DIR`, cold-then-warm subprocesses
+under `NUMBA_DEBUG_CACHE=1`):
+
+| Spike | Hypothesis | Verdict |
+|-------|------------|---------|
+| **S1** | B (baked-global codegen, anchored, `cfunc(cache=True)`) warm-HITs cross-process on a real SQLite SUM UDAF, user fn inlined | **confirmed** — warm HIT (`.nbc` stable at 1), `sqlite3_value_int64`+NRT inlined into the impl, aggregate `==31`, `mi_alloc==mi_free` |
+| **S2** | No argument-passing form (dispatcher / `.as_func` / cfunc-object) gives both warm-HIT and inlining | **confirmed** — dispatcher: inlined 0.43 ns but MISS (`.nbc` 1→2, address in key); `.as_func`/cfunc: HIT but indirect ~1.9 ns (4.4×). stable-cache XOR inlining |
+| **S3** | B's invalidation is correct only with a co_consts-sensitive digest; bare `co_code` gives a stale false-HIT after a literal edit | **confirmed** — `co_code` digest: false HIT, stale result 30≠45; `cloudpickle.dumps` digest: recompiles, correct 45, stable HIT unchanged |
+| **S4** | Mechanism E (shared cached lifecycle calling user step via `@proxy` extern symbol) caches but is indirect per row | **confirmed** — both warm-HIT, but E=3.02 ns vs B=1.21 ns (2.5×); asm shows `callq *%r13` extern vs B's inlined+unrolled body |
+
+**Rejected non-B mechanisms:** **C** (dispatcher-arg) — uncacheable (S2). **D** (CRE
+import-as-module) — same idea as B but heavier for numbox: needs `cloudpickle` (not in
+the venv), a writable cache package on `sys.path`, and `config.CACHE_DIR` mutation;
+numbox's exec-at-anchor avoids all of it. **E** (proxy extern-symbol) — cacheable but
+indirect per row (S4), fatal for a per-row `step`. **F** (`_PreciseCacheLocator`) — a
+clean way to auto-fold dep bytecode into the cache stamp, but it monkey-patches
+numba-internal cache classes (version-fragile against numbox's `numba<0.66` pin) and
+needs cloudpickle; B's manual digest achieves the same using only the public on-disk
+anchor contract.
+
+**Decision: implement B** — uniquely keeps **both** inlining (S1/S2/S4) and stable,
+bounded cross-process caching (S1), buildable with **zero new infrastructure** (reuses
+`preprocessing.py` `_anchor_path`/`_materialize_anchor`, the `highlevel.py`
+`make_structref` exec-at-anchor recipe, and the `meminfo.py` bridge), and corroborated
+as the right approach by CRE and numbduck.
 
 ## Placement
 
@@ -225,13 +284,19 @@ safety.
 4. **No cross-contamination** — two different UDAFs (different `state_type`s) registered
    in one process give correct independent results (guards C's per-overload specialization).
 5. **Cross-process cache** — a subprocess registers + runs a UDAF twice; correct both
-   times, and the numba cache dir is populated on the second run (validates C's caching
-   claim end-to-end).
-6. **flake8 clean** at `--max-line-length=127`; runs in existing `numbox_ci`
+   times, and on the warm run the target `.nbc` is **loaded, not re-saved** (assert via
+   `NUMBA_DEBUG_CACHE` output or a stable `.nbc` count). Validates B's stable-key claim
+   (spike S1) and guards against a regression to the C failure mode (unbounded `.nbc`).
+6. **Invalidation** — register a UDAF, then edit `step` so only a numeric literal changes
+   (`x*2` → `x*3`); a fresh process must **recompile and return the new result**, not a
+   stale cached one. Guards the co_consts-sensitive digest (spike S3 — a `co_code` digest
+   silently fails this).
+7. **flake8 clean** at `--max-line-length=127`; runs in existing `numbox_ci`
    (which already includes `--durations=20`).
 
-Tests 4–5 are the regression guards for B's per-UDAF specialization and stable
-cross-process caching (the spike that selected B is recorded under "Mechanism").
+Tests 4–6 are the regression guards for B's per-UDAF specialization, stable
+cross-process caching, and correct invalidation (the full mechanism re-review and the
+S1–S4 spikes that selected B are recorded under "Mechanism").
 
 ## Dependencies & sequencing
 
