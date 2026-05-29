@@ -6,6 +6,7 @@
     {
       "id": 7,
       "model": "opus",
+      "effort": "xhigh",
       "subject": "Task 1: register_aggregate helper + codegen/anchor/digest/handle",
       "status": "pending",
       "description": "**Goal:** Working register_aggregate(db, name, n_arg, state_type, init, step, finalize, *, deterministic=False) registering a structref-backed aggregate UDAF incl. the empty-group path.\n\n**Files:** Create numbox/core/bindings/_sqlite_udf_helpers.py; Test test/core/test_sqlite_udf_helpers.py\n\n**Acceptance Criteria:** SUM over [1..5]==15; empty table==0; non-StructRef state_type -> TypeError; handle keeps callbacks alive across gc.collect().\n\n**Verify:** /home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_udf_helpers.py -k aggregate -v\n\nCritical: digest co_consts-sensitive (cloudpickle.dumps(py.__code__)), NOT co_code; exec ns must carry __name__ (getmodule(_file_anchor).__dict__).\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_udf_helpers.py\", \"test/core/test_sqlite_udf_helpers.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_udf_helpers.py -k aggregate -v\", \"acceptanceCriteria\": [\"SUM over [1..5] yields 15\", \"empty table yields 0\", \"non-StructRef state_type raises TypeError\", \"handle keeps callbacks alive across gc.collect()\"]}\n```"
@@ -13,6 +14,7 @@
     {
       "id": 8,
       "model": "opus",
+      "effort": "xhigh",
       "subject": "Task 2: register_window helper (xInverse/xValue, release-in-xFinal-only)",
       "status": "pending",
       "blockedBy": [7],
@@ -21,6 +23,7 @@
     {
       "id": 9,
       "model": "opus",
+      "effort": "xhigh",
       "subject": "Task 3: Memory-safety & correctness guards (leak, no-collision, deterministic)",
       "status": "pending",
       "blockedBy": [8],
@@ -29,6 +32,7 @@
     {
       "id": 10,
       "model": "opus",
+      "effort": "xhigh",
       "subject": "Task 4: Cross-process caching + invalidation guards",
       "status": "pending",
       "blockedBy": [7],
@@ -37,6 +41,7 @@
     {
       "id": 11,
       "model": "opus",
+      "effort": "xhigh",
       "subject": "Task 5: Public API wiring + docs",
       "status": "pending",
       "blockedBy": [8, 10],
