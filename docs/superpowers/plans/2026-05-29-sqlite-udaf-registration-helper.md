@@ -59,16 +59,19 @@ from numba import carray, cfunc, njit, types
 from numba.core import types as nb_types
 from numba.experimental import structref
 
-from numbox.core.bindings._sqlite_conn import sqlite3_close, sqlite3_open
-from numbox.core.bindings._sqlite_constants import SQLITE_OK, SQLITE_UTF8
-from numbox.core.bindings._sqlite_exec import sqlite3_exec
-from numbox.core.bindings._sqlite_result import sqlite3_result_int, sqlite3_result_int64
-from numbox.core.bindings._sqlite_udf import (
+from numbox.core.bindings import (
+    SQLITE_OK,
+    SQLITE_UTF8,
+    sqlite3_close,
     sqlite3_create_function_v2,
+    sqlite3_exec,
+    sqlite3_open,
+    sqlite3_result_int,
+    sqlite3_result_int64,
     sqlite3_user_data,
+    sqlite3_value_int64,
 )
 from numbox.core.bindings._sqlite_udf_helpers import register_aggregate
-from numbox.core.bindings._sqlite_value import sqlite3_value_int64
 from numbox.utils.cstrings import c_string
 from numbox.utils.lowlevel import _cast_int_to_void_p
 
@@ -692,13 +695,11 @@ _DRIVER = textwrap.dedent('''
     from numba import carray, cfunc, njit, types
     from numba.core import types as nb_types
     from numba.experimental import structref
-    from numbox.core.bindings._sqlite_conn import sqlite3_close, sqlite3_open
-    from numbox.core.bindings._sqlite_constants import SQLITE_OK, SQLITE_UTF8
-    from numbox.core.bindings._sqlite_exec import sqlite3_exec
-    from numbox.core.bindings._sqlite_result import sqlite3_result_int, sqlite3_result_int64
-    from numbox.core.bindings._sqlite_udf import sqlite3_create_function_v2, sqlite3_user_data
+    from numbox.core.bindings import (
+        SQLITE_OK, SQLITE_UTF8, sqlite3_close, sqlite3_create_function_v2,
+        sqlite3_exec, sqlite3_open, sqlite3_result_int, sqlite3_result_int64,
+        sqlite3_user_data, sqlite3_value_int64)
     from numbox.core.bindings._sqlite_udf_helpers import register_aggregate
-    from numbox.core.bindings._sqlite_value import sqlite3_value_int64
     from numbox.utils.cstrings import c_string
     from numbox.utils.lowlevel import _cast_int_to_void_p
 
@@ -865,3 +866,5 @@ git -C /home/erik/projects/numbox commit -m "feat(udaf): export register_aggrega
 - **The digest MUST stay co_consts-sensitive** (`cloudpickle.dumps(py.__code__)`). Reverting to `co_code` reintroduces the stale-cache bug Task 4 guards against (verified in spec spike S3).
 - **Do not seed the exec namespace with a bare `{}`** — it must carry `__name__` (we use `getmodule(_file_anchor).__dict__`), or warm cache reload crashes (spec spike S1).
 - The state-type class and user `@njit` functions used by callers must live in an importable module (the tests define them at module scope for this reason).
+- **Test imports use the public package surface** (`from numbox.core.bindings import ...`) for the phase-2 bindings, matching the post-`7d92682` convention. `register_aggregate`/`register_window` are the exception — import them from `numbox.core.bindings._sqlite_udf_helpers` directly, because they don't reach the public surface until the `__init__` wiring in Task 5.
+- **Keep the `@njit(cache=True)` impl + thin `@cfunc` trampoline split — do not collapse to a bare `@cfunc`.** The `@njit(cache=True)` impl is the cross-process-cached unit (its baked-in globals inline at full per-row speed); the per-UDAF `@cfunc` cannot be the cache boundary, since a cfunc keyed on a dispatcher argument gets an ASLR-randomized cross-process key (the rejected mechanism C / spec spike S2 failure). This is structurally different from the phase-2 *test* probes, where the wrapped `@njit` is never independently compiled so a bare `@cfunc` is equivalent — the layering queried on upstream PR #17.
