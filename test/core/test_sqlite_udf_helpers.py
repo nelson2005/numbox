@@ -278,7 +278,7 @@ def test_window_running_sum():
 
 
 @njit
-def sum2_step(state, ctx, argc, argv_pp):  # distinct body => distinct anchor
+def sum2_step(state, ctx, argc, argv_pp):  # distinct body => independent compiled callbacks
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
     state.total += 2 * sqlite3_value_int64(args[0])
 
@@ -306,6 +306,30 @@ def test_deterministic_flag():
     sqlite3_close(db)
     assert val == 15
     assert h is not None
+
+
+def test_deterministic_flag_ors_bit(monkeypatch):
+    """deterministic=True must OR SQLITE_DETERMINISTIC into the flags passed to
+    sqlite3_create_function_v2, and the default must not. The flag is a
+    query-planner hint with no effect on an aggregate's value, so a result
+    assertion alone cannot guard this contract -- spy on the flags instead."""
+    import numbox.core.bindings._sqlite_udf_helpers as helpers
+    real = helpers.sqlite3_create_function_v2
+    seen = []
+
+    def spy(db, name_p, n_arg, flags, *rest):
+        seen.append(flags)
+        return real(db, name_p, n_arg, flags, *rest)
+
+    monkeypatch.setattr(helpers, "sqlite3_create_function_v2", spy)
+    db = _open_memory()
+    register_aggregate(db, "det_on", 1, sum_state_type,
+                       sum_init, sum_step, sum_finalize, deterministic=True)
+    register_aggregate(db, "det_off", 1, sum_state_type,
+                       sum_init, sum_step, sum_finalize)
+    sqlite3_close(db)
+    assert seen[0] & helpers.SQLITE_DETERMINISTIC
+    assert not (seen[1] & helpers.SQLITE_DETERMINISTIC)
 
 
 def test_no_meminfo_leak():
