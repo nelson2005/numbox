@@ -275,3 +275,54 @@ def test_window_running_sum():
     sqlite3_close(db)
     assert vals == [1, 3, 5, 7, 9]
     assert h is not None
+
+
+@njit
+def sum2_step(state, ctx, argc, argv_pp):  # distinct body => distinct anchor
+    args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
+    state.total += 2 * sqlite3_value_int64(args[0])
+
+
+def test_two_distinct_aggregates_no_collision():
+    db = _open_memory()
+    _make_table(db, [1, 2, 3, 4, 5])
+    h1 = register_aggregate(db, "my_sum", 1, sum_state_type,
+                            sum_init, sum_step, sum_finalize)
+    h2 = register_aggregate(db, "my_sum2", 1, sum_state_type,
+                            sum_init, sum2_step, sum_finalize)
+    v1, _c1 = _read1_int64(db, "SELECT __cap(my_sum(v)) FROM t")
+    v2, _c2 = _read1_int64(db, "SELECT __cap(my_sum2(v)) FROM t")
+    sqlite3_close(db)
+    assert (v1, v2) == (15, 30)
+    assert h1 is not None and h2 is not None
+
+
+def test_deterministic_flag():
+    db = _open_memory()
+    _make_table(db, [1, 2, 3, 4, 5])
+    h = register_aggregate(db, "my_sum_det", 1, sum_state_type,
+                           sum_init, sum_step, sum_finalize, deterministic=True)
+    val, _cap = _read1_int64(db, "SELECT __cap(my_sum_det(v)) FROM t")
+    sqlite3_close(db)
+    assert val == 15
+    assert h is not None
+
+
+def test_no_meminfo_leak():
+    """The helper-generated lifecycle must preserve export/release balance."""
+    from numba.core.runtime import nrt
+    _nrt = nrt._nrt
+    if not hasattr(_nrt, "memsys_enable_stats"):
+        import pytest
+        pytest.skip("NRT allocation stats unavailable")
+    _nrt.memsys_enable_stats()
+    test_aggregate_sum()          # warm up JIT / one-time allocs
+    test_window_running_sum()
+    before = nrt.rtsys.get_allocation_stats()
+    for _ in range(10):
+        test_aggregate_sum()
+        test_window_running_sum()
+    after = nrt.rtsys.get_allocation_stats()
+    allocated = after.mi_alloc - before.mi_alloc
+    freed = after.mi_free - before.mi_free
+    assert allocated == freed, "meminfo imbalance: %d alloc, %d free" % (allocated, freed)
