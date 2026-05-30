@@ -20,12 +20,22 @@ jobs:
       - name: Lint Python blocks in .rst and .md
         run: |
           shopt -s globstar nullglob
+          # Internal planning/spec docs hold illustrative partial snippets, not
+          # runnable examples; lint only user-facing docs (.rst) and READMEs.
           paths=()
-          for d in docs README.md README.rst; do
-            [[ -e "$d" ]] && paths+=("$d")
+          if [[ -d docs ]]; then
+            while IFS= read -r f; do paths+=("$f"); done < <(
+              find docs -type f \( -name '*.rst' -o -name '*.md' \) \
+                -not -path 'docs/superpowers/*' \
+                -not -path 'docs/plans/*' \
+                -not -path 'docs/_build/*'
+            )
+          fi
+          for f in README.md README.rst; do
+            [[ -e "$f" ]] && paths+=("$f")
           done
           if [[ ${#paths[@]} -eq 0 ]]; then
-            echo "No docs/ or top-level README to scan; skipping."
+            echo "No docs to scan (planning dirs excluded); skipping."
             exit 0
           fi
           if [[ ! -f .github/scripts/extract_codeblocks.py ]]; then
