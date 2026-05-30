@@ -226,3 +226,52 @@ def test_invalidation_on_literal_edit(tmp_path):
     cache.mkdir()
     assert _run_driver(tmp_path, cache, 1) == 15       # step: += 1*v  => 15
     assert _run_driver(tmp_path, cache, 3) == 45       # step: += 3*v  => 45 (not stale 15)
+
+
+from numbox.core.bindings._sqlite_udf_helpers import register_window  # noqa: E402
+
+
+@njit
+def w_inverse(state, ctx, argc, argv_pp):
+    args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
+    state.total -= sqlite3_value_int64(args[0])
+
+
+@njit
+def w_value(state, ctx):
+    sqlite3_result_int64(ctx, state.total)
+
+
+def _read_window(db, select_sql, nrows):
+    meta = np.zeros(nrows + 1, dtype=np.int64)  # meta[0]=count, meta[1:]=values
+
+    @cfunc(types.void(types.intp, types.int32, types.intp))
+    def wcap_cb(ctx, argc, argv):
+        ud = sqlite3_user_data(ctx)
+        m = carray(_cast_int_to_void_p(ud), (nrows + 1,), dtype=np.int64)
+        i = m[0]
+        args = carray(_cast_int_to_void_p(argv), (argc,), dtype=np.intp)
+        m[1 + i] = sqlite3_value_int64(args[0])
+        m[0] = i + 1
+        sqlite3_result_int(ctx, 0)
+
+    with c_string("__wcap") as cp:
+        assert sqlite3_create_function_v2(
+            db, cp, 1, SQLITE_UTF8, meta.ctypes.data, wcap_cb.address, 0, 0, 0) == SQLITE_OK
+    with c_string(select_sql) as sp:
+        assert sqlite3_exec(db, sp, 0, 0, 0) == SQLITE_OK
+    return [int(meta[1 + i]) for i in range(int(meta[0]))], wcap_cb
+
+
+def test_window_running_sum():
+    db = _open_memory()
+    _make_table(db, [1, 2, 3, 4, 5])
+    h = register_window(db, "my_wsum", 1, sum_state_type,
+                        sum_init, sum_step, w_inverse, w_value, sum_finalize)
+    sql = ("SELECT __wcap(my_wsum(v) OVER "
+           "(ORDER BY v ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)) "
+           "FROM t ORDER BY v")
+    vals, _cap = _read_window(db, sql, 5)
+    sqlite3_close(db)
+    assert vals == [1, 3, 5, 7, 9]
+    assert h is not None

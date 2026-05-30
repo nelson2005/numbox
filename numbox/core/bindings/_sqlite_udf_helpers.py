@@ -103,6 +103,32 @@ def _xfinal_impl(ctx):
     release_meminfo(slot[0])
 '''
 
+_XINVERSE_SRC = '''
+@njit(cache=True)
+def _xinverse_impl(ctx, argc, argv_pp):
+    agg = sqlite3_aggregate_context(ctx, 0)
+    if agg == 0:
+        return
+    slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
+    if slot[0] == 0:
+        return
+    _inverse(borrow_structref(_state_type, slot[0]), ctx, argc, argv_pp)
+'''
+
+_XVALUE_SRC = '''
+@njit(cache=True)
+def _xvalue_impl(ctx):
+    agg = sqlite3_aggregate_context(ctx, 0)
+    if agg == 0:
+        _value(_init(), ctx)
+        return
+    slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
+    if slot[0] == 0:
+        _value(_init(), ctx)
+        return
+    _value(borrow_structref(_state_type, slot[0]), ctx)
+'''
+
 
 class _UDAFHandle:
     """Keeps the generated ``cfunc`` callbacks (and the user functions they bake
@@ -203,3 +229,52 @@ def register_aggregate(db, name, n_arg, state_type, init, step, finalize,
         _raise_rc(db, name, rc)
     return _UDAFHandle(step_cb, final_cb, xstep_impl, xfinal_impl,
                        init, step, finalize)
+
+
+def register_window(db, name, n_arg, state_type, init, step, inverse, value,
+                    finalize, *, deterministic=False):
+    """Register a structref-backed window UDAF.
+
+    Same as :func:`register_aggregate` plus ``inverse(state, ctx, argc,
+    argv_pp)`` (un-applies a row; state already exists) and ``value(state,
+    ctx)`` (emits the running result WITHOUT releasing). Only ``xFinal``
+    releases the meminfo.
+    """
+    _validate_state_type(state_type)
+    ns = _compile_callbacks(
+        _stem("wudaf_", name),
+        [_XSTEP_SRC, _XINVERSE_SRC, _XVALUE_SRC, _XFINAL_SRC], state_type,
+        {"_init": init, "_step": step, "_inverse": inverse,
+         "_value": value, "_finalize": finalize})
+    xstep_impl = ns["_xstep_impl"]
+    xinverse_impl = ns["_xinverse_impl"]
+    xvalue_impl = ns["_xvalue_impl"]
+    xfinal_impl = ns["_xfinal_impl"]
+
+    @cfunc(types.void(types.intp, types.int32, types.intp))
+    def step_cb(ctx, argc, argv):
+        xstep_impl(ctx, argc, argv)
+
+    @cfunc(types.void(types.intp, types.int32, types.intp))
+    def inverse_cb(ctx, argc, argv):
+        xinverse_impl(ctx, argc, argv)
+
+    @cfunc(types.void(types.intp))
+    def value_cb(ctx):
+        xvalue_impl(ctx)
+
+    @cfunc(types.void(types.intp))
+    def final_cb(ctx):
+        xfinal_impl(ctx)
+
+    flags = SQLITE_UTF8 | (SQLITE_DETERMINISTIC if deterministic else 0)
+    with c_string(name) as name_p:
+        rc = sqlite3_create_window_function(
+            db, name_p, n_arg, flags, 0,
+            step_cb.address, final_cb.address,
+            value_cb.address, inverse_cb.address, 0)
+    if rc != SQLITE_OK:
+        _raise_rc(db, name, rc)
+    return _UDAFHandle(step_cb, inverse_cb, value_cb, final_cb,
+                       xstep_impl, xinverse_impl, xvalue_impl, xfinal_impl,
+                       init, step, inverse, value, finalize)
