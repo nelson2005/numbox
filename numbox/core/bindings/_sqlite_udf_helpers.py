@@ -28,6 +28,7 @@ import numba
 from numba import cfunc, types
 from numba.core.serialize import cloudpickle
 from numba.core.types import StructRef
+from numba.extending import is_jitted
 
 import numbox
 from numbox.core.bindings._sqlite_conn import sqlite3_errmsg
@@ -148,6 +149,16 @@ def _validate_state_type(state_type):
             "(e.g. MyStateType([('x', int64)])), got %r" % (state_type,))
 
 
+def _validate_callbacks(**fns):
+    """Reject non-``@njit`` callbacks up front with a clear message; otherwise a
+    plain Python callable surfaces as a cryptic numba ``TypingError`` when it
+    fails to bake into the generated source."""
+    for role, fn in fns.items():
+        if not is_jitted(fn):
+            raise TypeError(
+                "%s must be an @njit-compiled function, got %r" % (role, fn))
+
+
 def _digest(state_type, fns):
     """Content hash that invalidates when the state type, the user functions
     (co_consts-sensitive, via cloudpickle of the code object -- NOT bare
@@ -211,6 +222,7 @@ def register_aggregate(db, name, n_arg, state_type, init, step, finalize,
     :returns: a keep-alive handle the caller MUST retain (see ``_UDAFHandle``).
     """
     _validate_state_type(state_type)
+    _validate_callbacks(init=init, step=step, finalize=finalize)
     ns = _compile_callbacks(
         _stem("udaf_", name), [_XSTEP_SRC, _XFINAL_SRC], state_type,
         {"_init": init, "_step": step, "_finalize": finalize})
@@ -246,6 +258,8 @@ def register_window(db, name, n_arg, state_type, init, step, inverse, value,
     releases the meminfo.
     """
     _validate_state_type(state_type)
+    _validate_callbacks(init=init, step=step, inverse=inverse, value=value,
+                        finalize=finalize)
     ns = _compile_callbacks(
         _stem("wudaf_", name),
         [_XSTEP_SRC, _XINVERSE_SRC, _XVALUE_SRC, _XFINAL_SRC], state_type,

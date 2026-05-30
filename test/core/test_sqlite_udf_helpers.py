@@ -350,3 +350,99 @@ def test_no_meminfo_leak():
     allocated = after.mi_alloc - before.mi_alloc
     freed = after.mi_free - before.mi_free
     assert allocated == freed, "meminfo imbalance: %d alloc, %d free" % (allocated, freed)
+
+
+def test_window_deterministic_flag_ors_bit(monkeypatch):
+    """register_window must OR SQLITE_DETERMINISTIC into the flags passed to
+    sqlite3_create_window_function when deterministic=True, and not otherwise."""
+    import numbox.core.bindings._sqlite_udf_helpers as helpers
+    real = helpers.sqlite3_create_window_function
+    seen = []
+
+    def spy(db, name_p, n_arg, flags, *rest):
+        seen.append(flags)
+        return real(db, name_p, n_arg, flags, *rest)
+
+    monkeypatch.setattr(helpers, "sqlite3_create_window_function", spy)
+    db = _open_memory()
+    register_window(db, "wdet_on", 1, sum_state_type, sum_init, sum_step,
+                    w_inverse, w_value, sum_finalize, deterministic=True)
+    register_window(db, "wdet_off", 1, sum_state_type, sum_init, sum_step,
+                    w_inverse, w_value, sum_finalize)
+    sqlite3_close(db)
+    assert seen[0] & helpers.SQLITE_DETERMINISTIC
+    assert not (seen[1] & helpers.SQLITE_DETERMINISTIC)
+
+
+def test_registration_error_raises():
+    """A failed sqlite registration (here an out-of-range n_arg) surfaces as a
+    RuntimeError via _raise_rc, not a silent success."""
+    import pytest
+    db = _open_memory()
+    with pytest.raises(RuntimeError, match="registration failed"):
+        register_aggregate(db, "too_many_args", 200, sum_state_type,
+                           sum_init, sum_step, sum_finalize)
+    sqlite3_close(db)
+
+
+def test_non_njit_callback_rejected():
+    """A plain (non-@njit) callback is rejected up front with a clear TypeError
+    rather than a cryptic numba TypingError at bake time."""
+    import pytest
+    db = _open_memory()
+
+    def plain_step(state, ctx, argc, argv_pp):
+        pass
+
+    with pytest.raises(TypeError, match="step must be an @njit"):
+        register_aggregate(db, "bad_cb", 1, sum_state_type,
+                           sum_init, plain_step, sum_finalize)
+    sqlite3_close(db)
+
+
+# --- multi-field state + multi-arg UDAF parity ---
+@structref.register
+class PairStateType(nb_types.StructRef):
+    def preprocess_fields(self, fields):
+        return tuple((n, nb_types.unliteral(t)) for n, t in fields)
+
+
+class PairState(structref.StructRefProxy):
+    def __new__(cls, sa, sb):
+        return structref.StructRefProxy.__new__(cls, sa, sb)
+
+
+structref.define_proxy(PairState, PairStateType, ["sa", "sb"])
+pair_state_type = PairStateType([("sa", nb_types.int64), ("sb", nb_types.int64)])
+
+
+@njit
+def pair_init():
+    return PairState(nb_types.int64(0), nb_types.int64(0))
+
+
+@njit
+def pair_step(state, ctx, argc, argv_pp):
+    args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
+    state.sa += sqlite3_value_int64(args[0])
+    state.sb += sqlite3_value_int64(args[1])
+
+
+@njit
+def pair_finalize(state, ctx):
+    sqlite3_result_int64(ctx, state.sa + 10 * state.sb)
+
+
+def test_multiarg_multifield_state():
+    db = _open_memory()
+    with c_string("CREATE TABLE t2(a INTEGER, b INTEGER)") as p:
+        assert sqlite3_exec(db, p, 0, 0, 0) == SQLITE_OK
+    for a, b in [(1, 4), (2, 5), (3, 6)]:
+        with c_string("INSERT INTO t2 VALUES (%d, %d)" % (a, b)) as p:
+            assert sqlite3_exec(db, p, 0, 0, 0) == SQLITE_OK
+    h = register_aggregate(db, "pairsum", 2, pair_state_type,
+                           pair_init, pair_step, pair_finalize)
+    val, _cap = _read1_int64(db, "SELECT __cap(pairsum(a, b)) FROM t2")
+    sqlite3_close(db)
+    assert val == 156  # sa=1+2+3=6, sb=4+5+6=15 => 6 + 10*15
+    assert h is not None
