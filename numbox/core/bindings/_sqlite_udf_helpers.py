@@ -16,13 +16,20 @@ anchor file under numba's cache dir (reusing numbox.utils.preprocessing), and th
 folds a cloudpickle of the user functions' code objects so editing a body --
 including a numeric literal -- invalidates correctly.
 
-**Caller requirements.** The state-type class and the ``@njit`` functions MUST
-live in an importable module (stable ``__module__``, not ``__main__``); this is a
-precondition for numba caching of any generated code that references them.
+**Caller requirements.** The generated ``@njit(cache=True)`` impls cache and
+invalidate correctly even when the state-type class and the ``@njit`` callbacks
+are defined in ``__main__`` -- the anchor key is content-addressed on a
+``cloudpickle`` of each callback's ``__code__`` (plus ``repr(state_type)`` and
+the numba/numbox versions), never on ``__module__`` (see ``_digest``); the
+subprocess tests ``test_xprocess_cache_no_growth`` /
+``test_invalidation_on_literal_edit`` exercise this ``__main__`` path. The one
+case that does require a stable ``__module__`` is a *caller-side*
+``@njit(cache=True)`` callback -- numba refuses to cache functions defined in
+``__main__`` -- so for deployments where callbacks are themselves cached, define
+the state-type class and callbacks in an importable module.
 """
 import ctypes
 import hashlib
-from inspect import getmodule
 
 import numba
 from numba import cfunc, types
@@ -52,6 +59,8 @@ from numbox.utils.preprocessing import (
 # puts them in this module's __dict__, which seeds the exec namespace below.
 import numpy as np  # noqa: F401
 from numba import carray, njit  # noqa: F401
+from numbox.core.bindings._sqlite_constants import SQLITE_ERROR  # noqa: F401
+from numbox.core.bindings._sqlite_result import sqlite3_result_error_code  # noqa: F401
 from numbox.core.bindings._sqlite_udf import sqlite3_aggregate_context  # noqa: F401
 from numbox.utils.lowlevel import _cast_int_to_void_p  # noqa: F401
 from numbox.utils.meminfo import (  # noqa: F401
@@ -64,14 +73,6 @@ __all__ = ["register_aggregate", "register_window"]
 
 _ANCHOR_SUBDIR = "numbox-sqlite-udaf"
 _orphan_anchor_sweep(_ANCHOR_SUBDIR)
-
-
-def _file_anchor():
-    """Identity handle whose module __dict__ (this module's globals, incl.
-    ``__name__``) seeds the generated code's exec namespace. Mirrors
-    ``numbox.utils.highlevel.make_structref``; the ``__name__`` is required or
-    the warm cache reload aborts in numba's Environment rebuild."""
-    raise NotImplementedError
 
 
 # Generated-source templates. Baked global names: _state_type, _init, _step,
@@ -100,7 +101,10 @@ def _xfinal_impl(ctx):
     if slot[0] == 0:
         _finalize(_init(), ctx)
         return
-    _finalize(borrow_structref(_state_type, slot[0]), ctx)
+    try:
+        _finalize(borrow_structref(_state_type, slot[0]), ctx)
+    except Exception:
+        sqlite3_result_error_code(ctx, SQLITE_ERROR)  # fail the query, never leak the slot
     release_meminfo(slot[0])
 '''
 
@@ -185,7 +189,9 @@ def _compile_callbacks(stem, srcs, state_type, fns):
     callables. Returns the exec namespace (contains ``_xstep_impl`` etc.)."""
     digest = _digest(state_type, list(fns.values()))
     code_txt = "# udaf-digest: %s\n%s" % (digest, "".join(srcs))
-    ns = {**getmodule(_file_anchor).__dict__, "_state_type": state_type, **fns}
+    # globals() is this module's __dict__; it carries __name__, which numba's
+    # warm-cache Environment rebuild requires when reloading the cached impls.
+    ns = {**globals(), "_state_type": state_type, **fns}
     anchor = _anchor_path(_ANCHOR_SUBDIR, stem, code_txt)
     _materialize_anchor(anchor, code_txt)
     code = compile(code_txt, str(anchor), mode="exec")

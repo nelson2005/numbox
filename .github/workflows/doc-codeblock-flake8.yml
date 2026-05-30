@@ -21,7 +21,8 @@ jobs:
         run: |
           shopt -s globstar nullglob
           # Internal planning/spec docs hold illustrative partial snippets, not
-          # runnable examples; lint only user-facing docs (.rst) and READMEs.
+          # runnable examples; lint user-facing docs (.rst and .md) and READMEs,
+          # excluding the planning/spec and build dirs below.
           paths=()
           if [[ -d docs ]]; then
             while IFS= read -r f; do paths+=("$f"); done < <(

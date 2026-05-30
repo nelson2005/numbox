@@ -10,6 +10,8 @@ from numba.experimental import structref
 from numbox.core.bindings import (
     SQLITE_OK,
     SQLITE_UTF8,
+    register_aggregate,
+    register_window,
     sqlite3_close,
     sqlite3_create_function_v2,
     sqlite3_exec,
@@ -19,7 +21,6 @@ from numbox.core.bindings import (
     sqlite3_user_data,
     sqlite3_value_int64,
 )
-from numbox.core.bindings._sqlite_udf_helpers import register_aggregate
 from numbox.utils.cstrings import c_string
 from numbox.utils.lowlevel import _cast_int_to_void_p
 
@@ -226,9 +227,6 @@ def test_invalidation_on_literal_edit(tmp_path):
     cache.mkdir()
     assert _run_driver(tmp_path, cache, 1) == 15       # step: += 1*v  => 15
     assert _run_driver(tmp_path, cache, 3) == 45       # step: += 3*v  => 45 (not stale 15)
-
-
-from numbox.core.bindings._sqlite_udf_helpers import register_window  # noqa: E402
 
 
 @njit
@@ -451,4 +449,41 @@ def test_multiarg_multifield_state():
     val, _cap = _read1_int64(db, "SELECT __cap(pairsum(a, b)) FROM t2")
     sqlite3_close(db)
     assert val == 156  # sa=1+2+3=6, sb=4+5+6=15 => 6 + 10*15
+    assert h is not None
+
+
+@njit
+def raising_finalize(state, ctx):
+    raise ValueError("boom from finalize")
+
+
+def test_finalize_exception_surfaces_error_and_no_leak():
+    """A raising finalize must fail the query (xFinal reports SQLITE_ERROR) and
+    must not leak the exported meminfo slot -- xFinal releases in a try/except."""
+    from numba.core.runtime import nrt
+    _nrt = nrt._nrt
+    if not hasattr(_nrt, "memsys_enable_stats"):
+        import pytest
+        pytest.skip("NRT allocation stats unavailable")
+
+    db = _open_memory()
+    _make_table(db, [1, 2, 3, 4, 5])
+    h = register_aggregate(db, "raise_fin", 1, sum_state_type,
+                           sum_init, sum_step, raising_finalize)
+    with c_string("SELECT raise_fin(v) FROM t") as sp:
+        rc = sqlite3_exec(db, sp, 0, 0, 0)
+    assert rc != SQLITE_OK  # error surfaced to sqlite, not a silent wrong result
+
+    _nrt.memsys_enable_stats()
+    with c_string("SELECT raise_fin(v) FROM t") as sp:  # warm
+        sqlite3_exec(db, sp, 0, 0, 0)
+    before = nrt.rtsys.get_allocation_stats()
+    for _ in range(10):
+        with c_string("SELECT raise_fin(v) FROM t") as sp:
+            sqlite3_exec(db, sp, 0, 0, 0)
+    after = nrt.rtsys.get_allocation_stats()
+    sqlite3_close(db)
+    allocated = after.mi_alloc - before.mi_alloc
+    freed = after.mi_free - before.mi_free
+    assert allocated == freed, "leak on raising finalize: %d alloc, %d free" % (allocated, freed)
     assert h is not None
