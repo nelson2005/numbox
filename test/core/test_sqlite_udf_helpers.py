@@ -374,13 +374,19 @@ def test_window_deterministic_flag_ors_bit(monkeypatch):
     assert not (seen[1] & helpers.SQLITE_DETERMINISTIC)
 
 
-def test_registration_error_raises():
-    """A failed sqlite registration (here an out-of-range n_arg) surfaces as a
-    RuntimeError via _raise_rc, not a silent success."""
+def test_registration_error_raises(monkeypatch):
+    """A non-OK return from sqlite registration surfaces as a RuntimeError via
+    _raise_rc, not a silent success. The non-OK code is injected (rather than
+    relying on an out-of-range n_arg or an over-long name, whose rejection is
+    build-dependent -- SQLITE_MAX_FUNCTION_ARG and name limits vary), so the
+    test is portable across sqlite builds."""
     import pytest
+    import numbox.core.bindings._sqlite_udf_helpers as helpers
+    monkeypatch.setattr(helpers, "sqlite3_create_function_v2",
+                        lambda *a, **k: 1)  # non-OK rc (SQLITE_ERROR)
     db = _open_memory()
     with pytest.raises(RuntimeError, match="registration failed"):
-        register_aggregate(db, "too_many_args", 200, sum_state_type,
+        register_aggregate(db, "err", 1, sum_state_type,
                            sum_init, sum_step, sum_finalize)
     sqlite3_close(db)
 
