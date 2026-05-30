@@ -155,6 +155,11 @@ def _digest(state_type, fns):
     h = hashlib.sha256()
     h.update(repr(state_type).encode("utf-8"))
     h.update(numba.__version__.encode("utf-8"))
+    # numbox.__version__ is "" upstream (the package version derives from it via
+    # pyproject's dynamic attr), so this fold is currently inert; it is kept so
+    # digests auto-invalidate should numbox ever set a real __version__. The
+    # numba version above and the code-object hash below do the real
+    # invalidating work (proven by test_invalidation_on_literal_edit).
     h.update((numbox.__version__ or "").encode("utf-8"))
     for fn in fns:
         py = getattr(fn, "py_func", fn)
