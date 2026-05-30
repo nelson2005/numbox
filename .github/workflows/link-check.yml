@@ -40,6 +40,9 @@ jobs:
               -not -path './.github/*'; echo EOF; } >> "$GITHUB_OUTPUT"
           fi
 
+      # git.musl-libc.org is excluded: lychee's reqwest/rustls client cannot
+      # complete a request to that cgit server (curl succeeds), so it reports a
+      # false TIMEOUT. The link stays valid in the docs; we just don't check it.
       - name: Lychee
         if: steps.scope.outputs.files != ''
         uses: lycheeverse/lychee-action@v2
@@ -49,9 +52,10 @@ jobs:
             --max-concurrency 4
             --max-retries 2
             --retry-wait-time 5
-            --timeout 120
+            --timeout 20
             --accept 200,206,429
             --exclude '^mailto:'
+            --exclude 'git\.musl-libc\.org'
             --exclude-path .git
             --exclude-path venv
             ${{ steps.scope.outputs.files }}
