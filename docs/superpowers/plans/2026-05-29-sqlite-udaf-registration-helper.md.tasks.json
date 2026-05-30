@@ -34,7 +34,7 @@
       "model": "opus",
       "effort": "xhigh",
       "subject": "Task 4: Cross-process caching + invalidation guards",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "**Goal:** Prove generated impls warm-HIT the cross-process cache (no .nbc growth) and a numeric-literal edit invalidates correctly.\n\n**Files:** Test test/core/test_sqlite_udf_helpers.py (two subprocess tests + generated driver)\n\n**Acceptance Criteria:** warm second process adds no new impl .nbc (stable count); literal edit *2->*3 yields 45 in a fresh process, not stale 15.\n\n**Verify:** /home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_udf_helpers.py -k \"xprocess or invalidation\" -v\n\n```json:metadata\n{\"files\": [\"test/core/test_sqlite_udf_helpers.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_udf_helpers.py -k \\\"xprocess or invalidation\\\" -v\", \"acceptanceCriteria\": [\"warm second process adds no new impl .nbc (stable count)\", \"literal edit *2->*3 yields 45 in a fresh process, not stale 15\"]}\n```"
     },
@@ -48,5 +48,5 @@
       "description": "**Goal:** Export register_aggregate/register_window on the public bindings API + document the module; lint + test + docs build green.\n\n**Files:** Modify numbox/core/bindings/__init__.py; Modify docs/numbox.core.bindings.rst\n\n**Acceptance Criteria:** importable from numbox.core.bindings; automodule + family entry in rst; flake8 clean at max-line-length=127; sphinx-build exit 0; full test file passes with --durations=20.\n\n**Verify:** cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html (exit 0); python -c import register_aggregate, register_window\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/__init__.py\", \"docs/numbox.core.bindings.rst\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m flake8 --max-line-length=127 numbox/core/bindings/_sqlite_udf_helpers.py test/core/test_sqlite_udf_helpers.py && cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html\", \"acceptanceCriteria\": [\"register_aggregate/register_window importable from numbox.core.bindings\", \"automodule + family entry added to docs rst\", \"flake8 clean at max-line-length=127\", \"sphinx-build exits 0\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-05-29T22:37:05Z"
+  "lastUpdated": "2026-05-30T16:54:07Z"
 }
