@@ -1,4 +1,9 @@
 import ctypes
+import gc
+import os
+import subprocess
+import sys
+import textwrap
 from ctypes import addressof, c_int64, cast, c_char_p, string_at
 
 import pytest
@@ -198,3 +203,145 @@ def test_text_as_blob():
     assert _fetchall(db, "SELECT s FROM t") == [(b"xy",)]
     assert _fetchall(db, "SELECT typeof(s) FROM t") == [("blob",)]
     sqlite3_close(db)
+
+
+def test_fortran_order_matches_c():
+    db = _open_memory()
+    a = np.asfortranarray(np.array([[1, 2], [3, 4], [5, 6]], dtype=np.int64))
+    h = register_table(db, "t", a, columns=["a", "b"])  # noqa: F841
+    assert _fetchall(db, "SELECT a, b FROM t ORDER BY a") == [(1, 2), (3, 4), (5, 6)]
+    sqlite3_close(db)
+
+
+def test_noncontiguous_slice():
+    db = _open_memory()
+    big = np.arange(40, dtype=np.int64).reshape(8, 5)
+    view = big[::2, 1:4]
+    h = register_table(db, "t", view, columns=["a", "b", "c"])  # noqa: F841
+    assert _fetchall(db, "SELECT a, b, c FROM t") == [tuple(r) for r in view.tolist()]
+    sqlite3_close(db)
+
+
+def test_reversed_rows():
+    db = _open_memory()
+    a = np.array([[1], [2], [3]], dtype=np.int64)[::-1]
+    h = register_table(db, "t", a, columns=["a"])  # noqa: F841
+    assert _fetchall(db, "SELECT a FROM t") == [(3,), (2,), (1,)]
+    sqlite3_close(db)
+
+
+def test_packed_unicode_odd_offset():
+    db = _open_memory()
+    dt = np.dtype([("a", "i1"), ("u", "U4")])
+    assert dt.fields["u"][1] == 1
+    a = np.array([(1, "wörd")], dtype=dt)
+    h = register_table(db, "t", a)  # noqa: F841
+    assert _fetchall(db, "SELECT a, u FROM t") == [(1, "wörd")]
+    sqlite3_close(db)
+
+
+def test_empty_table():
+    db = _open_memory()
+    a = np.empty((0, 2), dtype=np.int64)
+    h = register_table(db, "t", a, columns=["a", "b"])  # noqa: F841
+    assert _fetchall(db, "SELECT * FROM t") == []
+    assert _fetchall(db, "SELECT COUNT(*) FROM t") == [(0,)]
+    sqlite3_close(db)
+
+
+def test_rowid_is_zero_based():
+    db = _open_memory()
+    a = np.array([[10], [20], [30]], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["a"])  # noqa: F841
+    assert _fetchall(db, "SELECT rowid, a FROM t") == [(0, 10), (1, 20), (2, 30)]
+    sqlite3_close(db)
+
+
+def test_join_two_tables():
+    db = _open_memory()
+    a = np.array([[1, 100], [2, 200]], dtype=np.int64)
+    b = np.array([[1, 7], [2, 9]], dtype=np.int64)
+    h1 = register_table(db, "lhs", a, columns=["id", "v"])  # noqa: F841
+    h2 = register_table(db, "rhs", b, columns=["id", "w"])  # noqa: F841
+    got = _fetchall(db, "SELECT lhs.v, rhs.w FROM lhs JOIN rhs ON lhs.id = rhs.id ORDER BY lhs.id")
+    assert got == [(100, 7), (200, 9)]
+    sqlite3_close(db)
+
+
+def test_handle_survives_gc():
+    db = _open_memory()
+    a = np.array([[5, 6]], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["a", "b"])  # noqa: F841
+    gc.collect()
+    assert _fetchall(db, "SELECT a, b FROM t") == [(5, 6)]
+    sqlite3_close(db)
+
+
+def test_duplicate_name_replaces():
+    db = _open_memory()
+    a = np.array([[1]], dtype=np.int64)
+    b = np.array([[2]], dtype=np.int64)
+    h1 = register_table(db, "dup", a, columns=["x"])  # noqa: F841
+    h2 = register_table(db, "dup", b, columns=["x"])  # noqa: F841
+    assert _fetchall(db, "SELECT x FROM dup") == [(2,)]
+    sqlite3_close(db)
+
+
+# A self-contained driver: imports register_table, opens :memory:, registers a
+# 2-D int64 table, runs a SELECT, and prints the rows. Run twice in fresh
+# subprocesses to assert cold/warm cfunc cache reuse (no growth on the warm run).
+_DRIVER = textwrap.dedent('''
+    from ctypes import addressof, c_int64
+    import numpy as np
+    from numbox.core.bindings import (
+        sqlite3_open, sqlite3_prepare_v2, sqlite3_step,
+        sqlite3_column_int64, sqlite3_finalize)
+    from numbox.core.bindings._sqlite_vtable import register_table
+    from numbox.utils.cstrings import c_string
+
+    db_p = c_int64(0)
+    with c_string(":memory:") as n:
+        sqlite3_open(n, addressof(db_p))
+    db = db_p.value
+    a = np.array([[1, 10], [2, 20], [3, 30]], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["a", "b"])
+    stmt_p = c_int64(0)
+    with c_string("SELECT a, b FROM t ORDER BY a") as sp:
+        sqlite3_prepare_v2(db, sp, -1, addressof(stmt_p), 0)
+    stmt = stmt_p.value
+    rows = []
+    while sqlite3_step(stmt) == 100:
+        rows.append((sqlite3_column_int64(stmt, 0), sqlite3_column_int64(stmt, 1)))
+    sqlite3_finalize(stmt)
+    assert rows == [(1, 10), (2, 20), (3, 30)], rows
+    print("RESULT", rows)
+''')
+
+
+def _run_vtable_driver(tmp_path, cache_dir):
+    script = tmp_path / "vtable_drv.py"
+    script.write_text(_DRIVER)
+    env = dict(os.environ, NUMBA_CACHE_DIR=str(cache_dir))
+    out = subprocess.run([sys.executable, str(script)], env=env,
+                         capture_output=True, text=True, timeout=600)
+    assert out.returncode == 0, out.stderr
+    line = [ln for ln in out.stdout.splitlines() if ln.startswith("RESULT")][0]
+    return line
+
+
+def _count_vtable_nbc(cache_dir):
+    # Scope to the vtable cfunc/njit caches only, so the no-growth assertion is
+    # immune to unrelated bindings whose compile timing differs across runs.
+    return sum(1 for _ in cache_dir.rglob("*_sqlite_vtable*.nbc"))
+
+
+def test_xprocess_cache_no_growth(tmp_path):
+    cache = tmp_path / "nbcache"
+    cache.mkdir()
+    line1 = _run_vtable_driver(tmp_path, cache)  # cold: compiles + writes cache
+    assert line1 == "RESULT [(1, 10), (2, 20), (3, 30)]"
+    n_cold = _count_vtable_nbc(cache)
+    assert n_cold > 0
+    line2 = _run_vtable_driver(tmp_path, cache)  # warm: must reuse, not append
+    assert line2 == "RESULT [(1, 10), (2, 20), (3, 30)]"
+    assert _count_vtable_nbc(cache) == n_cold, "warm run grew the cache (cache reuse failed)"

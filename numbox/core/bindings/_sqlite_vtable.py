@@ -426,6 +426,10 @@ def register_table(db, name, arr, columns=None, *, text_as_blob=False):
 
     See docs/plans/2026-05-31-sqlite-vtable-design.md for the full contract.
     The caller MUST retain the returned handle for as long as the table is used.
+
+    Registering a second table under an existing name follows SQLite's
+    eponymous-module semantics: the later registration replaces the earlier one
+    (it does not raise).
     """
     built = _build_descriptor(arr, columns, text_as_blob)
     with c_string(name) as name_p:
