@@ -3,6 +3,8 @@
   "specPath": "docs/plans/2026-05-31-sqlite-vtable-design.md",
   "branch": "feat/sqlite-vtable",
   "modelPolicy": "All implementation tasks run on Opus at max reasoning (adversarial/verification workflows would use a Sonnet floor; implementation does not).",
+  "interTaskPauseMinutes": 42,
+  "pacing": "REQUIRED: pause 42 minutes between tasks. After each task's verify passes and commit lands, wait a full 42 minutes before starting the next task. Honored in every execution mode.",
   "tasks": [
     {
       "id": 1,

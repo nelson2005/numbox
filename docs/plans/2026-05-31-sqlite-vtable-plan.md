@@ -21,6 +21,8 @@ Lint (whole tree): `/home/erik/projects/numbox/venv/bin/flake8 --max-line-length
 
 **Commit rule:** attribute to the user only; no AI/Claude/Anthropic mention, no `Co-Authored-By`. Feature branch is `feat/sqlite-vtable` (already created off the phase-3 branch); never commit to `main`.
 
+**Pacing — REQUIRED:** Pause **42 minutes between tasks.** After a task's verify passes and its commit lands, wait a full 42 minutes before starting the next task. Applies to every execution mode. Subagent-driven (coordinator in-session): after each task, start a 42-minute background timer and only dispatch the next task when it fires. Parallel session: idle 42 minutes at each between-task checkpoint.
+
 ---
 
 ## File structure
