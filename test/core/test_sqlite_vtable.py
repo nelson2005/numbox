@@ -1,5 +1,8 @@
+import ctypes
+
 import numpy as np
 from numbox.core.bindings._sqlite_vtable import utf32_to_utf8, _nul_trimmed_len
+from numbox.core.bindings._sqlite_vtable import _build_descriptor, _TAG_I64, _TAG_F64, _TAG_U
 from numbox.utils.lowlevel import array_data_p
 
 
@@ -45,3 +48,40 @@ def test_utf32_invalid_codepoint_replacement():
 def test_nul_trimmed_len():
     buf = np.frombuffer(b"hi\x00\x00\x00", dtype=np.uint8).copy()
     assert _nul_trimmed_len(array_data_p(buf), 5) == 2
+
+
+def test_descriptor_2d_int64():
+    a = np.arange(6, dtype=np.int64).reshape(3, 2)
+    d = _build_descriptor(a, ["a", "b"], False)
+    assert (d.nrows, d.ncols, d.row_stride) == (3, 2, a.strides[0])
+    assert list(d.offsets) == [0, 8]
+    assert list(d.tags) == [_TAG_I64, _TAG_I64]
+    assert d.schema == b"CREATE TABLE x(a INTEGER, b INTEGER)\x00"
+
+
+def test_descriptor_structured_mixed():
+    dt = np.dtype([("t", "U6"), ("q", "i8"), ("p", "f8")])
+    a = np.zeros(2, dtype=dt)
+    d = _build_descriptor(a, None, False)
+    assert d.ncols == 3
+    assert list(d.tags) == [_TAG_U, _TAG_I64, _TAG_F64]
+    assert list(d.offsets) == [dt.fields["t"][1], dt.fields["q"][1], dt.fields["p"][1]]
+    assert d.scratch_bytes == 6 * 4 + 1
+    assert d.schema == b"CREATE TABLE x(t TEXT, q INTEGER, p REAL)\x00"
+
+
+def test_descriptor_rejects_bad_shapes():
+    import pytest
+    with pytest.raises((TypeError, ValueError)):
+        _build_descriptor(np.zeros((2, 2, 2), dtype=np.int64), ["a", "b"], False)
+    with pytest.raises((TypeError, ValueError)):
+        _build_descriptor(np.arange(4, dtype=np.int64), ["a"], False)
+    with pytest.raises((TypeError, ValueError)):
+        _build_descriptor(np.zeros((2, 3), dtype=np.int64), ["a", "b"], False)
+    with pytest.raises((TypeError, ValueError)):
+        _build_descriptor(np.empty((2, 2), dtype=object), ["a", "b"], False)
+
+
+def test_descriptor_offsets_assertion_holds():
+    from numbox.core.bindings._sqlite_vtable import _NdarrayTableDescriptor
+    assert ctypes.sizeof(_NdarrayTableDescriptor) == 72
