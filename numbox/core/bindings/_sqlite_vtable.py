@@ -2,8 +2,7 @@
 
 A single generic sqlite3_module (built once at import) serves every table; the
 per-table base pointer / strides / dtype tags / schema live in a ctypes
-descriptor passed as pClientData. See
-docs/plans/2026-05-31-sqlite-vtable-design.md.
+descriptor passed as pClientData.
 """
 import ctypes
 
@@ -424,7 +423,6 @@ def _raise_rc(db, name, rc):
 def register_table(db, name, arr, columns=None, *, text_as_blob=False):
     """Expose a numpy array as a read-only eponymous SQLite virtual table.
 
-    See docs/plans/2026-05-31-sqlite-vtable-design.md for the full contract.
     The caller MUST retain the returned handle for as long as the table is used.
 
     Registering a second table under an existing name follows SQLite's
