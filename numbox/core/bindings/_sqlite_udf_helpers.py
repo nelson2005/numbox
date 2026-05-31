@@ -95,7 +95,11 @@ def _xstep_impl(ctx, argc, argv_pp):
         return
     slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
     if slot[0] == 0:
-        slot[0] = export_meminfo(_init())
+        try:
+            slot[0] = export_meminfo(_init())
+        except Exception:
+            sqlite3_result_error(ctx, get_unicode_data_p("error in user init callback"), -1)
+            return
     try:
         _step(borrow_structref(_state_type, slot[0]), ctx, argc, argv_pp)
     except Exception:
@@ -108,14 +112,24 @@ def _xfinal_impl(ctx):
     agg = sqlite3_aggregate_context(ctx, 0)
     if agg == 0:
         try:
-            _finalize(_init(), ctx)
+            _state = _init()
+        except Exception:
+            sqlite3_result_error(ctx, get_unicode_data_p("error in user init callback"), -1)
+            return
+        try:
+            _finalize(_state, ctx)
         except Exception:
             sqlite3_result_error(ctx, get_unicode_data_p("error in user finalize callback"), -1)
         return
     slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
     if slot[0] == 0:
         try:
-            _finalize(_init(), ctx)
+            _state = _init()
+        except Exception:
+            sqlite3_result_error(ctx, get_unicode_data_p("error in user init callback"), -1)
+            return
+        try:
+            _finalize(_state, ctx)
         except Exception:
             sqlite3_result_error(ctx, get_unicode_data_p("error in user finalize callback"), -1)
         return
@@ -147,14 +161,24 @@ def _xvalue_impl(ctx):
     agg = sqlite3_aggregate_context(ctx, 0)
     if agg == 0:
         try:
-            _value(_init(), ctx)
+            _state = _init()
+        except Exception:
+            sqlite3_result_error(ctx, get_unicode_data_p("error in user init callback"), -1)
+            return
+        try:
+            _value(_state, ctx)
         except Exception:
             sqlite3_result_error(ctx, get_unicode_data_p("error in user value callback"), -1)
         return
     slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
     if slot[0] == 0:
         try:
-            _value(_init(), ctx)
+            _state = _init()
+        except Exception:
+            sqlite3_result_error(ctx, get_unicode_data_p("error in user init callback"), -1)
+            return
+        try:
+            _value(_state, ctx)
         except Exception:
             sqlite3_result_error(ctx, get_unicode_data_p("error in user value callback"), -1)
         return

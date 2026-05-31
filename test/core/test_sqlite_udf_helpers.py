@@ -630,3 +630,51 @@ def test_finalize_exception_empty_group_surfaces_error():
     assert rc != SQLITE_OK  # raising finalize on an empty group must fail loudly
     assert "finalize callback" in msg  # descriptive message even on the empty-group path
     assert h is not None
+
+
+@njit
+def init_raise():
+    s = SumState(nb_types.int64(0))
+    if s.total >= 0:  # always true at runtime; keeps the St return type for typing
+        raise ValueError("boom from init")
+    return s
+
+
+def test_init_exception_surfaces_error_no_unraisable():
+    """A raising init (called at xStep's first-row export) must be caught and
+    reported as 'error in user init callback', NOT swallowed by the @cfunc
+    boundary as an 'Exception ignored' unraisable."""
+    db = _open_memory()
+    _make_table(db, [1, 2, 3])
+    h = register_aggregate(db, "raise_init", 1, sum_state_type,
+                           init_raise, sum_step, sum_finalize)
+    captured = []
+    old_hook = sys.unraisablehook
+    sys.unraisablehook = lambda a: captured.append(a)
+    try:
+        with c_string("SELECT raise_init(v) FROM t") as sp:
+            rc = sqlite3_exec(db, sp, 0, 0, 0)
+        msg = _errmsg(db)
+    finally:
+        sys.unraisablehook = old_hook
+    sqlite3_close(db)
+    assert not captured, "raising init leaked an unraisable (swallowed): %r" % (captured,)
+    assert rc != SQLITE_OK
+    assert "init callback" in msg  # accurate role, not a mislabeled finalize error
+    assert h is not None
+
+
+def test_init_exception_empty_group_surfaces_error():
+    """A raising init on an empty group (xFinal's no-state branch) must report
+    'error in user init callback', not the mislabeled 'finalize callback'."""
+    db = _open_memory()
+    _make_table(db, [])
+    h = register_aggregate(db, "raise_init_empty", 1, sum_state_type,
+                           init_raise, sum_step, sum_finalize)
+    with c_string("SELECT raise_init_empty(v) FROM t") as sp:
+        rc = sqlite3_exec(db, sp, 0, 0, 0)
+    msg = _errmsg(db)
+    sqlite3_close(db)
+    assert rc != SQLITE_OK
+    assert "init callback" in msg
+    assert h is not None
