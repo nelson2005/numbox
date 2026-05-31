@@ -71,7 +71,7 @@ def test_descriptor_2d_int64():
     assert (d.nrows, d.ncols, d.row_stride) == (3, 2, a.strides[0])
     assert list(d.offsets) == [0, 8]
     assert list(d.tags) == [_TAG_I64, _TAG_I64]
-    assert d.schema == b"CREATE TABLE x(a INTEGER, b INTEGER)\x00"
+    assert d.schema == b'CREATE TABLE x("a" INTEGER, "b" INTEGER)\x00'
 
 
 def test_descriptor_structured_mixed():
@@ -82,7 +82,7 @@ def test_descriptor_structured_mixed():
     assert list(d.tags) == [_TAG_U, _TAG_I64, _TAG_F64]
     assert list(d.offsets) == [dt.fields["t"][1], dt.fields["q"][1], dt.fields["p"][1]]
     assert d.scratch_bytes == 6 * 4 + 1
-    assert d.schema == b"CREATE TABLE x(t TEXT, q INTEGER, p REAL)\x00"
+    assert d.schema == b'CREATE TABLE x("t" TEXT, "q" INTEGER, "p" REAL)\x00'
 
 
 def test_descriptor_rejects_bad_shapes():
@@ -95,6 +95,8 @@ def test_descriptor_rejects_bad_shapes():
         _build_descriptor(np.zeros((2, 3), dtype=np.int64), ["a", "b"], False)
     with pytest.raises((TypeError, ValueError)):
         _build_descriptor(np.empty((2, 2), dtype=object), ["a", "b"], False)
+    with pytest.raises((TypeError, ValueError)):
+        _build_descriptor(np.empty((3, 0), dtype=np.int64), [], False)
 
 
 def test_descriptor_offsets_assertion_holds():
@@ -154,6 +156,14 @@ def test_count_and_sum():
     a = np.array([[1, 10], [2, 20], [3, 30]], dtype=np.int64)
     h = register_table(db, "t", a, columns=["a", "b"])  # noqa: F841
     assert _fetchall(db, "SELECT COUNT(*), SUM(a) FROM t") == [(3, 6)]
+    sqlite3_close(db)
+
+
+def test_quoted_keyword_and_space_columns():
+    db = _open_memory()
+    a = np.array([[1, 2]], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["order", "group by"])  # noqa: F841
+    assert _fetchall(db, 'SELECT "order", "group by" FROM t') == [(1, 2)]
     sqlite3_close(db)
 
 

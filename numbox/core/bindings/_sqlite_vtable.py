@@ -49,6 +49,7 @@ _D_COL_OFFSETS, _D_COL_TAGS, _D_COL_WIDTHS, _D_SCHEMA, _D_SCRATCH = 32, 40, 48, 
 _VTAB_DESC, _VTAB_SIZE = 24, 32
 # cursor layout: pVtab(+0), descriptor(+8), rowid(+16), scratch(+24)
 _CUR_PVTAB, _CUR_DESC, _CUR_ROWID, _CUR_SCRATCH = 0, 8, 16, 24
+assert _VTAB_DESC + 8 == _VTAB_SIZE and _CUR_SCRATCH == _CUR_ROWID + 8
 
 
 @proxy(signatures.get("sqlite3_create_module"), jit_options={"cache": True})
@@ -205,6 +206,8 @@ def _build_descriptor(arr, columns, text_as_blob):
         sub = [arr.dtype] * arr.shape[1]
         offs = [j * arr.strides[1] for j in range(arr.shape[1])]
 
+    if not col_names:
+        raise ValueError("array must have at least one column")
     tags = [_col_tag(dt, text_as_blob) for dt in sub]
     widths = [int(dt.itemsize) for dt in sub]
     scratch = max([w + 1 for w, t in zip(widths, tags) if t == _TAG_U], default=0)
@@ -212,7 +215,7 @@ def _build_descriptor(arr, columns, text_as_blob):
     offsets_buf = np.array(offs, dtype=np.int64)
     tags_buf = np.array(tags, dtype=np.int32)  # the xColumn cfunc reads int32 elements; do not widen
     widths_buf = np.array(widths, dtype=np.int64)
-    cols_sql = ", ".join("%s %s" % (n, _SQL_TYPE[t]) for n, t in zip(col_names, tags))
+    cols_sql = ", ".join('"%s" %s' % (n.replace('"', '""'), _SQL_TYPE[t]) for n, t in zip(col_names, tags))
     schema = ("CREATE TABLE x(%s)" % cols_sql).encode("utf-8") + b"\x00"
 
     c = _NdarrayTableDescriptor()
@@ -271,7 +274,7 @@ def _xopen(vtab, pp_cursor):
     try:
         desc = load_at(vtab + _VTAB_DESC, int64)
         scratch = load_at(desc + _D_SCRATCH, int64)
-        cur = sqlite3_malloc(int32(_CUR_SCRATCH + scratch))
+        cur = sqlite3_malloc(int32(_CUR_SCRATCH + scratch))  # oversized scratch wraps to NULL -> NOMEM (safe)
         if cur == 0:
             return SQLITE_NOMEM
         store_at(cur + _CUR_PVTAB, int64(vtab))
@@ -427,7 +430,11 @@ def register_table(db, name, arr, columns=None, *, text_as_blob=False):
 
     Registering a second table under an existing name follows SQLite's
     eponymous-module semantics: the later registration replaces the earlier one
-    (it does not raise).
+    (it does not raise). Column names may be any string (they are quoted in the
+    generated schema). ``text_as_blob`` affects only bytes (``'S'``) columns;
+    unicode (``'U'``) is always TEXT. numpy has no missing value, so no cell is
+    SQL NULL (a float NaN passes through as a REAL NaN). uint64 values >= 2**63
+    are stored as SQLite's signed INTEGER and therefore wrap to negative.
     """
     built = _build_descriptor(arr, columns, text_as_blob)
     with c_string(name) as name_p:
