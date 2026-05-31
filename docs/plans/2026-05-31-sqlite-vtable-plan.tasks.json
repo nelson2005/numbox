@@ -1,0 +1,113 @@
+{
+  "planPath": "docs/plans/2026-05-31-sqlite-vtable-plan.md",
+  "specPath": "docs/plans/2026-05-31-sqlite-vtable-design.md",
+  "branch": "feat/sqlite-vtable",
+  "modelPolicy": "All implementation tasks run on Opus at max reasoning (adversarial/verification workflows would use a Sonnet floor; implementation does not).",
+  "tasks": [
+    {
+      "id": 1,
+      "nativeTaskId": 8,
+      "subject": "Task 1: load_unaligned intrinsic",
+      "status": "pending",
+      "blockedBy": [],
+      "model": "opus",
+      "reasoning": "max",
+      "files": ["numbox/utils/lowlevel.py", "test/core/test_load_unaligned.py"],
+      "verifyCommand": "/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_load_unaligned.py --durations=20",
+      "acceptanceCriteria": ["load_unaligned reads correct value from misaligned address in njit", "matches load_at for aligned int8/int32/int64/float64"],
+      "description": "Add load_unaligned (align=1 load) to lowlevel.py, mirroring _load_at. See plan section Task 1."
+    },
+    {
+      "id": 2,
+      "nativeTaskId": 9,
+      "subject": "Task 2: SQLite vtable signatures, wrappers, constants",
+      "status": "pending",
+      "blockedBy": [],
+      "model": "opus",
+      "reasoning": "max",
+      "files": ["numbox/core/bindings/signatures.py", "numbox/core/bindings/_sqlite_vtable.py", "test/core/test_sqlite_vtable.py"],
+      "verifyCommand": "/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_vtable.py::test_imports --durations=20",
+      "acceptanceCriteria": ["3 new signatures present in signatures_sqlite", "_sqlite_vtable.py imports cleanly, wrappers Python-callable"],
+      "description": "Bind sqlite3_create_module/declare_vtab/malloc; create _sqlite_vtable.py header (wrappers, constants). See plan section Task 2."
+    },
+    {
+      "id": 3,
+      "nativeTaskId": 10,
+      "subject": "Task 3: String-emit helpers (utf32_to_utf8, _nul_trimmed_len)",
+      "status": "pending",
+      "blockedBy": [1],
+      "model": "opus",
+      "reasoning": "max",
+      "files": ["numbox/core/bindings/_sqlite_vtable.py", "test/core/test_sqlite_vtable.py"],
+      "verifyCommand": "/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_vtable.py -k 'utf32 or nul_trim' --durations=20",
+      "acceptanceCriteria": ["utf32_to_utf8 handles 1-4 byte codepoints and stops at NUL", "invalid codepoints -> U+FFFD", "_nul_trimmed_len returns unpadded length"],
+      "description": "UTF-32->UTF-8 encoder (codepoints via load_unaligned) + NUL-trim helper. See plan section Task 3."
+    },
+    {
+      "id": 4,
+      "nativeTaskId": 11,
+      "subject": "Task 4: Descriptor builder, dtype mapping, schema, validation, handle",
+      "status": "pending",
+      "blockedBy": [],
+      "model": "opus",
+      "reasoning": "max",
+      "files": ["numbox/core/bindings/_sqlite_vtable.py", "test/core/test_sqlite_vtable.py"],
+      "verifyCommand": "/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_vtable.py -k descriptor --durations=20",
+      "acceptanceCriteria": ["2-D int64 descriptor fields + schema correct", "structured mixed dtype tags/offsets/schema/scratch correct", "rejects bad shapes/dtypes/columns", "descriptor offsets == _D_* and sizeof==72"],
+      "description": "Pure-Python _build_descriptor (layout/tags/schema/validation) + offset-mirror assert + _BuiltDescriptor. See plan section Task 4."
+    },
+    {
+      "id": 5,
+      "nativeTaskId": 12,
+      "subject": "Task 5: cfunc callbacks, static module, register_table",
+      "status": "pending",
+      "blockedBy": [1, 2, 3, 4],
+      "model": "opus",
+      "reasoning": "max",
+      "files": ["numbox/core/bindings/_sqlite_vtable.py", "numbox/core/bindings/__init__.py", "test/core/test_sqlite_vtable.py"],
+      "verifyCommand": "/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_vtable.py -k 'int64_table or count or imports' --durations=20",
+      "acceptanceCriteria": ["SELECT/WHERE/ORDER BY on int64 table matches numpy", "COUNT/SUM match numpy", "register_table importable from package", "duplicate/failed registration raises"],
+      "description": "Hardest task (raw-pointer struct walks, cfunc ABI, positional module assembly xNext-before-xEof, exception categories). The ~10 cfuncs + THE_MODULE + register_table + _VTableHandle; package export; first int64 integration test + _fetchall harness. See plan section Task 5."
+    },
+    {
+      "id": 6,
+      "nativeTaskId": 13,
+      "subject": "Task 6: Full dtype coverage",
+      "status": "pending",
+      "blockedBy": [5],
+      "model": "opus",
+      "reasoning": "max",
+      "files": ["numbox/core/bindings/_sqlite_vtable.py", "test/core/test_sqlite_vtable.py"],
+      "verifyCommand": "/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_vtable.py -k 'dtype or structured or blob' --durations=20",
+      "acceptanceCriteria": ["all numeric dtypes + bool roundtrip exactly", "structured 'S'+'U' columns correct, non-ASCII 'U' roundtrips", "text_as_blob yields BLOB column"],
+      "description": "Drive every xColumn dtype branch via real queries (float/mixed/bool/structured/S/U/text_as_blob); fix dispatch bugs inline. See plan section Task 6."
+    },
+    {
+      "id": 7,
+      "nativeTaskId": 14,
+      "subject": "Task 7: Layout & edge cases",
+      "status": "pending",
+      "blockedBy": [5],
+      "model": "opus",
+      "reasoning": "max",
+      "files": ["numbox/core/bindings/_sqlite_vtable.py", "test/core/test_sqlite_vtable.py"],
+      "verifyCommand": "/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_sqlite_vtable.py -k 'fortran or strided or reversed or packed or empty or rowid or join or duplicate or lifetime' --durations=20",
+      "acceptanceCriteria": ["F-order/strided/reversed match numpy", "packed 'U' at odd offset correct", "empty/rowid/join/duplicate/gc-lifetime pass", "cfunc cache cold/warm verified or documented"],
+      "description": "Validate strides model + edges (F-order, strided, reversed, packed-'U', empty, rowid, JOIN, duplicate, gc-lifetime, cfunc cache). See plan section Task 7."
+    },
+    {
+      "id": 8,
+      "nativeTaskId": 15,
+      "subject": "Task 8: Docs and full-CI gate",
+      "status": "pending",
+      "blockedBy": [5, 6, 7],
+      "model": "opus",
+      "reasoning": "max",
+      "files": ["docs/numbox.core.bindings.rst"],
+      "verifyCommand": "/home/erik/projects/numbox/venv/bin/flake8 --max-line-length=127 . && /home/erik/projects/numbox/venv/bin/python -m pytest test/ --durations=20",
+      "acceptanceCriteria": ["_sqlite_vtable automodule section added (not family-list)", "flake8 clean", "full test suite passes", "sphinx-build exits 0"],
+      "description": "Sphinx automodule entry (not the _call_lib_func family-list) + full local CI gate (flake8, full pytest, sphinx-build). See plan section Task 8."
+    }
+  ],
+  "lastUpdated": "2026-05-31"
+}
