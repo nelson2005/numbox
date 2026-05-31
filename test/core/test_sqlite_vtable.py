@@ -1,6 +1,7 @@
 import ctypes
 from ctypes import addressof, c_int64, cast, c_char_p, string_at
 
+import pytest
 import numpy as np
 from numbox.utils.cstrings import c_string
 from numbox.core.bindings import (
@@ -148,4 +149,52 @@ def test_count_and_sum():
     a = np.array([[1, 10], [2, 20], [3, 30]], dtype=np.int64)
     h = register_table(db, "t", a, columns=["a", "b"])  # noqa: F841
     assert _fetchall(db, "SELECT COUNT(*), SUM(a) FROM t") == [(3, 6)]
+    sqlite3_close(db)
+
+
+@pytest.mark.parametrize("dt", [np.float64, np.float32, np.int32, np.int16, np.uint32, np.int8, np.uint8, np.uint16])
+def test_numeric_dtype_roundtrip(dt):
+    db = _open_memory()
+    a = (np.arange(6, dtype=dt).reshape(3, 2) + 1)
+    h = register_table(db, "t", a, columns=["a", "b"])  # noqa: F841
+    got = _fetchall(db, "SELECT a, b FROM t ORDER BY a")
+    exp = [tuple(row) for row in a.tolist()]
+    assert got == exp
+    sqlite3_close(db)
+
+
+def test_uint64_roundtrip_and_signed_wrap():
+    db = _open_memory()
+    a = np.array([[1], [2 ** 63], [2 ** 64 - 1]], dtype=np.uint64)
+    h = register_table(db, "t", a, columns=["a"])  # noqa: F841
+    # SQLite INTEGER is a signed int64; uint64 values >= 2**63 reinterpret as negative.
+    assert _fetchall(db, "SELECT a FROM t") == [(1,), (-(2 ** 63),), (-1,)]
+    sqlite3_close(db)
+
+
+def test_bool_dtype():
+    db = _open_memory()
+    a = np.array([[True, False], [False, True]], dtype=np.bool_)
+    h = register_table(db, "t", a, columns=["a", "b"])  # noqa: F841
+    assert _fetchall(db, "SELECT a, b FROM t") == [(1, 0), (0, 1)]
+    sqlite3_close(db)
+
+
+def test_structured_text_and_unicode():
+    db = _open_memory()
+    dt = np.dtype([("t", "U6"), ("q", "i4"), ("p", "f8"), ("s", "S4")])
+    a = np.array([("héllo", 3, 1.5, b"ab"), ("\U0001F600", 7, 2.0, b"cd")], dtype=dt)
+    h = register_table(db, "trades", a)  # noqa: F841
+    got = _fetchall(db, "SELECT t, q, p, s FROM trades")
+    assert got == [("héllo", 3, 1.5, "ab"), ("\U0001F600", 7, 2.0, "cd")]
+    sqlite3_close(db)
+
+
+def test_text_as_blob():
+    db = _open_memory()
+    dt = np.dtype([("s", "S3")])
+    a = np.array([(b"xy",)], dtype=dt)
+    h = register_table(db, "t", a, text_as_blob=True)  # noqa: F841
+    assert _fetchall(db, "SELECT s FROM t") == [(b"xy",)]
+    assert _fetchall(db, "SELECT typeof(s) FROM t") == [("blob",)]
     sqlite3_close(db)
