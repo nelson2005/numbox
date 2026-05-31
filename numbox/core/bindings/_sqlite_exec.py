@@ -17,6 +17,14 @@ Produce the callback address from Python via:
     @cfunc(int32(voidptr, int32, intp, intp))
     def my_row_cb(ctx, n, values_pp, names_pp): ...
     sqlite3_exec(db, sql, my_row_cb.address, ctx_p, errmsg_pp)
+
+Exception handling: a numba @cfunc swallows any exception raised by its body (it
+prints "Exception ignored" and returns the zero default = 0 = "continue"), so an
+intended abort is silently suppressed and iteration proceeds. The row callback
+has no sqlite3_context, so the return code is the only channel: wrap the body in
+a bare try/except (never try/finally) and return NONZERO from the except to force
+SQLITE_ABORT. The same guard also prevents an NRT meminfo leak when the body
+holds an array / list / structref live across a call that raises.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures

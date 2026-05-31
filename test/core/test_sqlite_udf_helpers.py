@@ -487,3 +487,119 @@ def test_finalize_exception_surfaces_error_and_no_leak():
     freed = after.mi_free - before.mi_free
     assert allocated == freed, "leak on raising finalize: %d alloc, %d free" % (allocated, freed)
     assert h is not None
+
+
+@njit
+def raising_step(state, ctx, argc, argv_pp):
+    raise ValueError("boom from step")
+
+
+def test_step_exception_surfaces_error_and_no_leak():
+    """A raising step must fail the query (xStep reports SQLITE_ERROR) instead of
+    silently dropping rows, and must not leak the borrowed state meminfo."""
+    from numba.core.runtime import nrt
+    _nrt = nrt._nrt
+    if not hasattr(_nrt, "memsys_enable_stats"):
+        import pytest
+        pytest.skip("NRT allocation stats unavailable")
+
+    db = _open_memory()
+    _make_table(db, [1, 2, 3, 4, 5])
+    h = register_aggregate(db, "raise_step", 1, sum_state_type,
+                           sum_init, raising_step, sum_finalize)
+    with c_string("SELECT raise_step(v) FROM t") as sp:
+        rc = sqlite3_exec(db, sp, 0, 0, 0)
+    assert rc != SQLITE_OK  # raising step fails the query, not a silent wrong result
+
+    _nrt.memsys_enable_stats()
+    with c_string("SELECT raise_step(v) FROM t") as sp:  # warm
+        sqlite3_exec(db, sp, 0, 0, 0)
+    before = nrt.rtsys.get_allocation_stats()
+    for _ in range(10):
+        with c_string("SELECT raise_step(v) FROM t") as sp:
+            sqlite3_exec(db, sp, 0, 0, 0)
+    after = nrt.rtsys.get_allocation_stats()
+    sqlite3_close(db)
+    allocated = after.mi_alloc - before.mi_alloc
+    freed = after.mi_free - before.mi_free
+    assert allocated == freed, "leak on raising step: %d alloc, %d free" % (allocated, freed)
+    assert h is not None
+
+
+_WIN_SQL = ("SELECT %s(v) OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) "
+            "FROM t ORDER BY v")
+
+
+@njit
+def raising_value(state, ctx):
+    raise ValueError("boom from value")
+
+
+def test_value_exception_surfaces_error_and_no_leak():
+    """A raising window value must fail the query (xValue reports SQLITE_ERROR)
+    instead of emitting a stale value, and must not leak the borrowed meminfo."""
+    from numba.core.runtime import nrt
+    _nrt = nrt._nrt
+    if not hasattr(_nrt, "memsys_enable_stats"):
+        import pytest
+        pytest.skip("NRT allocation stats unavailable")
+
+    db = _open_memory()
+    _make_table(db, [1, 2, 3, 4, 5])
+    h = register_window(db, "raise_wval", 1, sum_state_type, sum_init, sum_step,
+                        w_inverse, raising_value, sum_finalize)
+    with c_string(_WIN_SQL % "raise_wval") as sp:
+        rc = sqlite3_exec(db, sp, 0, 0, 0)
+    assert rc != SQLITE_OK
+
+    _nrt.memsys_enable_stats()
+    with c_string(_WIN_SQL % "raise_wval") as sp:  # warm
+        sqlite3_exec(db, sp, 0, 0, 0)
+    before = nrt.rtsys.get_allocation_stats()
+    for _ in range(10):
+        with c_string(_WIN_SQL % "raise_wval") as sp:
+            sqlite3_exec(db, sp, 0, 0, 0)
+    after = nrt.rtsys.get_allocation_stats()
+    sqlite3_close(db)
+    allocated = after.mi_alloc - before.mi_alloc
+    freed = after.mi_free - before.mi_free
+    assert allocated == freed, "leak on raising value: %d alloc, %d free" % (allocated, freed)
+    assert h is not None
+
+
+@njit
+def raising_inverse(state, ctx, argc, argv_pp):
+    raise ValueError("boom from inverse")
+
+
+def test_inverse_exception_surfaces_error_and_no_leak():
+    """A raising window inverse must fail the query and must not leak the borrowed
+    meminfo. (SQLite does not document xInverse error propagation, but it is
+    observed on the system sqlite; the load-bearing guarantee is no-leak.)"""
+    from numba.core.runtime import nrt
+    _nrt = nrt._nrt
+    if not hasattr(_nrt, "memsys_enable_stats"):
+        import pytest
+        pytest.skip("NRT allocation stats unavailable")
+
+    db = _open_memory()
+    _make_table(db, [1, 2, 3, 4, 5])
+    h = register_window(db, "raise_winv", 1, sum_state_type, sum_init, sum_step,
+                        raising_inverse, w_value, sum_finalize)
+    with c_string(_WIN_SQL % "raise_winv") as sp:
+        rc = sqlite3_exec(db, sp, 0, 0, 0)
+    assert rc != SQLITE_OK
+
+    _nrt.memsys_enable_stats()
+    with c_string(_WIN_SQL % "raise_winv") as sp:  # warm
+        sqlite3_exec(db, sp, 0, 0, 0)
+    before = nrt.rtsys.get_allocation_stats()
+    for _ in range(10):
+        with c_string(_WIN_SQL % "raise_winv") as sp:
+            sqlite3_exec(db, sp, 0, 0, 0)
+    after = nrt.rtsys.get_allocation_stats()
+    sqlite3_close(db)
+    allocated = after.mi_alloc - before.mi_alloc
+    freed = after.mi_free - before.mi_free
+    assert allocated == freed, "leak on raising inverse: %d alloc, %d free" % (allocated, freed)
+    assert h is not None

@@ -8,6 +8,15 @@ the release-in-xFinal-but-NOT-xValue rule -- so callers write only their
 ``@njit`` ``init``/``step``/``finalize`` (and ``inverse``/``value`` for windows)
 state logic.
 
+**Exception handling.** Each generated callback wraps the user
+step/inverse/value/finalize call in a ``try``/``except`` that reports
+``SQLITE_ERROR`` via ``sqlite3_result_error_code`` when the user callback raises.
+A numba ``@cfunc`` otherwise SWALLOWS the exception (it prints "Exception
+ignored" and returns the zero default without unwinding into SQLite), which would
+be a silent wrong result; the in-body catch also lets numba run the borrowed
+state's reference-count decrement, which the unwind would otherwise skip -- a
+per-group meminfo leak. Only ``xFinal`` releases the slot.
+
 Mechanism (see docs/superpowers/specs/2026-05-29-sqlite-udaf-registration-helper-design.md):
 per-UDAF callback source is generated with the state type and the user functions
 baked in as module globals (so the calls inline), written to a content-addressed
@@ -87,7 +96,10 @@ def _xstep_impl(ctx, argc, argv_pp):
     slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
     if slot[0] == 0:
         slot[0] = export_meminfo(_init())
-    _step(borrow_structref(_state_type, slot[0]), ctx, argc, argv_pp)
+    try:
+        _step(borrow_structref(_state_type, slot[0]), ctx, argc, argv_pp)
+    except Exception:
+        sqlite3_result_error_code(ctx, SQLITE_ERROR)  # fail the query; the catch prevents the borrow leak
 '''
 
 _XFINAL_SRC = '''
@@ -117,7 +129,10 @@ def _xinverse_impl(ctx, argc, argv_pp):
     slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
     if slot[0] == 0:
         return
-    _inverse(borrow_structref(_state_type, slot[0]), ctx, argc, argv_pp)
+    try:
+        _inverse(borrow_structref(_state_type, slot[0]), ctx, argc, argv_pp)
+    except Exception:
+        sqlite3_result_error_code(ctx, SQLITE_ERROR)  # fail the query; the catch prevents the borrow leak
 '''
 
 _XVALUE_SRC = '''
@@ -131,7 +146,10 @@ def _xvalue_impl(ctx):
     if slot[0] == 0:
         _value(_init(), ctx)
         return
-    _value(borrow_structref(_state_type, slot[0]), ctx)
+    try:
+        _value(borrow_structref(_state_type, slot[0]), ctx)
+    except Exception:
+        sqlite3_result_error_code(ctx, SQLITE_ERROR)  # fail the query; the catch prevents the borrow leak
 '''
 
 

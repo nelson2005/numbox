@@ -8,6 +8,17 @@ sqlite3_context_db_handle -- retrieve db pointer from context.
 
 Callback function pointers are passed as intp obtained from @cfunc(...).address.
 Pass 0 for NULL (no callback / no pApp / no xDestroy).
+
+Exception handling: a numba @cfunc swallows any exception raised by its body (it
+prints "Exception ignored" and returns the zero default without unwinding into
+SQLite), so a raising scalar xFunc reports success to SQLite -- a silent
+wrong/NULL result. xFunc receives an sqlite3_context, so guard the body with a
+bare try/except (never try/finally -- numba rejects re-raising through finally)
+and call sqlite3_result_error / sqlite3_result_error_code in the except to fail
+the query loudly. The same guard also prevents an NRT meminfo leak when the body
+holds an array / list / structref live across a call that raises. The
+structref-backed register_aggregate / register_window helpers already do this
+for the aggregate and window callbacks.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
