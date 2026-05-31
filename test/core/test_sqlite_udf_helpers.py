@@ -603,3 +603,18 @@ def test_inverse_exception_surfaces_error_and_no_leak():
     freed = after.mi_free - before.mi_free
     assert allocated == freed, "leak on raising inverse: %d alloc, %d free" % (allocated, freed)
     assert h is not None
+
+
+def test_finalize_exception_empty_group_surfaces_error():
+    """A raising finalize on an EMPTY group (xFinal's no-state branch, where no
+    xStep ran so the aggregate context is NULL) must also fail the query, not be
+    silently swallowed -- the empty-group branch is guarded like the borrow path."""
+    db = _open_memory()
+    _make_table(db, [])  # empty: xStep never runs -> xFinal hits the no-state branch
+    h = register_aggregate(db, "raise_fin_empty", 1, sum_state_type,
+                           sum_init, sum_step, raising_finalize)
+    with c_string("SELECT raise_fin_empty(v) FROM t") as sp:
+        rc = sqlite3_exec(db, sp, 0, 0, 0)
+    sqlite3_close(db)
+    assert rc != SQLITE_OK  # raising finalize on an empty group must fail loudly
+    assert h is not None

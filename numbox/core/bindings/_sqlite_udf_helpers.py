@@ -107,11 +107,17 @@ _XFINAL_SRC = '''
 def _xfinal_impl(ctx):
     agg = sqlite3_aggregate_context(ctx, 0)
     if agg == 0:
-        _finalize(_init(), ctx)
+        try:
+            _finalize(_init(), ctx)
+        except Exception:
+            sqlite3_result_error_code(ctx, SQLITE_ERROR)
         return
     slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
     if slot[0] == 0:
-        _finalize(_init(), ctx)
+        try:
+            _finalize(_init(), ctx)
+        except Exception:
+            sqlite3_result_error_code(ctx, SQLITE_ERROR)
         return
     try:
         _finalize(borrow_structref(_state_type, slot[0]), ctx)
@@ -140,11 +146,17 @@ _XVALUE_SRC = '''
 def _xvalue_impl(ctx):
     agg = sqlite3_aggregate_context(ctx, 0)
     if agg == 0:
-        _value(_init(), ctx)
+        try:
+            _value(_init(), ctx)
+        except Exception:
+            sqlite3_result_error_code(ctx, SQLITE_ERROR)
         return
     slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
     if slot[0] == 0:
-        _value(_init(), ctx)
+        try:
+            _value(_init(), ctx)
+        except Exception:
+            sqlite3_result_error_code(ctx, SQLITE_ERROR)
         return
     try:
         _value(borrow_structref(_state_type, slot[0]), ctx)
