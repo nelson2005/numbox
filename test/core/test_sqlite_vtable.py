@@ -1,6 +1,15 @@
 import ctypes
+from ctypes import addressof, c_int64, cast, c_char_p, string_at
 
 import numpy as np
+from numbox.utils.cstrings import c_string
+from numbox.core.bindings import (
+    sqlite3_open, sqlite3_close, register_table,
+    sqlite3_prepare_v2, sqlite3_step, sqlite3_finalize,
+    sqlite3_column_count, sqlite3_column_type,
+    sqlite3_column_int64, sqlite3_column_double,
+    sqlite3_column_text, sqlite3_column_blob, sqlite3_column_bytes,
+)
 from numbox.core.bindings._sqlite_vtable import utf32_to_utf8, _nul_trimmed_len
 from numbox.core.bindings._sqlite_vtable import _build_descriptor, _TAG_I64, _TAG_F64, _TAG_U
 from numbox.utils.lowlevel import array_data_p
@@ -85,3 +94,58 @@ def test_descriptor_rejects_bad_shapes():
 def test_descriptor_offsets_assertion_holds():
     from numbox.core.bindings._sqlite_vtable import _NdarrayTableDescriptor
     assert ctypes.sizeof(_NdarrayTableDescriptor) == 72
+
+
+_SQLITE_ROW = 100
+_T_INT, _T_FLOAT, _T_TEXT, _T_BLOB, _T_NULL = 1, 2, 3, 4, 5
+
+
+def _open_memory():
+    db_p = c_int64(0)
+    with c_string(":memory:") as name_p:
+        rc = sqlite3_open(name_p, addressof(db_p))
+    assert rc == 0, rc
+    return db_p.value
+
+
+def _fetchall(db, sql):
+    stmt_p = c_int64(0)
+    with c_string(sql) as sql_p:
+        rc = sqlite3_prepare_v2(db, sql_p, -1, addressof(stmt_p), 0)
+    assert rc == 0, (rc, sql)
+    stmt = stmt_p.value
+    rows = []
+    while sqlite3_step(stmt) == _SQLITE_ROW:
+        row = []
+        for i in range(sqlite3_column_count(stmt)):
+            t = sqlite3_column_type(stmt, i)
+            if t == _T_INT:
+                row.append(sqlite3_column_int64(stmt, i))
+            elif t == _T_FLOAT:
+                row.append(sqlite3_column_double(stmt, i))
+            elif t == _T_TEXT:
+                row.append(cast(sqlite3_column_text(stmt, i), c_char_p).value.decode("utf-8"))
+            elif t == _T_BLOB:
+                n = sqlite3_column_bytes(stmt, i)
+                row.append(string_at(sqlite3_column_blob(stmt, i), n) if n else b"")
+            else:
+                row.append(None)
+        rows.append(tuple(row))
+    sqlite3_finalize(stmt)
+    return rows
+
+
+def test_int64_table_select_where_order():
+    db = _open_memory()
+    a = np.array([[1, 10], [2, 20], [3, 30]], dtype=np.int64)
+    h = register_table(db, "points", a, columns=["a", "b"])  # noqa: F841
+    assert _fetchall(db, "SELECT a, b FROM points WHERE a >= 2 ORDER BY b DESC") == [(3, 30), (2, 20)]
+    sqlite3_close(db)
+
+
+def test_count_and_sum():
+    db = _open_memory()
+    a = np.array([[1, 10], [2, 20], [3, 30]], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["a", "b"])  # noqa: F841
+    assert _fetchall(db, "SELECT COUNT(*), SUM(a) FROM t") == [(3, 6)]
+    sqlite3_close(db)

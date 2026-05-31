@@ -8,14 +8,31 @@ docs/plans/2026-05-31-sqlite-vtable-design.md.
 import ctypes
 
 import numpy as np
-from numba import carray, njit
-from numba.core.types import uint8, uint32
+from numba import carray, cfunc, njit, types
+from numba.core.types import (
+    int8, int16, int32, int64, uint8, uint16, uint32, uint64,
+    float32, float64,
+)
 
+from numbox.core.bindings._sqlite_constants import (
+    SQLITE_OK, SQLITE_TRANSIENT, SQLITE_ERROR, SQLITE_NOMEM,
+)
+from numbox.core.bindings._sqlite_conn import sqlite3_errmsg
+from numbox.core.bindings._sqlite_exec import sqlite3_free
+from numbox.core.bindings._sqlite_result import (
+    sqlite3_result_int64, sqlite3_result_double,
+    sqlite3_result_text, sqlite3_result_blob, sqlite3_result_error,
+)
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib
 from numbox.core.proxy.proxy import proxy
-from numbox.utils.lowlevel import _cast_int_to_void_p, load_unaligned
+from numbox.utils.cstrings import c_string
+from numbox.utils.lowlevel import (
+    _cast_int_to_void_p, get_unicode_data_p, load_at, load_unaligned, store_at,
+)
+
+__all__ = ["register_table"]
 
 load_lib("sqlite3")
 
@@ -210,3 +227,209 @@ def _build_descriptor(arr, columns, text_as_blob):
     c.schema_ptr = ctypes.cast(ctypes.c_char_p(schema), ctypes.c_void_p).value
     c.scratch_bytes = int(scratch)
     return _BuiltDescriptor(c, offsets_buf, tags_buf, widths_buf, schema, arr)
+
+
+@cfunc(types.int32(types.intp, types.intp, types.int32, types.intp, types.intp, types.intp), cache=True)
+def _xconnect(db, p_aux, argc, argv, pp_vtab, pz_err):
+    vtab = 0
+    try:
+        schema_p = load_at(p_aux + _D_SCHEMA, int64)
+        rc = sqlite3_declare_vtab(db, schema_p)
+        if rc != SQLITE_OK:
+            return rc
+        vtab = sqlite3_malloc(int32(_VTAB_SIZE))
+        if vtab == 0:
+            return SQLITE_NOMEM
+        store_at(vtab + 0, int64(0))
+        store_at(vtab + 8, int64(0))
+        store_at(vtab + 16, int64(0))
+        store_at(vtab + _VTAB_DESC, int64(p_aux))
+        slot = carray(_cast_int_to_void_p(pp_vtab), (1,), dtype=np.intp)
+        slot[0] = vtab
+        return SQLITE_OK
+    except Exception:
+        sqlite3_free(vtab)
+        return SQLITE_ERROR
+
+
+@cfunc(types.int32(types.intp, types.intp), cache=True)
+def _xbestindex(vtab, idx_info):
+    return SQLITE_OK
+
+
+@cfunc(types.int32(types.intp), cache=True)
+def _xdisconnect(vtab):
+    try:
+        sqlite3_free(vtab)
+        return SQLITE_OK
+    except Exception:
+        return SQLITE_ERROR
+
+
+@cfunc(types.int32(types.intp, types.intp), cache=True)
+def _xopen(vtab, pp_cursor):
+    cur = 0
+    try:
+        desc = load_at(vtab + _VTAB_DESC, int64)
+        scratch = load_at(desc + _D_SCRATCH, int64)
+        cur = sqlite3_malloc(int32(_CUR_SCRATCH + scratch))
+        if cur == 0:
+            return SQLITE_NOMEM
+        store_at(cur + _CUR_PVTAB, int64(vtab))
+        store_at(cur + _CUR_DESC, int64(desc))
+        store_at(cur + _CUR_ROWID, int64(0))
+        slot = carray(_cast_int_to_void_p(pp_cursor), (1,), dtype=np.intp)
+        slot[0] = cur
+        return SQLITE_OK
+    except Exception:
+        sqlite3_free(cur)
+        return SQLITE_ERROR
+
+
+@cfunc(types.int32(types.intp), cache=True)
+def _xclose(cur):
+    try:
+        sqlite3_free(cur)
+        return SQLITE_OK
+    except Exception:
+        return SQLITE_ERROR
+
+
+@cfunc(types.int32(types.intp, types.int32, types.intp, types.int32, types.intp), cache=True)
+def _xfilter(cur, idx_num, idx_str, argc, argv):
+    store_at(cur + _CUR_ROWID, int64(0))
+    return SQLITE_OK
+
+
+@cfunc(types.int32(types.intp), cache=True)
+def _xnext(cur):
+    store_at(cur + _CUR_ROWID, load_at(cur + _CUR_ROWID, int64) + 1)
+    return SQLITE_OK
+
+
+@cfunc(types.int32(types.intp), cache=True)
+def _xeof(cur):
+    desc = load_at(cur + _CUR_DESC, int64)
+    rowid = load_at(cur + _CUR_ROWID, int64)
+    nrows = load_at(desc + _D_NROWS, int64)
+    if rowid >= nrows:
+        return 1
+    return 0
+
+
+@cfunc(types.int32(types.intp, types.intp), cache=True)
+def _xrowid(cur, p_rowid):
+    store_at(p_rowid, load_at(cur + _CUR_ROWID, int64))
+    return SQLITE_OK
+
+
+@cfunc(types.int32(types.intp, types.intp, types.int32), cache=True)
+def _xcolumn(cur, ctx, j):
+    try:
+        desc = load_at(cur + _CUR_DESC, int64)
+        rowid = load_at(cur + _CUR_ROWID, int64)
+        ncols = load_at(desc + _D_NCOLS, int32)
+        base = load_at(desc + _D_DATA_BASE, int64)
+        row_stride = load_at(desc + _D_ROW_STRIDE, int64)
+        offsets = carray(_cast_int_to_void_p(load_at(desc + _D_COL_OFFSETS, int64)), (ncols,), dtype=np.int64)
+        tags = carray(_cast_int_to_void_p(load_at(desc + _D_COL_TAGS, int64)), (ncols,), dtype=np.int32)
+        widths = carray(_cast_int_to_void_p(load_at(desc + _D_COL_WIDTHS, int64)), (ncols,), dtype=np.int64)
+        addr = base + rowid * row_stride + offsets[j]
+        tag = tags[j]
+        if tag == _TAG_I8:
+            sqlite3_result_int64(ctx, int64(load_unaligned(addr, int8)))
+        elif tag == _TAG_I16:
+            sqlite3_result_int64(ctx, int64(load_unaligned(addr, int16)))
+        elif tag == _TAG_I32:
+            sqlite3_result_int64(ctx, int64(load_unaligned(addr, int32)))
+        elif tag == _TAG_I64:
+            sqlite3_result_int64(ctx, load_unaligned(addr, int64))
+        elif tag == _TAG_U8:
+            sqlite3_result_int64(ctx, int64(load_unaligned(addr, uint8)))
+        elif tag == _TAG_U16:
+            sqlite3_result_int64(ctx, int64(load_unaligned(addr, uint16)))
+        elif tag == _TAG_U32:
+            sqlite3_result_int64(ctx, int64(load_unaligned(addr, uint32)))
+        elif tag == _TAG_U64:
+            sqlite3_result_int64(ctx, int64(load_unaligned(addr, uint64)))
+        elif tag == _TAG_BOOL:
+            sqlite3_result_int64(ctx, int64(1) if load_unaligned(addr, uint8) != 0 else int64(0))
+        elif tag == _TAG_F32:
+            sqlite3_result_double(ctx, float64(load_unaligned(addr, float32)))
+        elif tag == _TAG_F64:
+            sqlite3_result_double(ctx, load_unaligned(addr, float64))
+        elif tag == _TAG_S:
+            n = _nul_trimmed_len(addr, widths[j])
+            sqlite3_result_text(ctx, addr, int32(n), SQLITE_TRANSIENT)
+        elif tag == _TAG_BLOB:
+            n = _nul_trimmed_len(addr, widths[j])
+            sqlite3_result_blob(ctx, addr, int32(n), SQLITE_TRANSIENT)
+        elif tag == _TAG_U:
+            scratch = cur + _CUR_SCRATCH
+            n = utf32_to_utf8(addr, widths[j] // 4, scratch)
+            sqlite3_result_text(ctx, scratch, int32(n), SQLITE_TRANSIENT)
+        return SQLITE_OK
+    except Exception:
+        sqlite3_result_error(ctx, get_unicode_data_p("error reading vtable column"), -1)
+        return SQLITE_ERROR
+
+
+class _Sqlite3Module(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_void_p) for n in (
+        "xCreate", "xConnect", "xBestIndex", "xDisconnect", "xDestroy",
+        "xOpen", "xClose", "xFilter", "xNext", "xEof", "xColumn", "xRowid",
+        "xUpdate", "xBegin", "xSync", "xCommit", "xRollback",
+        "xFindFunction", "xRename")]
+    # reassigned to prepend iVersion; ctypes reads only the final value
+    _fields_ = [("iVersion", ctypes.c_int)] + _fields_
+
+
+THE_MODULE = _Sqlite3Module()
+THE_MODULE.iVersion = 1
+THE_MODULE.xCreate = _xconnect.address
+THE_MODULE.xConnect = _xconnect.address
+THE_MODULE.xBestIndex = _xbestindex.address
+THE_MODULE.xDisconnect = _xdisconnect.address
+THE_MODULE.xDestroy = _xdisconnect.address
+THE_MODULE.xOpen = _xopen.address
+THE_MODULE.xClose = _xclose.address
+THE_MODULE.xFilter = _xfilter.address
+THE_MODULE.xNext = _xnext.address
+THE_MODULE.xEof = _xeof.address
+THE_MODULE.xColumn = _xcolumn.address
+THE_MODULE.xRowid = _xrowid.address
+_THE_MODULE_P = ctypes.addressof(THE_MODULE)
+_CFUNCS = (_xconnect, _xbestindex, _xdisconnect, _xopen, _xclose,
+           _xfilter, _xnext, _xeof, _xcolumn, _xrowid)
+
+
+class _VTableHandle:
+    """Keeps the array + descriptor + buffers alive. SQLite reads the array
+    buffer directly; if this handle is GC'd the data frees and the next query
+    reads freed memory. The caller MUST retain it."""
+    __slots__ = ("_keep",)
+
+    def __init__(self, *objs):
+        self._keep = objs
+
+
+def _raise_rc(db, name, rc):
+    msg_p = sqlite3_errmsg(db)
+    detail = ""
+    if msg_p:
+        detail = ": " + ctypes.cast(msg_p, ctypes.c_char_p).value.decode("utf-8", "replace")
+    raise RuntimeError("register_table failed for %r (rc=%d)%s" % (name, rc, detail))
+
+
+def register_table(db, name, arr, columns=None, *, text_as_blob=False):
+    """Expose a numpy array as a read-only eponymous SQLite virtual table.
+
+    See docs/plans/2026-05-31-sqlite-vtable-design.md for the full contract.
+    The caller MUST retain the returned handle for as long as the table is used.
+    """
+    built = _build_descriptor(arr, columns, text_as_blob)
+    with c_string(name) as name_p:
+        rc = sqlite3_create_module(db, name_p, _THE_MODULE_P, ctypes.addressof(built.c))
+    if rc != SQLITE_OK:
+        _raise_rc(db, name, rc)
+    return _VTableHandle(built)
