@@ -107,6 +107,34 @@ def store_at(p, v):
 
 
 @intrinsic
+def _load_unaligned(typingctx: Context, p_ty, ty_ref: TypeRef):
+    if unliteral(p_ty) not in (intp, uintp):
+        raise TypingError(
+            f"load_unaligned: pointer argument must be intp or uintp, got {p_ty}"
+        )
+    ty = ty_ref.instance_type
+    sig = ty(p_ty, ty_ref)
+
+    def codegen(context: BaseContext, builder, signature, args):
+        ty_ll = context.get_data_type(ty)
+        ptr = builder.inttoptr(args[0], ty_ll.as_pointer())
+        return builder.load(ptr, align=1)
+    return sig, codegen
+
+
+@njit(**jit_options)
+def load_unaligned(p, ty):
+    """Load a value of type ``ty`` from raw pointer ``p`` with byte alignment.
+
+    Like :func:`load_at` but emits an ``align=1`` load, so it is legal on a
+    misaligned address (e.g. a packed numpy structured-dtype field). ``load_at``
+    asserts the type's natural alignment, which is IR-level UB when the address
+    is in fact misaligned.
+    """
+    return _load_unaligned(p, ty)
+
+
+@intrinsic
 def _deref_payload(typingctx: Context, struct_ty, ty_ref: TypeRef):
     ty = ty_ref.instance_type
     sig = ty(struct_ty, ty_ref)
