@@ -9,8 +9,9 @@ the release-in-xFinal-but-NOT-xValue rule -- so callers write only their
 state logic.
 
 **Exception handling.** Each generated callback wraps the user
-step/inverse/value/finalize call in a ``try``/``except`` that reports
-``SQLITE_ERROR`` via ``sqlite3_result_error_code`` when the user callback raises.
+step/inverse/value/finalize call in a ``try``/``except`` that reports a
+descriptive error via ``sqlite3_result_error`` (e.g. "error in user step
+callback", with code ``SQLITE_ERROR``) when the user callback raises.
 A numba ``@cfunc`` otherwise SWALLOWS the exception (it prints "Exception
 ignored" and returns the zero default without unwinding into SQLite), which would
 be a silent wrong result; the in-body catch also lets numba run the borrowed
@@ -68,10 +69,9 @@ from numbox.utils.preprocessing import (
 # puts them in this module's __dict__, which seeds the exec namespace below.
 import numpy as np  # noqa: F401
 from numba import carray, njit  # noqa: F401
-from numbox.core.bindings._sqlite_constants import SQLITE_ERROR  # noqa: F401
-from numbox.core.bindings._sqlite_result import sqlite3_result_error_code  # noqa: F401
+from numbox.core.bindings._sqlite_result import sqlite3_result_error  # noqa: F401
 from numbox.core.bindings._sqlite_udf import sqlite3_aggregate_context  # noqa: F401
-from numbox.utils.lowlevel import _cast_int_to_void_p  # noqa: F401
+from numbox.utils.lowlevel import _cast_int_to_void_p, get_unicode_data_p  # noqa: F401
 from numbox.utils.meminfo import (  # noqa: F401
     borrow_structref,
     export_meminfo,
@@ -99,7 +99,7 @@ def _xstep_impl(ctx, argc, argv_pp):
     try:
         _step(borrow_structref(_state_type, slot[0]), ctx, argc, argv_pp)
     except Exception:
-        sqlite3_result_error_code(ctx, SQLITE_ERROR)  # fail the query; the catch prevents the borrow leak
+        sqlite3_result_error(ctx, get_unicode_data_p("error in user step callback"), -1)
 '''
 
 _XFINAL_SRC = '''
@@ -110,19 +110,19 @@ def _xfinal_impl(ctx):
         try:
             _finalize(_init(), ctx)
         except Exception:
-            sqlite3_result_error_code(ctx, SQLITE_ERROR)
+            sqlite3_result_error(ctx, get_unicode_data_p("error in user finalize callback"), -1)
         return
     slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
     if slot[0] == 0:
         try:
             _finalize(_init(), ctx)
         except Exception:
-            sqlite3_result_error_code(ctx, SQLITE_ERROR)
+            sqlite3_result_error(ctx, get_unicode_data_p("error in user finalize callback"), -1)
         return
     try:
         _finalize(borrow_structref(_state_type, slot[0]), ctx)
     except Exception:
-        sqlite3_result_error_code(ctx, SQLITE_ERROR)  # fail the query, never leak the slot
+        sqlite3_result_error(ctx, get_unicode_data_p("error in user finalize callback"), -1)
     release_meminfo(slot[0])
 '''
 
@@ -138,7 +138,7 @@ def _xinverse_impl(ctx, argc, argv_pp):
     try:
         _inverse(borrow_structref(_state_type, slot[0]), ctx, argc, argv_pp)
     except Exception:
-        sqlite3_result_error_code(ctx, SQLITE_ERROR)  # fail the query; the catch prevents the borrow leak
+        sqlite3_result_error(ctx, get_unicode_data_p("error in user inverse callback"), -1)
 '''
 
 _XVALUE_SRC = '''
@@ -149,19 +149,19 @@ def _xvalue_impl(ctx):
         try:
             _value(_init(), ctx)
         except Exception:
-            sqlite3_result_error_code(ctx, SQLITE_ERROR)
+            sqlite3_result_error(ctx, get_unicode_data_p("error in user value callback"), -1)
         return
     slot = carray(_cast_int_to_void_p(agg), (1,), dtype=np.intp)
     if slot[0] == 0:
         try:
             _value(_init(), ctx)
         except Exception:
-            sqlite3_result_error_code(ctx, SQLITE_ERROR)
+            sqlite3_result_error(ctx, get_unicode_data_p("error in user value callback"), -1)
         return
     try:
         _value(borrow_structref(_state_type, slot[0]), ctx)
     except Exception:
-        sqlite3_result_error_code(ctx, SQLITE_ERROR)  # fail the query; the catch prevents the borrow leak
+        sqlite3_result_error(ctx, get_unicode_data_p("error in user value callback"), -1)
 '''
 
 

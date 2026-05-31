@@ -1,6 +1,6 @@
 """Tests for the structref-backed SQLite UDAF/window registration helpers."""
 import gc
-from ctypes import addressof, c_int64
+from ctypes import addressof, c_char_p, c_int64
 
 import numpy as np
 from numba import carray, cfunc, njit, types
@@ -14,6 +14,7 @@ from numbox.core.bindings import (
     register_window,
     sqlite3_close,
     sqlite3_create_function_v2,
+    sqlite3_errmsg,
     sqlite3_exec,
     sqlite3_open,
     sqlite3_result_int,
@@ -71,6 +72,12 @@ def _make_table(db, values):
     for v in values:
         with c_string("INSERT INTO t VALUES (%d)" % v) as p:
             assert sqlite3_exec(db, p, 0, 0, 0) == SQLITE_OK
+
+
+def _errmsg(db):
+    """Decode sqlite3_errmsg(db) (the most recent error string) to a str."""
+    p = sqlite3_errmsg(db)
+    return c_char_p(p).value.decode("utf-8", "replace") if p else ""
 
 
 def _read1_int64(db, select_sql):
@@ -473,6 +480,7 @@ def test_finalize_exception_surfaces_error_and_no_leak():
     with c_string("SELECT raise_fin(v) FROM t") as sp:
         rc = sqlite3_exec(db, sp, 0, 0, 0)
     assert rc != SQLITE_OK  # error surfaced to sqlite, not a silent wrong result
+    assert "finalize callback" in _errmsg(db)  # descriptive message, not the generic code
 
     _nrt.memsys_enable_stats()
     with c_string("SELECT raise_fin(v) FROM t") as sp:  # warm
@@ -510,6 +518,7 @@ def test_step_exception_surfaces_error_and_no_leak():
     with c_string("SELECT raise_step(v) FROM t") as sp:
         rc = sqlite3_exec(db, sp, 0, 0, 0)
     assert rc != SQLITE_OK  # raising step fails the query, not a silent wrong result
+    assert "step callback" in _errmsg(db)  # descriptive message, not the generic code
 
     _nrt.memsys_enable_stats()
     with c_string("SELECT raise_step(v) FROM t") as sp:  # warm
@@ -551,6 +560,7 @@ def test_value_exception_surfaces_error_and_no_leak():
     with c_string(_WIN_SQL % "raise_wval") as sp:
         rc = sqlite3_exec(db, sp, 0, 0, 0)
     assert rc != SQLITE_OK
+    assert "value callback" in _errmsg(db)  # descriptive message, not the generic code
 
     _nrt.memsys_enable_stats()
     with c_string(_WIN_SQL % "raise_wval") as sp:  # warm
@@ -615,6 +625,8 @@ def test_finalize_exception_empty_group_surfaces_error():
                            sum_init, sum_step, raising_finalize)
     with c_string("SELECT raise_fin_empty(v) FROM t") as sp:
         rc = sqlite3_exec(db, sp, 0, 0, 0)
+    msg = _errmsg(db)
     sqlite3_close(db)
     assert rc != SQLITE_OK  # raising finalize on an empty group must fail loudly
+    assert "finalize callback" in msg  # descriptive message even on the empty-group path
     assert h is not None
