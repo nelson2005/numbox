@@ -11,7 +11,7 @@ numbox — a toolbox of low-level utilities for working with numba. Provides typ
 - Venv: `python3.12 -m venv venv && venv/bin/pip install -e . flake8 pytest`
 - Install: `pip install -e .`
 - Test: `pytest`
-- Lint: `flake8` (config in `.flake8`: max-line-length=127, default rules, per-file F403/F405 ignore for `test/core/test_bindings.py`)
+- Lint: `flake8` (config in `.flake8`: max-line-length=127, excludes `venv`/`build`/`dist`, per-file F403/F405 ignore for `test/core/test_bindings.py`). **`.flake8` is fork-only** — `upstream/main` (so `upstream-pr/*` branches) ships no flake8 config; its CI gate is `flake8 . --select=E9,F63,F7,F82,F401` (line-length is advisory `--exit-zero`). When verifying an upstream-pr branch locally, plain `flake8 .` misleads (no config → 79-char default, and it scans `venv`); replicate the upstream gate with `flake8 $(git ls-files '*.py') --select=E9,F63,F7,F82,F401`.
 - Docs: `cd docs && make html` (Sphinx)
 - Python: >=3.10 (CI tests 3.10–3.14; local venv pinned to 3.12)
 - Key dependency: `numba>=0.60.0,<0.66.0` (matches `pyproject.toml`; use `numba==0.60.0` locally)
