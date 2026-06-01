@@ -33,7 +33,7 @@ The one genuinely new mechanism vs. all prior SQLite phases: a **`sqlite3_module
 | 2-D ndarray input | any C/F/strided 2-D array | column names from `columns` (required) |
 | Structured 1-D input | `arr.dtype.names` | column names from fields; `columns` optional override (renames in place) |
 | Numeric columns | int8/16/32/64, uint8/16/32/64, float32/64, bool | → `sqlite3_result_int64` / `_double` |
-| Bytes columns | `'S'` | → `TEXT` (or `BLOB` via `text_as_blob`), NUL-trimmed |
+| Bytes columns | `'S'` | → `TEXT` (or `BLOB` via `text_as_blob`); trailing NUL padding trimmed, interior NULs preserved |
 | Unicode columns | `'U'` (UTF-32LE) | → `TEXT` via a `utf32_to_utf8` njit encoder |
 | Read protocol | `xConnect`/`xBestIndex`(full-scan)/`xOpen`/`xClose`/`xFilter`/`xNext`/`xEof`/`xColumn`/`xRowid` + `xDisconnect` | one static `sqlite3_module`, generic over all tables |
 | New bindings | `sqlite3_create_module`, `sqlite3_declare_vtab`, `sqlite3_malloc` | `sqlite3_free` already bound (phase 1) |
@@ -184,7 +184,7 @@ All cursor state is reached by raw-pointer walks (`load_at`/`store_at`/`carray`/
 |---|---|---|
 | int8/16/32/64, uint8/16/32/64, bool | `INTEGER` | widen/reinterpret → `sqlite3_result_int64` (one path for all integer tags; `uint64` ≥ 2⁶³ wraps to negative — doc note only, no special case) |
 | float32/64 | `REAL` | `sqlite3_result_double` (NaN passes through, not NULL) |
-| `'S'` (bytes) | `TEXT` (or `BLOB` if `text_as_blob`) | NUL-trim over `[addr, addr+width)` bytes → `sqlite3_result_text/blob(ctx, addr, n, SQLITE_TRANSIENT)` |
+| `'S'` (bytes) | `TEXT` (or `BLOB` if `text_as_blob`) | trim trailing NUL padding over `[addr, addr+width)` (interior NULs kept) → `sqlite3_result_text/blob(ctx, addr, n, SQLITE_TRANSIENT)` |
 | `'U'` (UTF-32LE) | `TEXT` | `utf32_to_utf8(addr, width//4, scratch)` (code points = byte `width`//4; reads via `load_unaligned`) → `sqlite3_result_text(ctx, scratch, n, SQLITE_TRANSIENT)` |
 
 `SQLITE_TRANSIENT` (= −1) tells SQLite to copy, so `addr`/`scratch` need not outlive the call. `'S'` needs no scratch (emit `addr` directly); only `'U'` uses the per-cursor scratch buffer.
@@ -220,7 +220,7 @@ A `load_at` variant emitting `builder.load(ptr, align=1)`. Needed because numpy'
 
 ### 4.3 `utf32_to_utf8(src_ptr, n_codepoints, dst_ptr) -> int32` (njit, internal to `_sqlite_vtable.py`)
 
-`xColumn` passes `n_codepoints = col_widths[j] // 4` (the `'U'` field's byte width // 4). The encoder reads each code point with `load_unaligned(src_ptr + 4*i, uint32)` (not `carray`, which assumes alignment), stops at the first `0` (numpy `'U'` NUL-pads), encodes each as 1–4 UTF-8 bytes into `dst_ptr`, and returns the byte count. Invalid code points (surrogate range `0xD800–0xDFFF` or `> 0x10FFFF`) emit U+FFFD. `dst` is the per-cursor scratch, sized `scratch_bytes = max(width + 1)` over `'U'` columns. Little-endian matches numpy `'U'` on every CI platform. Unit-tested standalone, including a packed dtype whose `'U'` field sits at an odd byte offset.
+`xColumn` passes `n_codepoints = col_widths[j] // 4` (the `'U'` field's byte width // 4). The encoder reads each code point with `load_unaligned(src_ptr + 4*i, uint32)` (not `carray`, which assumes alignment), trims trailing `0` code points (numpy `'U'` NUL-pads) while preserving interior NULs, encodes each as 1–4 UTF-8 bytes into `dst_ptr`, and returns the byte count. Invalid code points (surrogate range `0xD800–0xDFFF` or `> 0x10FFFF`) emit U+FFFD. `dst` is the per-cursor scratch, sized `scratch_bytes = max(width + 1)` over `'U'` columns. Little-endian matches numpy `'U'` on every CI platform. Unit-tested standalone, including a packed dtype whose `'U'` field sits at an odd byte offset.
 
 ## 5. Testing (`test/core/test_sqlite_vtable.py`)
 

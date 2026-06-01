@@ -25,6 +25,7 @@ from numbox.core.bindings._sqlite_result import (
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib
+from numbox.core.configurations import jit_options
 from numbox.core.proxy.proxy import proxy
 from numbox.utils.cstrings import c_string
 from numbox.utils.lowlevel import (
@@ -67,29 +68,25 @@ def sqlite3_malloc(n):
     return _call_lib_func("sqlite3_malloc", (n,))
 
 
-@njit(cache=True)
+@njit(**jit_options)
 def _nul_trimmed_len(p, width):
     buf = carray(_cast_int_to_void_p(p), (width,), dtype=np.uint8)
-    n = 0
-    while n < width and buf[n] != 0:
-        n += 1
+    n = width
+    while n > 0 and buf[n - 1] == 0:
+        n -= 1
     return n
 
 
-@njit(cache=True)
+@njit(**jit_options)
 def utf32_to_utf8(src, n_codepoints, dst):
-    """Encode up to ``n_codepoints`` UTF-32 code points at ``src`` into UTF-8 at ``dst``.
-
-    Stops at the first NUL code point. Returns the number of UTF-8 bytes written; the
-    output is not NUL-terminated (callers pass this count explicitly, e.g. to
-    ``sqlite3_result_text``). ``dst`` must hold at least ``4 * n_codepoints`` bytes.
-    """
+    """``dst`` must hold at least ``4 * n_codepoints + 1`` bytes."""
+    m = n_codepoints
+    while m > 0 and load_unaligned(src + 4 * (m - 1), uint32) == 0:
+        m -= 1
     out = carray(_cast_int_to_void_p(dst), (4 * n_codepoints + 1,), dtype=np.uint8)
     k = 0
-    for i in range(n_codepoints):
+    for i in range(m):
         cp = load_unaligned(src + 4 * i, uint32)
-        if cp == 0:
-            break
         if cp > 0x10FFFF or (0xD800 <= cp <= 0xDFFF):
             cp = 0xFFFD
         if cp < 0x80:
@@ -211,6 +208,8 @@ def _build_descriptor(arr, columns, text_as_blob):
     tags = [_col_tag(dt, text_as_blob) for dt in sub]
     widths = [int(dt.itemsize) for dt in sub]
     scratch = max([w + 1 for w, t in zip(widths, tags) if t == _TAG_U], default=0)
+    if _CUR_SCRATCH + scratch > 2 ** 31 - 1:
+        raise ValueError("unicode column too wide: per-cursor scratch buffer would overflow int32")
 
     offsets_buf = np.array(offs, dtype=np.int64)
     tags_buf = np.array(tags, dtype=np.int32)  # the xColumn cfunc reads int32 elements; do not widen
@@ -274,7 +273,7 @@ def _xopen(vtab, pp_cursor):
     try:
         desc = load_at(vtab + _VTAB_DESC, int64)
         scratch = load_at(desc + _D_SCRATCH, int64)
-        cur = sqlite3_malloc(int32(_CUR_SCRATCH + scratch))  # oversized scratch wraps to NULL -> NOMEM (safe)
+        cur = sqlite3_malloc(int32(_CUR_SCRATCH + scratch))  # _build_descriptor caps scratch: int32 cast cannot overflow
         if cur == 0:
             return SQLITE_NOMEM
         store_at(cur + _CUR_PVTAB, int64(vtab))

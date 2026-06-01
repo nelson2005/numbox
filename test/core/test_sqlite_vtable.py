@@ -53,6 +53,11 @@ def test_utf32_stops_at_nul():
     assert _encode("hi", 6) == b"hi"
 
 
+def test_utf32_keeps_interior_nul():
+    # trailing NUL pad is trimmed; an interior NUL code point is preserved
+    assert _encode("a\x00b", 6) == b"a\x00b"
+
+
 def test_utf32_invalid_codepoint_replacement():
     src = np.array([0x41, 0xD800, 0x110000, 0], dtype=np.uint32)
     dst = np.zeros(64, dtype=np.uint8)
@@ -63,6 +68,11 @@ def test_utf32_invalid_codepoint_replacement():
 def test_nul_trimmed_len():
     buf = np.frombuffer(b"hi\x00\x00\x00", dtype=np.uint8).copy()
     assert _nul_trimmed_len(array_data_p(buf), 5) == 2
+
+
+def test_nul_trimmed_len_keeps_interior():
+    buf = np.frombuffer(b"a\x00b\x00\x00", dtype=np.uint8).copy()
+    assert _nul_trimmed_len(array_data_p(buf), 5) == 3
 
 
 def test_descriptor_2d_int64():
@@ -97,6 +107,14 @@ def test_descriptor_rejects_bad_shapes():
         _build_descriptor(np.empty((2, 2), dtype=object), ["a", "b"], False)
     with pytest.raises((TypeError, ValueError)):
         _build_descriptor(np.empty((3, 0), dtype=np.int64), [], False)
+
+
+def test_unicode_width_overflow_rejected():
+    # itemsize 4*536870906 = 2147483624; + 1 (scratch) + 24 (_CUR_SCRATCH) overflows int32
+    dt = np.dtype([("u", "U536870906")])
+    a = np.zeros(0, dtype=dt)
+    with pytest.raises(ValueError):
+        _build_descriptor(a, None, False)
 
 
 def test_descriptor_offsets_assertion_holds():
@@ -212,6 +230,15 @@ def test_text_as_blob():
     h = register_table(db, "t", a, text_as_blob=True)  # noqa: F841
     assert _fetchall(db, "SELECT s FROM t") == [(b"xy",)]
     assert _fetchall(db, "SELECT typeof(s) FROM t") == [("blob",)]
+    sqlite3_close(db)
+
+
+def test_blob_preserves_interior_nul():
+    db = _open_memory()
+    dt = np.dtype([("s", "S5")])
+    a = np.array([(b"a\x00b",)], dtype=dt)  # numpy stores b"a\x00b\x00\x00"
+    h = register_table(db, "t", a, text_as_blob=True)  # noqa: F841
+    assert _fetchall(db, "SELECT s FROM t") == [(b"a\x00b",)]
     sqlite3_close(db)
 
 
