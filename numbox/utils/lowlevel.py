@@ -124,13 +124,8 @@ def _load_unaligned(typingctx: Context, p_ty, ty_ref: TypeRef):
 
 @njit(**jit_options)
 def load_unaligned(p, ty):
-    """Load a value of type ``ty`` from raw pointer ``p`` with byte alignment.
-
-    Like :func:`load_at` but emits an ``align=1`` load, so it is legal on a
-    misaligned address (e.g. a packed numpy structured-dtype field). ``load_at``
-    asserts the type's natural alignment, which is IR-level UB when the address
-    is in fact misaligned.
-    """
+    """Like :func:`load_at` but emits an ``align=1`` load, legal on a misaligned
+    address (e.g. a packed structured-dtype field) where ``load_at`` is UB."""
     return _load_unaligned(p, ty)
 
 
