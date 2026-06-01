@@ -425,7 +425,9 @@ def _raise_rc(db, name, rc):
 def register_table(db, name, arr, columns=None, *, text_as_blob=False):
     """Expose a numpy array as a read-only eponymous SQLite virtual table.
 
-    The caller MUST retain the returned handle for as long as the table is used.
+    The caller MUST retain the returned handle for as long as the table is used,
+    and must not mutate or resize the array while the table is registered -- the
+    view is zero-copy, so queries read the array's buffer directly.
 
     Registering a second table under an existing name follows SQLite's
     eponymous-module semantics: the later registration replaces the earlier one
