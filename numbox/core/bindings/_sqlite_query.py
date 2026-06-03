@@ -20,7 +20,7 @@ from numbox.core.bindings._sqlite_typemap import (
     _TAG_F32, _TAG_F64, _TAG_BOOL, _TAG_S, _TAG_U, _TAG_BLOB,
 )
 from numbox.core.configurations import jit_options
-from numbox.utils.lowlevel import _cast_int_to_void_p, array_data_p, store_at, get_str_from_p_as_int
+from numbox.utils.lowlevel import _cast_int_to_void_p, array_data_p, store_at
 
 __all__ = ["query_to_array"]
 
@@ -121,7 +121,7 @@ def _raise_rc(db, rc):
     msg_p = sqlite3_errmsg(db)
     detail = ""
     if msg_p:
-        detail = ": " + get_str_from_p_as_int(msg_p)
+        detail = ": " + ctypes.cast(msg_p, ctypes.c_char_p).value.decode("utf-8", "replace")
     raise RuntimeError("query_to_array failed (rc=%d)%s" % (rc, detail))
 
 

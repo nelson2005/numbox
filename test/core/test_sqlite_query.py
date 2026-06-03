@@ -113,6 +113,16 @@ def test_query_field_count_mismatch_raises():
     sqlite3_close(db)
 
 
+def test_query_bad_sql_raises():
+    db = _open_mem()
+    with c_string("SELECT FROM") as sql:
+        with pytest.raises(RuntimeError) as excinfo:
+            query_to_array(db, sql, np.dtype([("a", "i8")]))
+    assert "query_to_array failed" in str(excinfo.value)
+    assert str(excinfo.value).strip()
+    sqlite3_close(db)
+
+
 def test_query_two_dtypes_no_stale_cache():
     db = _open_mem()
     _exec(db, "CREATE TABLE t(a INTEGER, b INTEGER)")
