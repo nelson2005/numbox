@@ -26,7 +26,7 @@
     {
       "id": 3,
       "subject": "Task 3: query_to_array(db, sql, dtype)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [0, 2],
       "description": "**Goal:** Run a SELECT and collect rows into a numpy structured array of the caller dtype, writing cells by field offset (xColumn in reverse), geometric NRT growth + trim. Output dtype passed as numba.from_dtype typeref (A2 cache-key rule).\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_query.py\", \"numbox/core/bindings/__init__.py\", \"test/core/test_sqlite_query.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\", \"acceptanceCriteria\": [\"numeric/text/blob round-trip\", \"NULL coercion NaN/0/empty\", \"growth boundary + empty\", \"field-count mismatch raises\", \"A2 two-dtype no stale cache\"]}\n```"
