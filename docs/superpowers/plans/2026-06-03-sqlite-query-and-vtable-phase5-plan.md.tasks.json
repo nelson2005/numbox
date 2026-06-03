@@ -34,7 +34,7 @@
     {
       "id": 4,
       "subject": "Task 4: xBestIndex eq/range constraint pushdown",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [0, 1],
       "description": "**Goal:** register_table's vtable claims eq/range WHERE constraints in xBestIndex, receives values in xFilter, skips non-matching rows in xNext/xEof, reports real estimatedRows/Cost. First increment: EQ + GT/GE/LT/LE on numeric columns.\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -k 'pushdown or filter or bestindex' -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_vtable.py\", \"test/core/test_sqlite_vtable.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -k 'pushdown or filter or bestindex' -q\", \"acceptanceCriteria\": [\"element dtype itemsizes 12/8/8 asserted\", \"EQ + each range op prunes correctly\", \"matches full-scan baseline\", \"EXPLAIN QUERY PLAN uses idxNum\", \"multi-constraint prunes\"]}\n```"

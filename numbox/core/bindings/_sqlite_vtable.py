@@ -330,9 +330,9 @@ def _xclose(cur):
 
 @njit(**jit_options)
 def _cell_value(d, rowid, col):
-    # Read the numeric cell at (rowid, col) as float64, mirroring _xcolumn's
-    # numeric ladder (same addr math, same load_unaligned widths). Only numeric
-    # columns are ever claimed by xBestIndex, so non-numeric tags return 0.
+    # Read the cell at (rowid, col) as float64, mirroring _xcolumn's full tag
+    # ladder (same addr math, same load_unaligned widths). xBestIndex only
+    # claims tags up to _TAG_F64; the string/blob tags fall through to 0.
     ncols = d[0].ncols
     base = d[0].data_base
     row_stride = d[0].row_stride
