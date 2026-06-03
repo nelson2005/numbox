@@ -447,3 +447,96 @@ def test_xprocess_cache_no_growth(tmp_path):
     line2 = _run_vtable_driver(tmp_path, cache)  # warm: must reuse, not append
     assert line2 == "RESULT [(1, 10), (2, 20), (3, 30)]"
     assert _count_vtable_nbc(cache) == n_cold, "warm run grew the cache (cache reuse failed)"
+
+
+def test_pushdown_element_dtype_itemsizes():
+    from numbox.core.bindings._sqlite_vtable import (
+        _CONSTRAINT_DTYPE, _USAGE_DTYPE, _ORDERBY_DTYPE,
+    )
+    assert _CONSTRAINT_DTYPE.itemsize == 12
+    assert _USAGE_DTYPE.itemsize == 8
+    assert _ORDERBY_DTYPE.itemsize == 8
+
+
+def _select_col0(db, sql):
+    """Collect column 0 of every result row as Python ints."""
+    return [r[0] for r in _fetchall(db, sql)]
+
+
+def test_pushdown_eq():
+    db = _open_memory()
+    a = np.array([[3], [5], [7], [5], [9]], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["c"])  # noqa: F841
+    assert sorted(_select_col0(db, "SELECT c FROM t WHERE c = 5")) == [5, 5]
+    assert _select_col0(db, "SELECT c FROM t WHERE c = 7") == [7]
+    assert _select_col0(db, "SELECT c FROM t WHERE c = 100") == []
+    sqlite3_close(db)
+
+
+def test_pushdown_range_matches_fullscan():
+    db = _open_memory()
+    vals = [3, 5, 7, 5, 9, 1, 5]
+    a = np.array([[v] for v in vals], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["c"])  # noqa: F841
+    preds = {
+        ">": lambda v: v > 5,
+        ">=": lambda v: v >= 5,
+        "<": lambda v: v < 5,
+        "<=": lambda v: v <= 5,
+    }
+    for op, pred in preds.items():
+        got = sorted(_select_col0(db, "SELECT c FROM t WHERE c %s 5" % op))
+        exp = sorted(v for v in vals if pred(v))
+        assert got == exp, (op, got, exp)
+    sqlite3_close(db)
+
+
+def test_pushdown_multi_constraint():
+    db = _open_memory()
+    rows = [(1, 9), (4, 2), (7, 1), (3, 8), (6, 5), (2, 3), (9, 0)]
+    a = np.array(rows, dtype=np.int64)
+    h = register_table(db, "t", a, columns=["x", "y"])  # noqa: F841
+    got = sorted(
+        (r[0], r[1]) for r in _fetchall(db, "SELECT x, y FROM t WHERE x >= 3 AND y < 5")
+    )
+    exp = sorted((x, y) for (x, y) in rows if x >= 3 and y < 5)
+    assert got == exp, (got, exp)
+    sqlite3_close(db)
+
+
+def test_pushdown_float_column():
+    db = _open_memory()
+    vals = [1.5, 2.5, 5.0, 7.25, 5.0, 0.5]
+    a = np.array([[v] for v in vals], dtype=np.float64)
+    h = register_table(db, "t", a, columns=["c"])  # noqa: F841
+    got = sorted(r[0] for r in _fetchall(db, "SELECT c FROM t WHERE c >= 5.0"))
+    exp = sorted(v for v in vals if v >= 5.0)
+    assert got == exp, (got, exp)
+    eq = sorted(r[0] for r in _fetchall(db, "SELECT c FROM t WHERE c = 5.0"))
+    assert eq == [5.0, 5.0]
+    sqlite3_close(db)
+
+
+def test_pushdown_no_constraint_full_scan():
+    db = _open_memory()
+    a = np.array([[3], [5], [7], [5], [9]], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["c"])  # noqa: F841
+    assert _select_col0(db, "SELECT c FROM t") == [3, 5, 7, 5, 9]
+    sqlite3_close(db)
+
+
+def test_pushdown_explain_uses_index():
+    # SQLite reports the chosen vtable plan as "VIRTUAL TABLE INDEX <idxNum>:".
+    # A full scan claims nothing, so idxNum stays 0; a claimed constraint sets a
+    # non-zero idxNum. Assert the constrained query picks a non-zero idxNum and
+    # the unconstrained query does not.
+    db = _open_memory()
+    a = np.array([[3], [5], [7]], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["c"])  # noqa: F841
+    plan = _fetchall(db, "EXPLAIN QUERY PLAN SELECT c FROM t WHERE c = 5")
+    text = " ".join(str(field) for row in plan for field in row).upper()
+    assert "VIRTUAL TABLE INDEX 1:" in text, text
+    full = _fetchall(db, "EXPLAIN QUERY PLAN SELECT c FROM t")
+    full_text = " ".join(str(field) for row in full for field in row).upper()
+    assert "VIRTUAL TABLE INDEX 0:" in full_text, full_text
+    sqlite3_close(db)
