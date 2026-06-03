@@ -17,3 +17,4 @@ from numbox.core.bindings._errno import *  # noqa: F401, F403
 from numbox.core.bindings._strerror import *  # noqa: F401, F403
 from numbox.core.bindings._fmtio import *  # noqa: F401, F403
 from numbox.core.bindings._sqlite_vtable import *  # noqa: F401, F403
+from numbox.core.bindings._sqlite_query import *  # noqa: F401, F403
