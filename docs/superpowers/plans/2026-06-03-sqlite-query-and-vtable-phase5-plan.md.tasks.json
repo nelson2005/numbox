@@ -11,7 +11,7 @@
     {
       "id": 1,
       "subject": "Task 1: create_module_v2 signature + SQLITE_INDEX_CONSTRAINT_* constants",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** Bind sqlite3_create_module_v2 and add the index-constraint op-code constants (EQ=2,GT=4,LE=8,LT=16,GE=32,NE=68,ISNULL=71,IS=72).\n\n**Verify:** python -c importing SQLITE_INDEX_CONSTRAINT_EQ + signatures['sqlite3_create_module_v2']\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_sqlite_constants.py\", \"test/core/test_sqlite_constants.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_constants.py -q\", \"acceptanceCriteria\": [\"create_module_v2 signature present\", \"8 index-constraint op constants importable with correct values\"]}\n```"
     },
