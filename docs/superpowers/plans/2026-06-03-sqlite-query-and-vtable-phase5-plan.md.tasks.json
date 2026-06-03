@@ -18,7 +18,7 @@
     {
       "id": 2,
       "subject": "Task 2: utf8_to_utf32 decoder in _sqlite_typemap.py",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [0],
       "description": "**Goal:** Add the inverse of utf32_to_utf8 — decode a UTF-8 buffer into a fixed-width UTF-32 ('U') numpy field — for query_to_array TEXT->'U' columns.\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -k utf8_to_utf32 -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_typemap.py\", \"test/core/test_sqlite_query.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -k utf8_to_utf32 -q\", \"acceptanceCriteria\": [\"utf8_to_utf32 decodes ascii/multibyte/4-byte correctly\", \"clamps to width_cp + NUL-pads\", \"round-trips with utf32_to_utf8\"]}\n```"
