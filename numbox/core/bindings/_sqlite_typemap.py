@@ -61,6 +61,40 @@ def utf32_to_utf8(src, n_codepoints, dst):
     return k
 
 
+@njit(**jit_options)
+def utf8_to_utf32(src, nbytes, dst, width_cp):
+    """Decode the UTF-8 bytes at ``src`` (length ``nbytes``) into up to
+    ``width_cp`` little-endian uint32 code points at ``dst``; NUL-pad the
+    remainder. Returns the number of code points written."""
+    inp = carray(_cast_int_to_void_p(src), (nbytes,), dtype=np.uint8)
+    out = carray(_cast_int_to_void_p(dst), (width_cp,), dtype=np.uint32)
+    for k in range(width_cp):
+        out[k] = 0
+    i = 0
+    k = 0
+    while i < nbytes and k < width_cp:
+        b0 = uint32(inp[i])
+        if b0 < 0x80:
+            cp = b0
+            i += 1
+        elif b0 >> 5 == 0x6 and i + 1 < nbytes:
+            cp = ((b0 & 0x1F) << 6) | (uint32(inp[i + 1]) & 0x3F)
+            i += 2
+        elif b0 >> 4 == 0xE and i + 2 < nbytes:
+            cp = ((b0 & 0x0F) << 12) | ((uint32(inp[i + 1]) & 0x3F) << 6) | (uint32(inp[i + 2]) & 0x3F)
+            i += 3
+        elif b0 >> 3 == 0x1E and i + 3 < nbytes:
+            cp = (((b0 & 0x07) << 18) | ((uint32(inp[i + 1]) & 0x3F) << 12)
+                  | ((uint32(inp[i + 2]) & 0x3F) << 6) | (uint32(inp[i + 3]) & 0x3F))
+            i += 4
+        else:
+            cp = 0xFFFD
+            i += 1
+        out[k] = cp
+        k += 1
+    return k
+
+
 _NUMERIC_TAGS = {
     np.dtype("int8"): _TAG_I8, np.dtype("int16"): _TAG_I16,
     np.dtype("int32"): _TAG_I32, np.dtype("int64"): _TAG_I64,
