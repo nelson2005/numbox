@@ -4,7 +4,7 @@
     {
       "id": 0,
       "subject": "Task 0: Extract shared type-map into _sqlite_typemap.py",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** Move dtype-tag constants, tag/SQL-type maps, _col_tag, utf32_to_utf8, _nul_trimmed_len out of _sqlite_vtable.py into a new shared _sqlite_typemap.py; _sqlite_vtable re-imports them. Pure refactor, no behavior change.\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_typemap.py\", \"numbox/core/bindings/_sqlite_vtable.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -q\", \"acceptanceCriteria\": [\"typemap module defines tags/maps/_col_tag/utf32_to_utf8/_nul_trimmed_len\", \"_sqlite_vtable re-imports and re-exports them\", \"full suite green + flake8 clean\"]}\n```"
     },
