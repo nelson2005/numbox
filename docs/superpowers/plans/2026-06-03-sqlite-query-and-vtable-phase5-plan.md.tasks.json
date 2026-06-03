@@ -1,0 +1,60 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-03-sqlite-query-and-vtable-phase5-plan.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Extract shared type-map into _sqlite_typemap.py",
+      "status": "pending",
+      "description": "**Goal:** Move dtype-tag constants, tag/SQL-type maps, _col_tag, utf32_to_utf8, _nul_trimmed_len out of _sqlite_vtable.py into a new shared _sqlite_typemap.py; _sqlite_vtable re-imports them. Pure refactor, no behavior change.\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_typemap.py\", \"numbox/core/bindings/_sqlite_vtable.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -q\", \"acceptanceCriteria\": [\"typemap module defines tags/maps/_col_tag/utf32_to_utf8/_nul_trimmed_len\", \"_sqlite_vtable re-imports and re-exports them\", \"full suite green + flake8 clean\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: create_module_v2 signature + SQLITE_INDEX_CONSTRAINT_* constants",
+      "status": "pending",
+      "description": "**Goal:** Bind sqlite3_create_module_v2 and add the index-constraint op-code constants (EQ=2,GT=4,LE=8,LT=16,GE=32,NE=68,ISNULL=71,IS=72).\n\n**Verify:** python -c importing SQLITE_INDEX_CONSTRAINT_EQ + signatures['sqlite3_create_module_v2']\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/signatures.py\", \"numbox/core/bindings/_sqlite_constants.py\", \"test/core/test_sqlite_constants.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_constants.py -q\", \"acceptanceCriteria\": [\"create_module_v2 signature present\", \"8 index-constraint op constants importable with correct values\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: utf8_to_utf32 decoder in _sqlite_typemap.py",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Add the inverse of utf32_to_utf8 — decode a UTF-8 buffer into a fixed-width UTF-32 ('U') numpy field — for query_to_array TEXT->'U' columns.\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -k utf8_to_utf32 -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_typemap.py\", \"test/core/test_sqlite_query.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -k utf8_to_utf32 -q\", \"acceptanceCriteria\": [\"utf8_to_utf32 decodes ascii/multibyte/4-byte correctly\", \"clamps to width_cp + NUL-pads\", \"round-trips with utf32_to_utf8\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: query_to_array(db, sql, dtype)",
+      "status": "pending",
+      "blockedBy": [0, 2],
+      "description": "**Goal:** Run a SELECT and collect rows into a numpy structured array of the caller dtype, writing cells by field offset (xColumn in reverse), geometric NRT growth + trim. Output dtype passed as numba.from_dtype typeref (A2 cache-key rule).\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_query.py\", \"numbox/core/bindings/__init__.py\", \"test/core/test_sqlite_query.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\", \"acceptanceCriteria\": [\"numeric/text/blob round-trip\", \"NULL coercion NaN/0/empty\", \"growth boundary + empty\", \"field-count mismatch raises\", \"A2 two-dtype no stale cache\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: xBestIndex eq/range constraint pushdown",
+      "status": "pending",
+      "blockedBy": [0, 1],
+      "description": "**Goal:** register_table's vtable claims eq/range WHERE constraints in xBestIndex, receives values in xFilter, skips non-matching rows in xNext/xEof, reports real estimatedRows/Cost. First increment: EQ + GT/GE/LT/LE on numeric columns.\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -k 'pushdown or filter or bestindex' -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_vtable.py\", \"test/core/test_sqlite_vtable.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -k 'pushdown or filter or bestindex' -q\", \"acceptanceCriteria\": [\"element dtype itemsizes 12/8/8 asserted\", \"EQ + each range op prunes correctly\", \"matches full-scan baseline\", \"EXPLAIN QUERY PLAN uses idxNum\", \"multi-constraint prunes\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: register_tvf table-valued functions",
+      "status": "pending",
+      "blockedBy": [0, 1, 4],
+      "description": "**Goal:** register_tvf(db, name, arg_types, out_dtype, fn): vtable whose rows are a numpy array of out_dtype computed by fn(*args) from hidden-column args, served via per-cursor NRT-backed storage ([meminfo_p, data_p] slot, A1 idiom).\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_tvf.py\", \"numbox/core/bindings/__init__.py\", \"test/core/test_sqlite_tvf.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py -q\", \"acceptanceCriteria\": [\"SELECT FROM f(args) invokes fn + yields computed rows\", \"different args -> different rows\", \"leak-balance over >=10 iters\", \"missing hidden arg handled without crash\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: create_module_v2 + xDestroy registry cleanup",
+      "status": "pending",
+      "blockedBy": [1, 5],
+      "description": "**Goal:** Register register_table + register_tvf modules via sqlite3_create_module_v2 with a ctypes xDestroy callback that pops a module-level registry (keyed by descriptor pointer) on teardown — fixing the caller-must-retain-handle hazard. xDestroy does Python pop only (no sqlite3_free of numpy-owned descriptor) per A4.\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -k 'xdestroy or cleanup or registry' -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_vtable.py\", \"numbox/core/bindings/_sqlite_tvf.py\", \"test/core/test_sqlite_vtable.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -k 'xdestroy or cleanup or registry' -q\", \"acceptanceCriteria\": [\"registry entry removed on close (one xDestroy)\", \"two tables two removals\", \"duplicate name first-at-rereg second-at-close\", \"no C-free of numpy descriptor, no UAF\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Docs + full CI gate",
+      "status": "pending",
+      "blockedBy": [3, 6],
+      "description": "**Goal:** Document the new modules/symbols (bindings.rst automodule for _sqlite_query + _sqlite_tvf) and run every CI check locally before declaring done.\n\n**Verify:** flake8 . ; pytest --durations=20 ; sphinx-build ; extract_codeblocks docs README.md ; lychee changed files — all green.\n\n```json:metadata\n{\"files\": [\"docs/numbox.core.bindings.rst\", \"numbox/core/bindings/__init__.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/flake8 . --max-line-length=127 && /home/erik/projects/numbox/venv/bin/pytest --durations=20 -q\", \"acceptanceCriteria\": [\"bindings.rst lists _sqlite_query + _sqlite_tvf\", \"sphinx-build exit 0\", \"flake8/pytest/doc-codeblock/lychee all green\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-03"
+}
