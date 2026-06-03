@@ -14,7 +14,7 @@ sqlite3_vtab). See https://www.sqlite.org/vtab.html.
 import ctypes
 
 import numpy as np
-from numba import carray, cfunc, njit, types
+from numba import carray, cfunc, types
 from numba.core.types import (
     int8, int16, int32, int64, uint8, uint16, uint32, uint64,
     float32, float64,
@@ -27,6 +27,11 @@ from numbox.core.bindings import (
     sqlite3_errmsg, sqlite3_free, sqlite3_malloc,
     sqlite3_result_int64, sqlite3_result_double,
     sqlite3_result_text, sqlite3_result_blob, sqlite3_result_error,
+)
+from numbox.core.bindings._sqlite_typemap import (
+    _TAG_I8, _TAG_I16, _TAG_I32, _TAG_I64, _TAG_U8, _TAG_U16, _TAG_U32, _TAG_U64,
+    _TAG_F32, _TAG_F64, _TAG_BOOL, _TAG_S, _TAG_U, _TAG_BLOB,
+    _SQL_TYPE, _col_tag, utf32_to_utf8, _nul_trimmed_len,
 )
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
@@ -41,12 +46,6 @@ from numbox.utils.lowlevel import (
 __all__ = ["register_table"]
 
 load_lib("sqlite3")
-
-# dtype tags (col_tags[j])
-_TAG_I8, _TAG_I16, _TAG_I32, _TAG_I64 = 0, 1, 2, 3
-_TAG_U8, _TAG_U16, _TAG_U32, _TAG_U64 = 4, 5, 6, 7
-_TAG_F32, _TAG_F64, _TAG_BOOL = 8, 9, 10
-_TAG_S, _TAG_U, _TAG_BLOB = 11, 12, 13
 
 # per-table descriptor passed as pClientData; the cfuncs read it field-by-name
 # via carray(ptr, (1,), dtype=_DESC_DTYPE). The dtype is the single source of
@@ -103,74 +102,6 @@ def sqlite3_create_module(db, z_name, p_module, p_client_data):
 @proxy(signatures.get("sqlite3_declare_vtab"), jit_options=jit_options)
 def sqlite3_declare_vtab(db, z_sql):
     return _call_lib_func("sqlite3_declare_vtab", (db, z_sql))
-
-
-@njit(**jit_options)
-def _nul_trimmed_len(p, width):
-    buf = carray(_cast_int_to_void_p(p), (width,), dtype=np.uint8)
-    n = width
-    while n > 0 and buf[n - 1] == 0:
-        n -= 1
-    return n
-
-
-@njit(**jit_options)
-def utf32_to_utf8(src, n_codepoints, dst):
-    """``dst`` must hold at least ``4 * n_codepoints + 1`` bytes."""
-    m = n_codepoints
-    while m > 0 and load_unaligned(src + 4 * (m - 1), uint32) == 0:
-        m -= 1
-    out = carray(_cast_int_to_void_p(dst), (4 * n_codepoints + 1,), dtype=np.uint8)
-    k = 0
-    for i in range(m):
-        cp = load_unaligned(src + 4 * i, uint32)
-        if cp > 0x10FFFF or (0xD800 <= cp <= 0xDFFF):
-            cp = 0xFFFD
-        if cp < 0x80:
-            out[k] = uint8(cp)
-            k += 1
-        elif cp < 0x800:
-            out[k] = uint8(0xC0 | (cp >> 6))
-            out[k + 1] = uint8(0x80 | (cp & 0x3F))
-            k += 2
-        elif cp < 0x10000:
-            out[k] = uint8(0xE0 | (cp >> 12))
-            out[k + 1] = uint8(0x80 | ((cp >> 6) & 0x3F))
-            out[k + 2] = uint8(0x80 | (cp & 0x3F))
-            k += 3
-        else:
-            out[k] = uint8(0xF0 | (cp >> 18))
-            out[k + 1] = uint8(0x80 | ((cp >> 12) & 0x3F))
-            out[k + 2] = uint8(0x80 | ((cp >> 6) & 0x3F))
-            out[k + 3] = uint8(0x80 | (cp & 0x3F))
-            k += 4
-    return k
-
-
-_NUMERIC_TAGS = {
-    np.dtype("int8"): _TAG_I8, np.dtype("int16"): _TAG_I16,
-    np.dtype("int32"): _TAG_I32, np.dtype("int64"): _TAG_I64,
-    np.dtype("uint8"): _TAG_U8, np.dtype("uint16"): _TAG_U16,
-    np.dtype("uint32"): _TAG_U32, np.dtype("uint64"): _TAG_U64,
-    np.dtype("float32"): _TAG_F32, np.dtype("float64"): _TAG_F64,
-    np.dtype("bool"): _TAG_BOOL,
-}
-_SQL_TYPE = {
-    _TAG_I8: "INTEGER", _TAG_I16: "INTEGER", _TAG_I32: "INTEGER", _TAG_I64: "INTEGER",
-    _TAG_U8: "INTEGER", _TAG_U16: "INTEGER", _TAG_U32: "INTEGER", _TAG_U64: "INTEGER",
-    _TAG_BOOL: "INTEGER", _TAG_F32: "REAL", _TAG_F64: "REAL",
-    _TAG_S: "TEXT", _TAG_U: "TEXT", _TAG_BLOB: "BLOB",
-}
-
-
-def _col_tag(dt, text_as_blob):
-    if dt.kind == "S":
-        return _TAG_BLOB if text_as_blob else _TAG_S
-    if dt.kind == "U":
-        return _TAG_U
-    if dt in _NUMERIC_TAGS:
-        return _NUMERIC_TAGS[dt]
-    raise TypeError("unsupported column dtype %r" % (dt,))
 
 
 class _BuiltDescriptor:
