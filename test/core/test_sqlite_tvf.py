@@ -142,3 +142,55 @@ def test_tvf_no_meminfo_leak():
     sqlite3_close(db.value)
     del h
     assert allocated == freed, "meminfo imbalance: %d alloc, %d free" % (allocated, freed)
+
+
+@njit
+def _series_sliced(start, stop):
+    # returns an offset slice: logical start != allocation base
+    out = np.empty((stop - start) + 1, _OUT)
+    for i in range((stop - start) + 1):
+        out[i].n = (start - 1) + i
+    return out[1:]
+
+
+@njit
+def _series_strided(start, stop):
+    # returns a strided view: row stride = 2 * itemsize
+    out = np.empty(2 * (stop - start), _OUT)
+    for i in range(2 * (stop - start)):
+        out[i].n = -1
+    for i in range(stop - start):
+        out[2 * i].n = start + i
+    return out[::2]
+
+
+@njit
+def _series_empty(start, stop):
+    return np.empty(0, _OUT)
+
+
+def test_tvf_offset_slice_return():
+    db = _open()
+    h = register_tvf(db.value, "series", (np.int64, np.int64), _OUT, _series_sliced)
+    _, rows = _select_int(db, "SELECT n FROM series(2, 5)")
+    assert [x[0] for x in rows] == [2, 3, 4]
+    sqlite3_close(db.value)
+    del h
+
+
+def test_tvf_strided_return():
+    db = _open()
+    h = register_tvf(db.value, "series", (np.int64, np.int64), _OUT, _series_strided)
+    _, rows = _select_int(db, "SELECT n FROM series(2, 5)")
+    assert [x[0] for x in rows] == [2, 3, 4]
+    sqlite3_close(db.value)
+    del h
+
+
+def test_tvf_empty_return():
+    db = _open()
+    h = register_tvf(db.value, "series", (np.int64, np.int64), _OUT, _series_empty)
+    _, rows = _select_int(db, "SELECT n FROM series(2, 5)")
+    assert rows == []
+    sqlite3_close(db.value)
+    del h

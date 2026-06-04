@@ -63,7 +63,7 @@ from numbox.core.bindings._sqlite_typemap import (  # noqa: F401
 )
 from numbox.core.configurations import jit_options  # noqa: F401
 from numbox.utils.lowlevel import (  # noqa: F401
-    _cast_int_to_void_p, get_unicode_data_p, load_unaligned, store_at,
+    _cast_int_to_void_p, get_unicode_data_p, load_unaligned, store_at, array_data_p,
 )
 from numbox.utils.meminfo import (  # noqa: F401
     structref_meminfo, _incref_meminfo, release_meminfo,
@@ -89,7 +89,7 @@ _TVF_DESC_DTYPE = np.dtype([
 
 _TVF_CUR_DTYPE = np.dtype([
     ("base", _SQLITE3_VTAB_CURSOR_DTYPE), ("descriptor", "i8"), ("rowid", "i8"),
-    ("mi_p", "i8"), ("data_p", "i8"), ("n_rows", "i8"), ("scratch_p", "i8"),
+    ("mi_p", "i8"), ("data_p", "i8"), ("n_rows", "i8"), ("row_stride", "i8"), ("scratch_p", "i8"),
 ], align=True)
 _TVF_CUR_SIZE = _TVF_CUR_DTYPE.itemsize
 
@@ -116,17 +116,19 @@ def _tvf_xfilter_impl(cur, argc, argv):
         c[0].mi_p = 0
         c[0].data_p = 0
         c[0].n_rows = 0
+        c[0].row_stride = 0
     c[0].rowid = 0
     if argc < _N_HIDDEN:
         return
     vals = carray(_cast_int_to_void_p(argv), (argc,), dtype=np.intp)
 {arg_decode}
     result = {fn_call}
-    mi_p, data_p = structref_meminfo(result)
+    mi_p, _base = structref_meminfo(result)
     _incref_meminfo(mi_p)
     c[0].mi_p = mi_p
-    c[0].data_p = data_p
+    c[0].data_p = array_data_p(result)
     c[0].n_rows = result.shape[0]
+    c[0].row_stride = result.strides[0]
 '''
 
 
@@ -239,6 +241,7 @@ def _make_static_cfuncs():
             c[0].mi_p = 0
             c[0].data_p = 0
             c[0].n_rows = 0
+            c[0].row_stride = 0
             c[0].scratch_p = scratch_p
             slot = carray(_cast_int_to_void_p(pp_cursor), (1,), dtype=np.intp)
             slot[0] = cur
@@ -257,6 +260,7 @@ def _make_static_cfuncs():
                 c[0].mi_p = 0
                 c[0].data_p = 0
                 c[0].n_rows = 0
+                c[0].row_stride = 0
             sqlite3_free(c[0].scratch_p)
             sqlite3_free(cur)
             return SQLITE_OK
@@ -296,11 +300,10 @@ def _make_xcolumn():
             rowid = c[0].rowid
             d = carray(_cast_int_to_void_p(c[0].descriptor), (1,), dtype=_TVF_DESC_DTYPE)
             ncols = d[0].ncols
-            itemsize = d[0].itemsize
             offsets = carray(_cast_int_to_void_p(d[0].col_offsets), (ncols,), dtype=np.int64)
             tags = carray(_cast_int_to_void_p(d[0].col_tags), (ncols,), dtype=np.int32)
             widths = carray(_cast_int_to_void_p(d[0].col_widths), (ncols,), dtype=np.int64)
-            addr = data_p + rowid * itemsize + offsets[j]
+            addr = data_p + rowid * c[0].row_stride + offsets[j]
             tag = tags[j]
             if tag == _TAG_I8:
                 sqlite3_result_int64(ctx, int64(load_unaligned(addr, int8)))
@@ -431,6 +434,11 @@ def register_tvf(db, name, arg_types, out_dtype, fn):
     into the generated allocator (so it caches cross-process); a NaN ``float``
     cell reads back as SQL NULL (SQLite coerces NaN REAL to NULL), as in
     ``register_table``.
+
+    ``fn`` must return a 1-D numpy structured array whose dtype is ``out_dtype``;
+    a slice / strided / offset view is handled (the row stride is honored), but a
+    return whose *dtype* differs from ``out_dtype`` is read through ``out_dtype``'s
+    layout and yields undefined values.
     """
     c, offsets_buf, tags_buf, widths_buf, schema, arg_tags = _build_tvf_descriptor(
         name, arg_types, out_dtype)
