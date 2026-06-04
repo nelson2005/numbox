@@ -194,3 +194,32 @@ def test_tvf_empty_return():
     assert rows == []
     sqlite3_close(db.value)
     del h
+
+
+def test_tvf_non_numeric_arg_type_raises():
+    db = _open()
+    with pytest.raises(TypeError):
+        register_tvf(db.value, "f", (np.dtype("U4"),), _OUT, _series)
+    sqlite3_close(db.value)
+
+
+@njit
+def _raises(start, stop):
+    # raise explicitly: numba's default boundscheck is off, so an OOB index would
+    # corrupt rather than raise. The @cfunc boundary swallows this -> 0 rows.
+    out = np.empty(stop - start, _OUT)
+    if start < stop:
+        raise ValueError("boom")
+    return out
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+def test_tvf_user_fn_raises_yields_no_rows():
+    # the @cfunc boundary swallows the user fn's exception (surfaced as an
+    # unraisable exception); the observable contract is just "no rows".
+    db = _open()
+    h = register_tvf(db.value, "boom", (np.int64, np.int64), _OUT, _raises)
+    _, rows = _select_int(db, "SELECT n FROM boom(2, 5)")
+    assert rows == []
+    sqlite3_close(db.value)
+    del h

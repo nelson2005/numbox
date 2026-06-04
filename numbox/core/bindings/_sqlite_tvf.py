@@ -379,6 +379,10 @@ def _build_tvf_descriptor(name, arg_types, out_dtype):
 
     arg_dtypes = [np.dtype(t) for t in arg_types]
     arg_tags = [_col_tag(dt, False) for dt in arg_dtypes]
+    if any(t not in _INT_TAGS and t not in _FLOAT_TAGS for t in arg_tags):
+        raise TypeError(
+            "register_tvf arg_types must be integer or float scalar dtypes; "
+            "string/bytes hidden args are not supported")
 
     offsets_buf = np.array(offs, dtype=np.int64)
     tags_buf = np.array(vis_tags, dtype=np.int32)
