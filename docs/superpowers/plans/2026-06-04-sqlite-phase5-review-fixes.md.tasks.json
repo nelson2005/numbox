@@ -4,21 +4,21 @@
     {
       "id": 0,
       "subject": "Task 0: Add store_unaligned to lowlevel.py",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** align=1 store primitive mirroring load_unaligned for misaligned structured-dtype field writes.\n\n**Files:** Modify numbox/utils/lowlevel.py; Test test/core/test_load_unaligned.py\n\n**Acceptance Criteria:** store_unaligned emits builder.store(v, ptr, align=1); round-trips via load_unaligned at a misaligned address; flake8 clean.\n\n**Verify:** clean caches, then /home/erik/projects/numbox/venv/bin/pytest test/core/test_load_unaligned.py -q\n\n**Steps:** Full code in the plan .md -> Task 0.\n\n```json:metadata\n{\"files\": [\"numbox/utils/lowlevel.py\", \"test/core/test_load_unaligned.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_load_unaligned.py -q\", \"planSection\": \"Task 0\", \"acceptanceCriteria\": [\"store_unaligned emits align=1 store\", \"round-trips via load_unaligned\", \"flake8 clean\"]}\n```"
     },
     {
       "id": 1,
       "subject": "Task 1: query_to_array surface mid-step errors (M1)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** query_to_array raises on a sqlite3_step error mid-iteration instead of returning a truncated array.\n\n**Files:** Modify numbox/core/bindings/_sqlite_query.py; Test test/core/test_sqlite_query.py\n\n**Acceptance Criteria:** _query_core returns (array, terminal_rc); query_to_array raises via _raise_rc on non-SQLITE_DONE; clean query unaffected; empty result returns length-0; mid-step error raises.\n\n**Verify:** clean caches, then /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\n\n**Steps:** Full code in the plan .md -> Task 1. Verify the step-error test SQL fails at STEP not prepare on the venv sqlite.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_query.py\", \"test/core/test_sqlite_query.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\", \"planSection\": \"Task 1\", \"acceptanceCriteria\": [\"_query_core returns (array, rc)\", \"raises on non-SQLITE_DONE\", \"empty result length-0\", \"mid-step error raises\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: query_to_array unaligned stores + accessor order + docstring (M2a, nits)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [0, 1],
       "description": "**Goal:** _store_cell uses store_unaligned, calls the format accessor before column_bytes, docstring states sql_p is a char* pointer.\n\n**Files:** Modify numbox/core/bindings/_sqlite_query.py; Test test/core/test_sqlite_query.py\n\n**Acceptance Criteria:** multi-byte/NaN writes use store_unaligned; _TAG_S/_TAG_BLOB call column_text/blob before column_bytes; packed misaligned dtype round-trips; BLOB into 'S' field; docstring documents sql_p pointer.\n\n**Verify:** clean caches, then /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\n\n**Steps:** Full code in the plan .md -> Task 2. (x86 may pass even when buggy; ubuntu-arm CI leg is the real check.)\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_query.py\", \"test/core/test_sqlite_query.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\", \"planSection\": \"Task 2\", \"acceptanceCriteria\": [\"store_unaligned for multi-byte writes\", \"format accessor before column_bytes\", \"packed misaligned dtype round-trips\", \"blob into S field\", \"docstring documents sql_p pointer\"]}\n```"
@@ -26,7 +26,7 @@
     {
       "id": 3,
       "subject": "Task 3: typemap unaligned UTF-32 writes + decode validation (M2b, L2)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [0],
       "description": "**Goal:** utf8_to_utf32 writes via store_unaligned and validates continuation bytes / rejects surrogate+overlong (-> U+FFFD).\n\n**Files:** Modify numbox/core/bindings/_sqlite_typemap.py; Test test/core/test_sqlite_query.py\n\n**Acceptance Criteria:** utf8_to_utf32 stores via store_unaligned; malformed UTF-8 -> 0xFFFD; existing utf8 tests pass.\n\n**Verify:** clean caches, then /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\n\n**Steps:** Full code in the plan .md -> Task 3.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_typemap.py\", \"test/core/test_sqlite_query.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_query.py -q\", \"planSection\": \"Task 3\", \"acceptanceCriteria\": [\"utf8_to_utf32 uses store_unaligned\", \"malformed UTF-8 -> 0xFFFD\", \"existing utf8 tests pass\"]}\n```"
@@ -34,14 +34,14 @@
     {
       "id": 4,
       "subject": "Task 4: vtable exact integer-domain pushdown (H1 + M4)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** Pushdown compares integer columns in the int64 domain (no float64 precision loss; uint64 read as the wrapped int64 xColumn surfaces).\n\n**Files:** Modify numbox/core/bindings/_sqlite_vtable.py; Test test/core/test_sqlite_vtable.py\n\n**Acceptance Criteria:** _PRED_DTYPE carries is_int/ival/fval; _xfilter decodes integer cols via sqlite3_value_int64; _cell_value_i64 returns int64 (uint64 wrapped); _row_matches compares integers exactly; int64 2**53+1 range correct; uint64>=2**63 consistent; existing pushdown tests pass.\n\n**Verify:** clean caches, then /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -q\n\n**Steps:** Full code in the plan .md -> Task 4. Use explicit comparison dicts (no eval).\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_vtable.py\", \"test/core/test_sqlite_vtable.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -q\", \"planSection\": \"Task 4\", \"acceptanceCriteria\": [\"_PRED_DTYPE carries is_int/ival/fval\", \"integer cols decoded+compared as int64\", \"uint64 wrapped to match xColumn\", \"int64>2**53 range correct\", \"existing pushdown tests pass\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: vtable guard xBestIndex idxStr leak; document omit invariant (L1, nit)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [4],
       "description": "**Goal:** _xbestindex cannot leak its sqlite3_malloc'd idxStr on exception; omit=0 dependency documented.\n\n**Files:** Modify numbox/core/bindings/_sqlite_vtable.py\n\n**Acceptance Criteria:** body wrapped so exceptions free idx_p and return SQLITE_ERROR; idx_p zeroed after handoff so no double-free; comment at omit=0; existing pushdown tests pass.\n\n**Verify:** clean caches, then /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -q\n\n**Steps:** Full code in the plan .md -> Task 5.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_vtable.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -q\", \"planSection\": \"Task 5\", \"acceptanceCriteria\": [\"xBestIndex try/except frees idx_p\", \"idx_p zeroed after handoff\", \"omit=0 invariant comment\", \"pushdown tests pass\"]}\n```"
@@ -49,14 +49,14 @@
     {
       "id": 6,
       "subject": "Task 6: tvf stride/offset-correct addressing; document return contract (M3, L3)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** A TVF whose fn returns a sliced/strided/offset array is read correctly (logical pointer + real row stride); register_tvf docstring states the return contract.\n\n**Files:** Modify numbox/core/bindings/_sqlite_tvf.py; Test test/core/test_sqlite_tvf.py\n\n**Acceptance Criteria:** _TVF_CUR_DTYPE has row_stride; _tvf_xfilter_impl stores array_data_p(result)+strides[0] (still pins via structref_meminfo); _tvf_xcolumn uses c[0].row_stride; offset/strided/empty fn returns correct; docstring states return contract.\n\n**Verify:** clean caches, then /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py -q\n\n**Steps:** Full code in the plan .md -> Task 6.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_tvf.py\", \"test/core/test_sqlite_tvf.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py -q\", \"planSection\": \"Task 6\", \"acceptanceCriteria\": [\"_TVF_CUR_DTYPE has row_stride\", \"stores array_data_p + strides[0]\", \"xColumn uses row_stride\", \"offset/strided/empty returns correct\", \"docstring states contract\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: tvf validate non-numeric arg_types; cover fn-raises (M5, tests_docs-2)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [6],
       "description": "**Goal:** register_tvf rejects non-numeric arg_types instead of silently decoding a string/bytes arg as a garbage float; cover user-fn-raises -> 0 rows.\n\n**Files:** Modify numbox/core/bindings/_sqlite_tvf.py; Test test/core/test_sqlite_tvf.py\n\n**Acceptance Criteria:** register_tvf raises TypeError on non-numeric arg_types; a raising fn yields 0 rows; numeric-arg TVF tests pass.\n\n**Verify:** clean caches, then /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py -q\n\n**Steps:** Full code in the plan .md -> Task 7.\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_tvf.py\", \"test/core/test_sqlite_tvf.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py -q\", \"planSection\": \"Task 7\", \"acceptanceCriteria\": [\"TypeError on non-numeric arg_types\", \"raising fn yields 0 rows\", \"numeric-arg TVF tests pass\"]}\n```"
@@ -64,7 +64,7 @@
     {
       "id": 8,
       "subject": "Task 8: coverage tests - two-TVF coexistence, cross-process cache, deferred xDestroy",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [4, 6, 7],
       "description": "**Goal:** Close no-code-fix coverage gaps: two distinct TVF registrations coexisting; cross-process cache reuse for query_to_array; xDestroy not firing on a BUSY close.\n\n**Files:** Test test/core/test_sqlite_tvf.py, test/core/test_sqlite_query.py, test/core/test_sqlite_vtable.py\n\n**Acceptance Criteria:** two distinct TVFs each return own rows/columns; subprocess query_to_array cold+warm succeeds; unfinalized-statement close does not pop registry, finalize+close does.\n\n**Verify:** clean caches, then /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py test/core/test_sqlite_query.py test/core/test_sqlite_vtable.py -q\n\n**Steps:** Full code in the plan .md -> Task 8. Confirm sqlite3_close v1/v2 binding in _sqlite_conn.py before finalizing the deferred-xDestroy assertions.\n\n```json:metadata\n{\"files\": [\"test/core/test_sqlite_tvf.py\", \"test/core/test_sqlite_query.py\", \"test/core/test_sqlite_vtable.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py test/core/test_sqlite_query.py test/core/test_sqlite_vtable.py -q\", \"planSection\": \"Task 8\", \"acceptanceCriteria\": [\"two distinct TVFs coexist\", \"cross-process query cache cold+warm\", \"deferred xDestroy on BUSY close\"]}\n```"
@@ -72,7 +72,7 @@
     {
       "id": 9,
       "subject": "Task 9: full CI-gate verification + docs check",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [0, 1, 2, 3, 4, 5, 6, 7, 8],
       "description": "**Goal:** Confirm the whole change set passes every CI gate locally and docs stay consistent.\n\n**Files:** Verify docs/numbox.core.bindings.rst (no new modules; confirm automodule list accurate)\n\n**Acceptance Criteria:** flake8 . --count --show-source --statistics -> 0; full pytest --durations=20 (cold cache) all pass / 2 skips; sphinx-build exit 0 with no new warnings citing changed modules; doc-codeblock clean; lychee clean except the known pre-existing musl timeout.\n\n**Verify:** run the command block in the plan .md -> Task 9.\n\n**Steps:** Full commands in the plan .md -> Task 9. After all gates green, set this tasks.json statuses to completed and commit plan + tasks.json.\n\n```json:metadata\n{\"files\": [\"docs/numbox.core.bindings.rst\", \"docs/superpowers/plans/2026-06-04-sqlite-phase5-review-fixes.md.tasks.json\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/flake8 . --count --show-source --statistics && /home/erik/projects/numbox/venv/bin/pytest --durations=20 -q\", \"planSection\": \"Task 9\", \"acceptanceCriteria\": [\"flake8 clean\", \"full pytest passes\", \"sphinx exit 0 no new warnings\", \"doc-codeblock clean\", \"lychee clean except known musl timeout\"]}\n```"
