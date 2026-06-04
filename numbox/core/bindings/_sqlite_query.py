@@ -8,7 +8,7 @@ from numba.core.types import (
     int8, int16, int32, int64, uint8, uint16, uint32, uint64, float32, float64,
 )
 
-from numbox.core.bindings._sqlite_constants import SQLITE_ROW, SQLITE_NULL, SQLITE_OK
+from numbox.core.bindings._sqlite_constants import SQLITE_ROW, SQLITE_NULL, SQLITE_OK, SQLITE_DONE
 from numbox.core.bindings import (
     sqlite3_prepare_v2, sqlite3_step, sqlite3_finalize, sqlite3_column_count,
     sqlite3_column_type, sqlite3_column_int64, sqlite3_column_double,
@@ -88,12 +88,14 @@ def _store_cell(out_data, addr_off, tag, width, stmt, j):
 @njit(**jit_options)
 def _query_core(stmt, ncols, offsets, tags, widths, itemsize, dt):
     """Step ``stmt`` to exhaustion, materialising rows into an NRT buffer that
-    grows geometrically, then trim to the exact length and return an owned array.
+    grows geometrically, then trim to the exact length. Returns ``(array, rc)``
+    where ``rc`` is the terminal step return code (SQLITE_DONE on success).
     """
     cap = 16
     out = np.empty(cap, dt)
     n = 0
-    while sqlite3_step(stmt) == SQLITE_ROW:
+    rc = sqlite3_step(stmt)
+    while rc == SQLITE_ROW:
         if n == cap:
             cap = cap * 2
             new = np.empty(cap, dt)
@@ -109,12 +111,13 @@ def _query_core(stmt, ncols, offsets, tags, widths, itemsize, dt):
         for j in range(ncols):
             _store_cell(base, offsets[j], tags[j], widths[j], stmt, j)
         n += 1
+        rc = sqlite3_step(stmt)
     res = np.empty(n, dt)
     src_bytes = carray(_cast_int_to_void_p(array_data_p(out)), (n * itemsize,), dtype=np.uint8)
     res_bytes = carray(_cast_int_to_void_p(array_data_p(res)), (n * itemsize,), dtype=np.uint8)
     for b in range(n * itemsize):
         res_bytes[b] = src_bytes[b]
-    return res
+    return res, rc
 
 
 def _raise_rc(db, rc):
@@ -144,7 +147,10 @@ def query_to_array(db, sql_p, dtype):
         ncols = sqlite3_column_count(stmt.value)
         if ncols != len(names):
             raise ValueError("dtype has %d fields but query returns %d columns" % (len(names), ncols))
-        return _query_core(stmt.value, ncols, offsets, tags, widths,
-                           int(dtype.itemsize), numba.from_dtype(dtype))
+        res, last_rc = _query_core(stmt.value, ncols, offsets, tags, widths,
+                                   int(dtype.itemsize), numba.from_dtype(dtype))
+        if last_rc != SQLITE_DONE:
+            _raise_rc(db, last_rc)
+        return res
     finally:
         sqlite3_finalize(stmt.value)

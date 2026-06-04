@@ -133,3 +133,28 @@ def test_query_two_dtypes_no_stale_cache():
     assert o1.dtype.itemsize == 16 and o2.dtype.itemsize == 8
     assert tuple(o2[0]) == (1, 2)
     sqlite3_close(db)
+
+
+def test_query_empty_result():
+    db = _open_mem()
+    _exec(db, "CREATE TABLE t(i INTEGER)")
+    with c_string("SELECT i FROM t") as sql:
+        out = query_to_array(db, sql, np.dtype([("i", "i8")]))
+    assert out.shape == (0,)
+    sqlite3_close(db)
+
+
+def test_query_step_error_raises():
+    # A step-time error after >=1 row must raise, not return a truncated array.
+    # CASE returns plain ints for the first rows, then abs(INT64_MIN) overflows
+    # at the last step (verified against the venv sqlite: prepare succeeds, rows
+    # emit, then sqlite3_step returns SQLITE_ERROR "integer overflow").
+    db = _open_mem()
+    _exec(db, "CREATE TABLE t(i INTEGER)")
+    _exec(db, "INSERT INTO t VALUES (1), (2), (3)")
+    sql_text = "SELECT CASE i WHEN 3 THEN abs(-9223372036854775808) ELSE i END FROM t"
+    with c_string(sql_text) as sql:
+        with pytest.raises(RuntimeError) as excinfo:
+            query_to_array(db, sql, np.dtype([("i", "i8")]))
+    assert "query_to_array failed" in str(excinfo.value)
+    sqlite3_close(db)
