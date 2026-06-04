@@ -50,7 +50,7 @@
     {
       "id": 6,
       "subject": "Task 6: create_module_v2 + xDestroy registry cleanup",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [1, 5],
       "description": "**Goal:** Register register_table + register_tvf modules via sqlite3_create_module_v2 with a ctypes xDestroy callback that pops a module-level registry (keyed by descriptor pointer) on teardown — fixing the caller-must-retain-handle hazard. xDestroy does Python pop only (no sqlite3_free of numpy-owned descriptor) per A4.\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -k 'xdestroy or cleanup or registry' -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_vtable.py\", \"numbox/core/bindings/_sqlite_tvf.py\", \"test/core/test_sqlite_vtable.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_vtable.py -k 'xdestroy or cleanup or registry' -q\", \"acceptanceCriteria\": [\"registry entry removed on close (one xDestroy)\", \"two tables two removals\", \"duplicate name first-at-rereg second-at-close\", \"no C-free of numpy descriptor, no UAF\"]}\n```"
@@ -64,5 +64,5 @@
       "description": "**Goal:** Document the new modules/symbols (bindings.rst automodule for _sqlite_query + _sqlite_tvf) and run every CI check locally before declaring done.\n\n**Verify:** flake8 . ; pytest --durations=20 ; sphinx-build ; extract_codeblocks docs README.md ; lychee changed files — all green.\n\n```json:metadata\n{\"files\": [\"docs/numbox.core.bindings.rst\", \"numbox/core/bindings/__init__.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/flake8 . --max-line-length=127 && /home/erik/projects/numbox/venv/bin/pytest --durations=20 -q\", \"acceptanceCriteria\": [\"bindings.rst lists _sqlite_query + _sqlite_tvf\", \"sphinx-build exit 0\", \"flake8/pytest/doc-codeblock/lychee all green\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-03"
+  "lastUpdated": "2026-06-04"
 }
