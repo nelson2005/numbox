@@ -223,3 +223,21 @@ def test_tvf_user_fn_raises_yields_no_rows():
     assert rows == []
     sqlite3_close(db.value)
     del h
+
+
+def test_tvf_two_distinct_registrations_same_process():
+    db = _open()
+    h1 = register_tvf(db.value, "series", (np.int64, np.int64), _OUT, _series)
+    h2 = register_tvf(db.value, "scaled", (np.int64, np.int64, np.float64), _OUT2, _scaled)
+    _, r1 = _select_int(db, "SELECT n FROM series(2, 5)")
+    stmt = c_int64(0)
+    with c_string("SELECT n, v FROM scaled(0, 3, 2.5)") as p:
+        sqlite3_prepare_v2(db.value, p, -1, addressof(stmt), 0)
+    r2 = []
+    while sqlite3_step(stmt.value) == 100:
+        r2.append((sqlite3_column_int64(stmt.value, 0), sqlite3_column_double(stmt.value, 1)))
+    sqlite3_finalize(stmt.value)
+    assert [x[0] for x in r1] == [2, 3, 4]
+    assert r2 == [(0, 0.0), (1, 2.5), (2, 5.0)]
+    sqlite3_close(db.value)
+    del h1, h2

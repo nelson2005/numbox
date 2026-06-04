@@ -691,3 +691,34 @@ def test_pushdown_uint64_high_magnitude_consistent():
     full = sorted(v for v in allrows if v > ((1 << 63) + 0))
     assert pushed == full, (pushed, full)
     sqlite3_close(db)
+
+
+def test_xdestroy_deferred_while_statement_open():
+    from numbox.core.bindings import _sqlite_vtable as v
+    from numbox.core.bindings import register_tvf
+    from numba import njit
+    out = np.dtype([("n", "i8")])
+
+    @njit
+    def series(start, stop):
+        o = np.empty(stop - start, out)
+        for i in range(stop - start):
+            o[i].n = start + i
+        return o
+
+    db = c_int64(0)
+    with c_string(":memory:") as p:
+        sqlite3_open(p, addressof(db))
+    h = register_tvf(db.value, "series", (np.int64, np.int64), out, series)
+    stmt = c_int64(0)
+    with c_string("SELECT n FROM series(2, 5)") as p:
+        sqlite3_prepare_v2(db.value, p, -1, addressof(stmt), 0)
+    sqlite3_step(stmt.value)  # leave the statement open (not finalized)
+    n_before = len(v._REGISTRY)
+    rc = sqlite3_close(db.value)  # sqlite3_close (v1) returns SQLITE_BUSY with an open stmt
+    assert rc != 0  # BUSY: close refused, xDestroy NOT fired
+    assert len(v._REGISTRY) == n_before  # registry entry still present
+    sqlite3_finalize(stmt.value)
+    assert sqlite3_close(db.value) == 0  # now it closes and fires xDestroy
+    assert len(v._REGISTRY) == n_before - 1
+    del h

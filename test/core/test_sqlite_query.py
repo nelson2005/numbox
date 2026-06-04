@@ -202,3 +202,63 @@ def test_utf8_to_utf32_overlong_is_replacement():
     # overlong 2-byte encoding of '/' (0xC0 0xAF) is illegal
     n, dst = _decode(b"\xc0\xaf", 4)
     assert int(dst[0]) == 0xFFFD
+
+
+def test_query_xprocess_cache(tmp_path):
+    import os
+    import subprocess
+    import sys
+    import textwrap
+    driver = textwrap.dedent('''
+        from ctypes import addressof, c_int64
+        import numpy as np
+        from numba import njit
+        from numbox.core.bindings import (
+            sqlite3_open, sqlite3_close, sqlite3_exec, query_to_array,
+            sqlite3_prepare_v2, sqlite3_step, sqlite3_column_int64, sqlite3_finalize,
+            register_tvf)
+        from numbox.utils.cstrings import c_string
+
+        OUT = np.dtype([("n", "i8")])
+
+        @njit
+        def series(start, stop):
+            o = np.empty(stop - start, OUT)
+            for i in range(stop - start):
+                o[i].n = start + i
+            return o
+
+        db_p = c_int64(0)
+        with c_string(":memory:") as nm:
+            sqlite3_open(nm, addressof(db_p))
+        db = db_p.value
+        with c_string("CREATE TABLE t(i INTEGER, x REAL)") as p:
+            sqlite3_exec(db, p, 0, 0, 0)
+        with c_string("INSERT INTO t VALUES (1, 1.5), (2, 2.5)") as p:
+            sqlite3_exec(db, p, 0, 0, 0)
+        dt = np.dtype([("i", "i8"), ("x", "f8")])
+        with c_string("SELECT i, x FROM t ORDER BY i") as s:
+            out = query_to_array(db, s, dt)
+        q = [int(val) for val in out["i"]]
+
+        h = register_tvf(db, "series", (np.int64, np.int64), OUT, series)
+        stmt_p = c_int64(0)
+        with c_string("SELECT n FROM series(2, 5)") as sp:
+            sqlite3_prepare_v2(db, sp, -1, addressof(stmt_p), 0)
+        tvf = []
+        while sqlite3_step(stmt_p.value) == 100:
+            tvf.append(sqlite3_column_int64(stmt_p.value, 0))
+        sqlite3_finalize(stmt_p.value)
+        sqlite3_close(db)
+        assert q == [1, 2], q
+        assert tvf == [2, 3, 4], tvf
+        print("RESULT", q, tvf)
+    ''')
+    script = tmp_path / "query_drv.py"
+    script.write_text(driver)
+    env = dict(os.environ, NUMBA_CACHE_DIR=str(tmp_path / "nbcache"))
+    for _ in range(2):  # cold then warm: cross-process cache reuse must not crash
+        out = subprocess.run([sys.executable, str(script)], env=env,
+                             capture_output=True, text=True, timeout=600)
+        assert out.returncode == 0, out.stderr
+        assert "RESULT [1, 2] [2, 3, 4]" in out.stdout
