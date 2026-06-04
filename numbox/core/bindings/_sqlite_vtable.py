@@ -30,7 +30,7 @@ from numbox.core.bindings import (
     sqlite3_errmsg, sqlite3_free, sqlite3_malloc,
     sqlite3_result_int64, sqlite3_result_double,
     sqlite3_result_text, sqlite3_result_blob, sqlite3_result_error,
-    sqlite3_value_double,
+    sqlite3_value_double, sqlite3_value_int64,
 )
 from numbox.core.bindings._sqlite_typemap import (
     _TAG_I8, _TAG_I16, _TAG_I32, _TAG_I64, _TAG_U8, _TAG_U16, _TAG_U32, _TAG_U64,
@@ -108,8 +108,10 @@ assert _CONSTRAINT_DTYPE.itemsize == 12 and _USAGE_DTYPE.itemsize == 8 and _ORDE
 
 # A claimed (col, op, value) predicate, carried per-cursor in pred_p (n_pred of
 # them). xBestIndex serialises the (col, op) pairs into the idxStr channel;
-# xFilter fills val from the matching argv[] sqlite3_value.
-_PRED_DTYPE = np.dtype([("col", "i4"), ("op", "i4"), ("val", "f8")], align=True)
+# xFilter fills ival or fval (per the column's int/float domain) from the
+# matching argv[] sqlite3_value, setting is_int to pick the comparison domain.
+_PRED_DTYPE = np.dtype([("col", "i4"), ("op", "i4"), ("is_int", "i4"),
+                        ("ival", "i8"), ("fval", "f8")], align=True)
 _PRED_SIZE = _PRED_DTYPE.itemsize
 
 _CACHE = jit_options.get("cache", True)
@@ -257,6 +259,11 @@ def _is_numeric_tag(tag):
 
 
 @njit(**jit_options)
+def _is_int_tag(tag):
+    return tag <= _TAG_U64
+
+
+@njit(**jit_options)
 def _is_supported_op(op):
     return (op == SQLITE_INDEX_CONSTRAINT_EQ or op == SQLITE_INDEX_CONSTRAINT_GT
             or op == SQLITE_INDEX_CONSTRAINT_GE or op == SQLITE_INDEX_CONSTRAINT_LT
@@ -401,6 +408,52 @@ def _cell_value(d, rowid, col):
 
 
 @njit(**jit_options)
+def _cell_value_i64(d, rowid, col):
+    # Read an integer cell at (rowid, col) as int64, mirroring _xcolumn's
+    # sqlite3_result_int64 (uint64 wrapped to the same int64 SQLite sees).
+    ncols = d[0].ncols
+    base = d[0].data_base
+    row_stride = d[0].row_stride
+    offsets = carray(_cast_int_to_void_p(d[0].col_offsets), (ncols,), dtype=np.int64)
+    tags = carray(_cast_int_to_void_p(d[0].col_tags), (ncols,), dtype=np.int32)
+    addr = base + rowid * row_stride + offsets[col]
+    tag = tags[col]
+    if tag == _TAG_I8:
+        return int64(load_unaligned(addr, int8))
+    elif tag == _TAG_I16:
+        return int64(load_unaligned(addr, int16))
+    elif tag == _TAG_I32:
+        return int64(load_unaligned(addr, int32))
+    elif tag == _TAG_I64:
+        return load_unaligned(addr, int64)
+    elif tag == _TAG_U8:
+        return int64(load_unaligned(addr, uint8))
+    elif tag == _TAG_U16:
+        return int64(load_unaligned(addr, uint16))
+    elif tag == _TAG_U32:
+        return int64(load_unaligned(addr, uint32))
+    elif tag == _TAG_U64:
+        return int64(load_unaligned(addr, uint64))
+    return int64(0)
+
+
+@njit(**jit_options)
+def _cmp(op, cv, rv):
+    # Compare in the native type of cv/rv (kept separate per call site so numba
+    # never phi-unifies an int64 cell up to float64 -- that would lose precision
+    # above 2**53 and reintroduce the dropped-row bug this pushdown guards).
+    if op == SQLITE_INDEX_CONSTRAINT_EQ:
+        return cv == rv
+    elif op == SQLITE_INDEX_CONSTRAINT_GT:
+        return cv > rv
+    elif op == SQLITE_INDEX_CONSTRAINT_GE:
+        return cv >= rv
+    elif op == SQLITE_INDEX_CONSTRAINT_LT:
+        return cv < rv
+    return cv <= rv
+
+
+@njit(**jit_options)
 def _row_matches(cur):
     c = carray(_cast_int_to_void_p(cur), (1,), dtype=_CUR_DTYPE)
     if c[0].n_pred == 0:
@@ -408,19 +461,11 @@ def _row_matches(cur):
     d = carray(_cast_int_to_void_p(c[0].descriptor), (1,), dtype=_DESC_DTYPE)
     preds = carray(_cast_int_to_void_p(c[0].pred_p), (c[0].n_pred,), dtype=_PRED_DTYPE)
     for k in range(c[0].n_pred):
-        cv = _cell_value(d, c[0].rowid, preds[k].col)
         op = preds[k].op
-        rv = preds[k].val
-        if op == SQLITE_INDEX_CONSTRAINT_EQ:
-            ok = cv == rv
-        elif op == SQLITE_INDEX_CONSTRAINT_GT:
-            ok = cv > rv
-        elif op == SQLITE_INDEX_CONSTRAINT_GE:
-            ok = cv >= rv
-        elif op == SQLITE_INDEX_CONSTRAINT_LT:
-            ok = cv < rv
+        if preds[k].is_int != 0:
+            ok = _cmp(op, _cell_value_i64(d, c[0].rowid, preds[k].col), preds[k].ival)
         else:
-            ok = cv <= rv
+            ok = _cmp(op, _cell_value(d, c[0].rowid, preds[k].col), preds[k].fval)
         if not ok:
             return False
     return True
@@ -451,10 +496,21 @@ def _xfilter(cur, idx_num, idx_str, argc, argv):
             preds = carray(_cast_int_to_void_p(pred_p), (argc,), dtype=_PRED_DTYPE)
             spec = carray(_cast_int_to_void_p(idx_str), (2 * argc,), dtype=np.int32)
             vals = carray(_cast_int_to_void_p(argv), (argc,), dtype=np.intp)
+            d = carray(_cast_int_to_void_p(c[0].descriptor), (1,), dtype=_DESC_DTYPE)
+            ncols = d[0].ncols
+            col_tags = carray(_cast_int_to_void_p(d[0].col_tags), (ncols,), dtype=np.int32)
             for k in range(argc):
-                preds[k].col = spec[2 * k]
+                col = spec[2 * k]
+                preds[k].col = col
                 preds[k].op = spec[2 * k + 1]
-                preds[k].val = sqlite3_value_double(vals[k])
+                if _is_int_tag(col_tags[col]):
+                    preds[k].is_int = 1
+                    preds[k].ival = sqlite3_value_int64(vals[k])
+                    preds[k].fval = 0.0
+                else:
+                    preds[k].is_int = 0
+                    preds[k].ival = 0
+                    preds[k].fval = sqlite3_value_double(vals[k])
         _seek_match(cur)
         return SQLITE_OK
     except Exception:

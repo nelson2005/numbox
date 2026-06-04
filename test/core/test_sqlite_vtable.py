@@ -655,3 +655,39 @@ def test_pushdown_explain_uses_index():
     full_text = " ".join(str(field) for row in full for field in row).upper()
     assert "VIRTUAL TABLE INDEX 0:" in full_text, full_text
     sqlite3_close(db)
+
+
+def test_pushdown_int64_above_2_53_range():
+    db = _open_memory()
+    base = 1 << 53
+    vals = [base, base + 1, base + 2, base + 3]
+    a = np.array([[v] for v in vals], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["c"])  # noqa: F841
+    threshold = base + 1
+    preds = {
+        ">": lambda v: v > threshold,
+        ">=": lambda v: v >= threshold,
+        "<": lambda v: v < threshold,
+        "<=": lambda v: v <= threshold,
+    }
+    for op, pred in preds.items():
+        got = sorted(_select_col0(db, "SELECT c FROM t WHERE c %s %d" % (op, threshold)))
+        exp = sorted(v for v in vals if pred(v))
+        assert got == exp, (op, got, exp)
+    # the exact row at 2**53+1 that float64 collapse used to drop under "> base":
+    assert sorted(_select_col0(db, "SELECT c FROM t WHERE c > %d" % base)) == sorted(vals[1:])
+    sqlite3_close(db)
+
+
+def test_pushdown_uint64_high_magnitude_consistent():
+    db = _open_memory()
+    vals = [(1 << 63), (1 << 63) + 5, (1 << 63) + 1]
+    a = np.array([[v] for v in vals], dtype=np.uint64)
+    h = register_table(db, "t", a, columns=["c"])  # noqa: F841
+    # xColumn surfaces uint64 as a wrapped int64; the cursor must agree, so a
+    # pushdown query returns exactly what a full scan + SQLite re-check returns.
+    pushed = sorted(_select_col0(db, "SELECT c FROM t WHERE c > %d" % ((1 << 63) + 0)))
+    allrows = sorted(_select_col0(db, "SELECT c FROM t"))
+    full = sorted(v for v in allrows if v > ((1 << 63) + 0))
+    assert pushed == full, (pushed, full)
+    sqlite3_close(db)
