@@ -10,7 +10,7 @@ from numba import carray, njit
 from numba.core.types import uint8, uint32
 
 from numbox.core.configurations import jit_options
-from numbox.utils.lowlevel import _cast_int_to_void_p, load_unaligned
+from numbox.utils.lowlevel import _cast_int_to_void_p, load_unaligned, store_unaligned
 
 # dtype tags (col_tags[j])
 _TAG_I8, _TAG_I16, _TAG_I32, _TAG_I64 = 0, 1, 2, 3
@@ -65,11 +65,12 @@ def utf32_to_utf8(src, n_codepoints, dst):
 def utf8_to_utf32(src, nbytes, dst, width_cp):
     """Decode the UTF-8 bytes at ``src`` (length ``nbytes``) into up to
     ``width_cp`` little-endian uint32 code points at ``dst``; NUL-pad the
-    remainder. Returns the number of code points written."""
+    remainder. Malformed input (bad continuation byte, surrogate, overlong
+    encoding, out-of-range) decodes to U+FFFD. Returns the number of code points
+    written. ``dst`` may be misaligned (writes are align=1)."""
     inp = carray(_cast_int_to_void_p(src), (nbytes,), dtype=np.uint8)
-    out = carray(_cast_int_to_void_p(dst), (width_cp,), dtype=np.uint32)
     for k in range(width_cp):
-        out[k] = 0
+        store_unaligned(dst + 4 * k, uint32(0))
     i = 0
     k = 0
     while i < nbytes and k < width_cp:
@@ -77,20 +78,27 @@ def utf8_to_utf32(src, nbytes, dst, width_cp):
         if b0 < 0x80:
             cp = b0
             i += 1
-        elif b0 >> 5 == 0x6 and i + 1 < nbytes:
+        elif b0 >> 5 == 0x6 and i + 1 < nbytes and (inp[i + 1] >> 6) == 0x2:
             cp = ((b0 & 0x1F) << 6) | (uint32(inp[i + 1]) & 0x3F)
+            if cp < 0x80:
+                cp = 0xFFFD
             i += 2
-        elif b0 >> 4 == 0xE and i + 2 < nbytes:
+        elif b0 >> 4 == 0xE and i + 2 < nbytes and (inp[i + 1] >> 6) == 0x2 and (inp[i + 2] >> 6) == 0x2:
             cp = ((b0 & 0x0F) << 12) | ((uint32(inp[i + 1]) & 0x3F) << 6) | (uint32(inp[i + 2]) & 0x3F)
+            if cp < 0x800 or (0xD800 <= cp <= 0xDFFF):
+                cp = 0xFFFD
             i += 3
-        elif b0 >> 3 == 0x1E and i + 3 < nbytes:
+        elif (b0 >> 3 == 0x1E and i + 3 < nbytes and (inp[i + 1] >> 6) == 0x2
+              and (inp[i + 2] >> 6) == 0x2 and (inp[i + 3] >> 6) == 0x2):
             cp = (((b0 & 0x07) << 18) | ((uint32(inp[i + 1]) & 0x3F) << 12)
                   | ((uint32(inp[i + 2]) & 0x3F) << 6) | (uint32(inp[i + 3]) & 0x3F))
+            if cp < 0x10000 or cp > 0x10FFFF:
+                cp = 0xFFFD
             i += 4
         else:
             cp = 0xFFFD
             i += 1
-        out[k] = cp
+        store_unaligned(dst + 4 * k, uint32(cp))
         k += 1
     return k
 

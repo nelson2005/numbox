@@ -184,3 +184,21 @@ def test_query_blob_into_S_field():
     assert out["b"][0] == b"\x00\xff\x10"
     assert out["b"][1] == b"AB"
     sqlite3_close(db)
+
+
+def test_utf8_to_utf32_bad_continuation_is_replacement():
+    # 0xE0 starts a 3-byte sequence but the next byte 0x20 is not a continuation
+    n, dst = _decode(b"\xe0\x20\x41", 4)
+    assert int(dst[0]) == 0xFFFD
+
+
+def test_utf8_to_utf32_surrogate_is_replacement():
+    # CESU-8-style encoding of a high surrogate U+D800 (0xED 0xA0 0x80) is illegal
+    n, dst = _decode(b"\xed\xa0\x80", 4)
+    assert int(dst[0]) == 0xFFFD
+
+
+def test_utf8_to_utf32_overlong_is_replacement():
+    # overlong 2-byte encoding of '/' (0xC0 0xAF) is illegal
+    n, dst = _decode(b"\xc0\xaf", 4)
+    assert int(dst[0]) == 0xFFFD
