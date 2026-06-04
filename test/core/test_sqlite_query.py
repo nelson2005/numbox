@@ -158,3 +158,29 @@ def test_query_step_error_raises():
             query_to_array(db, sql, np.dtype([("i", "i8")]))
     assert "query_to_array failed" in str(excinfo.value)
     sqlite3_close(db)
+
+
+def test_query_packed_misaligned_dtype():
+    db = _open_mem()
+    _exec(db, "CREATE TABLE t(flag INTEGER, x REAL, s TEXT)")
+    _exec(db, "INSERT INTO t VALUES (1, 2.5, 'ok'), (0, -3.25, 'hi')")
+    dt = np.dtype([("flag", "i1"), ("x", "f8"), ("s", "U4")])  # x at offset 1, s at offset 9
+    assert not dt.isalignedstruct
+    with c_string("SELECT flag, x, s FROM t") as sql:
+        out = query_to_array(db, sql, dt)
+    assert list(out["flag"]) == [1, 0]
+    assert list(out["x"]) == [2.5, -3.25]
+    assert list(out["s"]) == ["ok", "hi"]
+    sqlite3_close(db)
+
+
+def test_query_blob_into_S_field():
+    db = _open_mem()
+    _exec(db, "CREATE TABLE t(b BLOB)")
+    _exec(db, "INSERT INTO t VALUES (x'00ff10'), (x'4142')")
+    with c_string("SELECT b FROM t") as sql:
+        out = query_to_array(db, sql, np.dtype([("b", "S3")]))
+    # interior bytes preserved up to field width; trailing NUL pad trimmed on read
+    assert out["b"][0] == b"\x00\xff\x10"
+    assert out["b"][1] == b"AB"
+    sqlite3_close(db)
