@@ -16,10 +16,10 @@ Unlike the read-only ``register_table`` (one shared module), each
 ``register_tvf`` GENERATES its own ``xFilter`` / ``xColumn`` (the user ``fn`` and
 ``out_dtype`` are baked in as codegen globals so the allocator specialises on the
 dtype and the impls cache cross-process) and builds its own ``sqlite3_module``
-from this registration's cfunc addresses. The returned handle retains the module
-struct, every cfunc object (SQLite stores their addresses), the descriptor
-buffers, and ``fn``; if it is GC'd, SQLite calls freed code -- the caller MUST
-retain it.
+from this registration's cfunc addresses. The handle retains the module struct,
+every cfunc object (SQLite stores their addresses), the descriptor buffers, and
+``fn``; its keep-alive lives in the module-level ``_REGISTRY`` (released by SQLite
+via ``xDestroy``), so the returned handle is advisory.
 """
 import ctypes
 
@@ -34,10 +34,8 @@ from numbox.core.bindings._sqlite_typemap import _col_tag, _SQL_TYPE
 from numbox.core.bindings._sqlite_vtable import (
     _Sqlite3Module, _SQLITE3_VTAB_CURSOR_DTYPE, _VTAB_DTYPE, _VTAB_SIZE,
     _IDX_INFO_DTYPE, _CONSTRAINT_DTYPE, _USAGE_DTYPE,
-    sqlite3_create_module,
+    _register_with_destroy,
 )
-from numbox.core.bindings._sqlite_conn import sqlite3_errmsg
-from numbox.utils.cstrings import c_string
 from numbox.utils.digest import digest
 from numbox.utils.preprocessing import (
     _anchor_path, _materialize_anchor, _orphan_anchor_sweep,
@@ -404,7 +402,8 @@ class _TvfHandle:
     """Keeps the per-registration module struct, every cfunc object (SQLite
     stores their addresses), the descriptor buffers, and fn alive. SQLite calls
     the cfuncs by address; if this handle is GC'd they free and SQLite calls
-    freed code. The caller MUST retain it."""
+    freed code. The keep-alive lives in the module-level ``_REGISTRY``, released
+    by SQLite via ``xDestroy``; the returned handle is advisory."""
     __slots__ = ("_keep",)
 
     def __init__(self, *objs):
@@ -413,14 +412,6 @@ class _TvfHandle:
 
 def _stem(name):
     return "tvf_" + "".join(c if c.isalnum() else "_" for c in name)
-
-
-def _raise_rc(db, name, rc):
-    msg_p = sqlite3_errmsg(db)
-    detail = ""
-    if msg_p:
-        detail = ": " + ctypes.cast(msg_p, ctypes.c_char_p).value.decode("utf-8", "replace")
-    raise RuntimeError("register_tvf failed for %r (rc=%d)%s" % (name, rc, detail))
 
 
 def register_tvf(db, name, arg_types, out_dtype, fn):
@@ -434,11 +425,12 @@ def register_tvf(db, name, arg_types, out_dtype, fn):
     be supplied with an equality value in the query; a call form that leaves a
     hidden arg unbound is rejected with a SQLite constraint error (no rows).
 
-    The caller MUST retain the returned handle for as long as the function is
-    used: SQLite holds the addresses of this registration's generated callbacks,
-    which live only as long as the handle. ``out_dtype`` is baked into the
-    generated allocator (so it caches cross-process); a NaN ``float`` cell reads
-    back as SQL NULL (SQLite coerces NaN REAL to NULL), as in ``register_table``.
+    The returned handle is advisory: its keep-alive lives in the module-level
+    ``_REGISTRY`` and is released by SQLite via ``xDestroy`` (on ``DROP TABLE``,
+    connection close, or re-registration of the same name). ``out_dtype`` is baked
+    into the generated allocator (so it caches cross-process); a NaN ``float``
+    cell reads back as SQL NULL (SQLite coerces NaN REAL to NULL), as in
+    ``register_table``.
     """
     c, offsets_buf, tags_buf, widths_buf, schema, arg_tags = _build_tvf_descriptor(
         name, arg_types, out_dtype)
@@ -475,12 +467,8 @@ def register_tvf(db, name, arg_types, out_dtype, fn):
     module.xRowid = xrowid.address
     module_p = ctypes.addressof(module)
 
-    with c_string(name) as name_p:
-        rc = sqlite3_create_module(db, name_p, module_p, c.ctypes.data)
-    if rc != SQLITE_OK:
-        _raise_rc(db, name, rc)
-
-    return _TvfHandle(
+    handle = _TvfHandle(
         module, c, offsets_buf, tags_buf, widths_buf, schema, fn,
         xfilter_impl, _tvf_xfilter, xconnect, xbestindex, xdisconnect,
         xopen, xclose, xnext, xeof, xrowid, xcolumn)
+    return _register_with_destroy(db, name, module_p, c.ctypes.data, handle)

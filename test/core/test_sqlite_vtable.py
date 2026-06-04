@@ -525,6 +525,107 @@ def test_pushdown_no_constraint_full_scan():
     sqlite3_close(db)
 
 
+def test_xdestroy_pops_registry_on_close():
+    from numbox.core.bindings import _sqlite_vtable as v
+    db = c_int64(0)
+    with c_string(":memory:") as p:
+        sqlite3_open(p, addressof(db))
+    arr = np.array([[1], [2]], dtype=np.int64)
+    h = register_table(db.value, "t", arr, ["c"])
+    assert _select_col0(db.value, "SELECT c FROM t") == [1, 2]
+    n_before = len(v._REGISTRY)
+    sqlite3_close(db.value)
+    assert len(v._REGISTRY) == n_before - 1
+    del h
+
+
+def test_xdestroy_two_tables():
+    from numbox.core.bindings import _sqlite_vtable as v
+    db = c_int64(0)
+    with c_string(":memory:") as p:
+        sqlite3_open(p, addressof(db))
+    h1 = register_table(db.value, "t1", np.array([[1]], np.int64), ["c"])
+    h2 = register_table(db.value, "t2", np.array([[2]], np.int64), ["c"])
+    n = len(v._REGISTRY)
+    sqlite3_close(db.value)
+    assert len(v._REGISTRY) == n - 2
+    del h1, h2
+
+
+def test_xdestroy_reregister_drops_first():
+    from numbox.core.bindings import _sqlite_vtable as v
+    db = c_int64(0)
+    with c_string(":memory:") as p:
+        sqlite3_open(p, addressof(db))
+    a = np.array([[1]], np.int64)
+    b = np.array([[2]], np.int64)
+    h1 = register_table(db.value, "t", a, ["c"])
+    key1 = h1._keep[0].c.ctypes.data  # the first descriptor pointer = its registry key
+    assert key1 in v._REGISTRY
+    h2 = register_table(db.value, "t", b, ["c"])
+    # re-registration fires the FIRST descriptor's xDestroy synchronously
+    assert key1 not in v._REGISTRY, "first entry not dropped on re-register"
+    key2 = h2._keep[0].c.ctypes.data
+    assert key2 in v._REGISTRY and key2 != key1
+    assert _select_col0(db.value, "SELECT c FROM t") == [2]
+    n = len(v._REGISTRY)
+    sqlite3_close(db.value)
+    assert key2 not in v._REGISTRY
+    assert len(v._REGISTRY) == n - 1
+    del h1, h2
+
+
+def test_xdestroy_no_c_free_of_descriptor():
+    from numbox.core.bindings import _sqlite_vtable as v
+    db = c_int64(0)
+    with c_string(":memory:") as p:
+        sqlite3_open(p, addressof(db))
+    arr = np.array([[11], [22], [33]], dtype=np.int64)
+    h = register_table(db.value, "t", arr, ["c"])
+    assert _select_col0(db.value, "SELECT c FROM t") == [11, 22, 33]
+    n_before = len(v._REGISTRY)
+    sqlite3_close(db.value)
+    assert len(v._REGISTRY) == n_before - 1
+    # xDestroy must NOT have C-freed the numpy-owned descriptor/array: the test
+    # still holds arr (and the handle), so reading it must not segfault and the
+    # data must be unchanged.
+    assert arr.tolist() == [[11], [22], [33]]
+    assert h._keep[0].c["nrows"][0] == 3
+    del h
+
+
+def test_xdestroy_tvf_pops_registry_on_close():
+    from numbox.core.bindings import _sqlite_vtable as v
+    from numbox.core.bindings import register_tvf
+    from numba import njit
+
+    out = np.dtype([("n", "i8")])
+
+    @njit
+    def _series(start, stop):
+        o = np.empty(stop - start, out)
+        for i in range(stop - start):
+            o[i].n = start + i
+        return o
+
+    db = c_int64(0)
+    with c_string(":memory:") as p:
+        sqlite3_open(p, addressof(db))
+    h = register_tvf(db.value, "series", (np.int64, np.int64), out, _series)
+    stmt = c_int64(0)
+    with c_string("SELECT n FROM series(2, 5)") as p:
+        sqlite3_prepare_v2(db.value, p, -1, addressof(stmt), 0)
+    got = []
+    while sqlite3_step(stmt.value) == _SQLITE_ROW:
+        got.append(sqlite3_column_int64(stmt.value, 0))
+    sqlite3_finalize(stmt.value)
+    assert got == [2, 3, 4]
+    n_before = len(v._REGISTRY)
+    sqlite3_close(db.value)
+    assert len(v._REGISTRY) == n_before - 1
+    del h
+
+
 def test_pushdown_explain_uses_index():
     # SQLite reports the chosen vtable plan as "VIRTUAL TABLE INDEX <idxNum>:".
     # A full scan claims nothing, so idxNum stays 0; a claimed constraint sets a

@@ -120,6 +120,41 @@ def sqlite3_create_module(db, z_name, p_module, p_client_data):
     return _call_lib_func("sqlite3_create_module", (db, z_name, p_module, p_client_data))
 
 
+@proxy(signatures.get("sqlite3_create_module_v2"), jit_options=jit_options)
+def sqlite3_create_module_v2(db, z_name, p_module, p_client_data, x_destroy):
+    return _call_lib_func("sqlite3_create_module_v2", (db, z_name, p_module, p_client_data, x_destroy))
+
+
+# Module-level keep-alive registry: maps each registration's descriptor pointer
+# (the pClientData) to its handle. register_* stores the handle here BEFORE
+# create_module_v2; SQLite releases it by firing xDestroy on DROP TABLE,
+# connection close, or re-registration of the same name. The returned handle is
+# advisory -- the registry owns the keep-alive.
+_REGISTRY = {}
+
+
+def _xdestroy_py(p_aux):
+    # SQLite passes pClientData (the descriptor pointer) back as the only arg;
+    # ctypes delivers a c_void_p as a Python int, matching the int key stored by
+    # register_*. Drop the keep-alive -- numpy owns the descriptor, so this NEVER
+    # frees C memory, it only releases the Python reference.
+    _REGISTRY.pop(p_aux, None)
+
+
+_XDESTROY_CFUNC = ctypes.CFUNCTYPE(None, ctypes.c_void_p)(_xdestroy_py)
+_XDESTROY_ADDR = ctypes.cast(_XDESTROY_CFUNC, ctypes.c_void_p).value
+
+
+def _register_with_destroy(db, name, module_p, client_ptr, handle):
+    _REGISTRY[client_ptr] = handle
+    with c_string(name) as name_p:
+        rc = sqlite3_create_module_v2(db, name_p, module_p, client_ptr, _XDESTROY_ADDR)
+    if rc != SQLITE_OK:
+        _REGISTRY.pop(client_ptr, None)
+        _raise_rc(db, name, rc)
+    return handle
+
+
 @proxy(signatures.get("sqlite3_declare_vtab"), jit_options=jit_options)
 def sqlite3_declare_vtab(db, z_sql):
     return _call_lib_func("sqlite3_declare_vtab", (db, z_sql))
@@ -535,7 +570,8 @@ _THE_MODULE_P = ctypes.addressof(THE_MODULE)
 class _VTableHandle:
     """Keeps the array + descriptor + buffers alive. SQLite reads the array
     buffer directly; if this handle is GC'd the data frees and the next query
-    reads freed memory. The caller MUST retain it."""
+    reads freed memory. The keep-alive lives in the module-level ``_REGISTRY``,
+    released by SQLite via ``xDestroy``; the returned handle is advisory."""
     __slots__ = ("_keep",)
 
     def __init__(self, *objs):
@@ -553,9 +589,11 @@ def _raise_rc(db, name, rc):
 def register_table(db, name, arr, columns=None, *, text_as_blob=False):
     """Expose a numpy array as a read-only eponymous SQLite virtual table.
 
-    The caller MUST retain the returned handle for as long as the table is used,
-    and must not mutate or resize the array while the table is registered -- the
-    view is zero-copy, so queries read the array's buffer directly.
+    The returned handle is advisory: the keep-alive lives in the module-level
+    ``_REGISTRY`` and is released by SQLite via ``xDestroy`` (on ``DROP TABLE``,
+    connection close, or re-registration of the same name). The caller must not
+    mutate or resize the array while the table is registered -- the view is
+    zero-copy, so queries read the array's buffer directly.
 
     Registering a second table under an existing name follows SQLite's
     eponymous-module semantics: the later registration replaces the earlier one
@@ -585,8 +623,5 @@ def register_table(db, name, arr, columns=None, *, text_as_blob=False):
       text/blob pointer, or use ``text_as_blob=True`` for full fidelity.
     """
     built = _build_descriptor(arr, columns, text_as_blob)
-    with c_string(name) as name_p:
-        rc = sqlite3_create_module(db, name_p, _THE_MODULE_P, built.c.ctypes.data)
-    if rc != SQLITE_OK:
-        _raise_rc(db, name, rc)
-    return _VTableHandle(built)
+    handle = _VTableHandle(built)
+    return _register_with_destroy(db, name, _THE_MODULE_P, built.c.ctypes.data, handle)
