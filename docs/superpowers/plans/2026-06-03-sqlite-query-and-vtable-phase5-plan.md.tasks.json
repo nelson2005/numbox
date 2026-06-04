@@ -58,7 +58,7 @@
     {
       "id": 7,
       "subject": "Task 7: Docs + full CI gate",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [3, 6],
       "description": "**Goal:** Document the new modules/symbols (bindings.rst automodule for _sqlite_query + _sqlite_tvf) and run every CI check locally before declaring done.\n\n**Verify:** flake8 . ; pytest --durations=20 ; sphinx-build ; extract_codeblocks docs README.md ; lychee changed files — all green.\n\n```json:metadata\n{\"files\": [\"docs/numbox.core.bindings.rst\", \"numbox/core/bindings/__init__.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/flake8 . --max-line-length=127 && /home/erik/projects/numbox/venv/bin/pytest --durations=20 -q\", \"acceptanceCriteria\": [\"bindings.rst lists _sqlite_query + _sqlite_tvf\", \"sphinx-build exit 0\", \"flake8/pytest/doc-codeblock/lychee all green\"]}\n```"
