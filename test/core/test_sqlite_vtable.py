@@ -552,6 +552,20 @@ def test_xdestroy_two_tables():
     del h1, h2
 
 
+def test_xdestroy_three_tables():
+    from numbox.core.bindings import _sqlite_vtable as v
+    db = c_int64(0)
+    with c_string(":memory:") as p:
+        sqlite3_open(p, addressof(db))
+    h1 = register_table(db.value, "t1", np.array([[1]], np.int64), ["c"])
+    h2 = register_table(db.value, "t2", np.array([[2]], np.int64), ["c"])
+    h3 = register_table(db.value, "t3", np.array([[3]], np.int64), ["c"])
+    n = len(v._REGISTRY)
+    sqlite3_close(db.value)
+    assert len(v._REGISTRY) == n - 3
+    del h1, h2, h3
+
+
 def test_xdestroy_reregister_drops_first():
     from numbox.core.bindings import _sqlite_vtable as v
     db = c_int64(0)

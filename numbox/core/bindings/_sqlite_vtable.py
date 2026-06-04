@@ -127,8 +127,8 @@ def sqlite3_create_module_v2(db, z_name, p_module, p_client_data, x_destroy):
 
 # Module-level keep-alive registry: maps each registration's descriptor pointer
 # (the pClientData) to its handle. register_* stores the handle here BEFORE
-# create_module_v2; SQLite releases it by firing xDestroy on DROP TABLE,
-# connection close, or re-registration of the same name. The returned handle is
+# create_module_v2; SQLite releases it by firing xDestroy on connection close
+# or re-registration of the same name. The returned handle is
 # advisory -- the registry owns the keep-alive.
 _REGISTRY = {}
 
@@ -583,15 +583,15 @@ def _raise_rc(db, name, rc):
     detail = ""
     if msg_p:
         detail = ": " + ctypes.cast(msg_p, ctypes.c_char_p).value.decode("utf-8", "replace")
-    raise RuntimeError("register_table failed for %r (rc=%d)%s" % (name, rc, detail))
+    raise RuntimeError("registration failed for %r (rc=%d)%s" % (name, rc, detail))
 
 
 def register_table(db, name, arr, columns=None, *, text_as_blob=False):
     """Expose a numpy array as a read-only eponymous SQLite virtual table.
 
     The returned handle is advisory: the keep-alive lives in the module-level
-    ``_REGISTRY`` and is released by SQLite via ``xDestroy`` (on ``DROP TABLE``,
-    connection close, or re-registration of the same name). The caller must not
+    ``_REGISTRY`` and is released by SQLite via ``xDestroy`` (on connection close
+    or re-registration of the same name). The caller must not
     mutate or resize the array while the table is registered -- the view is
     zero-copy, so queries read the array's buffer directly.
 

@@ -426,8 +426,8 @@ def register_tvf(db, name, arg_types, out_dtype, fn):
     hidden arg unbound is rejected with a SQLite constraint error (no rows).
 
     The returned handle is advisory: its keep-alive lives in the module-level
-    ``_REGISTRY`` and is released by SQLite via ``xDestroy`` (on ``DROP TABLE``,
-    connection close, or re-registration of the same name). ``out_dtype`` is baked
+    ``_REGISTRY`` and is released by SQLite via ``xDestroy`` (on connection close
+    or re-registration of the same name). ``out_dtype`` is baked
     into the generated allocator (so it caches cross-process); a NaN ``float``
     cell reads back as SQL NULL (SQLite coerces NaN REAL to NULL), as in
     ``register_table``.
