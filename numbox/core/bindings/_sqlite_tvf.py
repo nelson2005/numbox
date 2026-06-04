@@ -24,7 +24,6 @@ retain it.
 import ctypes
 
 import numpy as np
-import numba
 from numba import cfunc, types
 
 from numbox.core.bindings._sqlite_constants import (
@@ -103,11 +102,13 @@ _FLOAT_TAGS = frozenset((_TAG_F32, _TAG_F64))
 
 # --- generated-source templates -------------------------------------------
 # Baked globals (seeded into the exec namespace): _fn (the user callable),
-# _out_dtype = numba.from_dtype(out_dtype) (so the allocator specialises on the
-# dtype -- spec rule A2), _N_HIDDEN, jit_options, and every helper imported
-# above. The {arg_decode} / {fn_call} substitutions are the only arity-varying
-# parts; they are generated from arg_types before exec, exactly as the UDAF
-# helpers bake per-UDAF source.
+# _N_HIDDEN, jit_options, and every helper imported above. The {arg_decode} /
+# {fn_call} substitutions are the only arity-varying parts; they are generated
+# from arg_types before exec, exactly as the UDAF helpers bake per-UDAF source.
+# Cache-correctness across out_dtypes is not a shared-function hazard here: each
+# registration gets a DISTINCT anchor/cache key from digest((out_dtype,
+# tuple(arg_tags)), [fn]), and the baked _fn's fixed return type (set by
+# out_dtype) makes numba specialise the impl, so two out_dtypes never collide.
 _XFILTER_SRC = '''
 @njit(**jit_options)
 def _tvf_xfilter_impl(cur, argc, argv):
@@ -187,6 +188,8 @@ def _make_xbestindex():
         usage = carray(_cast_int_to_void_p(ii[0].aConstraintUsage), (n_constraint,), dtype=_USAGE_DTYPE)
 
         bound = 0
+        # Duplicate EQ on one hidden arg (e.g. arg=1 AND arg=2) overcounts bound and
+        # writes argvIndex twice; harmless -- arg-decode reads exactly n_hidden vals[].
         for i in range(n_constraint):
             col = cons[i].iColumn
             op = cons[i].op
@@ -356,8 +359,7 @@ def _compile_xfilter(stem, arg_tags, out_dtype, fn):
     src = _XFILTER_SRC.format(arg_decode=arg_decode, fn_call=fn_call)
     tvf_digest = digest((out_dtype, tuple(arg_tags)), [fn])
     code_txt = "# tvf-digest: %s\n%s" % (tvf_digest, src)
-    ns = {**globals(), "_fn": fn, "_out_dtype": numba.from_dtype(out_dtype),
-          "_N_HIDDEN": n_hidden}
+    ns = {**globals(), "_fn": fn, "_N_HIDDEN": n_hidden}
     anchor = _anchor_path(_ANCHOR_SUBDIR, stem, code_txt)
     _materialize_anchor(anchor, code_txt)
     code = compile(code_txt, str(anchor), mode="exec")
@@ -445,6 +447,10 @@ def register_tvf(db, name, arg_types, out_dtype, fn):
 
     @cfunc(types.int32(types.intp, types.int32, types.intp, types.int32, types.intp), cache=_CACHE)
     def _tvf_xfilter(cur, idx_num, idx_str, argc, argv):
+        # If the user fn raises inside xfilter_impl, the @cfunc boundary swallows
+        # the exception and returns the zero default (SQLITE_OK), so SQLite sees a
+        # successful query with no rows rather than an error. Unlike a UDF, xFilter
+        # gets no sqlite3_context, so there is no handle to call sqlite3_result_error.
         xfilter_impl(cur, argc, argv)
         return SQLITE_OK
 
