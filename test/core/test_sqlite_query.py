@@ -262,3 +262,18 @@ def test_query_xprocess_cache(tmp_path):
                              capture_output=True, text=True, timeout=600)
         assert out.returncode == 0, out.stderr
         assert "RESULT [1, 2] [2, 3, 4]" in out.stdout
+
+
+def test_query_empty_text_and_blob():
+    # Empty TEXT '' and zero-length BLOB x'' -> SQLite returns a NULL/zero-length
+    # pointer with nbytes==0, so _store_cell builds carray(ptr, (0,)) and copies 0
+    # bytes. This exercises that path and must yield empty cells without crashing.
+    db = _open_mem()
+    _exec(db, "CREATE TABLE t(s TEXT, b BLOB, u TEXT)")
+    _exec(db, "INSERT INTO t VALUES ('', x'', '')")
+    dt = np.dtype([("s", "S4"), ("b", "S4"), ("u", "U4")])
+    with c_string("SELECT s, b, u FROM t") as sql:
+        out = query_to_array(db, sql, dt)
+    assert out.shape == (1,)
+    assert out["s"][0] == b"" and out["b"][0] == b"" and out["u"][0] == ""
+    sqlite3_close(db)

@@ -35,7 +35,8 @@ def _scaled(start, stop, scale):
 def _open():
     db = c_int64(0)
     with c_string(":memory:") as p:
-        sqlite3_open(p, addressof(db))
+        rc = sqlite3_open(p, addressof(db))
+    assert rc == 0, rc
     return db
 
 

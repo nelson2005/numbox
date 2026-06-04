@@ -4,7 +4,7 @@ import ctypes
 import numpy as np
 import numba
 from numba import njit, carray
-from numba.core.types import uint8, uint32, uint64
+from numba.core.types import uint8, uint32
 
 from numbox.core.bindings._sqlite_constants import SQLITE_ROW, SQLITE_NULL, SQLITE_OK, SQLITE_DONE
 from numbox.core.bindings import (
@@ -24,21 +24,22 @@ __all__ = ["query_to_array"]
 
 
 @njit(**jit_options)
-def _put_int_le(buf, off, v, nbytes):
-    """Write the low ``nbytes`` little-endian bytes of integer ``v`` into ``buf``."""
-    uv = uint64(v)
+def _put_native(buf, off, scratch8, nbytes):
+    """Copy ``nbytes`` native-order bytes from ``scratch8`` into ``buf`` at ``off``."""
     for k in range(nbytes):
-        buf[off + k] = uint8((uv >> uint64(8 * k)) & uint64(0xFF))
+        buf[off + k] = scratch8[k]
 
 
 @njit(**jit_options)
-def _put_unicode(buf, off, src_p, nbytes, width_cp):
+def _put_unicode(buf, off, scratch8, src_p, nbytes, width_cp):
     """Decode UTF-8 at ``src_p`` into up to ``width_cp`` UTF-32 code points and
-    write their little-endian bytes into ``buf`` at ``off``. Mirrors
+    write them into ``buf`` at ``off`` in the platform's NATIVE byte order (via a
+    uint32 view of ``scratch8``, matching numpy's 'U' dtype). Mirrors
     ``_sqlite_typemap.utf8_to_utf32`` but writes natively into ``buf`` (a tracked
     uint8 array view) instead of a raw pointer -- raw-pointer stores get
     dead-code-eliminated by the macOS-arm64 optimizer. Malformed input -> U+FFFD."""
     inp = carray(_cast_int_to_void_p(src_p), (nbytes,), dtype=np.uint8)
+    cps = scratch8.view(np.uint32)
     i = 0
     k = 0
     while i < nbytes and k < width_cp:
@@ -66,57 +67,50 @@ def _put_unicode(buf, off, src_p, nbytes, width_cp):
         else:
             cp = 0xFFFD
             i += 1
-        bo = off + 4 * k
-        buf[bo] = uint8(cp & 0xFF)
-        buf[bo + 1] = uint8((cp >> 8) & 0xFF)
-        buf[bo + 2] = uint8((cp >> 16) & 0xFF)
-        buf[bo + 3] = uint8((cp >> 24) & 0xFF)
+        cps[0] = cp
+        _put_native(buf, off + 4 * k, scratch8, 4)
         k += 1
 
 
 @njit(**jit_options)
-def _store_cell(buf, off, tag, width, stmt, j, f32buf, f64buf):
+def _store_cell(buf, off, tag, width, stmt, j, scratch8):
     """Write column ``j`` of the current row into the uint8 array view ``buf`` at
-    byte offset ``off``. All writes go through ``buf`` (numba-tracked) rather than
-    a raw array_data_p pointer, so the optimizer cannot drop them on macOS-arm64.
-    The row is pre-zeroed by the caller (np.zeros), so a SQL NULL leaves an integer
-    cell 0 and a text/blob cell empty; only float cells are overwritten with NaN.
-    The text/blob accessor is read before column_bytes (SQLite contract)."""
+    byte offset ``off``. Scalars are serialised through ``scratch8`` (a tracked
+    8-byte uint8 array) via a typed view, so the bytes land in the platform's
+    NATIVE order, then copied into ``buf`` -- all numba-tracked array writes, so
+    the optimizer cannot drop them on macOS-arm64. The row is pre-zeroed by the
+    caller (np.zeros): a SQL NULL leaves an integer cell 0 / text-blob empty; only
+    float cells get NaN. The text/blob accessor is read before column_bytes."""
     ctype = sqlite3_column_type(stmt, j)
     if ctype == SQLITE_NULL:
         if tag == _TAG_F32:
-            f32buf[0] = np.float32(np.nan)
-            fb = f32buf.view(np.uint8)
-            for k in range(4):
-                buf[off + k] = fb[k]
+            scratch8.view(np.float32)[0] = np.float32(np.nan)
+            _put_native(buf, off, scratch8, 4)
         elif tag == _TAG_F64:
-            f64buf[0] = np.float64(np.nan)
-            fb = f64buf.view(np.uint8)
-            for k in range(8):
-                buf[off + k] = fb[k]
+            scratch8.view(np.float64)[0] = np.float64(np.nan)
+            _put_native(buf, off, scratch8, 8)
         return
     if tag == _TAG_I8 or tag == _TAG_U8:
-        _put_int_le(buf, off, sqlite3_column_int64(stmt, j), 1)
+        buf[off] = uint8(sqlite3_column_int64(stmt, j))
     elif tag == _TAG_I16 or tag == _TAG_U16:
-        _put_int_le(buf, off, sqlite3_column_int64(stmt, j), 2)
+        scratch8.view(np.int16)[0] = np.int16(sqlite3_column_int64(stmt, j))
+        _put_native(buf, off, scratch8, 2)
     elif tag == _TAG_I32 or tag == _TAG_U32:
-        _put_int_le(buf, off, sqlite3_column_int64(stmt, j), 4)
+        scratch8.view(np.int32)[0] = np.int32(sqlite3_column_int64(stmt, j))
+        _put_native(buf, off, scratch8, 4)
     elif tag == _TAG_I64 or tag == _TAG_U64:
-        _put_int_le(buf, off, sqlite3_column_int64(stmt, j), 8)
+        scratch8.view(np.int64)[0] = np.int64(sqlite3_column_int64(stmt, j))
+        _put_native(buf, off, scratch8, 8)
     elif tag == _TAG_BOOL:
         buf[off] = uint8(1) if sqlite3_column_int64(stmt, j) != 0 else uint8(0)
     elif tag == _TAG_F32:
-        f32buf[0] = np.float32(sqlite3_column_double(stmt, j))
-        fb = f32buf.view(np.uint8)
-        for k in range(4):
-            buf[off + k] = fb[k]
+        scratch8.view(np.float32)[0] = np.float32(sqlite3_column_double(stmt, j))
+        _put_native(buf, off, scratch8, 4)
     elif tag == _TAG_F64:
-        f64buf[0] = sqlite3_column_double(stmt, j)
-        fb = f64buf.view(np.uint8)
-        for k in range(8):
-            buf[off + k] = fb[k]
+        scratch8.view(np.float64)[0] = sqlite3_column_double(stmt, j)
+        _put_native(buf, off, scratch8, 8)
     elif tag == _TAG_U:
-        _put_unicode(buf, off, sqlite3_column_text(stmt, j), sqlite3_column_bytes(stmt, j), width // 4)
+        _put_unicode(buf, off, scratch8, sqlite3_column_text(stmt, j), sqlite3_column_bytes(stmt, j), width // 4)
     elif tag == _TAG_S:
         src_p = sqlite3_column_text(stmt, j)
         nbytes = sqlite3_column_bytes(stmt, j)
@@ -142,8 +136,7 @@ def _query_core(stmt, ncols, offsets, tags, widths, itemsize, dt):
     cap = 16
     out = np.zeros(cap, dt)
     out_u8 = out.view(np.uint8)
-    f32buf = np.empty(1, np.float32)
-    f64buf = np.empty(1, np.float64)
+    scratch8 = np.empty(8, np.uint8)
     n = 0
     rc = sqlite3_step(stmt)
     while rc == SQLITE_ROW:
@@ -156,7 +149,7 @@ def _query_core(stmt, ncols, offsets, tags, widths, itemsize, dt):
             out_u8 = new_u8
         row_off = n * itemsize
         for j in range(ncols):
-            _store_cell(out_u8, row_off + offsets[j], tags[j], widths[j], stmt, j, f32buf, f64buf)
+            _store_cell(out_u8, row_off + offsets[j], tags[j], widths[j], stmt, j, scratch8)
         n += 1
         rc = sqlite3_step(stmt)
     return out[:n].copy(), rc
