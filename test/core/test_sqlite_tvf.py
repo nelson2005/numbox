@@ -10,6 +10,13 @@ from numbox.core.bindings import (
     sqlite3_prepare_v2, sqlite3_step, sqlite3_finalize,
     sqlite3_column_int64, sqlite3_column_double,
 )
+from numbox.core.bindings._sqlite_tvf import _make_xbestindex, _TVF_DESC_DTYPE
+from numbox.core.bindings._sqlite_vtable import (
+    _VTAB_DTYPE, _IDX_INFO_DTYPE, _CONSTRAINT_DTYPE, _USAGE_DTYPE,
+)
+from numbox.core.bindings._sqlite_constants import (
+    SQLITE_OK, SQLITE_CONSTRAINT, SQLITE_INDEX_CONSTRAINT_EQ,
+)
 
 _OUT = np.dtype([("n", "i8")])
 _OUT2 = np.dtype([("n", "i8"), ("v", "f8")])
@@ -242,3 +249,49 @@ def test_tvf_two_distinct_registrations_same_process():
     assert r2 == [(0, 0.0), (1, 2.5), (2, 5.0)]
     sqlite3_close(db.value)
     del h1, h2
+
+
+def _call_xbestindex(ncols, n_hidden, constraints):
+    """Drive _make_xbestindex()'s cfunc against a hand-built sqlite3_index_info.
+    ``constraints`` is a list of (iColumn, op, usable). Returns (rc, usage_array).
+    The numpy buffers stay referenced for the whole call so their data pointers
+    remain valid. Hidden args occupy table columns ncols .. ncols+n_hidden-1."""
+    desc = np.zeros(1, _TVF_DESC_DTYPE)
+    desc[0]["ncols"] = ncols
+    desc[0]["n_hidden"] = n_hidden
+    vtab = np.zeros(1, _VTAB_DTYPE)
+    vtab[0]["descriptor"] = desc.ctypes.data
+    n = len(constraints)
+    cons = np.zeros(n, _CONSTRAINT_DTYPE)
+    for i, (col, op, usable) in enumerate(constraints):
+        cons[i]["iColumn"] = col
+        cons[i]["op"] = op
+        cons[i]["usable"] = usable
+    usage = np.zeros(n, _USAGE_DTYPE)
+    ii = np.zeros(1, _IDX_INFO_DTYPE)
+    ii[0]["nConstraint"] = n
+    ii[0]["aConstraint"] = cons.ctypes.data
+    ii[0]["aConstraintUsage"] = usage.ctypes.data
+    rc = _make_xbestindex().ctypes(vtab.ctypes.data, ii.ctypes.data)
+    return rc, usage
+
+
+def test_tvf_xbestindex_rejects_unbound_arg_despite_duplicate_eq():
+    # 2 visible cols, 3 hidden (cols 2,3,4). Duplicate usable EQ on arg0 (col 2)
+    # plus a usable EQ on arg2 (col 4), with arg1 (col 3) left unbound. A naive
+    # usable-EQ count reaches 3 == n_hidden and wrongly accepts the plan even
+    # though one hidden arg is unbound. SQLite coalesces such constraints before
+    # xBestIndex so this never arrives via SQL, but the contract is to reject it.
+    EQ = SQLITE_INDEX_CONSTRAINT_EQ
+    rc, _ = _call_xbestindex(2, 3, [(2, EQ, 1), (2, EQ, 1), (4, EQ, 1)])
+    assert rc == SQLITE_CONSTRAINT, rc
+
+
+def test_tvf_xbestindex_accepts_all_args_bound_with_duplicate_eq():
+    # Every hidden arg (cols 2,3,4) has a usable EQ, with a redundant duplicate on
+    # arg0: the plan must still be accepted (the duplicate must not change the
+    # all-bound verdict).
+    EQ = SQLITE_INDEX_CONSTRAINT_EQ
+    rc, usage = _call_xbestindex(2, 3, [(2, EQ, 1), (2, EQ, 1), (3, EQ, 1), (4, EQ, 1)])
+    assert rc == SQLITE_OK, rc
+    assert [int(usage[i]["argvIndex"]) for i in range(4)] == [1, 1, 2, 3]

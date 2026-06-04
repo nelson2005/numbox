@@ -187,9 +187,10 @@ def _make_xbestindex():
         cons = carray(_cast_int_to_void_p(ii[0].aConstraint), (n_constraint,), dtype=_CONSTRAINT_DTYPE)
         usage = carray(_cast_int_to_void_p(ii[0].aConstraintUsage), (n_constraint,), dtype=_USAGE_DTYPE)
 
-        bound = 0
-        # Duplicate EQ on one hidden arg (e.g. arg=1 AND arg=2) overcounts bound and
-        # writes argvIndex twice; harmless -- arg-decode reads exactly n_hidden vals[].
+        # Track each hidden arg's binding as its own bit, not a running count: a
+        # duplicate usable EQ on one arg must not mask another arg being unbound.
+        # argvIndex is position-based (h + 1), so duplicates overwrite one slot.
+        bound_mask = uint64(0)
         for i in range(n_constraint):
             col = cons[i].iColumn
             op = cons[i].op
@@ -197,9 +198,9 @@ def _make_xbestindex():
             if cons[i].usable != 0 and op == SQLITE_INDEX_CONSTRAINT_EQ and 0 <= h < n_hidden:
                 usage[i].argvIndex = int32(h + 1)
                 usage[i].omit = 1
-                bound += 1
+                bound_mask |= uint64(1) << uint64(h)
 
-        if bound < n_hidden:
+        if bound_mask != (uint64(1) << uint64(n_hidden)) - uint64(1):
             return SQLITE_CONSTRAINT
         ii[0].idxNum = int32(1)
         ii[0].estimatedCost = float64(1)
