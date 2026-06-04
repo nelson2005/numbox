@@ -42,7 +42,7 @@
     {
       "id": 5,
       "subject": "Task 5: register_tvf table-valued functions",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "blockedBy": [0, 1, 4],
       "description": "**Goal:** register_tvf(db, name, arg_types, out_dtype, fn): vtable whose rows are a numpy array of out_dtype computed by fn(*args) from hidden-column args, served via per-cursor NRT-backed storage ([meminfo_p, data_p] slot, A1 idiom).\n\n**Verify:** /home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py -q\n\n```json:metadata\n{\"files\": [\"numbox/core/bindings/_sqlite_tvf.py\", \"numbox/core/bindings/__init__.py\", \"test/core/test_sqlite_tvf.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_sqlite_tvf.py -q\", \"acceptanceCriteria\": [\"SELECT FROM f(args) invokes fn + yields computed rows\", \"different args -> different rows\", \"leak-balance over >=10 iters\", \"missing hidden arg handled without crash\"]}\n```"
