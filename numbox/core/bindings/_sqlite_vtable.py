@@ -274,46 +274,56 @@ def _is_supported_op(op):
 def _xbestindex(vtab, idx_info):
     # Claim every usable eq/range constraint on a numeric column: assign it an
     # argvIndex (so xFilter receives its value) and serialise the (col, op) pair
-    # into idxStr (the xBestIndex -> xFilter side channel). omit stays 0 so
-    # SQLite re-checks each constraint -- correctness never depends on the
-    # cursor's pruning. Cardinality is reported regardless (joins/subqueries
-    # otherwise mis-cost; SQLite defaults estimatedRows to 25).
-    v = carray(_cast_int_to_void_p(vtab), (1,), dtype=_VTAB_DTYPE)
-    d = carray(_cast_int_to_void_p(v[0].descriptor), (1,), dtype=_DESC_DTYPE)
-    ii = carray(_cast_int_to_void_p(idx_info), (1,), dtype=_IDX_INFO_DTYPE)
-    ncols = d[0].ncols
-    tags = carray(_cast_int_to_void_p(d[0].col_tags), (ncols,), dtype=np.int32)
-    n_constraint = ii[0].nConstraint
-    cons = carray(_cast_int_to_void_p(ii[0].aConstraint), (n_constraint,), dtype=_CONSTRAINT_DTYPE)
-    usage = carray(_cast_int_to_void_p(ii[0].aConstraintUsage), (n_constraint,), dtype=_USAGE_DTYPE)
+    # into idxStr (the xBestIndex -> xFilter side channel). Cardinality is
+    # reported regardless (joins/subqueries otherwise mis-cost; SQLite defaults
+    # estimatedRows to 25).
+    idx_p = 0
+    try:
+        v = carray(_cast_int_to_void_p(vtab), (1,), dtype=_VTAB_DTYPE)
+        d = carray(_cast_int_to_void_p(v[0].descriptor), (1,), dtype=_DESC_DTYPE)
+        ii = carray(_cast_int_to_void_p(idx_info), (1,), dtype=_IDX_INFO_DTYPE)
+        ncols = d[0].ncols
+        tags = carray(_cast_int_to_void_p(d[0].col_tags), (ncols,), dtype=np.int32)
+        n_constraint = ii[0].nConstraint
+        cons = carray(_cast_int_to_void_p(ii[0].aConstraint), (n_constraint,), dtype=_CONSTRAINT_DTYPE)
+        usage = carray(_cast_int_to_void_p(ii[0].aConstraintUsage), (n_constraint,), dtype=_USAGE_DTYPE)
 
-    idx_p = sqlite3_malloc(int32(n_constraint * 8)) if n_constraint > 0 else 0
-    if n_constraint > 0 and idx_p == 0:
-        return SQLITE_NOMEM
-    spec = carray(_cast_int_to_void_p(idx_p), (2 * n_constraint,), dtype=np.int32)
+        idx_p = sqlite3_malloc(int32(n_constraint * 8)) if n_constraint > 0 else 0
+        if n_constraint > 0 and idx_p == 0:
+            return SQLITE_NOMEM
+        spec = carray(_cast_int_to_void_p(idx_p), (2 * n_constraint,), dtype=np.int32)
 
-    nbound = 0
-    for i in range(n_constraint):
-        col = cons[i].iColumn
-        op = cons[i].op
-        if cons[i].usable != 0 and _is_supported_op(op) and 0 <= col < ncols and _is_numeric_tag(tags[col]):
-            usage[i].argvIndex = int32(nbound + 1)
-            usage[i].omit = 0
-            spec[2 * nbound] = int32(col)
-            spec[2 * nbound + 1] = int32(op)
-            nbound += 1
+        nbound = 0
+        for i in range(n_constraint):
+            col = cons[i].iColumn
+            op = cons[i].op
+            if cons[i].usable != 0 and _is_supported_op(op) and 0 <= col < ncols and _is_numeric_tag(tags[col]):
+                usage[i].argvIndex = int32(nbound + 1)
+                # omit MUST stay 0: SQLite re-checks every surfaced row, the
+                # correctness net behind the cursor's pruning. Keep it 0 even
+                # though _row_matches now prunes exactly (int64 for integer
+                # columns) so future predicate widening can't silently drop rows.
+                usage[i].omit = 0
+                spec[2 * nbound] = int32(col)
+                spec[2 * nbound + 1] = int32(op)
+                nbound += 1
 
-    ii[0].idxNum = int32(nbound)
-    if nbound > 0:
-        ii[0].idxStr = idx_p
-        ii[0].needToFreeIdxStr = int32(1)
-    else:
+        ii[0].idxNum = int32(nbound)
+        if nbound > 0:
+            ii[0].idxStr = idx_p
+            ii[0].needToFreeIdxStr = int32(1)
+            idx_p = 0  # SQLite owns it now; the except handler must not free it
+        else:
+            sqlite3_free(idx_p)
+            idx_p = 0
+
+        nrows = d[0].nrows
+        ii[0].estimatedRows = nrows if nbound == 0 else nrows // (nbound + 1) + 1
+        ii[0].estimatedCost = float64(nrows)
+        return SQLITE_OK
+    except Exception:
         sqlite3_free(idx_p)
-
-    nrows = d[0].nrows
-    ii[0].estimatedRows = nrows if nbound == 0 else nrows // (nbound + 1) + 1
-    ii[0].estimatedCost = float64(nrows)
-    return SQLITE_OK
+        return SQLITE_ERROR
 
 
 @cfunc(types.int32(types.intp), cache=_CACHE)
