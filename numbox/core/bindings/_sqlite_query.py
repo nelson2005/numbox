@@ -128,8 +128,8 @@ def _store_cell(buf, off, tag, width, stmt, j, scratch8):
 
 @njit(**jit_options)
 def _query_core(stmt, ncols, offsets, tags, widths, itemsize):
-    """Step ``stmt`` to exhaustion, materialising rows into a flat uint8 NRT
-    buffer that grows geometrically, then trim to the exact length. Returns
+    """Step ``stmt`` to exhaustion, materialising rows into a flat uint8 numpy
+    array that grows geometrically, then trim to the exact length. Returns
     ``(buf, rc)`` where ``buf`` is ``n * itemsize`` native-order bytes (the
     caller views it back to the structured dtype) and ``rc`` is the terminal
     step return code (SQLITE_DONE on success).
