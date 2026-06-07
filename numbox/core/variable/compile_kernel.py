@@ -56,14 +56,23 @@ def _assign_identifiers(variables):
 
 
 def _wrap_formula(formula):
-    """Return an njit-callable for `formula`; plain Python is auto-njit'd."""
+    """Return an njit-callable for `formula`; non-Dispatcher/CompileResultWAP callables are njit-wrapped."""
     if isinstance(formula, (Dispatcher, CompileResultWAP)):
         return formula
     return njit(formula)
 
 
 def _safe_getsource(formula):
-    """Source text of a formula for cache hashing; falls back to repr."""
+    """Source text of a formula, for the content-addressed cache hash.
+
+    Content-sensitive on purpose: two formulas with the same signature but
+    different bodies must hash differently, so we never substitute the
+    signature here. When no source is recoverable (e.g. a cres/CompileResultWAP
+    formula, or a lambda defined outside a source file), we fall back to
+    ``repr(formula)``. repr is unique per object, so it never causes a hash
+    *collision* (results stay correct); it is just not stable across processes,
+    so such a formula does not get cross-process cache reuse.
+    """
     target = getattr(formula, "py_func", formula)
     try:
         return getsource(target)
@@ -118,7 +127,7 @@ def _generate_body(compiled, required, idents):
         out_ids.append(idents[var])
 
     sig = ", ".join(ident for _, _, ident in params)
-    body = "\n".join(lines) if lines else "    pass"
     ret = f"    return ({', '.join(out_ids)},)"
-    source = f"def _kernel({sig}):\n{body}\n{ret}\n"
+    body = ("\n".join(lines) + "\n") if lines else ""
+    source = f"def _kernel({sig}):\n{body}{ret}\n"
     return source, bindings, params, outputs

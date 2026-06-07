@@ -78,7 +78,9 @@ def test_generate_body_shape():
     assert outputs == ["variables.u", "variables.a"]
     assert source.startswith("def _kernel(")
     assert source.rstrip().endswith(",)")
-    assert set(bindings) == {"f_" + idents[v] for v in idents if v.qual_name() != "basket.y"}
+    external = {v for vs in compiled.required_external_variables.values() for v in vs.values()}
+    expected = {"f_" + idents[n.variable] for n in compiled.ordered_nodes if n.variable not in external}
+    assert set(bindings) == expected
 
 
 def test_generate_body_errors():
@@ -101,3 +103,31 @@ def test_generate_body_errors():
     id2 = _assign_identifiers([n.variable for n in c2.ordered_nodes])
     with pytest.raises(ValueError):
         _generate_body(c2, ["variables.broken"], id2)
+
+
+def test_generate_body_external_as_only_output():
+    g = _diamond_graph()
+    compiled = g.compile(["basket.y"])
+    idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
+    source, bindings, params, outputs = _generate_body(compiled, ["basket.y"], idents)
+    assert bindings == {}
+    assert outputs == ["basket.y"]
+    assert "pass" not in source
+    y_ident = params[0][2]
+    assert source == f"def _kernel({y_ident}):\n    return ({y_ident},)\n"
+
+
+def test_safe_getsource_named_function_and_cres():
+    from numbox.core.variable.compile_kernel import _safe_getsource
+    from numbox.utils.highlevel import cres
+    from numba.core.types import float64
+
+    @njit
+    def named(x):
+        return x + 41
+    src = _safe_getsource(named)
+    assert "return x + 41" in src
+
+    wap = cres(float64(float64))(lambda x: x * 2.0)
+    s = _safe_getsource(wap)             # must not raise
+    assert isinstance(s, str) and s      # non-empty (repr fallback is acceptable)
