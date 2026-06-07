@@ -38,6 +38,11 @@ def _assign_identifiers(variables):
         i = 0
         while cand in used or ("f_" + cand) in used:
             i += 1
+            if i > len(digest):
+                raise RuntimeError(
+                    f"Cannot assign a unique identifier for {var.qual_name()!r}; "
+                    f"all sha256 prefixes exhausted"
+                )
             cand = f"{base}_{digest[:i]}"
         used.add(cand)
         used.add("f_" + cand)

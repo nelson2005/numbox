@@ -31,3 +31,11 @@ def test_assign_identifiers_deterministic():
     v1 = Variable(name="c", source="a_b")
     v2 = Variable(name="b_c", source="a")
     assert _assign_identifiers([v1, v2]) == _assign_identifiers([v1, v2])
+
+
+def test_assign_identifiers_invalid_char_and_leading_digit():
+    v1 = Variable(name="first-name", source="ext")   # invalid char
+    v2 = Variable(name="3m", source="ext")           # leading digit
+    idents = _assign_identifiers([v1, v2])
+    assert all(s.isidentifier() for s in idents.values())
+    assert idents[v1] != idents[v2]
