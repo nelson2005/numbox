@@ -1,0 +1,61 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-07-compile-kernel.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: Module scaffold + identifier assignment",
+      "status": "pending",
+      "description": "**Goal:** Create `numbox/core/variable/compile_kernel.py` with `_sanitize` and `_assign_identifiers` (unique, valid, readable identifiers; minimal deterministic sha256 suffix only on collision; reserves temp + `f_<temp>`).\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"_sanitize handles invalid chars/leading digit/empty\", \"_assign_identifiers unique across temps + f_<temp> + reserved\", \"three collision classes resolve\", \"deterministic\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Codegen — formula wrapping + source generation",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Add `_wrap_formula`, `_safe_getsource`, `_generate_body` (CompiledGraph + idents -> source, bindings, params=[(source,name,ident)], outputs). External nodes -> params; ValueError on empty required / non-external formula=None / unknown output.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"_wrap_formula passthrough + njit-wrap\", \"_generate_body straight-line source + bindings + params + outputs\", \"external nodes -> params\", \"ValueError on empty/placeholder/unknown-output\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Compile with content-addressed cache",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Add `_compile` (hash source + every formula getsource -> content-addressed anchor via preprocessing `_anchor_path`/`_materialize_anchor`; `@njit(cache=...)` in-source; exec against real anchor). Subdir `numbox-compile-kernel`; `_orphan_anchor_sweep` at import.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"_compile returns working dispatcher\", \"content-addressed anchor created\", \"anchor differs when formula source differs\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Public API — CompiledKernel + compile_kernel",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** `compile_kernel(graph, required, *, jit_options=None, cache=True)` -> `CompiledKernel` (.kernel, .execute dict-in/dict-out, .params, .outputs, .source, .identifiers). Equivalent to CompiledGraph.execute; missing external -> KeyError; auto-specialization.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"compile_kernel returns CompiledKernel; str|list required\", \"kernel + execute match CompiledGraph.execute\", \"missing external -> KeyError\", \"auto-specialization int then float\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Robustness — identifier collisions, formula variety, error taxonomy",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Integration tests: a_b.c vs a.b_c collision-pair graph runs; invalid-char/leading-digit external name runs; cres + njit formulas reconciled to verified behavior (Spec §14.1); auto-wrap/constant/array formulas; non-jittable -> error at first call (lazy).\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"test/core/test_compile_kernel.py\", \"numbox/core/variable/compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"collision-pair graph runs\", \"invalid-char name runs\", \"cres+njit reconciled to verified behavior\", \"auto-wrap/constant/array formulas work\", \"non-jittable fails at first call\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Cross-process cache-collision regression",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Subprocess test (run twice so 2nd reads on-disk cache): two same-skeleton/different-formula cache=True kernels each return their own result. Mirror test_builder.py::test_make_graph_cache_key_content_independent.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py::test_cache_no_skeleton_collision -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py::test_cache_no_skeleton_collision -q )\", \"acceptanceCriteria\": [\"fresh-subprocess same-skeleton/different-formula kernels do not cross-load\", \"mirrors builder cache-independence test\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Documentation",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Add a `compile_kernel` section + worked example + `automodule` to `docs/numbox.core.variable.rst`; sphinx-build exit 0; doc python blocks flake8-clean at max-line-length 120.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/sphinx-build -b html docs docs/_build/html ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"docs/numbox.core.variable.rst\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/sphinx-build -b html docs docs/_build/html ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )\", \"acceptanceCriteria\": [\"compile_kernel rst section + automodule\", \"sphinx-build exit 0\", \"doc python blocks flake8-clean at 120\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Full local CI gate + push readiness",
+      "status": "pending",
+      "blockedBy": [5, 6, 7],
+      "description": "**Goal:** Caches cleaned; full pytest --durations=20 green; flake8 . clean (repo root); extract_codeblocks docs clean; lychee on changed docs clean. Report counts; STOP and await user approval before opening fork PR (upstream only on explicit per-PR approval; exclude CLAUDE.md + docs/superpowers/** from upstream).\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )\", \"acceptanceCriteria\": [\"full pytest green caches-cleaned\", \"flake8 clean repo config\", \"doc-codeblock clean\", \"branch ready; no fork PR without approval\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-07T22:45:00Z"
+}
