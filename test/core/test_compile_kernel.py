@@ -2,9 +2,10 @@ import pytest
 from numba import njit
 from numba.core.dispatcher import Dispatcher
 from numbox.core.variable.compile_kernel import (
-    _sanitize, _assign_identifiers, _wrap_formula, _generate_body
+    _sanitize, _assign_identifiers, _wrap_formula, _generate_body, _compile, _ANCHOR_SUBDIR
 )
 from numbox.core.variable.variable import Variable, Graph
+from numbox.utils.preprocessing import _anchor_root
 
 
 def test_sanitize_basic():
@@ -131,3 +132,22 @@ def test_safe_getsource_named_function_and_cres():
     wap = cres(float64(float64))(lambda x: x * 2.0)
     s = _safe_getsource(wap)             # must not raise
     assert isinstance(s, str) and s      # non-empty (repr fallback is acceptable)
+
+
+def test_compile_runs():
+    src = "def _kernel(y):\n    x = f_x(y)\n    return (x,)\n"
+    bindings = {"f_x": njit(lambda y: 2 * y)}
+    kernel = _compile(src, bindings, None, True)
+    assert kernel(10) == (20,)
+
+
+def test_compile_anchor_is_content_addressed():
+    root = _anchor_root(_ANCHOR_SUBDIR)
+    src = "def _kernel(y):\n    x = f_x(y)\n    return (x,)\n"
+    _compile(src, {"f_x": njit(lambda y: 2 * y)}, None, True)
+    anchors = sorted(p.name for p in root.glob("_kernel_*.py"))
+    assert anchors, "expected at least one anchor file"
+    before = set(root.glob("_kernel_*.py"))
+    _compile(src, {"f_x": njit(lambda y: 3 * y)}, None, True)
+    after = set(root.glob("_kernel_*.py"))
+    assert after - before, "different formula must produce a new anchor"

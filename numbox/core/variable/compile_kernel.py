@@ -14,8 +14,16 @@ from numba import njit
 from numba.core.dispatcher import Dispatcher
 from numba.core.types.function_type import CompileResultWAP
 
+from numbox.core.configurations import jit_options as _default_jit_options
+from numbox.utils.preprocessing import (
+    _anchor_path, _materialize_anchor, _orphan_anchor_sweep,
+)
+
 # Names injected into the kernel exec namespace; identifiers must avoid them.
 _RESERVED = frozenset({"njit", "_kernel_jit_options"})
+
+_ANCHOR_SUBDIR = "numbox-compile-kernel"
+_orphan_anchor_sweep(_ANCHOR_SUBDIR)
 
 
 def _sanitize(qual_name):
@@ -131,3 +139,21 @@ def _generate_body(compiled, required, idents):
     body = ("\n".join(lines) + "\n") if lines else ""
     source = f"def _kernel({sig}):\n{body}{ret}\n"
     return source, bindings, params, outputs
+
+
+def _compile(source, bindings, jit_options, cache):
+    """Content-addressed compile of the kernel source into an @njit dispatcher."""
+    formula_src = "\n".join(_safe_getsource(f) for f in bindings.values())
+    hash_text = source + "\n# formulas:\n" + formula_src
+    digest = hashlib.sha256(hash_text.encode("utf-8")).hexdigest()[:16]
+    name = f"_kernel_{digest}"
+    opts = {**_default_jit_options, **(jit_options or {}), "cache": cache}
+    final_src = "@njit(**_kernel_jit_options)\n" + source.replace(
+        "def _kernel(", f"def {name}(", 1
+    )
+    anchor = _anchor_path(_ANCHOR_SUBDIR, name, hash_text)
+    _materialize_anchor(anchor, final_src)
+    code = compile(final_src, str(anchor), "exec")
+    ns = {**bindings, "njit": njit, "_kernel_jit_options": opts}
+    exec(code, ns)  # nosec B102 - JIT codegen of internal source
+    return ns[name]
