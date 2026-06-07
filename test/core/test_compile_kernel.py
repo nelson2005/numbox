@@ -1,5 +1,10 @@
-from numbox.core.variable.compile_kernel import _sanitize, _assign_identifiers
-from numbox.core.variable.variable import Variable
+import pytest
+from numba import njit
+from numba.core.dispatcher import Dispatcher
+from numbox.core.variable.compile_kernel import (
+    _sanitize, _assign_identifiers, _wrap_formula, _generate_body
+)
+from numbox.core.variable.variable import Variable, Graph
 
 
 def test_sanitize_basic():
@@ -39,3 +44,60 @@ def test_assign_identifiers_invalid_char_and_leading_digit():
     idents = _assign_identifiers([v1, v2])
     assert all(s.isidentifier() for s in idents.values())
     assert idents[v1] != idents[v2]
+
+
+def _diamond_graph():
+    return Graph(
+        variables_lists={"variables": [
+            {"name": "x", "inputs": {"y": "basket"}, "formula": njit(lambda y: 2 * y)},
+            {"name": "a", "inputs": {"x": "variables"}, "formula": njit(lambda x: x - 74)},
+            {"name": "b", "inputs": {"x": "variables"}, "formula": njit(lambda x: x + 0.5)},
+            {"name": "u", "inputs": {"a": "variables", "b": "variables"},
+             "formula": njit(lambda a, b: a + b)},
+        ]},
+        external_source_names=["basket"],
+    )
+
+
+def test_wrap_formula_passthrough_and_wrap():
+    d = njit(lambda x: x)
+    assert _wrap_formula(d) is d
+
+    def plain(x):
+        return x + 1
+    assert isinstance(_wrap_formula(plain), Dispatcher)
+
+
+def test_generate_body_shape():
+    g = _diamond_graph()
+    compiled = g.compile(["variables.u", "variables.a"])
+    idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
+    source, bindings, params, outputs = _generate_body(compiled, ["variables.u", "variables.a"], idents)
+    y_var = next(v for v in idents if v.qual_name() == "basket.y")
+    assert params == [("basket", "y", idents[y_var])]
+    assert outputs == ["variables.u", "variables.a"]
+    assert source.startswith("def _kernel(")
+    assert source.rstrip().endswith(",)")
+    assert set(bindings) == {"f_" + idents[v] for v in idents if v.qual_name() != "basket.y"}
+
+
+def test_generate_body_errors():
+    g = _diamond_graph()
+    compiled = g.compile(["variables.u"])
+    idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
+    with pytest.raises(ValueError):
+        _generate_body(compiled, [], idents)
+    with pytest.raises(ValueError):
+        _generate_body(compiled, ["variables.nope"], idents)
+
+    gph = Graph(
+        variables_lists={"variables": [
+            {"name": "x", "inputs": {"y": "basket"}, "formula": njit(lambda y: 2 * y)},
+            {"name": "broken", "inputs": {"x": "variables"}, "formula": None},
+        ]},
+        external_source_names=["basket"],
+    )
+    c2 = gph.compile(["variables.broken"])
+    id2 = _assign_identifiers([n.variable for n in c2.ordered_nodes])
+    with pytest.raises(ValueError):
+        _generate_body(c2, ["variables.broken"], id2)
