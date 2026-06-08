@@ -214,6 +214,7 @@ class CompiledKernel:
 def compile_kernel(graph, required, *, jit_options=None, cache=True):
     """Compile `graph` into a fused @njit kernel for the `required` variables."""
     required = [required] if isinstance(required, str) else list(required)
+    required = list(dict.fromkeys(required))  # dedupe, preserve first-seen order
     compiled = graph.compile(required)
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
     source, bindings, params, outputs = _generate_body(compiled, required, idents)

@@ -371,5 +371,15 @@ def test_compile_kernel_newline_in_name_is_safe():
         external_source_names=["e"],
     )
     ck = compile_kernel(g, ["v.o"])
-    assert "\n" not in ck.source.split("# ")[-1].splitlines()[0] or True  # comment stays single-logical-line
+    # the raw newline from the name must not appear unescaped in the generated
+    # source (that would split the trailing comment into an executable line)
+    assert "e.a\nx" not in ck.source
     assert ck.execute({"e": {"a\nx": 10}}) == {"v.o": 11}
+
+
+def test_compile_kernel_duplicate_required_deduped():
+    g = _diamond_graph()
+    ck = compile_kernel(g, ["variables.u", "variables.u"])
+    assert ck.outputs == ["variables.u"]
+    assert ck.execute({"basket": {"y": 100}}) == {"variables.u": 326.5}
+    assert ck.kernel(100) == (326.5,)
