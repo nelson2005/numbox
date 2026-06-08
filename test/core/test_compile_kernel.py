@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from numba import njit
 from numba.core.dispatcher import Dispatcher
+from numba.core.errors import TypingError
 from numba.core.types import float64
 from numbox.core.variable.compile_kernel import (
     _sanitize, _assign_identifiers, _wrap_formula, _generate_body, _compile,
@@ -128,8 +129,6 @@ def test_generate_body_external_as_only_output():
 
 def test_safe_getsource_named_function_and_cres():
     from numbox.core.variable.compile_kernel import _safe_getsource
-    from numbox.utils.highlevel import cres
-    from numba.core.types import float64
 
     @njit
     def named(x):
@@ -280,15 +279,15 @@ def test_autowrap_plain_python_formula():
 
 
 def test_cres_formula():
-    add = cres(float64(float64, float64))(lambda a, b: a + b)
+    sub = cres(float64(float64, float64))(lambda a, b: a - b)
     g = Graph(
         variables_lists={"variables": [
-            {"name": "u", "inputs": {"p": "ext", "q": "ext"}, "formula": add},
+            {"name": "u", "inputs": {"p": "ext", "q": "ext"}, "formula": sub},
         ]},
         external_source_names=["ext"],
     )
     ck = compile_kernel(g, ["variables.u"])
-    assert ck.execute({"ext": {"p": 1.5, "q": 2.0}}) == {"variables.u": 3.5}
+    assert ck.execute({"ext": {"p": 1.5, "q": 2.0}}) == {"variables.u": -0.5}
 
 
 def test_non_jittable_formula_fails_at_first_call_not_compile():
@@ -301,5 +300,5 @@ def test_non_jittable_formula_fails_at_first_call_not_compile():
         external_source_names=["ext"],
     )
     ck = compile_kernel(g, ["variables.b"])     # must NOT raise here (lazy)
-    with pytest.raises(Exception):
+    with pytest.raises(TypingError):
         ck.execute({"ext": {"y": 1}})           # error surfaces at first call

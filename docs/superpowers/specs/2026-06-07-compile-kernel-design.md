@@ -193,7 +193,7 @@ falls back to `repr(formula)` (per the `_safe_getsource` docstring); this is
 correctness-safe (repr is unique per object, never a hash collision) but, being
 per-process, gets no cross-process cache reuse. (A `cres` formula additionally
 disables caching of the whole kernel via numba's dynamic-globals rule — see
-§14.1.)
+§14 item 1.)
 
 ## 8. Caching (content-addressed)
 
