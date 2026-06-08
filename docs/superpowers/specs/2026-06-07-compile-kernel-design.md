@@ -187,6 +187,14 @@ Caveat: `lambda` formulas work functionally but their `getsource` is unreliable
 for the cache hash (multiple lambdas can share a source line) — documented, not
 blocked; callers wanting cache stability should use named functions.
 
+Note: `cres`/`CompileResultWAP` formulas and source-less lambdas (defined
+outside any source file) have no recoverable `getsource`, so the cache hash
+falls back to `repr(formula)` (per the `_safe_getsource` docstring); this is
+correctness-safe (repr is unique per object, never a hash collision) but, being
+per-process, gets no cross-process cache reuse. (A `cres` formula additionally
+disables caching of the whole kernel via numba's dynamic-globals rule — see
+§14.1.)
+
 ## 8. Caching (content-addressed)
 
 Reuse `numbox.utils.preprocessing`:
@@ -280,12 +288,17 @@ Code blocks in the `.rst` must be flake8-clean (doc-codeblock-flake8).
 
 ## 14. Open risks / verification items
 
-1. **`cres`-by-global-name callability.** The PoC verified `@njit`
-   (`CPUDispatcher`) globals are callable by name inside the kernel; `cres`
-   returns a `CompileResultWAP` (first-class function value). Whether that is
-   callable by global name inside the kernel must be verified in tests; if not,
-   wrap such formulas (or document `cres` formulas as unsupported, requiring
-   `@njit`).
+1. **`cres`-by-global-name callability. — VERIFIED: works as-is.** The PoC
+   verified `@njit` (`CPUDispatcher`) globals are callable by name inside the
+   kernel; `cres` returns a `CompileResultWAP` (first-class function value).
+   Confirmed by `test_compile_kernel.py::test_cres_formula`: a
+   `CompileResultWAP` bound as a kernel global is callable by name and produces
+   the correct result, with no wrapping needed (no Option A re-`njit`, no Option
+   B fail-fast). Only side effect: numba emits a `NumbaWarning` and disables
+   on-disk caching for that kernel ("uses dynamic globals"), because a
+   `CompileResultWAP` is treated as a dynamic global; the result is still
+   correct, the kernel just recompiles each fresh process. `cres` formulas are
+   therefore supported but not cache-eligible.
 2. **Cache correctness across processes** — covered by the subprocess test, but
    it is the highest-risk area; treat a green subprocess collision test as the
    gate for shipping `cache=True` as the default.

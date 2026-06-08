@@ -3,14 +3,17 @@ import subprocess
 import sys
 import textwrap
 
+import numpy as np
 import pytest
 from numba import njit
 from numba.core.dispatcher import Dispatcher
+from numba.core.types import float64
 from numbox.core.variable.compile_kernel import (
     _sanitize, _assign_identifiers, _wrap_formula, _generate_body, _compile,
     compile_kernel, CompiledKernel,
 )
 from numbox.core.variable.variable import Variable, Graph, Values
+from numbox.utils.highlevel import cres
 
 
 def test_sanitize_basic():
@@ -223,3 +226,80 @@ def test_compile_kernel_missing_external_source_raises():
     with pytest.raises(KeyError) as exc:
         ck.execute({})                      # entire 'basket' source absent
     assert "basket.y" in str(exc.value)
+
+
+def test_identifier_collision_graph_runs():
+    g = Graph(
+        variables_lists={
+            "a_b": [{"name": "c", "inputs": {"y": "ext"}, "formula": njit(lambda y: y + 1)}],
+            "a": [{"name": "b_c", "inputs": {"y": "ext"}, "formula": njit(lambda y: y + 2)}],
+        },
+        external_source_names=["ext"],
+    )
+    ck = compile_kernel(g, ["a_b.c", "a.b_c"])
+    assert ck.execute({"ext": {"y": 10}}) == {"a_b.c": 11, "a.b_c": 12}
+
+
+def test_invalid_char_external_name_runs():
+    g = Graph(
+        variables_lists={"variables": [
+            {"name": "out", "inputs": {"first-name": "ext"}, "formula": njit(lambda v: v * 2)},
+        ]},
+        external_source_names=["ext"],
+    )
+    ck = compile_kernel(g, ["variables.out"])
+    assert ck.execute({"ext": {"first-name": 5}}) == {"variables.out": 10}
+
+
+def test_constant_and_array_formulas():
+    g = Graph(
+        variables_lists={"variables": [
+            {"name": "k", "inputs": {}, "formula": njit(lambda: 7.0)},
+            {"name": "u", "inputs": {"k": "variables", "y": "ext"}, "formula": njit(lambda k, y: k + y)},
+            {"name": "arr", "inputs": {"y": "ext"}, "formula": njit(lambda y: np.arange(y))},
+        ]},
+        external_source_names=["ext"],
+    )
+    ck = compile_kernel(g, ["variables.u", "variables.arr"])
+    out = ck.execute({"ext": {"y": 3}})
+    assert out["variables.u"] == 10.0
+    assert list(out["variables.arr"]) == [0, 1, 2]
+
+
+def test_autowrap_plain_python_formula():
+    def plain(y):
+        return y * 3
+    g = Graph(
+        variables_lists={"variables": [
+            {"name": "o", "inputs": {"y": "ext"}, "formula": plain},
+        ]},
+        external_source_names=["ext"],
+    )
+    ck = compile_kernel(g, ["variables.o"])
+    assert ck.execute({"ext": {"y": 4}}) == {"variables.o": 12}
+
+
+def test_cres_formula():
+    add = cres(float64(float64, float64))(lambda a, b: a + b)
+    g = Graph(
+        variables_lists={"variables": [
+            {"name": "u", "inputs": {"p": "ext", "q": "ext"}, "formula": add},
+        ]},
+        external_source_names=["ext"],
+    )
+    ck = compile_kernel(g, ["variables.u"])
+    assert ck.execute({"ext": {"p": 1.5, "q": 2.0}}) == {"variables.u": 3.5}
+
+
+def test_non_jittable_formula_fails_at_first_call_not_compile():
+    def bad(y):
+        return open("/tmp/_ck_nope.txt", "w")
+    g = Graph(
+        variables_lists={"variables": [
+            {"name": "b", "inputs": {"y": "ext"}, "formula": bad},
+        ]},
+        external_source_names=["ext"],
+    )
+    ck = compile_kernel(g, ["variables.b"])     # must NOT raise here (lazy)
+    with pytest.raises(Exception):
+        ck.execute({"ext": {"y": 1}})           # error surfaces at first call
