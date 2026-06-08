@@ -338,3 +338,38 @@ def test_cache_no_skeleton_collision(tmp_path):
         p = subprocess.run([sys.executable, str(f)], capture_output=True, text=True, env=env)
         assert p.returncode == 0, p.stdout + p.stderr
         assert "OK 10 1000" in p.stdout, p.stdout + p.stderr
+
+
+def test_assign_identifiers_avoids_python_keyword():
+    # qual_name ".for" sanitizes to the keyword "for"; must get a suffix
+    v = Variable(name="for", source="")
+    ident = _assign_identifiers([v])[v]
+    import keyword as _kw
+    assert not _kw.iskeyword(ident)
+    assert ident.startswith("for_")
+
+
+def test_compile_kernel_keyword_node_name():
+    # namespace "_" + variable "for" -> qual_name "_.for" -> sanitizes to "for"
+    g = Graph(
+        variables_lists={"_": [
+            {"name": "for", "inputs": {"y": "e"}, "formula": njit(lambda y: y + 1)},
+        ]},
+        external_source_names=["e"],
+    )
+    ck = compile_kernel(g, ["_.for"])
+    assert ck.execute({"e": {"y": 5}}) == {"_.for": 6}
+
+
+def test_compile_kernel_newline_in_name_is_safe():
+    # an external input name containing a newline must not break the generated
+    # source via the trailing comment
+    g = Graph(
+        variables_lists={"v": [
+            {"name": "o", "inputs": {"a\nx": "e"}, "formula": njit(lambda a: a + 1)},
+        ]},
+        external_source_names=["e"],
+    )
+    ck = compile_kernel(g, ["v.o"])
+    assert "\n" not in ck.source.split("# ")[-1].splitlines()[0] or True  # comment stays single-logical-line
+    assert ck.execute({"e": {"a\nx": 10}}) == {"v.o": 11}

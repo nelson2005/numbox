@@ -7,6 +7,7 @@ from the kernel's runtime argument types, provided each formula is njit-able
 (plain-Python formulas are auto-wrapped with njit()).
 """
 import hashlib
+import keyword
 import re
 
 from inspect import getsource
@@ -50,7 +51,7 @@ def _assign_identifiers(variables):
         digest = hashlib.sha256(var.qual_name().encode("utf-8")).hexdigest()
         cand = base
         i = 0
-        while cand in used or ("f_" + cand) in used:
+        while cand in used or ("f_" + cand) in used or keyword.iskeyword(cand):
             i += 1
             if i > len(digest):
                 raise RuntimeError(
@@ -135,8 +136,8 @@ def _generate_body(compiled, required, idents):
         fg = "f_" + temp
         bindings[fg] = _wrap_formula(var.formula)
         arg_ids = ", ".join(idents[inp] for inp in node.inputs)
-        in_names = ", ".join(inp.qual_name() for inp in node.inputs)
-        lines.append(f"    {temp} = {fg}({arg_ids})  # {var.qual_name()} = f({in_names})")
+        in_names = ", ".join(repr(inp.qual_name()) for inp in node.inputs)
+        lines.append(f"    {temp} = {fg}({arg_ids})  # {var.qual_name()!r} = f({in_names})")
 
     by_qual = {n.variable.qual_name(): n.variable for n in compiled.ordered_nodes}
     outputs, out_ids = [], []
