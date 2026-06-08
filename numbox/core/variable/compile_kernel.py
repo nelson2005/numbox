@@ -74,19 +74,31 @@ def _wrap_formula(formula):
 def _safe_getsource(formula):
     """Source text of a formula, for the content-addressed cache hash.
 
-    Content-sensitive on purpose: two formulas with the same signature but
-    different bodies must hash differently, so we never substitute the
-    signature here. When no source is recoverable (e.g. a cres/CompileResultWAP
-    formula, or a lambda defined outside a source file), we fall back to
-    ``repr(formula)``. repr is unique per object, so it never causes a hash
-    *collision* (results stay correct); it is just not stable across processes,
-    so such a formula does not get cross-process cache reuse.
+    Content-sensitive on purpose: two formulas that differ in body OR in
+    closed-over values must hash differently, so we append the closure cell
+    contents to the recovered source (the source text alone is identical for
+    two lambdas built by the same closure factory). We never substitute the
+    signature, which would let different bodies collide.
+
+    When no source is recoverable (a cres/CompileResultWAP formula, or a lambda
+    defined outside a source file), we fall back to ``repr(formula)``. repr is
+    unique per object, so it never causes a hash *collision* (results stay
+    correct); it is just not stable across processes, so such a formula does
+    not get cross-process cache reuse. The same downgrade applies if a closure
+    cell value has no process-stable ``repr``.
     """
     target = getattr(formula, "py_func", formula)
     try:
-        return getsource(target)
+        src = getsource(target)
     except (OSError, TypeError):
         return repr(formula)
+    closure = getattr(target, "__closure__", None)
+    if closure:
+        try:
+            src += "\n# closure: " + repr([c.cell_contents for c in closure])
+        except Exception:  # noqa: BLE001 - any unrepr-able cell -> conservative tag
+            src += "\n# closure: <unrepr>"
+    return src
 
 
 def _generate_body(compiled, required, idents):

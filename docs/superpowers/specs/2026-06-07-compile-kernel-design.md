@@ -202,7 +202,10 @@ Reuse `numbox.utils.preprocessing`:
   node order. Including formula sources is mandatory: two graphs with identical
   straight-line skeletons but different formulas must not share a cache entry
   (a verified failure mode — without it, `cache=True` silently loads the wrong
-  binary).
+  binary). The content hash includes each formula's source text **and its
+  closed-over constants** (the formula's closure cell values), so two formulas
+  built by the same closure factory — identical source text, different captured
+  values — get distinct cache entries instead of colliding.
 - `anchor = _anchor_path("numbox-compile-kernel", "kernel", hash_text)`;
   `_materialize_anchor(anchor, source)`; `compile(source, str(anchor), "exec")`;
   fold the digest into the kernel function name too (belt-and-suspenders, as

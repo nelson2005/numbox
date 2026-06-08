@@ -302,3 +302,39 @@ def test_non_jittable_formula_fails_at_first_call_not_compile():
     ck = compile_kernel(g, ["variables.b"])     # must NOT raise here (lazy)
     with pytest.raises(TypingError):
         ck.execute({"ext": {"y": 1}})           # error surfaces at first call
+
+
+def test_cache_no_skeleton_collision(tmp_path):
+    # Two kernels with identical skeleton (one leaf -> one formula -> return) but
+    # different formulas (y*10 vs y*1000). With cache=True they must NOT load each
+    # other's cached binary. Run twice in fresh interpreters so the 2nd run reads
+    # the on-disk cache.
+    script = textwrap.dedent('''
+        from numba import njit
+        from numbox.core.variable.variable import Graph
+        from numbox.core.variable.compile_kernel import compile_kernel
+
+        def build(mult):
+            g = Graph(
+                variables_lists={"v": [
+                    {"name": "o", "inputs": {"y": "e"}, "formula": njit(lambda y: y * mult)},
+                ]},
+                external_source_names=["e"],
+            )
+            return compile_kernel(g, ["v.o"], cache=True)
+
+        a = build(10)
+        b = build(1000)
+        ra = a.execute({"e": {"y": 1}})["v.o"]
+        rb = b.execute({"e": {"y": 1}})["v.o"]
+        assert ra == 10, ra
+        assert rb == 1000, rb
+        print("OK", ra, rb)
+    ''')
+    f = tmp_path / "ck_cache_probe.py"
+    f.write_text(script)
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(tmp_path / "nbcache")}
+    for _ in range(2):
+        p = subprocess.run([sys.executable, str(f)], capture_output=True, text=True, env=env)
+        assert p.returncode == 0, p.stdout + p.stderr
+        assert "OK 10 1000" in p.stdout, p.stdout + p.stderr
