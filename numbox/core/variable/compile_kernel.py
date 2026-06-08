@@ -178,7 +178,8 @@ def _compile(source, bindings, jit_options, cache):
 class CompiledKernel:
     """A fused @njit kernel compiled from a Variable graph.
 
-    Attributes:
+    Attributes::
+
       kernel      - bare numba dispatcher; positional external args (in `params`
                     order) -> tuple (in `outputs` order). Zero-overhead hot path.
       params      - external input qual_names, kernel-argument order.
