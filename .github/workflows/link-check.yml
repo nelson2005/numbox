@@ -56,6 +56,10 @@ jobs:
             --exclude-path venv
             ${{ steps.scope.outputs.files }}
           fail: true
+          # Don't fail when the changed-file set contains no links at all
+          # (e.g. a code-only or link-less-docs PR): "no links found" is not a
+          # link-check failure. Broken links are still reported via fail: true.
+          failIfEmpty: false
           format: markdown
           output: ./lychee-report.md
 
