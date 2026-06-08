@@ -151,7 +151,7 @@ def _compile(source, bindings, jit_options, cache):
     final_src = "@njit(**_kernel_jit_options)\n" + source.replace(
         "def _kernel(", f"def {name}(", 1
     )
-    anchor = _anchor_path(_ANCHOR_SUBDIR, name, hash_text)
+    anchor = _anchor_path(_ANCHOR_SUBDIR, "_kernel", hash_text)
     _materialize_anchor(anchor, final_src)
     code = compile(final_src, str(anchor), "exec")
     # __name__ must be an importable module so numba can rebuild the cached
