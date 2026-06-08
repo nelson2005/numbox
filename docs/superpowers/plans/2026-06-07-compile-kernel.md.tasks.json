@@ -24,14 +24,14 @@
     {
       "id": 4,
       "subject": "Task 4: Public API — CompiledKernel + compile_kernel",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** `compile_kernel(graph, required, *, jit_options=None, cache=True)` -> `CompiledKernel` (.kernel, .execute dict-in/dict-out, .params, .outputs, .source, .identifiers). Equivalent to CompiledGraph.execute; missing external -> KeyError; auto-specialization.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"compile_kernel returns CompiledKernel; str|list required\", \"kernel + execute match CompiledGraph.execute\", \"missing external -> KeyError\", \"auto-specialization int then float\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: Robustness — identifier collisions, formula variety, error taxonomy",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** Integration tests: a_b.c vs a.b_c collision-pair graph runs; invalid-char/leading-digit external name runs; cres + njit formulas reconciled to verified behavior (Spec §14.1); auto-wrap/constant/array formulas; non-jittable -> error at first call (lazy).\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"test/core/test_compile_kernel.py\", \"numbox/core/variable/compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"collision-pair graph runs\", \"invalid-char name runs\", \"cres+njit reconciled to verified behavior\", \"auto-wrap/constant/array formulas work\", \"non-jittable fails at first call\"]}\n```"
     },
@@ -57,5 +57,5 @@
       "description": "**Goal:** Caches cleaned; full pytest --durations=20 green; flake8 . clean (repo root); extract_codeblocks docs clean; lychee on changed docs clean. Report counts; STOP and await user approval before opening fork PR (upstream only on explicit per-PR approval; exclude CLAUDE.md + docs/superpowers/** from upstream).\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )\", \"acceptanceCriteria\": [\"full pytest green caches-cleaned\", \"flake8 clean repo config\", \"doc-codeblock clean\", \"branch ready; no fork PR without approval\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-08T00:10:00Z"
+  "lastUpdated": "2026-06-08T01:05:00Z"
 }
