@@ -4,20 +4,20 @@
     {
       "id": 1,
       "subject": "Task 1: Module scaffold + identifier assignment",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Create `numbox/core/variable/compile_kernel.py` with `_sanitize` and `_assign_identifiers` (unique, valid, readable identifiers; minimal deterministic sha256 suffix only on collision; reserves temp + `f_<temp>`).\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"_sanitize handles invalid chars/leading digit/empty\", \"_assign_identifiers unique across temps + f_<temp> + reserved\", \"three collision classes resolve\", \"deterministic\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: Codegen — formula wrapping + source generation",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Add `_wrap_formula`, `_safe_getsource`, `_generate_body` (CompiledGraph + idents -> source, bindings, params=[(source,name,ident)], outputs). External nodes -> params; ValueError on empty required / non-external formula=None / unknown output.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"_wrap_formula passthrough + njit-wrap\", \"_generate_body straight-line source + bindings + params + outputs\", \"external nodes -> params\", \"ValueError on empty/placeholder/unknown-output\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: Compile with content-addressed cache",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Add `_compile` (hash source + every formula getsource -> content-addressed anchor via preprocessing `_anchor_path`/`_materialize_anchor`; `@njit(cache=...)` in-source; exec against real anchor). Subdir `numbox-compile-kernel`; `_orphan_anchor_sweep` at import.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py -q )\", \"acceptanceCriteria\": [\"_compile returns working dispatcher\", \"content-addressed anchor created\", \"anchor differs when formula source differs\"]}\n```"
     },
@@ -57,5 +57,5 @@
       "description": "**Goal:** Caches cleaned; full pytest --durations=20 green; flake8 . clean (repo root); extract_codeblocks docs clean; lychee on changed docs clean. Report counts; STOP and await user approval before opening fork PR (upstream only on explicit per-PR approval; exclude CLAUDE.md + docs/superpowers/** from upstream).\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )\", \"acceptanceCriteria\": [\"full pytest green caches-cleaned\", \"flake8 clean repo config\", \"doc-codeblock clean\", \"branch ready; no fork PR without approval\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-07T22:45:00Z"
+  "lastUpdated": "2026-06-08T00:10:00Z"
 }
