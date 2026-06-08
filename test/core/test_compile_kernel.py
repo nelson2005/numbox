@@ -152,6 +152,7 @@ def test_compile_anchor_is_content_addressed(tmp_path, monkeypatch):
     src = "def _kernel(y):\n    x = f_x(y)\n    return (x,)\n"
     _compile(src, {"f_x": njit(lambda y: 2 * y)}, None, True)
     before = set(tmp_path.glob("_kernel_*.py"))
+    assert before, "first _compile must create an anchor"
     _compile(src, {"f_x": njit(lambda y: 3 * y)}, None, True)
     after = set(tmp_path.glob("_kernel_*.py"))
     assert after - before, "different formula must produce a new anchor"
@@ -211,8 +212,9 @@ def test_compile_kernel_auto_specialization():
 def test_compile_kernel_missing_external_raises():
     g = _diamond_graph()
     ck = compile_kernel(g, ["variables.u"])
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError) as exc:
         ck.execute({"basket": {}})
+    assert "basket.y" in str(exc.value)
 
 
 def test_compile_kernel_missing_external_source_raises():
