@@ -7,9 +7,10 @@ import pytest
 from numba import njit
 from numba.core.dispatcher import Dispatcher
 from numbox.core.variable.compile_kernel import (
-    _sanitize, _assign_identifiers, _wrap_formula, _generate_body, _compile, _ANCHOR_SUBDIR
+    _sanitize, _assign_identifiers, _wrap_formula, _generate_body, _compile, _ANCHOR_SUBDIR,
+    compile_kernel, CompiledKernel,
 )
-from numbox.core.variable.variable import Variable, Graph
+from numbox.core.variable.variable import Variable, Graph, Values
 from numbox.utils.preprocessing import _anchor_root
 
 
@@ -173,3 +174,44 @@ def test_compile_cache_survives_fresh_process(tmp_path):
         p = subprocess.run([sys.executable, str(f)], capture_output=True, text=True, env=env)
         assert p.returncode == 0, p.stdout + p.stderr
         assert "RESULT 20" in p.stdout, p.stdout + p.stderr
+
+
+def _pure(graph, required, external_values):
+    compiled = graph.compile(required)
+    values = Values()
+    compiled.execute(external_values, values)
+    by_qual = {n.variable.qual_name(): n.variable for n in compiled.ordered_nodes}
+    return {q: values.get(by_qual[q]).value for q in required}
+
+
+def test_compile_kernel_matches_pure_python_diamond():
+    g = _diamond_graph()
+    req = ["variables.u", "variables.a"]
+    ck = compile_kernel(g, req)
+    assert isinstance(ck, CompiledKernel)
+    ext = {"basket": {"y": 100}}
+    assert ck.execute(ext) == _pure(g, req, ext)
+    assert ck.params == ["basket.y"]
+    assert ck.outputs == req
+    assert tuple(ck.kernel(100)) == tuple(_pure(g, req, ext)[q] for q in req)
+
+
+def test_compile_kernel_single_output_and_str_required():
+    g = _diamond_graph()
+    ck = compile_kernel(g, "variables.u")
+    assert ck.outputs == ["variables.u"]
+    assert ck.execute({"basket": {"y": 100}}) == {"variables.u": 326.5}
+
+
+def test_compile_kernel_auto_specialization():
+    g = _diamond_graph()
+    ck = compile_kernel(g, ["variables.u"])
+    assert ck.execute({"basket": {"y": 100}})["variables.u"] == 326.5
+    assert ck.execute({"basket": {"y": 100.0}})["variables.u"] == 326.5
+
+
+def test_compile_kernel_missing_external_raises():
+    g = _diamond_graph()
+    ck = compile_kernel(g, ["variables.u"])
+    with pytest.raises(KeyError):
+        ck.execute({"basket": {}})

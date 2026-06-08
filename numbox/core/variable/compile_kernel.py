@@ -15,6 +15,7 @@ from numba.core.dispatcher import Dispatcher
 from numba.core.types.function_type import CompileResultWAP
 
 from numbox.core.configurations import jit_options as _default_jit_options
+from numbox.core.variable.variable import make_qual_name
 from numbox.utils.preprocessing import (
     _anchor_path, _materialize_anchor, _orphan_anchor_sweep,
 )
@@ -160,3 +161,50 @@ def _compile(source, bindings, jit_options, cache):
     ns = {**bindings, "njit": njit, "_kernel_jit_options": opts, "__name__": __name__}
     exec(code, ns)  # nosec B102 - JIT codegen of internal source
     return ns[name]
+
+
+class CompiledKernel:
+    """A fused @njit kernel compiled from a Variable graph.
+
+    Attributes:
+      kernel      - bare numba dispatcher; positional external args (in `params`
+                    order) -> tuple (in `outputs` order). Zero-overhead hot path.
+      params      - external input qual_names, kernel-argument order.
+      outputs     - requested variable qual_names, return-tuple order.
+      source      - generated kernel source text.
+      identifiers - {qual_name: temp identifier} for inspection.
+    """
+
+    def __init__(self, kernel, params, outputs, source, identifiers):
+        self.kernel = kernel
+        self._param_keys = [(src, name) for src, name, _ in params]
+        self.params = [make_qual_name(src, name) for src, name, _ in params]
+        self.outputs = list(outputs)
+        self.source = source
+        self.identifiers = identifiers
+
+    def execute(self, external_values):
+        """Dict-in / dict-out convenience, symmetric with CompiledGraph.execute."""
+        args = []
+        for src, name in self._param_keys:
+            try:
+                args.append(external_values[src][name])
+            except KeyError as e:
+                raise KeyError(
+                    f"Missing external value for {make_qual_name(src, name)!r}"
+                ) from e
+        result = self.kernel(*args)
+        return dict(zip(self.outputs, result))
+
+
+def compile_kernel(graph, required, *, jit_options=None, cache=True):
+    """Compile `graph` into a fused @njit kernel for the `required` variables."""
+    if isinstance(required, str):
+        required = [required]
+    required = list(required)
+    compiled = graph.compile(required)
+    idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
+    source, bindings, params, outputs = _generate_body(compiled, required, idents)
+    kernel = _compile(source, bindings, jit_options, cache)
+    identifiers = {v.qual_name(): ident for v, ident in idents.items()}
+    return CompiledKernel(kernel, params, outputs, source, identifiers)
