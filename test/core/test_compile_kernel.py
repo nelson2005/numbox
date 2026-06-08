@@ -7,11 +7,10 @@ import pytest
 from numba import njit
 from numba.core.dispatcher import Dispatcher
 from numbox.core.variable.compile_kernel import (
-    _sanitize, _assign_identifiers, _wrap_formula, _generate_body, _compile, _ANCHOR_SUBDIR,
+    _sanitize, _assign_identifiers, _wrap_formula, _generate_body, _compile,
     compile_kernel, CompiledKernel,
 )
 from numbox.core.variable.variable import Variable, Graph, Values
-from numbox.utils.preprocessing import _anchor_root
 
 
 def test_sanitize_basic():
@@ -147,15 +146,14 @@ def test_compile_runs():
     assert kernel(10) == (20,)
 
 
-def test_compile_anchor_is_content_addressed():
-    root = _anchor_root(_ANCHOR_SUBDIR)
+def test_compile_anchor_is_content_addressed(tmp_path, monkeypatch):
+    import numbox.utils.preprocessing as pp
+    monkeypatch.setattr(pp, "_anchor_root", lambda subdir: tmp_path)
     src = "def _kernel(y):\n    x = f_x(y)\n    return (x,)\n"
     _compile(src, {"f_x": njit(lambda y: 2 * y)}, None, True)
-    anchors = sorted(p.name for p in root.glob("_kernel_*.py"))
-    assert anchors, "expected at least one anchor file"
-    before = set(root.glob("_kernel_*.py"))
+    before = set(tmp_path.glob("_kernel_*.py"))
     _compile(src, {"f_x": njit(lambda y: 3 * y)}, None, True)
-    after = set(root.glob("_kernel_*.py"))
+    after = set(tmp_path.glob("_kernel_*.py"))
     assert after - before, "different formula must produce a new anchor"
 
 
@@ -215,3 +213,11 @@ def test_compile_kernel_missing_external_raises():
     ck = compile_kernel(g, ["variables.u"])
     with pytest.raises(KeyError):
         ck.execute({"basket": {}})
+
+
+def test_compile_kernel_missing_external_source_raises():
+    g = _diamond_graph()
+    ck = compile_kernel(g, ["variables.u"])
+    with pytest.raises(KeyError) as exc:
+        ck.execute({})                      # entire 'basket' source absent
+    assert "basket.y" in str(exc.value)
