@@ -52,10 +52,10 @@
     {
       "id": 8,
       "subject": "Task 8: Full local CI gate + push readiness",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5, 6, 7],
       "description": "**Goal:** Caches cleaned; full pytest --durations=20 green; flake8 . clean (repo root); extract_codeblocks docs clean; lychee on changed docs clean. Report counts; STOP and await user approval before opening fork PR (upstream only on explicit per-PR approval; exclude CLAUDE.md + docs/superpowers/** from upstream).\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )\", \"acceptanceCriteria\": [\"full pytest green caches-cleaned\", \"flake8 clean repo config\", \"doc-codeblock clean\", \"branch ready; no fork PR without approval\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-08T02:00:00Z"
+  "lastUpdated": "2026-06-08T02:20:00Z"
 }

@@ -1,7 +1,7 @@
 # Design: `compile_kernel` — fuse a `Variable` graph into one `@njit` kernel
 
 - **Date:** 2026-06-07
-- **Status:** Draft (awaiting review)
+- **Status:** Implemented on `feat/variable-compile-kernel` (8/8 tasks; full local gate green)
 - **Module:** `numbox/core/variable/compile_kernel.py` (new)
 - **Relates to:** `numbox/core/variable/variable.py` (`Graph`/`CompiledGraph`),
   `numbox/core/work/` (`Work`/`builder.make_graph`),
@@ -175,7 +175,9 @@ Per derived node's `formula`:
   wrap with `njit()` (lazy, no signature) and bind the dispatcher.
 - already a numba `Dispatcher` (`@njit`) or a `cres` `CompileResultWAP` → bind
   as-is.
-- anything else → bind as-is and let numba decide at compile time.
+- anything else (any other callable) → `njit`-wrapped like a plain function;
+  a non-njit-able callable then fails eagerly at `compile_kernel()` time when
+  `njit()` is applied, rather than lazily at first call.
 
 Genuinely non-jittable bodies surface as a numba `TypingError` pointing at the
 formula. Because the kernel is lazily `@njit`-compiled, **that occurs on the
