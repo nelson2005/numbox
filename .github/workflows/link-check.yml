@@ -47,9 +47,9 @@ jobs:
           args: >-
             --no-progress
             --max-concurrency 4
-            --max-retries 2
+            --max-retries 3
             --retry-wait-time 5
-            --timeout 20
+            --timeout 30
             --accept 200,206,429
             --exclude '^mailto:'
             --exclude-path .git
