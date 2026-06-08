@@ -38,14 +38,14 @@
     {
       "id": 6,
       "subject": "Task 6: Cross-process cache-collision regression",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** Subprocess test (run twice so 2nd reads on-disk cache): two same-skeleton/different-formula cache=True kernels each return their own result. Mirror test_builder.py::test_make_graph_cache_key_content_independent.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py::test_cache_no_skeleton_collision -q )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest test/core/test_compile_kernel.py::test_cache_no_skeleton_collision -q )\", \"acceptanceCriteria\": [\"fresh-subprocess same-skeleton/different-formula kernels do not cross-load\", \"mirrors builder cache-independence test\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: Documentation",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** Add a `compile_kernel` section + worked example + `automodule` to `docs/numbox.core.variable.rst`; sphinx-build exit 0; doc python blocks flake8-clean at max-line-length 120.\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/sphinx-build -b html docs docs/_build/html ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [\"docs/numbox.core.variable.rst\"], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/sphinx-build -b html docs docs/_build/html ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )\", \"acceptanceCriteria\": [\"compile_kernel rst section + automodule\", \"sphinx-build exit 0\", \"doc python blocks flake8-clean at 120\"]}\n```"
     },
@@ -57,5 +57,5 @@
       "description": "**Goal:** Caches cleaned; full pytest --durations=20 green; flake8 . clean (repo root); extract_codeblocks docs clean; lychee on changed docs clean. Report counts; STOP and await user approval before opening fork PR (upstream only on explicit per-PR approval; exclude CLAUDE.md + docs/superpowers/** from upstream).\n\n**Verify:** `( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )`\n\n```json:metadata\n{\"model\": \"opus\", \"files\": [], \"verifyCommand\": \"( cd /home/erik/projects/numbox && venv/bin/python -m pytest -q --durations=20 ) && ( cd /home/erik/projects/numbox && venv/bin/flake8 . --count --show-source --statistics ) && ( cd /home/erik/projects/numbox && venv/bin/python .github/scripts/extract_codeblocks.py docs --flake8 venv/bin/flake8 )\", \"acceptanceCriteria\": [\"full pytest green caches-cleaned\", \"flake8 clean repo config\", \"doc-codeblock clean\", \"branch ready; no fork PR without approval\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-08T01:05:00Z"
+  "lastUpdated": "2026-06-08T02:00:00Z"
 }
