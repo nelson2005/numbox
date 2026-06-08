@@ -96,8 +96,8 @@ def _safe_getsource(formula):
     if closure:
         try:
             src += "\n# closure: " + repr([c.cell_contents for c in closure])
-        except Exception:  # noqa: BLE001 - any unrepr-able cell -> conservative tag
-            src += "\n# closure: <unrepr>"
+        except Exception:  # noqa: BLE001 - unrepr-able cell -> per-object fallback
+            return repr(formula)
     return src
 
 
