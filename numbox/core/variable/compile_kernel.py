@@ -154,6 +154,9 @@ def _compile(source, bindings, jit_options, cache):
     anchor = _anchor_path(_ANCHOR_SUBDIR, name, hash_text)
     _materialize_anchor(anchor, final_src)
     code = compile(final_src, str(anchor), "exec")
-    ns = {**bindings, "njit": njit, "_kernel_jit_options": opts}
+    # __name__ must be an importable module so numba can rebuild the cached
+    # overload's environment in another process (importlib.import_module needs
+    # a real name, not None); mirrors make_graph / make_structref.
+    ns = {**bindings, "njit": njit, "_kernel_jit_options": opts, "__name__": __name__}
     exec(code, ns)  # nosec B102 - JIT codegen of internal source
     return ns[name]

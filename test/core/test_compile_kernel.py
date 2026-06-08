@@ -1,3 +1,8 @@
+import os
+import subprocess
+import sys
+import textwrap
+
 import pytest
 from numba import njit
 from numba.core.dispatcher import Dispatcher
@@ -151,3 +156,20 @@ def test_compile_anchor_is_content_addressed():
     _compile(src, {"f_x": njit(lambda y: 3 * y)}, None, True)
     after = set(root.glob("_kernel_*.py"))
     assert after - before, "different formula must produce a new anchor"
+
+
+def test_compile_cache_survives_fresh_process(tmp_path):
+    script = textwrap.dedent('''
+        from numba import njit
+        from numbox.core.variable.compile_kernel import _compile
+        src = "def _kernel(y):\\n    x = f_x(y)\\n    return (x,)\\n"
+        k = _compile(src, {"f_x": njit(lambda y: 2 * y)}, None, True)
+        print("RESULT", k(10)[0])
+    ''')
+    f = tmp_path / "ck_warm.py"
+    f.write_text(script)
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(tmp_path / "nbcache")}
+    for _ in range(2):
+        p = subprocess.run([sys.executable, str(f)], capture_output=True, text=True, env=env)
+        assert p.returncode == 0, p.stdout + p.stderr
+        assert "RESULT 20" in p.stdout, p.stdout + p.stderr
