@@ -149,8 +149,8 @@ def test_compile_runs():
 
 
 def test_compile_anchor_is_content_addressed(tmp_path, monkeypatch):
-    import numbox.utils.preprocessing as pp
-    monkeypatch.setattr(pp, "_anchor_root", lambda subdir: tmp_path)
+    import numbox.core.variable.compile_kernel as ck_mod
+    monkeypatch.setattr(ck_mod, "_anchor_root", lambda subdir: tmp_path)
     src = "def _kernel(y):\n    x = f_x(y)\n    return (x,)\n"
     _compile(src, {"f_x": njit(lambda y: 2 * y)}, None, True)
     before = set(tmp_path.glob("_kernel_*.py"))
@@ -418,3 +418,69 @@ def test_kernel_dispatcher_collectable_after_release():
     for _ in range(3):
         gc.collect()
     assert ref() is None
+
+
+_CACHE_PROBE = """
+    import pathlib
+    import sys
+    from numbox.core.variable.variable import Graph
+    from numbox.core.variable.compile_kernel import compile_kernel
+
+    def f(x):
+        return x + 1.0
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+    kwargs = eval(sys.argv[1])
+    ck = compile_kernel(g, "calc.y", **kwargs)
+    print(ck.execute({"ext": {"x": 1.0}})["calc.y"])
+"""
+
+
+def _run_cache_probe(tmp_path, kwargs_src, extra_env=None):
+    f = tmp_path / "probe.py"
+    f.write_text(textwrap.dedent(_CACHE_PROBE))
+    cache_dir = tmp_path / "nbcache"
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir), **(extra_env or {})}
+    p = subprocess.run(
+        [sys.executable, str(f), kwargs_src],
+        capture_output=True, text=True, env=env,
+    )
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == "2.0"
+    files = [q for q in cache_dir.rglob("*") if q.is_file()] if cache_dir.exists() else []
+    return files, p.stderr
+
+
+def test_cache_false_writes_nothing(tmp_path):
+    files, _ = _run_cache_probe(tmp_path, "{'cache': False}")
+    assert files == []
+
+
+def test_cache_precedence_env_knob(tmp_path):
+    files, _ = _run_cache_probe(
+        tmp_path, "{}", extra_env={"NUMBOX_JIT_OPTIONS": '{"cache": false}'})
+    assert files == []
+
+
+def test_cache_precedence_jit_options(tmp_path):
+    files, _ = _run_cache_probe(tmp_path, "{'jit_options': {'cache': False}}")
+    assert files == []
+
+
+def test_cache_precedence_param_wins(tmp_path):
+    files, _ = _run_cache_probe(
+        tmp_path, "{'cache': True, 'jit_options': {'cache': False}}")
+    assert files != []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod-based read-only dir is POSIX-only")
+def test_readonly_cache_dir_degrades_gracefully(tmp_path):
+    cache_dir = tmp_path / "nbcache"
+    cache_dir.mkdir()
+    cache_dir.chmod(0o500)
+    try:
+        files, stderr = _run_cache_probe(tmp_path, "{}")
+        assert files == []
+        assert "cache directory unusable" in stderr
+    finally:
+        cache_dir.chmod(0o700)

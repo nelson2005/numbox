@@ -9,6 +9,7 @@ from the kernel's runtime argument types, provided each formula is njit-able
 import hashlib
 import keyword
 import re
+import warnings
 
 from inspect import getsource
 from numba import njit
@@ -18,7 +19,7 @@ from numba.core.types.function_type import CompileResultWAP
 from numbox.core.configurations import jit_options as _default_jit_options
 from numbox.core.variable.variable import make_qual_name
 from numbox.utils.preprocessing import (
-    _anchor_path, _materialize_anchor, _orphan_anchor_sweep,
+    _anchor_root, _materialize_anchor, _orphan_anchor_sweep,
 )
 
 # Names injected into the kernel exec namespace; identifiers must avoid them.
@@ -162,12 +163,24 @@ def _compile(source, bindings, jit_options, cache):
     hash_text = source + "\n# formulas:\n" + formula_src
     digest = hashlib.sha256(hash_text.encode("utf-8")).hexdigest()[:16]
     name = f"_kernel_{digest}"
-    opts = {**_default_jit_options, **(jit_options or {}), "cache": cache}
+    opts = {**_default_jit_options, **(jit_options or {})}
+    if cache is not None:
+        opts["cache"] = cache
+    opts.setdefault("cache", True)
     final_src = "@njit(**_kernel_jit_options)\n" + source.replace(
         "def _kernel(", f"def {name}(", 1
     )
-    anchor = _anchor_path(_ANCHOR_SUBDIR, "_kernel", hash_text)
-    _materialize_anchor(anchor, final_src)
+    anchor = _anchor_root(_ANCHOR_SUBDIR) / f"_kernel_{digest}.py"
+    if opts["cache"]:
+        try:
+            anchor.parent.mkdir(parents=True, exist_ok=True)
+            _materialize_anchor(anchor, final_src)
+        except OSError as e:
+            warnings.warn(
+                f"compile_kernel: cache directory unusable ({e}); "
+                f"compiling without an on-disk cache"
+            )
+            opts["cache"] = False
     code = compile(final_src, str(anchor), "exec")
     # __name__ must be an importable module so numba can rebuild the cached
     # overload's environment in another process (importlib.import_module needs
@@ -212,7 +225,7 @@ class CompiledKernel:
         return dict(zip(self.outputs, result))
 
 
-def compile_kernel(graph, required, *, jit_options=None, cache=True):
+def compile_kernel(graph, required, *, jit_options=None, cache=None):
     """Compile `graph` into a fused @njit kernel for the `required` variables."""
     required = [required] if isinstance(required, str) else list(required)
     required = list(dict.fromkeys(required))  # dedupe, preserve first-seen order
