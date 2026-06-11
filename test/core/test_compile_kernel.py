@@ -400,3 +400,21 @@ def test_safe_getsource_repr_fallback_is_per_object():
 
     a, b = _Konst(), _Konst()
     assert _safe_getsource(a) != _safe_getsource(b)
+
+
+def test_kernel_dispatcher_collectable_after_release():
+    import gc
+    import weakref
+
+    def f(x):
+        return x * 2.0
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+    ck = compile_kernel(g, "calc.y", cache=False)
+    assert ck.execute({"ext": {"x": 3.0}}) == {"calc.y": 6.0}
+    assert ck.kernel(4) == (8.0,)
+    ref = weakref.ref(ck.kernel)
+    del ck
+    for _ in range(3):
+        gc.collect()
+    assert ref() is None

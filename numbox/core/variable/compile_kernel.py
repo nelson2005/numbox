@@ -174,7 +174,7 @@ def _compile(source, bindings, jit_options, cache):
     # a real name, not None); mirrors make_graph / make_structref.
     ns = {**bindings, "njit": njit, "_kernel_jit_options": opts, "__name__": __name__}
     exec(code, ns)  # nosec B102 - JIT codegen of internal source
-    return ns[name]
+    return ns.pop(name)
 
 
 class CompiledKernel:
