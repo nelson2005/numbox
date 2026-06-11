@@ -1,0 +1,88 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-11-compile-kernel-review-fixes.md",
+  "reviewEvidence": "/home/erik/reviews/numbox-pr49-deep-dive/report.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Release the kernel exec namespace (F-06)",
+      "status": "pending",
+      "model": "opus",
+      "description": "**Goal:** A CompiledKernel whose owner drops it becomes garbage-collectable even after a real JIT compile - `return ns.pop(name)` removes the dispatcher's self-reference from its own __globals__.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py:177\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- weakref to an EXECUTED kernel (cache=False) dead after del + gc.collect x3\n- second-signature compile still works after the pop\n- full feature file green\n\n**Verify:** clean caches; venv pytest test/core/test_compile_kernel.py -v\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v\", \"acceptanceCriteria\": [\"weakref to executed kernel dead after del + gc.collect x3\", \"second-signature compile still works after pop\", \"full feature file green\"], \"model\": \"opus\", \"planTask\": 0}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Honest cache semantics and lazy anchors (F-08, F-09)",
+      "status": "pending",
+      "model": "opus",
+      "description": "**Goal:** cache precedence (param > jit_options[cache] > NUMBOX_JIT_OPTIONS > True); anchors written only when caching; unwritable cache dir degrades to uncached with a UserWarning.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (signature line 215 cache=None; _compile 159-177; imports warnings + _anchor_root)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- cache=False writes ZERO files under NUMBA_CACHE_DIR\n- env knob and jit_options cache knob honored when cache not passed\n- explicit cache=True overrides jit_options cache False\n- read-only cache dir: succeeds uncached + warning (POSIX-only test)\n- cross-process cache tests still green\n\n**Verify:** clean caches; venv pytest -k \"cache_precedence or cache_false or readonly_cache\" then full file\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v\", \"acceptanceCriteria\": [\"cache=False writes zero files\", \"env and jit_options cache knobs honored\", \"explicit param wins\", \"read-only cache dir degrades with warning\", \"cross-process tests green\"], \"model\": \"opus\", \"planTask\": 1}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Formula fingerprint machinery (F-01..F-05 core)",
+      "status": "pending",
+      "model": "opus",
+      "description": "**Goal:** Pure unit-tested _formula_fingerprint(formula) -> (text, cacheable) capturing code-object state, defaults, closure cells, referenced-global values (recursing helpers), defining module, dispatcher targetoptions; per-object fallback (cacheable=False) for anything un-canonicalizable.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (new _Unfingerprintable/_canon_value/_fingerprint_codeobj/_referenced_global_names/_fingerprint_function/_formula_fingerprint; imports numpy as np, types CodeType/FunctionType/ModuleType)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- same-line lambdas distinct; global/helper/default changes change the fingerprint\n- 2000-element arrays differing at index 500 distinct\n- set cells order-stable; recursive helpers terminate; module globals by name\n- un-canonicalizable values and cres -> cacheable=False\n\n**Verify:** clean caches; venv pytest -k fingerprint\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v -k fingerprint\", \"acceptanceCriteria\": [\"same-line lambdas distinct\", \"globals/helpers/defaults in fingerprint\", \"large-array cells distinct\", \"sets order-stable, recursion terminates\", \"fallback returns cacheable=False\"], \"model\": \"opus\", \"planTask\": 2}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Wire the fingerprint into the cache digest (F-01..05, F-07, F-16 end-to-end)",
+      "status": "pending",
+      "blockedBy": [1, 2],
+      "model": "opus",
+      "description": "**Goal:** _compile hashes fingerprints + effective compile flags (ck-digest-v2) instead of getsource text; un-fingerprintable formulas force the kernel uncached (no anchor, no numba cache, no warning noise); review stale/collision vectors demonstrably closed.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (_compile rewrite; DELETE _safe_getsource + getsource import; module docstring)\n- Test: test/core/test_compile_kernel.py (digest battery; REWRITE the two _safe_getsource tests at lines 130 and 388)\n\n**Acceptance Criteria:**\n- module-global edit between subprocess runs sharing a cache dir changes the result (no stale hit)\n- large-array and same-line-lambda collisions closed (different results)\n- error_model python vs default -> distinct kernels (raise vs inf)\n- cres kernel: zero anchors + zero cache files + no NumbaWarning, correct result\n- object-cell formula runs correctly, uncached\n- legacy cross-process tests still green\n\n**Verify:** clean caches; venv pytest full feature file\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v\", \"acceptanceCriteria\": [\"global change invalidates cache\", \"large-array and same-line-lambda collisions closed\", \"jit flags in digest\", \"cres kernel quiet uncached zero-files\", \"legacy cross-process tests green\"], \"model\": \"opus\", \"planTask\": 3}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Wider formula acceptance + eager signature checks (F-12, F-24, F-13)",
+      "status": "pending",
+      "model": "opus",
+      "description": "**Goal:** DUFunc/CFunc pass through unwrapped; non-callable formulas and arity mismatches fail at compile_kernel() time naming the qual_name; kw-only formulas no longer reach numba's bare IndexError.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (_wrap_formula; new _check_formula_arity; _generate_body binding wrapped with qual_name; imports inspect/CFunc/DUFunc)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- DUFunc and CFunc formulas compile and compute correctly\n- string formula -> eager TypeError with qual_name\n- arity mismatch and kw-only -> eager ValueError with qual_name\n- varargs accepted; cres skips the check; lazy-typing test stays green\n\n**Verify:** clean caches; venv pytest -k \"dufunc or cfunc_formula or not_callable or arity\" then full file\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v\", \"acceptanceCriteria\": [\"DUFunc and CFunc formulas work end-to-end\", \"string formula eager TypeError with qual_name\", \"arity and kw-only eager ValueError\", \"varargs accepted, cres lazy contract intact\"], \"model\": \"opus\", \"planTask\": 4}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Validate required + guard External footguns (F-11, F-10, F-17)",
+      "status": "pending",
+      "model": "opus",
+      "description": "**Goal:** Malformed required entries fail fast naming the entry; required names auto-created by External during this compile warn loudly; an External variable carrying a formula is rejected.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (compile_kernel body; _generate_body ext_sorted guard; import QUAL_SEP)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- non-string entry TypeError; dot-less entry ValueError (entry named)\n- unknown Variables name -> ValueError wrapping the substrate KeyError\n- typo'd External name compiles + UserWarning \"did not exist before compilation\"\n- formula-bearing external -> ValueError \"external but carries a formula\"\n\n**Verify:** clean caches; venv pytest -k \"required_valid or external_typo or external_formula\" then full file\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v\", \"acceptanceCriteria\": [\"TypeError/ValueError name the offending entry\", \"unknown Variables name wrapped as ValueError\", \"External typo warns but compiles\", \"formula-bearing external rejected\"], \"model\": \"opus\", \"planTask\": 5}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Contextual RecursionError for deep graphs (F-37)",
+      "status": "pending",
+      "blockedBy": [5],
+      "model": "opus",
+      "description": "**Goal:** Graphs deeper than Python's recursion limit fail with an error naming the cause and remedy (sys.setrecursionlimit) instead of a bare RecursionError.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (except RecursionError branch on the Task-5 try; import sys)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- chain deeper than the limit raises RecursionError whose message contains setrecursionlimit and the current limit\n- test runs sub-second (failure is pre-numba)\n\n**Verify:** clean caches; venv pytest ::test_deep_chain_recursion_error_is_contextual -v\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py::test_deep_chain_recursion_error_is_contextual -v\", \"acceptanceCriteria\": [\"contextual RecursionError mentions setrecursionlimit and current limit\", \"test sub-second\"], \"model\": \"opus\", \"planTask\": 6}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Save-side cache assertion + coverage gaps (F-15, F-22)",
+      "status": "pending",
+      "model": "opus",
+      "description": "**Goal:** Suite fails if kernel disk-cache SAVING silently regresses; external-only and mixed-output kernel shapes exercised end-to-end.\n\n**Files:**\n- Test: test/core/test_compile_kernel.py only (import assert_njit_cache_survives_subprocess_roundtrip from test.auxiliary_utils, mirroring test/core/test_proxy.py:15)\n\n**Acceptance Criteria:**\n- cold->warm subprocess roundtrip asserts .nbc/.nbi exist + paths/mtimes stable (helper at test/auxiliary_utils.py:78)\n- external-only output kernel end-to-end (pytest.warns wraps the expected auto-creation warning)\n- mixed external+interior outputs in requested order\n- mutation check (cache default flipped to False) makes the save-side test FAIL, then revert\n\n**Verify:** clean caches; venv pytest -k \"save_side or external_only or mixed_outputs\"\n\n```json:metadata\n{\"files\": [\"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v -k \\\"save_side or external_only or mixed_outputs\\\"\", \"acceptanceCriteria\": [\"save-side roundtrip asserts cache files + stable mtimes\", \"external-only kernel end-to-end\", \"mixed outputs end-to-end\", \"mutation check proves non-vacuity\"], \"model\": \"opus\", \"planTask\": 7}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Benchmark per-user tmp module dir (F-23)",
+      "status": "pending",
+      "model": "opus",
+      "description": "**Goal:** Benchmark's generated formula module lives in a per-user mode-0700 directory (no shared-/tmp EPERM crash, no attacker-writable exec).\n\n**Files:**\n- Modify: test/compile_kernel_benchmark.py (_formulas_dir above load_formulas; path line ~176; import getpass)\n\n**Acceptance Criteria:**\n- module path <tmp>/ck_bench_<username>/... dir mode 0700 with POSIX ownership check\n- small run (--nodes 8 --size 100 --repeats 2 --profile cheap) completes, module under the per-user dir\n- mtime stable across identical runs\n\n**Verify:** venv python test/compile_kernel_benchmark.py --nodes 8 --size 100 --repeats 2 --profile cheap\n\n```json:metadata\n{\"files\": [\"test/compile_kernel_benchmark.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python /home/erik/projects/numbox/test/compile_kernel_benchmark.py --nodes 8 --size 100 --repeats 2 --profile cheap\", \"acceptanceCriteria\": [\"per-user 0700 dir with ownership check\", \"small run completes with module under per-user dir\", \"mtime stable across identical runs\"], \"model\": \"opus\", \"planTask\": 8}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: Truthful documentation (F-14 + envelope/cache docs)",
+      "status": "pending",
+      "blockedBy": [1, 3, 4, 5, 6],
+      "model": "opus",
+      "description": "**Goal:** Docstring + rst tell the truth: eager/lazy error split, required semantics, cache tri-state precedence, digest coverage, un-fingerprintable fallback, anchor side effects, measured scale envelope.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (compile_kernel docstring - full text in plan)\n- Modify: docs/numbox.core.variable.rst (lines 220-275: Caching + Practical limits paragraphs - full rst in plan)\n\n**Acceptance Criteria:**\n- docstring covers required/jit_options/cache/error-timing/caching\n- rst Caching + Practical limits paragraphs added\n- sphinx exit 0, no new warnings vs origin/main (64 pre-existing); doc codeblocks flake8-clean\n\n**Verify:** venv sphinx-build -b html docs /tmp/sphinx-ckfix; doc-codeblock check per workflow\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"docs/numbox.core.variable.rst\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/sphinx-build -b html /home/erik/projects/numbox/docs /tmp/sphinx-ckfix\", \"acceptanceCriteria\": [\"docstring covers required/jit_options/cache/error-timing/caching\", \"rst Caching + Practical limits paragraphs\", \"sphinx exit 0 no new warnings\", \"doc codeblocks flake8-clean\"], \"model\": \"opus\", \"planTask\": 9}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: Full local CI gate, push (user-approved), fork CI",
+      "status": "pending",
+      "blockedBy": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      "model": "opus",
+      "description": "**Goal:** Every .github/workflows/ check passes locally; with explicit user approval THIS session, push to origin/feat/variable-compile-kernel and watch fork numbox_ci green.\n\n**Files:** none modified (gate + push); commits plan docs if untracked\n\n**Acceptance Criteria:**\n- full suite green (caches cleaned, pytest --durations=20)\n- both flake8 rule sets clean repo-wide\n- sphinx 0 new warnings; doc-codeblock clean; lychee clean over the changed-file set vs origin/main\n- explicit user push approval obtained (NEVER push without it)\n- fork numbox_ci green on pushed head (judge only status==completed; gh run watch --exit-status); report 27/27 + PR link https://github.com/nelson2005/numbox/pull/49\n\n**Verify:** plan Task 10 step 1 gate commands, then gh run watch -> success\n\nNOTE: upstream PR #23 cherry-pick is OUT OF SCOPE - separate consent-gated step.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test --durations=20\", \"acceptanceCriteria\": [\"full suite green\", \"both flake8 sets clean\", \"sphinx/doc-codeblock/lychee clean\", \"explicit user push approval obtained\", \"fork numbox_ci green on pushed head\"], \"model\": \"opus\", \"planTask\": 10}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-11T20:32:56Z"
+}
