@@ -12,6 +12,10 @@ import re
 import warnings
 
 from inspect import getsource
+from types import CodeType, FunctionType, ModuleType
+
+import numpy as np
+
 from numba import njit
 from numba.core.dispatcher import Dispatcher
 from numba.core.types.function_type import CompileResultWAP
@@ -71,6 +75,107 @@ def _wrap_formula(formula):
     if isinstance(formula, (Dispatcher, CompileResultWAP)):
         return formula
     return njit(formula)
+
+
+class _Unfingerprintable(Exception):
+    """A value the cache digest cannot canonicalize; the kernel goes uncached."""
+
+
+def _canon_value(value, seen):
+    if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
+        return repr(value)
+    if isinstance(value, np.ndarray):
+        data = np.ascontiguousarray(value)
+        raw = hashlib.sha256(data.tobytes()).hexdigest()
+        return f"ndarray({data.dtype.str};{data.shape};{raw})"
+    if isinstance(value, (tuple, list)):
+        return f"{type(value).__name__}[" + ",".join(_canon_value(v, seen) for v in value) + "]"
+    if isinstance(value, (set, frozenset)):
+        return f"{type(value).__name__}[" + ",".join(sorted(_canon_value(v, seen) for v in value)) + "]"
+    if isinstance(value, dict):
+        items = sorted((_canon_value(k, seen), _canon_value(v, seen)) for k, v in value.items())
+        return "dict[" + ",".join(f"{k}:{v}" for k, v in items) + "]"
+    if isinstance(value, ModuleType):
+        return f"module({value.__name__})"
+    if isinstance(value, Dispatcher):
+        topts = _canon_value(dict(getattr(value, "targetoptions", {}) or {}), seen)
+        return f"dispatcher({_fingerprint_function(value.py_func, seen)};{topts})"
+    if isinstance(value, FunctionType):
+        return f"function({_fingerprint_function(value, seen)})"
+    raise _Unfingerprintable(type(value).__name__)
+
+
+def _fingerprint_codeobj(code, seen):
+    consts = ",".join(
+        _fingerprint_codeobj(c, seen) if isinstance(c, CodeType) else _canon_value(c, seen)
+        for c in code.co_consts
+    )
+    return (
+        f"code({code.co_code.hex()};flags={code.co_flags};argc={code.co_argcount};"
+        f"kwonly={code.co_kwonlyargcount};names={','.join(code.co_names)};consts=[{consts}])"
+    )
+
+
+def _referenced_global_names(code):
+    names = set(code.co_names)
+    for c in code.co_consts:
+        if isinstance(c, CodeType):
+            names |= _referenced_global_names(c)
+    return names
+
+
+def _fingerprint_function(func, seen):
+    if id(func) in seen:
+        return f"recursive({func.__qualname__})"
+    seen = seen | {id(func)}
+    code = func.__code__
+    cells = []
+    for name, cell in zip(code.co_freevars, func.__closure__ or ()):
+        try:
+            contents = cell.cell_contents
+        except ValueError as e:
+            raise _Unfingerprintable("empty closure cell") from e
+        cells.append(f"{name}={_canon_value(contents, seen)}")
+    hashed_globals = []
+    for name in sorted(_referenced_global_names(code)):
+        if name in func.__globals__:
+            hashed_globals.append(f"{name}={_canon_value(func.__globals__[name], seen)}")
+    return (
+        f"func({func.__module__}:{func.__qualname__};{_fingerprint_codeobj(code, seen)};"
+        f"defaults={_canon_value(func.__defaults__ or (), seen)};"
+        f"kwdefaults={_canon_value(func.__kwdefaults__ or {}, seen)};"
+        f"closure=[{';'.join(cells)}];globals=[{';'.join(hashed_globals)}])"
+    )
+
+
+def _formula_fingerprint(formula):
+    """Behavioral identity of a formula for the cache digest.
+
+    Returns ``(text, cacheable)``. The text covers every value channel
+    numba freezes into a compiled artifact: code-object bytecode/consts/
+    names, default-argument values, closure-cell values, the values of
+    referenced module-level globals (recursing into helper functions and
+    dispatchers, with cycle protection), the defining module, and
+    dispatcher targetoptions. Builtins resolve outside ``__globals__``
+    and are deliberately not hashed. Any value with no canonical form
+    makes the formula un-fingerprintable: the returned text is then a
+    per-object placeholder and ``cacheable`` is False, so the kernel is
+    compiled without an on-disk cache -- never reused, never wrong.
+    """
+    target = getattr(formula, "py_func", None)
+    if target is None:
+        target = getattr(formula, "__wrapped__", None)
+    if target is None:
+        target = formula
+    if not isinstance(target, FunctionType):
+        return f"{repr(formula)} @{id(formula)}", False
+    extra = ""
+    if isinstance(formula, Dispatcher):
+        extra = ";targetoptions=" + _canon_value(dict(formula.targetoptions or {}), set())
+    try:
+        return _fingerprint_function(target, set()) + extra, True
+    except _Unfingerprintable:
+        return f"{repr(formula)} @{id(formula)}", False
 
 
 def _safe_getsource(formula):

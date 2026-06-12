@@ -484,3 +484,99 @@ def test_readonly_cache_dir_degrades_gracefully(tmp_path):
         assert "cache directory unusable" in stderr
     finally:
         cache_dir.chmod(0o700)
+
+
+def test_fingerprint_same_line_lambdas_distinct():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+    f10, f1000 = (lambda y: y * 10.0), (lambda y: y * 1000.0)
+    fp_a, ok_a = _formula_fingerprint(f10)
+    fp_b, ok_b = _formula_fingerprint(f1000)
+    assert ok_a and ok_b
+    assert fp_a != fp_b
+
+
+def test_fingerprint_covers_globals_helpers_defaults():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+    src = textwrap.dedent("""
+        SCALE = {scale}
+        def helper(v):
+            return v {op} 1.0
+        def f(x, m={default}):
+            return helper(x) * SCALE * m
+    """)
+    variants = {}
+    for key, (scale, op, default) in {
+        "base": ("2.0", "+", "1.0"),
+        "global": ("3.0", "+", "1.0"),
+        "helper": ("2.0", "-", "1.0"),
+        "default": ("2.0", "+", "5.0"),
+    }.items():
+        ns = {}
+        exec(compile(src.format(scale=scale, op=op, default=default), f"<fp-{key}>", "exec"), ns)
+        fp, ok = _formula_fingerprint(ns["f"])
+        assert ok
+        variants[key] = fp
+    assert len(set(variants.values())) == 4
+
+
+def test_fingerprint_large_array_cells_distinct():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    def factory(a):
+        return lambda x: x + a[500]
+
+    a1, a2 = np.zeros(2000), np.zeros(2000)
+    a2[500] = 1.0
+    assert repr(a1) == repr(a2)
+    fp1, _ = _formula_fingerprint(factory(a1))
+    fp2, _ = _formula_fingerprint(factory(a2))
+    assert fp1 != fp2
+
+
+def test_fingerprint_set_cells_order_stable():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    def factory(s):
+        return lambda x: x if x in s else -x
+
+    s1 = {"alpha", "beta", "gamma"}
+    s2 = set(reversed(sorted(s1)))
+    assert _formula_fingerprint(factory(s1))[0] == _formula_fingerprint(factory(s2))[0]
+
+
+def test_fingerprint_recursive_helpers_terminate():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+    ns = {}
+    exec(textwrap.dedent("""
+        def even(n):
+            return n == 0 or odd(n - 1)
+        def odd(n):
+            return n != 0 and even(n - 1)
+        def f(x):
+            return x if even(int(x)) else -x
+    """), ns)
+    fp, ok = _formula_fingerprint(ns["f"])
+    assert ok and "recursive(" in fp
+
+
+def test_fingerprint_fallback_paths():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    class Boom:
+        def __repr__(self):
+            raise RuntimeError("no repr")
+
+    def factory(cfg):
+        return lambda x: x if cfg is None else x
+
+    boom_lambda = factory(Boom())
+    assert boom_lambda.__closure__ is not None
+    fp, ok = _formula_fingerprint(boom_lambda)
+    assert not ok and " @" in fp
+
+    @cres(float64(float64))
+    def wap(x):
+        return x * 3.0
+
+    fp2, ok2 = _formula_fingerprint(wap)
+    assert not ok2
