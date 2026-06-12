@@ -79,6 +79,7 @@ import getpass
 import importlib.util
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -159,7 +160,8 @@ def _atomic_write(path, text):
 
 
 def _formulas_dir():
-    d = pathlib.Path(tempfile.gettempdir()) / f"ck_bench_{getpass.getuser()}"
+    user = re.sub(r"[^0-9A-Za-z._-]", "_", getpass.getuser())
+    d = pathlib.Path(tempfile.gettempdir()) / f"ck_bench_{user}"
     d.mkdir(mode=0o700, exist_ok=True)
     if hasattr(os, "getuid"):
         if d.stat().st_uid != os.getuid():

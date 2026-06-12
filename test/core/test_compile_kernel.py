@@ -428,6 +428,7 @@ def test_kernel_dispatcher_collectable_after_release():
 
 
 _CACHE_PROBE = """
+    import ast
     import pathlib
     import sys
     from numbox.core.variable.variable import Graph
@@ -437,7 +438,7 @@ _CACHE_PROBE = """
         return x + 1.0
 
     g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
-    kwargs = eval(sys.argv[1])
+    kwargs = ast.literal_eval(sys.argv[1])
     ck = compile_kernel(g, "calc.y", **kwargs)
     print(ck.execute({"ext": {"x": 1.0}})["calc.y"])
 """

@@ -369,8 +369,8 @@ def compile_kernel(graph, required, *, jit_options=None, cache=None):
 
     :param graph: a `Graph`; its dependency structure and formulas are fused
         into one straight-line @njit function (see `CompiledKernel`).
-    :param required: qualified name or list of qualified names. Order is
-        preserved (first occurrence wins) and fixes the order of
+    :param required: qualified name or list of qualified names. Duplicates are
+        removed; order is preserved (first occurrence wins) and fixes the order of
         `CompiledKernel.outputs` / the kernel's return tuple.
     :param jit_options: merged over numbox's defaults
         (`NUMBOX_JIT_OPTIONS` env) and passed to @njit. All options except
