@@ -995,3 +995,92 @@ def test_mixed_outputs_end_to_end():
         ck = compile_kernel(g, ["calc.y", "ext.x"])
     assert ck.outputs == ["calc.y", "ext.x"]
     assert ck.execute({"ext": {"x": 2.0}}) == {"calc.y": 20.0, "ext.x": 2.0}
+
+
+def test_fingerprint_object_array_is_unfingerprintable():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    def factory(a):
+        return lambda x: x if a is None else x
+
+    arr = np.array([object(), object()], dtype=object)
+    fp, ok = _formula_fingerprint(factory(arr))
+    assert not ok and " @" in fp
+
+
+def test_object_array_closure_kernel_uncached(tmp_path):
+    # An object-dtype array in a formula's closure is un-fingerprintable, so the
+    # kernel is marked uncacheable: no anchor and no numba cache files. (numba
+    # itself cannot njit-compile a formula that closes over a pyobject array, so
+    # execution raises a TypingError -- the load-bearing claim is the empty cache
+    # dir, proving the un-fingerprintable formula never wrote an anchor.)
+    probe = tmp_path / "probe.py"
+    probe.write_text(textwrap.dedent("""
+        import numpy as np
+        from numba.core.errors import TypingError
+        from numbox.core.variable.variable import Graph
+        from numbox.core.variable.compile_kernel import compile_kernel
+
+        objs = np.array([object(), object()], dtype=object)
+
+        def factory(a):
+            keep = a
+            return lambda x: x + (0.0 if keep is None else 1.0)
+
+        g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": factory(objs)}]}, ["ext"])
+        ck = compile_kernel(g, "calc.y")
+        try:
+            ck.execute({"ext": {"x": 1.0}})
+        except TypingError:
+            pass
+        print("DONE")
+    """))
+    cache_dir = tmp_path / "nbcache"
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
+    p = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True, env=env)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == "DONE"
+    files = [q for q in cache_dir.rglob("*") if q.is_file()] if cache_dir.exists() else []
+    assert files == []
+
+
+def test_fingerprint_numpy_scalar_cells_cacheable_and_distinct():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    def factory(k):
+        return lambda x: x + k
+
+    fp5, ok5 = _formula_fingerprint(factory(np.int64(5)))
+    fp6, ok6 = _formula_fingerprint(factory(np.int64(6)))
+    fpf, okf = _formula_fingerprint(factory(np.float32(2.5)))
+    assert ok5 and ok6 and okf
+    assert fp5 != fp6
+    assert len({fp5, fp6, fpf}) == 3
+
+
+def test_fingerprint_dispatcher_bad_targetoption_downgrades_not_crashes():
+    from numba import njit
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    @njit
+    def d(x):
+        return x + 1.0
+
+    d.targetoptions["_review_probe"] = object()  # un-canonicalizable
+    fp, ok = _formula_fingerprint(d)
+    assert not ok and " @" in fp
+
+
+def test_compile_self_referential_jit_option_no_recursionerror(tmp_path):
+    loop = []
+    loop.append(loop)
+
+    def f(x):
+        return x + 1.0
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+    # an un-canonicalizable jit flag must not let RecursionError escape the digest path;
+    # numba will reject the unknown option with its OWN error instead.
+    with pytest.raises(Exception) as ei:
+        compile_kernel(g, "calc.y", jit_options={"_review_loop": loop}).execute({"ext": {"x": 1.0}})
+    assert not isinstance(ei.value, RecursionError)

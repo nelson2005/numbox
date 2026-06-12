@@ -95,9 +95,16 @@ class _Unfingerprintable(Exception):
 def _canon_value(value, seen):
     if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
         return repr(value)
+    if isinstance(value, np.generic):
+        return f"npscalar({value.dtype.str};{value.tobytes().hex()})"
     if isinstance(value, np.ndarray):
+        if value.dtype.hasobject:
+            raise _Unfingerprintable(f"object-dtype ndarray {value.dtype.str}")
         data = np.ascontiguousarray(value)
-        raw = hashlib.sha256(data.tobytes()).hexdigest()
+        try:
+            raw = hashlib.sha256(data.tobytes()).hexdigest()
+        except (ValueError, TypeError) as e:
+            raise _Unfingerprintable(f"unhashable ndarray {value.dtype.str}") from e
         return f"ndarray({data.dtype.str};{value.shape};{raw})"
     if isinstance(value, (tuple, list)):
         return f"{type(value).__name__}[" + ",".join(_canon_value(v, seen) for v in value) + "]"
@@ -179,15 +186,15 @@ def _formula_fingerprint(formula):
     target = getattr(formula, "py_func", None)
     extra = ""
     if target is None and isinstance(formula, (DUFunc, CFunc)):
-        target = formula.__wrapped__
+        target = getattr(formula, "__wrapped__", None)
         extra = f";kind={type(formula).__name__}"
     if target is None:
         target = formula
     if not isinstance(target, FunctionType):
         return f"{repr(formula)} @{id(formula)}", False
-    if isinstance(formula, Dispatcher):
-        extra += ";targetoptions=" + _canon_value(dict(formula.targetoptions or {}), set())
     try:
+        if isinstance(formula, Dispatcher):
+            extra += ";targetoptions=" + _canon_value(dict(formula.targetoptions or {}), set())
         return _fingerprint_function(target, set()) + extra, not isinstance(formula, CFunc)
     except (_Unfingerprintable, RecursionError):
         return f"{repr(formula)} @{id(formula)}", False
@@ -287,7 +294,7 @@ def _compile(source, bindings, jit_options, cache):
     flags = {k: v for k, v in opts.items() if k != "cache"}
     try:
         flags_canon = _canon_value(flags, set())
-    except _Unfingerprintable:
+    except (_Unfingerprintable, RecursionError):
         flags_canon = repr(sorted(flags.items(), key=repr))
         cacheable = False
     hash_text = (
