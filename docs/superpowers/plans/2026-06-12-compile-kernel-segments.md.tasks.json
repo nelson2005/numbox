@@ -6,7 +6,7 @@
     {
       "id": 0,
       "subject": "Task 0: Partition data structures, plan walker, greedy linearizer, liveness",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** _kernel_partition.py exists with Segment/PartitionReport, _JitStep/_PyStep/_Plan (working run), linearize (greedy color-sticky, best-of-both-starts, deterministic), build_runs + segment_liveness - pure logic, unit-tested without numba compilation.\n\n**Files:**\n- Create: numbox/core/variable/_kernel_partition.py\n- Modify: docs/superpowers/specs/2026-06-12-compile-kernel-segments-design.md (section 6 paragraph)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- linearize on parallel-chains graph yields 2 runs (best-of-both-starts), respects all edges, deterministic\n- build_runs groups consecutive same-color nodes; segment_liveness qual-sorted; required outputs always live-out\n- _Plan.run threads values through stub callables; str(PartitionReport) renders mode/nodes/reasons\n- Spec section 6 amended to best-of-both-starts wording\n\n**Verify:** clean caches, then venv pytest test/core/test_compile_kernel.py -k \"linearize or partition_report or plan_run or liveness\" -v -> 5 pass\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/_kernel_partition.py\", \"test/core/test_compile_kernel.py\", \"docs/superpowers/specs/2026-06-12-compile-kernel-segments-design.md\"], \"verifyCommand\": \"venv pytest -k 'linearize or partition_report or plan_run or liveness' per plan conventions\", \"acceptanceCriteria\": [\"2-run parallel-chains linearization, deterministic, edge-respecting\", \"build_runs/segment_liveness correct and qual-sorted\", \"_Plan.run and PartitionReport str work\", \"spec section 6 amended\"], \"model\": \"opus\"}\n```"
     },
@@ -21,7 +21,9 @@
       "id": 2,
       "subject": "Task 2: Discovery - one-pass warm-up + probe",
       "status": "pending",
-      "blockedBy": [0],
+      "blockedBy": [
+        0
+      ],
       "model": "opus",
       "description": "**Goal:** discover() walks nodes in topo order with real values: probes Dispatcher.compile(typeof(inputs)), demotes on numba compile errors or untypeable inputs (recording reasons), evaluates every node (compiled dispatcher / py_func / exotic shim), propagates runtime errors.\n\n**Files:**\n- Modify: numbox/core/variable/_kernel_partition.py\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- json-using formula demoted with TypingError: reason; value computed via Python\n- Object-returning formula demoted; consumers demoted with 'is not numba-typeable' reasons\n- ZeroDivisionError propagates (no demotion); jittable values via compiled dispatcher\n- cres CompileResultWAP formula evaluated via @njit shim, not demoted\n\n**Verify:** clean caches, venv pytest test/core/test_compile_kernel.py -k discover -v -> 4 pass\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/_kernel_partition.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"venv pytest -k discover -v per plan conventions\", \"acceptanceCriteria\": [\"unjittable demoted with reason\", \"object chain demotes consumers\", \"runtime errors propagate\", \"exotic shim works\"], \"model\": \"opus\"}\n```"
     },
@@ -29,7 +31,9 @@
       "id": 3,
       "subject": "Task 3: CompiledKernel state machine - virgin to fused path",
       "status": "pending",
-      "blockedBy": [0],
+      "blockedBy": [
+        0
+      ],
       "model": "opus",
       "description": "**Goal:** CompiledKernel becomes mode-aware: kernel property (resolver while virgin, bare dispatcher once fused), first successful call sets mode=fused + single-jit-segment PartitionReport; whole existing suite green.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py:342-444 (CompiledKernel, compile_kernel tail, imports)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- ck.partition None pre-call; after one call on all-jittable graph -> PartitionReport(mode=fused) with one jit segment (all non-external nodes, fused source, empty reasons)\n- After first call isinstance(ck.kernel, Dispatcher) is True\n- Early-grabbed ck.kernel ref still works post-resolution\n- Entire existing suite green\n\n**Verify:** clean caches, venv pytest test/core/test_compile_kernel.py -v -> all pass incl. test_fused_mode_resolution\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"venv pytest test/core/test_compile_kernel.py -v per plan conventions\", \"acceptanceCriteria\": [\"partition None pre-call, fused report post-call\", \"kernel is bare Dispatcher after first call\", \"early ref works\", \"suite green\"], \"model\": \"opus\"}\n```"
     },
@@ -37,7 +41,12 @@
       "id": 4,
       "subject": "Task 4: Segmented path - discovery integration, segment compile, master, plan replacement",
       "status": "pending",
-      "blockedBy": [0, 1, 2, 3],
+      "blockedBy": [
+        0,
+        1,
+        2,
+        3
+      ],
       "model": "opus",
       "description": "**Goal:** _discover_and_run is real: discovery -> linearize -> runs -> liveness -> per-run segment codegen + _compile + eager dispatcher.compile -> _Plan + segmented PartitionReport; warm-up call returns correct outputs; later calls run the plan; segment compile error on new types replaces the plan.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (CompiledKernel._discover_and_run)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- Goykhman example n1-n5 (n3 json) -> partition exactly jit(n1,n2)/python(n3)/jit(n4,n5); calls 1 and 2 equal CompiledGraph result\n- Object chain (_Opaque with __mul__/__add__): consecutive demoted nodes in ONE python segment; correct on calls 1+2\n- All-demoted graph: zero jit segments, correct results\n- Plan replacement: float sig learns 2-segment plan; _Opaque external breaks segment -> re-discovery replaces plan (all-python); old float sig still correct after\n- ck.execute works in segmented mode\n\n**Verify:** clean caches, venv pytest test/core/test_compile_kernel.py -k \"segmented or goykhman or plan_replacement\" -v -> 4 pass, then full file all green\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"venv pytest -k 'segmented or goykhman or plan_replacement' -v then full file, per plan conventions\", \"acceptanceCriteria\": [\"Goykhman 2-segment example exact\", \"grouped python run\", \"all-python works\", \"plan replacement works\", \"execute works segmented\"], \"model\": \"opus\"}\n```"
     },
@@ -45,7 +54,9 @@
       "id": 5,
       "subject": "Task 5: Per-segment caching across processes",
       "status": "pending",
-      "blockedBy": [4],
+      "blockedBy": [
+        4
+      ],
       "model": "opus",
       "description": "**Goal:** Prove segments are content-addressed cached: fresh subprocess re-discovers and its segment compiles hit numba's on-disk cache; identical jit runs share a digest harmlessly.\n\n**Files:**\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- Subprocess A (own NUMBA_CACHE_DIR, cache=True) -> segmented mode, correct outputs, .nbc entries created\n- Subprocess B (same cache dir) passes with .nbc count unchanged (pure cache hits)\n- Identical-segment graph compiles and runs correctly twice\n\n**Verify:** clean caches, venv pytest test/core/test_compile_kernel.py -k \"segment_cache or shared_digest\" -v -> 2 pass\n\n```json:metadata\n{\"files\": [\"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"venv pytest -k 'segment_cache or shared_digest' -v per plan conventions\", \"acceptanceCriteria\": [\"subprocess roundtrip: nbc created then stable\", \"identical segments harmless\"], \"model\": \"opus\"}\n```"
     },
@@ -53,7 +64,9 @@
       "id": 6,
       "subject": "Task 6: Benchmark --python-nodes mode",
       "status": "pending",
-      "blockedBy": [4],
+      "blockedBy": [
+        4
+      ],
       "model": "opus",
       "description": "**Goal:** test/compile_kernel_benchmark.py gains --python-nodes K: inject K evenly-spaced non-jittable (json-calling) nodes into the N-node chain; report discovery time, segmented steady-state vs CompiledGraph, segment count from ck.partition.\n\n**Files:**\n- Modify: test/compile_kernel_benchmark.py\n\n**Acceptance Criteria:**\n- --python-nodes 0 (default) leaves every existing mode's output unchanged\n- --python-nodes 3 --nodes 100 prints: segment count, demoted count, first-call discovery seconds, steady-state ns/node segmented vs CompiledGraph\n- flake8-clean\n\n**Verify:** clean caches, venv python test/compile_kernel_benchmark.py --nodes 100 --python-nodes 3 -> report block, exit 0; then without --python-nodes -> unchanged\n\n```json:metadata\n{\"files\": [\"test/compile_kernel_benchmark.py\"], \"verifyCommand\": \"venv python test/compile_kernel_benchmark.py --nodes 100 --python-nodes 3 per plan conventions\", \"acceptanceCriteria\": [\"default unchanged\", \"python-nodes report prints\", \"flake8 clean\"], \"model\": \"opus\"}\n```"
     },
@@ -61,7 +74,9 @@
       "id": 7,
       "subject": "Task 7: Docs - rst subsection, docstrings, module docstring",
       "status": "pending",
-      "blockedBy": [4],
+      "blockedBy": [
+        4
+      ],
       "model": "opus",
       "description": "**Goal:** Docs tell the v2 truth: rst gains 'Graphs with non-jittable nodes' subsection (auto-detection, PartitionReport, N1-N5 worked example, caching/determinism, plan-replacement limitation); module + compile_kernel + CompiledKernel docstrings updated.\n\n**Files:**\n- Modify: docs/numbox.core.variable.rst\n- Modify: numbox/core/variable/compile_kernel.py (module docstring lines 1-14; compile_kernel docstring ~378-407; CompiledKernel docstring)\n\n**Acceptance Criteria:**\n- rst subsection with flake8-clean code-block (json middle node, ck.partition inspection)\n- Module docstring covers both modes + demotion contract\n- compile_kernel docstring documents .partition, hot-path-callable .kernel, plan-replacement limitation\n- sphinx exit 0, warnings <= 64 baseline\n\n**Verify:** venv sphinx-build -b html docs /tmp/numbox-docs-v2 -> exit 0, warnings <= 64; mirror doc-codeblock workflow locally\n\n```json:metadata\n{\"files\": [\"docs/numbox.core.variable.rst\", \"numbox/core/variable/compile_kernel.py\"], \"verifyCommand\": \"venv sphinx-build -b html docs /tmp/numbox-docs-v2; warnings <= 64\", \"acceptanceCriteria\": [\"rst subsection present + lint-clean\", \"docstrings updated\", \"sphinx baseline held\"], \"model\": \"opus\"}\n```"
     },
@@ -69,10 +84,15 @@
       "id": 8,
       "subject": "Task 8: Full local CI gate",
       "status": "pending",
-      "blockedBy": [4, 5, 6, 7],
+      "blockedBy": [
+        4,
+        5,
+        6,
+        7
+      ],
       "model": "opus",
       "description": "**Goal:** Every check the fork CI runs passes locally before any push is proposed; tasks.json statuses updated. NO push - consent-gated, outside this plan.\n\n**Files:**\n- Modify: docs/superpowers/plans/2026-06-12-compile-kernel-segments.md.tasks.json (statuses)\n\n**Acceptance Criteria:**\n- Full test suite green (whole test/ tree, caches cleaned, --durations=20)\n- Both flake8 passes clean\n- sphinx exit 0, warnings <= 64\n- Every workflow in .github/workflows/ mirrored locally against the changed file set (incl. lychee on changed .py/.rst/.md)\n- No push performed\n\n**Verify:** all gate commands in plan Task 8 exit 0\n\n```json:metadata\n{\"files\": [\"docs/superpowers/plans/2026-06-12-compile-kernel-segments.md.tasks.json\"], \"verifyCommand\": \"full gate command set in plan Task 8\", \"acceptanceCriteria\": [\"full suite green\", \"flake8 x2 clean\", \"sphinx <= 64 warnings\", \"all workflows mirrored\", \"no push\"], \"model\": \"opus\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-12T20:30:50Z"
+  "lastUpdated": "2026-06-12T20:48:26Z"
 }
