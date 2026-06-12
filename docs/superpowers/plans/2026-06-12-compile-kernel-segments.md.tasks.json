@@ -30,7 +30,7 @@
     {
       "id": 3,
       "subject": "Task 3: CompiledKernel state machine - virgin to fused path",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         0
       ],
@@ -94,5 +94,5 @@
       "description": "**Goal:** Every check the fork CI runs passes locally before any push is proposed; tasks.json statuses updated. NO push - consent-gated, outside this plan.\n\n**Files:**\n- Modify: docs/superpowers/plans/2026-06-12-compile-kernel-segments.md.tasks.json (statuses)\n\n**Acceptance Criteria:**\n- Full test suite green (whole test/ tree, caches cleaned, --durations=20)\n- Both flake8 passes clean\n- sphinx exit 0, warnings <= 64\n- Every workflow in .github/workflows/ mirrored locally against the changed file set (incl. lychee on changed .py/.rst/.md)\n- No push performed\n\n**Verify:** all gate commands in plan Task 8 exit 0\n\n```json:metadata\n{\"files\": [\"docs/superpowers/plans/2026-06-12-compile-kernel-segments.md.tasks.json\"], \"verifyCommand\": \"full gate command set in plan Task 8\", \"acceptanceCriteria\": [\"full suite green\", \"flake8 x2 clean\", \"sphinx <= 64 warnings\", \"all workflows mirrored\", \"no push\"], \"model\": \"opus\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-12T21:15:57Z"
+  "lastUpdated": "2026-06-12T21:35:45Z"
 }

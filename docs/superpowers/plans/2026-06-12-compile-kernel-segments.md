@@ -1280,6 +1280,8 @@ git -C /home/erik/projects/numbox commit -m "compile_kernel benchmark: --python-
 
 **Steps:**
 
+- [ ] **Step 0: Fix the now-stale v1 wording in `docs/numbox.core.variable.rst`.** The Task 3 review found the rst actively contradicts the new behavior: ~line 239 calls `.kernel` "the bare numba dispatcher — positional in, tuple out — for the zero-overhead hot path" and ~line 300 repeats "the bare ``ck.kernel``" — both must adopt the hot-path-callable wording (resolver before first call, bare dispatcher once fused, master when segmented); the "v1 fused path with two deliberate limitations" paragraph (~lines 246-249) needs rewriting for segmented mode. Read the section in full and update every sentence the v2 behavior falsifies.
+
 - [ ] **Step 1: Write the rst subsection** (append to the compile_kernel section of `docs/numbox.core.variable.rst`):
 
 ```rst
