@@ -827,7 +827,9 @@ Expected: FAIL with AttributeError on `partition`
             return self._discover_and_run(args)
 
     def _discover_and_run(self, args):
-        raise NotImplementedError   # segmented path lands in the next commit
+        """Segmented execution; not yet wired -- defer to the fused dispatcher
+        so error timing stays exactly v1 until the segmented path lands."""
+        return self._fused(*args)
 
     def execute(self, external_values):
         """Dict-in / dict-out convenience, symmetric with CompiledGraph.execute."""
@@ -1018,10 +1020,14 @@ def test_plan_replacement_on_new_signature():
 
 (In `test_plan_replacement_on_new_signature` the trailing-comma lines compare against a 1-tuple, matching the kernel's tuple return.)
 
-- [ ] **Step 2: Run them — expect FAIL** (`NotImplementedError` from `_discover_and_run`)
+- [ ] **Step 2: Run them — expect FAIL** (the `_discover_and_run` stub defers to the fused dispatcher, so these graphs raise numba typing errors instead of partitioning)
 
 Run: `<clean-caches> && <pytest> /home/erik/projects/numbox/test/core/test_compile_kernel.py -k "segmented or goykhman or plan_replacement" -v`
-Expected: 4 FAIL with NotImplementedError
+Expected: 4 FAIL (TypingError/UnsupportedBytecodeError surfacing through the stub)
+
+- [ ] **Step 2b: Rewrite the two v1 tests whose semantics this feature deliberately changes.** v2's whole point is that graphs which used to fail numba typing at first call now succeed via demotion (spec §9: "fused attempt fails to type → silent fallback to discovery"). Two pre-existing tests assert the OLD contract and must be rewritten to the new one — read each test body first, preserve its protective intent:
+  - `test_non_jittable_formula_fails_at_first_call_not_compile`: the `pytest.raises(TypingError)` at first call becomes: the call **succeeds** (value asserted against the formula's Python result), `ck.partition.mode == "segmented"`, the non-jittable node's qual_name is in `ck.partition.python_nodes`, and a reason is recorded for it. Keep the part of the test asserting that `compile_kernel()` itself raises nothing (eager/lazy split — structural errors eager, jittability resolution at first call).
+  - `test_object_array_closure_kernel_uncached`: the subprocess's `TypingError` expectation becomes call-succeeds-via-demotion. Preserve the test's protective intent — no on-disk cache entries are written for this graph: with the only node demoted there are zero jit segments, so the cache-dir-empty assertion stays valid; keep it.
 
 - [ ] **Step 3: Implement `_discover_and_run`** (replace the stub in `CompiledKernel`)
 
