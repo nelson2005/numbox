@@ -127,18 +127,20 @@ def test_generate_body_external_as_only_output():
     assert source == f"def _kernel({y_ident}):\n    return ({y_ident},)\n"
 
 
-def test_safe_getsource_named_function_and_cres():
-    from numbox.core.variable.compile_kernel import _safe_getsource
+def test_fingerprint_named_function_and_cres():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
 
     @njit
     def named(x):
         return x + 41
-    src = _safe_getsource(named)
-    assert "return x + 41" in src
+    text, ok = _formula_fingerprint(named)
+    assert ok
+    assert named.py_func.__qualname__ in text
 
     wap = cres(float64(float64))(lambda x: x * 2.0)
-    s = _safe_getsource(wap)             # must not raise
-    assert isinstance(s, str) and s      # non-empty (repr fallback is acceptable)
+    text2, ok2 = _formula_fingerprint(wap)   # must not raise
+    assert not ok2                           # cres WAP is un-fingerprintable
+    assert isinstance(text2, str) and text2  # non-empty per-object fallback
 
 
 def test_compile_runs():
@@ -385,11 +387,11 @@ def test_compile_kernel_duplicate_required_deduped():
     assert ck.kernel(100) == (326.5,)
 
 
-def test_safe_getsource_repr_fallback_is_per_object():
-    # A callable whose source can't be recovered and whose __repr__ is
+def test_fingerprint_fallback_is_per_object():
+    # A callable whose source can't be fingerprinted and whose __repr__ is
     # non-unique must still hash distinctly per object (via the id() suffix),
     # so two such formulas never collide in the content-addressed cache.
-    from numbox.core.variable.compile_kernel import _safe_getsource
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
 
     class _Konst:
         def __repr__(self):
@@ -399,7 +401,11 @@ def test_safe_getsource_repr_fallback_is_per_object():
             return x
 
     a, b = _Konst(), _Konst()
-    assert _safe_getsource(a) != _safe_getsource(b)
+    text_a, ok_a = _formula_fingerprint(a)
+    text_b, ok_b = _formula_fingerprint(b)
+    assert not ok_a and not ok_b
+    assert text_a != text_b
+    assert " @" in text_a and " @" in text_b
 
 
 def test_kernel_dispatcher_collectable_after_release():
@@ -627,3 +633,142 @@ def test_fingerprint_deep_nesting_downgrades_not_crashes():
 
     fp, ok = _formula_fingerprint(factory(deep))
     assert not ok and " @" in fp
+
+
+_DIGEST_PROBE = """
+    import sys
+    sys.path.insert(0, {moddir!r})
+    import formulas_mod
+    from numbox.core.variable.variable import Graph
+    from numbox.core.variable.compile_kernel import compile_kernel
+
+    g = Graph({{"calc": [{{"name": "y", "inputs": {{"x": "ext"}}, "formula": formulas_mod.f}}]}}, ["ext"])
+    ck = compile_kernel(g, "calc.y")
+    print(ck.execute({{"ext": {{"x": 10.0}}}})["calc.y"])
+"""
+
+
+def test_digest_global_change_invalidates_cache(tmp_path):
+    moddir = tmp_path / "mods"
+    moddir.mkdir()
+    mod = moddir / "formulas_mod.py"
+    runner = tmp_path / "run.py"
+    runner.write_text(textwrap.dedent(_DIGEST_PROBE.format(moddir=str(moddir))))
+    # Disable .pyc caching: the two writes can land in the same mtime tick and
+    # are the same byte length, so a cached bytecode would mask the second
+    # source -- we want the subprocess to recompile from the new SCALE each run.
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(tmp_path / "nbcache"),
+           "PYTHONDONTWRITEBYTECODE": "1"}
+
+    mod.write_text("SCALE = 2.0\ndef f(x):\n    return x * SCALE\n")
+    p1 = subprocess.run([sys.executable, str(runner)], capture_output=True, text=True, env=env)
+    assert p1.returncode == 0, p1.stderr
+    assert p1.stdout.strip() == "20.0"
+
+    mod.write_text("SCALE = 3.0\ndef f(x):\n    return x * SCALE\n")
+    p2 = subprocess.run([sys.executable, str(runner)], capture_output=True, text=True, env=env)
+    assert p2.returncode == 0, p2.stderr
+    assert p2.stdout.strip() == "30.0"
+
+
+def test_digest_large_array_closure_no_collision():
+    def factory(a):
+        return lambda x: x + a[500]
+
+    results = []
+    for fill in (0.0, 1.0):
+        a = np.zeros(2000)
+        a[500] = fill
+        g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": factory(a)}]}, ["ext"])
+        results.append(compile_kernel(g, "calc.y").execute({"ext": {"x": 1.0}})["calc.y"])
+    assert results == [1.0, 2.0]
+
+
+def test_digest_same_line_lambdas_no_collision():
+    f10, f1000 = (lambda y: y * 10.0), (lambda y: y * 1000.0)
+    results = []
+    for f in (f10, f1000):
+        g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+        results.append(compile_kernel(g, "calc.y").execute({"ext": {"x": 1.0}})["calc.y"])
+    assert results == [10.0, 1000.0]
+
+
+def test_digest_includes_jit_flags():
+    def f(x):
+        return 1.0 / x
+
+    def build():
+        return Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+
+    # numba's default error_model is "python" (1.0/0.0 raises); "numpy" returns
+    # inf. Same formula, two distinct jit-flag sets -> two distinct kernels with
+    # different behavior: the flags must be part of the cache digest.
+    ck_default = compile_kernel(build(), "calc.y")
+    with pytest.raises(ZeroDivisionError):
+        ck_default.execute({"ext": {"x": 0.0}})
+    ck_numpy = compile_kernel(build(), "calc.y", jit_options={"error_model": "numpy"})
+    assert ck_numpy.execute({"ext": {"x": 0.0}})["calc.y"] == np.inf
+
+
+def test_digest_cres_kernel_uncached_and_quiet(tmp_path):
+    probe = tmp_path / "probe.py"
+    probe.write_text(textwrap.dedent("""
+        import warnings
+        from numba.core.types import float64
+        from numbox.core.variable.variable import Graph
+        from numbox.core.variable.compile_kernel import compile_kernel
+        from numbox.utils.highlevel import cres
+
+        @cres(float64(float64))
+        def f(x):
+            return x - 1.0
+
+        g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            ck = compile_kernel(g, "calc.y")
+            print(ck.execute({"ext": {"x": 3.0}})["calc.y"])
+    """))
+    cache_dir = tmp_path / "nbcache"
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
+    p = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True, env=env)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == "2.0"
+    files = [q for q in cache_dir.rglob("*") if q.is_file()] if cache_dir.exists() else []
+    assert files == []
+
+
+def test_digest_mixed_cres_graph_uncached(tmp_path):
+    # A plain-python formula is fingerprintable, but a cres/CompileResultWAP node
+    # in the same kernel is not -- the uncacheable verdict must propagate to the
+    # whole kernel: zero cache files, correct results for both nodes. (An object
+    # cell in a lambda body cannot be njit-compiled at all, so this mixed-graph
+    # form is the runnable analogue of the un-fingerprintable-formula case.)
+    probe = tmp_path / "probe.py"
+    probe.write_text(textwrap.dedent("""
+        from numba.core.types import float64
+        from numbox.core.variable.variable import Graph
+        from numbox.core.variable.compile_kernel import compile_kernel
+        from numbox.utils.highlevel import cres
+
+        @cres(float64(float64))
+        def sub_one(x):
+            return x - 1.0
+
+        def add_two(x):
+            return x + 2.0
+
+        g = Graph({"calc": [
+            {"name": "a", "inputs": {"x": "ext"}, "formula": sub_one},
+            {"name": "b", "inputs": {"x": "ext"}, "formula": add_two},
+        ]}, ["ext"])
+        out = compile_kernel(g, ["calc.a", "calc.b"]).execute({"ext": {"x": 10.0}})
+        print(out["calc.a"], out["calc.b"])
+    """))
+    cache_dir = tmp_path / "nbcache"
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
+    p = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True, env=env)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == "9.0 12.0"
+    files = [q for q in cache_dir.rglob("*") if q.is_file()] if cache_dir.exists() else []
+    assert files == []

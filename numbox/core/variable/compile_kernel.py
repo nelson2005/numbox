@@ -5,13 +5,18 @@ into a single straight-line @njit function whose interior nodes are SSA
 temporaries. No per-node type info is needed: numba infers every interior type
 from the kernel's runtime argument types, provided each formula is njit-able
 (plain-Python formulas are auto-wrapped with njit()).
+
+The on-disk cache is content-addressed: the digest fingerprints each formula's
+code, constants, default arguments, closure-cell values, referenced globals,
+and the kernel's effective jit flags, so a stale binary is never reused and two
+distinct kernels never collide. A formula with no canonical fingerprint forces
+the kernel uncached (no anchor, no numba cache) -- never reused, never wrong.
 """
 import hashlib
 import keyword
 import re
 import warnings
 
-from inspect import getsource
 from types import CodeType, FunctionType, ModuleType
 
 import numpy as np
@@ -176,37 +181,6 @@ def _formula_fingerprint(formula):
         return f"{repr(formula)} @{id(formula)}", False
 
 
-def _safe_getsource(formula):
-    """Source text of a formula, for the content-addressed cache hash.
-
-    Content-sensitive on purpose: two formulas that differ in body OR in
-    closed-over values must hash differently, so we append the closure cell
-    contents to the recovered source (the source text alone is identical for
-    two lambdas built by the same closure factory). We never substitute the
-    signature, which would let different bodies collide.
-
-    When no source is recoverable (a cres/CompileResultWAP formula, or a lambda
-    defined outside a source file), we fall back to ``repr(formula)`` plus
-    ``id(formula)`` as a per-object discriminator, so the fallback is unique per
-    object even when ``__repr__`` is non-unique -- it never causes a hash
-    *collision* (results stay correct); it is just not stable across processes,
-    so such a formula does not get cross-process cache reuse. The same downgrade
-    applies if a closure cell value has no process-stable ``repr``.
-    """
-    target = getattr(formula, "py_func", formula)
-    try:
-        src = getsource(target)
-    except (OSError, TypeError):
-        return f"{repr(formula)} @{id(formula)}"
-    closure = getattr(target, "__closure__", None)
-    if closure:
-        try:
-            src += "\n# closure: " + repr([c.cell_contents for c in closure])
-        except Exception:  # noqa: BLE001 - unrepr-able cell -> per-object fallback
-            return f"{repr(formula)} @{id(formula)}"
-    return src
-
-
 def _generate_body(compiled, required, idents):
     """Generate `def _kernel(...): ...` source (no decorator) + bindings.
 
@@ -262,14 +236,31 @@ def _generate_body(compiled, required, idents):
 
 def _compile(source, bindings, jit_options, cache):
     """Content-addressed compile of the kernel source into an @njit dispatcher."""
-    formula_src = "\n".join(_safe_getsource(f) for f in bindings.values())
-    hash_text = source + "\n# formulas:\n" + formula_src
-    digest = hashlib.sha256(hash_text.encode("utf-8")).hexdigest()[:16]
-    name = f"_kernel_{digest}"
+    fingerprints = []
+    cacheable = True
+    for fg, formula in bindings.items():
+        fp, ok = _formula_fingerprint(formula)
+        fingerprints.append(f"{fg}: {fp}")
+        cacheable = cacheable and ok
     opts = {**_default_jit_options, **(jit_options or {})}
     if cache is not None:
         opts["cache"] = cache
     opts.setdefault("cache", True)
+    flags = {k: v for k, v in opts.items() if k != "cache"}
+    try:
+        flags_canon = _canon_value(flags, set())
+    except _Unfingerprintable:
+        flags_canon = repr(sorted(flags.items(), key=repr))
+        cacheable = False
+    hash_text = (
+        "ck-digest-v2\n" + source
+        + "\n# formulas:\n" + "\n".join(fingerprints)
+        + "\n# flags: " + flags_canon
+    )
+    if not cacheable:
+        opts["cache"] = False
+    digest = hashlib.sha256(hash_text.encode("utf-8")).hexdigest()[:16]
+    name = f"_kernel_{digest}"
     final_src = "@njit(**_kernel_jit_options)\n" + source.replace(
         "def _kernel(", f"def {name}(", 1
     )
