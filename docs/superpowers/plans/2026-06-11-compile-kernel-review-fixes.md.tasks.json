@@ -75,7 +75,7 @@
     {
       "id": 9,
       "subject": "Task 9: Truthful documentation (F-14 + envelope/cache docs)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1,
         3,
@@ -106,5 +106,5 @@
       "description": "**Goal:** Every .github/workflows/ check passes locally; with explicit user approval THIS session, push to origin/feat/variable-compile-kernel and watch fork numbox_ci green.\n\n**Files:** none modified (gate + push); commits plan docs if untracked\n\n**Acceptance Criteria:**\n- full suite green (caches cleaned, pytest --durations=20)\n- both flake8 rule sets clean repo-wide\n- sphinx 0 new warnings; doc-codeblock clean; lychee clean over the changed-file set vs origin/main\n- explicit user push approval obtained (NEVER push without it)\n- fork numbox_ci green on pushed head (judge only status==completed; gh run watch --exit-status); report 27/27 + PR link https://github.com/nelson2005/numbox/pull/49\n\n**Verify:** plan Task 10 step 1 gate commands, then gh run watch -> success\n\nNOTE: upstream PR #23 cherry-pick is OUT OF SCOPE - separate consent-gated step.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test --durations=20\", \"acceptanceCriteria\": [\"full suite green\", \"both flake8 sets clean\", \"sphinx/doc-codeblock/lychee clean\", \"explicit user push approval obtained\", \"fork numbox_ci green on pushed head\"], \"model\": \"opus\", \"planTask\": 10}\n```"
     }
   ],
-  "lastUpdated": "2026-06-12T05:23:17Z"
+  "lastUpdated": "2026-06-12T06:21:47Z"
 }
