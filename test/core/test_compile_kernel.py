@@ -897,3 +897,36 @@ def test_varargs_formula_still_accepted():
     g = Graph({"calc": [{"name": "y", "inputs": {"a": "ext", "b": "ext"}, "formula": star}]}, ["ext"])
     out = compile_kernel(g, "calc.y").execute({"ext": {"a": 1.0, "b": 2.0}})
     assert out == {"calc.y": 3.0}
+
+
+def test_required_validation_messages():
+    def f(x):
+        return x
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+    with pytest.raises(TypeError, match=r"required entries.*42"):
+        compile_kernel(g, ["calc.y", 42])
+    with pytest.raises(ValueError, match=r"'caly'.*not qualified"):
+        compile_kernel(g, "caly")
+    with pytest.raises(ValueError, match=r"cannot be resolved.*nope"):
+        compile_kernel(g, "calc.nope")
+
+
+def test_external_typo_warns_but_compiles():
+    def f(x):
+        return x
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+    with pytest.warns(UserWarning, match="did not exist before compilation"):
+        ck = compile_kernel(g, ["ext.tpyo"])
+    assert ck.execute({"ext": {"tpyo": 5.0}}) == {"ext.tpyo": 5.0}
+
+
+def test_external_variable_with_formula_rejected():
+    def f(x):
+        return x
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+    g.external["ext"].update("x", Variable(name="x", source="ext", formula=lambda: 1.0))
+    with pytest.raises(ValueError, match=r"ext\.x.*external but carries a formula"):
+        compile_kernel(g, "calc.y")

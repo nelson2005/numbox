@@ -29,7 +29,7 @@ from numba.core.types.function_type import CompileResultWAP
 from numba.np.ufunc.dufunc import DUFunc
 
 from numbox.core.configurations import jit_options as _default_jit_options
-from numbox.core.variable.variable import make_qual_name
+from numbox.core.variable.variable import QUAL_SEP, make_qual_name
 from numbox.utils.preprocessing import (
     _anchor_root, _materialize_anchor, _orphan_anchor_sweep,
 )
@@ -224,6 +224,13 @@ def _generate_body(compiled, required, idents):
         external.update(vars_.values())
 
     ext_sorted = sorted(external, key=lambda v: v.qual_name())
+    for var in ext_sorted:
+        if var.formula is not None:
+            raise ValueError(
+                f"{var.qual_name()!r} is external but carries a formula; CompiledGraph "
+                f"computes such a variable while a fused kernel treats it as a plain "
+                f"input. Move it into a Variables namespace or drop the formula."
+            )
     params = [(v.source, v.name, idents[v]) for v in ext_sorted]
 
     bindings = {}
@@ -353,7 +360,27 @@ def compile_kernel(graph, required, *, jit_options=None, cache=None):
     """Compile `graph` into a fused @njit kernel for the `required` variables."""
     required = [required] if isinstance(required, str) else list(required)
     required = list(dict.fromkeys(required))  # dedupe, preserve first-seen order
-    compiled = graph.compile(required)
+    for entry in required:
+        if not isinstance(entry, str):
+            raise TypeError(f"required entries must be qualified-name strings; got {entry!r}")
+        if QUAL_SEP not in entry:
+            raise ValueError(
+                f"required entry {entry!r} is not qualified (expected 'source{QUAL_SEP}name')"
+            )
+    pre_existing = {src: set(ns.keys()) for src, ns in graph.external.items()}
+    try:
+        compiled = graph.compile(required)
+    except KeyError as e:
+        raise ValueError(f"required name cannot be resolved in the graph: {e}") from e
+    for entry in required:
+        src, _, name = entry.rpartition(QUAL_SEP)
+        if src in pre_existing and name not in pre_existing[src] and name in graph.external[src]:
+            warnings.warn(
+                f"required entry {entry!r} did not exist before compilation; External "
+                f"namespaces create variables on first lookup, so a typo silently "
+                f"becomes a new kernel input",
+                stacklevel=2,
+            )
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
     source, bindings, params, outputs = _generate_body(compiled, required, idents)
     kernel = _compile(source, bindings, jit_options, cache)
