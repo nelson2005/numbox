@@ -358,7 +358,36 @@ class CompiledKernel:
 
 
 def compile_kernel(graph, required, *, jit_options=None, cache=None):
-    """Compile `graph` into a fused @njit kernel for the `required` variables."""
+    """Compile `graph` into a fused @njit kernel for the `required` variables.
+
+    :param graph: a `Graph`; its dependency structure and formulas are fused
+        into one straight-line @njit function (see `CompiledKernel`).
+    :param required: qualified name or list of qualified names. Order is
+        preserved (first occurrence wins) and fixes the order of
+        `CompiledKernel.outputs` / the kernel's return tuple.
+    :param jit_options: merged over numbox's defaults
+        (`NUMBOX_JIT_OPTIONS` env) and passed to @njit. All options except
+        `cache` participate in the content-addressed digest.
+    :param cache: tri-state. `None` (default) defers to
+        `jit_options["cache"]`, then the `NUMBOX_JIT_OPTIONS` env default,
+        then `True`. An explicit `True`/`False` wins over both.
+
+    Error timing: structural problems raise here (unknown or malformed
+    `required` entries, non-callable formulas, arity mismatches against the
+    declared inputs, formula-bearing external variables, graphs deeper than
+    the recursion limit); numba typing problems surface at the kernel's
+    first call (auto-njit of plain-Python formulas is lazy).
+
+    Caching: the kernel digest fingerprints each formula's bytecode,
+    constants, default values, closure-cell values, referenced module-level
+    globals (including helper functions, recursively), defining module, and
+    the effective jit flags. A formula whose state cannot be fingerprinted
+    (e.g. cres/CompileResultWAP objects, values with no canonical form)
+    downgrades that one kernel to cache=False: always recompiled, never
+    stale. When caching is enabled, a content-addressed anchor `.py` file is
+    written under numba's cache directory; with caching off (or the cache
+    dir unwritable, which warns and degrades) nothing is written.
+    """
     required = [required] if isinstance(required, str) else list(required)
     for entry in required:
         if not isinstance(entry, str):

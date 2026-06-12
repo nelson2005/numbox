@@ -248,6 +248,34 @@ This is a v1 fused path with two deliberate limitations: it does not honor the
 only the affected nodes. Use :class:`numbox.core.variable.variable.CompiledGraph` (or the
 `core.work` graph) when either of those is needed.
 
+**Caching.** The fused kernel is cached on disk, content-addressed by a
+fingerprint of the generated kernel source, every formula's behavioral
+state (bytecode, constants, default values, closure-cell values, referenced
+module-level globals including helper functions, defining module), and the
+effective jit flags. Changing any of these recompiles instead of reusing a
+stale binary; cosmetic edits that do not change behavior (comments, local
+renames) do not. Formulas whose state cannot be fingerprinted -- a
+``cres``-compiled callable, or a value with no canonical form -- make that
+one kernel uncacheable: always recompiled per process, never wrong. The
+``cache`` keyword is tri-state: ``None`` (the default) defers to
+``jit_options["cache"]``, then the ``NUMBOX_JIT_OPTIONS`` environment
+default, then ``True``; an explicit ``True``/``False`` wins. Two costs are
+worth knowing: a formula that references or closes over a **large array**
+pays a per-compile ``sha256`` over that array's bytes (proportional to its
+size) on every ``compile_kernel`` call; and numba itself declines to
+disk-cache a kernel that calls a ``@cfunc`` formula or references a large
+global array -- the kernel still computes correctly, it is simply
+recompiled in each process regardless of the content-addressed anchor. A
+``@vectorize`` (DUFunc) formula, by contrast, caches cleanly.
+
+**Practical limits.** Graph traversal is recursive: dependency chains
+deeper than roughly ``sys.getrecursionlimit()`` raise a ``RecursionError``
+naming the remedy (raise the limit before compiling). Cold compilation of
+the fused kernel costs on the order of 20 ms and ~1 MiB of memory per
+formula node (numba 0.65, CPython 3.12); graphs beyond a few thousand
+nodes compile increasingly slowly and are better split or evaluated via
+:class:`numbox.core.variable.variable.CompiledGraph`.
+
 A graph can be compiled to a fused kernel as follows:
 
 .. code-block:: python
