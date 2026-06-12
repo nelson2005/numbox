@@ -15,6 +15,7 @@ from numbox.core.variable.compile_kernel import (
 )
 from numbox.core.variable.variable import Variable, Graph, Values
 from numbox.utils.highlevel import cres
+from test.auxiliary_utils import assert_njit_cache_survives_subprocess_roundtrip
 
 
 def test_sanitize_basic():
@@ -951,3 +952,46 @@ def test_deep_chain_recursion_error_is_contextual():
     g = Graph({"calc": specs}, ["ext"])
     with pytest.raises(RecursionError, match="setrecursionlimit"):
         compile_kernel(g, f"calc.n{depth - 1}")
+
+
+def test_compile_kernel_cache_save_side(tmp_path):
+    assert_njit_cache_survives_subprocess_roundtrip(
+        tmp_path,
+        """
+        from numbox.core.variable.variable import Graph
+        from numbox.core.variable.compile_kernel import compile_kernel
+
+        def f(x):
+            return x * 2.0
+
+        def h(y):
+            return y + 1.0
+
+        g = Graph({"calc": [
+            {"name": "y", "inputs": {"x": "ext"}, "formula": f},
+            {"name": "z", "inputs": {"y": "calc"}, "formula": h},
+        ]}, ["ext"])
+        ck = compile_kernel(g, "calc.z")
+        print(ck.execute({"ext": {"x": 3.0}})["calc.z"])
+        """,
+        ["7.0"],
+    )
+
+
+def test_external_only_output_end_to_end():
+    g = Graph({"calc": []}, ["ext"])
+    with pytest.warns(UserWarning, match="did not exist before compilation"):
+        ck = compile_kernel(g, "ext.x")
+    assert ck.params == ["ext.x"]
+    assert ck.execute({"ext": {"x": 5.5}}) == {"ext.x": 5.5}
+
+
+def test_mixed_outputs_end_to_end():
+    def f(x):
+        return x * 10.0
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
+    with pytest.warns(UserWarning, match="did not exist before compilation"):
+        ck = compile_kernel(g, ["calc.y", "ext.x"])
+    assert ck.outputs == ["calc.y", "ext.x"]
+    assert ck.execute({"ext": {"x": 2.0}}) == {"calc.y": 20.0, "ext.x": 2.0}
