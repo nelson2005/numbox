@@ -87,7 +87,7 @@ def _canon_value(value, seen):
     if isinstance(value, np.ndarray):
         data = np.ascontiguousarray(value)
         raw = hashlib.sha256(data.tobytes()).hexdigest()
-        return f"ndarray({data.dtype.str};{data.shape};{raw})"
+        return f"ndarray({data.dtype.str};{value.shape};{raw})"
     if isinstance(value, (tuple, list)):
         return f"{type(value).__name__}[" + ",".join(_canon_value(v, seen) for v in value) + "]"
     if isinstance(value, (set, frozenset)):
@@ -164,8 +164,6 @@ def _formula_fingerprint(formula):
     """
     target = getattr(formula, "py_func", None)
     if target is None:
-        target = getattr(formula, "__wrapped__", None)
-    if target is None:
         target = formula
     if not isinstance(target, FunctionType):
         return f"{repr(formula)} @{id(formula)}", False
@@ -174,7 +172,7 @@ def _formula_fingerprint(formula):
         extra = ";targetoptions=" + _canon_value(dict(formula.targetoptions or {}), set())
     try:
         return _fingerprint_function(target, set()) + extra, True
-    except _Unfingerprintable:
+    except (_Unfingerprintable, RecursionError):
         return f"{repr(formula)} @{id(formula)}", False
 
 

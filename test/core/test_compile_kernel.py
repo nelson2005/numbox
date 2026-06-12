@@ -580,3 +580,50 @@ def test_fingerprint_fallback_paths():
 
     fp2, ok2 = _formula_fingerprint(wap)
     assert not ok2
+
+
+def test_fingerprint_wrapped_decorator_uses_executing_callable():
+    import functools
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    def shared(x):
+        return x + 1.0
+
+    def make_wrapper(rate):
+        @functools.wraps(shared)
+        def wrapper(x):
+            return shared(x) * rate
+        return wrapper
+
+    low, high = make_wrapper(1.05), make_wrapper(1.20)
+    assert low.__wrapped__ is shared and high.__wrapped__ is shared
+    fp_low, ok_low = _formula_fingerprint(low)
+    fp_high, ok_high = _formula_fingerprint(high)
+    assert ok_low and ok_high
+    assert fp_low != fp_high
+
+
+def test_fingerprint_zero_d_vs_one_d_array_distinct():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    def factory(a):
+        return lambda x: x + a.sum()
+
+    fp0, ok0 = _formula_fingerprint(factory(np.array(3.5)))
+    fp1, ok1 = _formula_fingerprint(factory(np.array([3.5])))
+    assert ok0 and ok1
+    assert fp0 != fp1
+
+
+def test_fingerprint_deep_nesting_downgrades_not_crashes():
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    deep = [0.0]
+    for _ in range(5000):
+        deep = [deep]
+
+    def factory(d):
+        return lambda x: x if d is None else x
+
+    fp, ok = _formula_fingerprint(factory(deep))
+    assert not ok and " @" in fp
