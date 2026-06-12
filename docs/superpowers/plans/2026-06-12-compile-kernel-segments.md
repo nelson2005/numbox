@@ -928,6 +928,12 @@ class _Opaque:
     def __add__(self, other):
         return _Opaque(self.v + other)
 
+    def __sub__(self, other):
+        return _Opaque(self.v - other)
+
+    def __truediv__(self, other):
+        return _Opaque(self.v / other)
+
 
 def _chain_graph_with_python_middle():
     def n3(v):
@@ -1010,12 +1016,12 @@ def test_segmented_all_python():
 def test_plan_replacement_on_new_signature():
     g = _chain_graph_with_python_middle()
     ck = compile_kernel(g, "calc.n5", cache=False)
-    assert ck.kernel(7.0) == (((7.0 + 1.0) * 2.0 * 3.0) - 4.0) / 2.0,
+    assert ck.kernel(7.0) == ((((7.0 + 1.0) * 2.0 * 3.0) - 4.0) / 2.0,)
     assert len([s for s in ck.partition.segments if s.kind == "jit"]) == 2
     out, = ck.kernel(_Opaque(7.0))          # breaks segment 1 -> re-discovery
     assert isinstance(out, _Opaque) and out.v == (((7.0 + 1.0) * 2.0 * 3.0) - 4.0) / 2.0
     assert [s.kind for s in ck.partition.segments] == ["python"]
-    assert ck.kernel(7.0) == (((7.0 + 1.0) * 2.0 * 3.0) - 4.0) / 2.0,
+    assert ck.kernel(7.0) == ((((7.0 + 1.0) * 2.0 * 3.0) - 4.0) / 2.0,)
 ```
 
 (In `test_plan_replacement_on_new_signature` the trailing-comma lines compare against a 1-tuple, matching the kernel's tuple return.)
