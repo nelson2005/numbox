@@ -164,7 +164,10 @@ With the demoted set known, re-linearize the node set (edges from
   (determinism — the content-addressed cache needs byte-stable segment
   sources);
 - always drain the current color while its queue is non-empty; switch colors
-  only when forced; initial color = jittable if any jittable node is ready.
+  only when forced; the linearization is computed from both possible starting
+  colors and the candidate with fewer runs wins (jit-start on a tie) — a
+  jit-start alone produces an avoidable extra run when a Python chain and a
+  jit chain meet at a jit sink.
 
 Exact minimization of run count in a 2-colored DAG linearization is NP-hard;
 greedy color-stickiness is the documented heuristic and handles the practical
