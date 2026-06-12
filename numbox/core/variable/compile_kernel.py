@@ -359,7 +359,6 @@ class CompiledKernel:
 def compile_kernel(graph, required, *, jit_options=None, cache=None):
     """Compile `graph` into a fused @njit kernel for the `required` variables."""
     required = [required] if isinstance(required, str) else list(required)
-    required = list(dict.fromkeys(required))  # dedupe, preserve first-seen order
     for entry in required:
         if not isinstance(entry, str):
             raise TypeError(f"required entries must be qualified-name strings; got {entry!r}")
@@ -367,14 +366,18 @@ def compile_kernel(graph, required, *, jit_options=None, cache=None):
             raise ValueError(
                 f"required entry {entry!r} is not qualified (expected 'source{QUAL_SEP}name')"
             )
+    required = list(dict.fromkeys(required))  # dedupe, preserve first-seen order
     pre_existing = {src: set(ns.keys()) for src, ns in graph.external.items()}
     try:
         compiled = graph.compile(required)
     except KeyError as e:
-        raise ValueError(f"required name cannot be resolved in the graph: {e}") from e
+        raise ValueError(
+            f"required name or one of its dependencies cannot be resolved in the graph: {e}"
+        ) from e
     for entry in required:
         src, _, name = entry.rpartition(QUAL_SEP)
         if src in pre_existing and name not in pre_existing[src] and name in graph.external[src]:
+            # fires only on the compile that creates the name; later compiles see it pre-existing
             warnings.warn(
                 f"required entry {entry!r} did not exist before compilation; External "
                 f"namespaces create variables on first lookup, so a typo silently "

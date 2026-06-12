@@ -906,10 +906,15 @@ def test_required_validation_messages():
     g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
     with pytest.raises(TypeError, match=r"required entries.*42"):
         compile_kernel(g, ["calc.y", 42])
+    with pytest.raises(TypeError, match=r"required entries"):
+        compile_kernel(g, [{"name": "calc.y"}])
     with pytest.raises(ValueError, match=r"'caly'.*not qualified"):
         compile_kernel(g, "caly")
     with pytest.raises(ValueError, match=r"cannot be resolved.*nope"):
         compile_kernel(g, "calc.nope")
+    g2 = Graph({"calc": [{"name": "y", "inputs": {"x": "bad_source"}, "formula": f}]}, ["ext"])
+    with pytest.raises(ValueError, match=r"or one of its dependencies.*bad_source"):
+        compile_kernel(g2, "calc.y")
 
 
 def test_external_typo_warns_but_compiles():
