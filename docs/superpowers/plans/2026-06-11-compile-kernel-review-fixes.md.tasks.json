@@ -26,7 +26,7 @@
     {
       "id": 3,
       "subject": "Task 3: Wire the fingerprint into the cache digest (F-01..05, F-07, F-16 end-to-end)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1,
         2
@@ -37,14 +37,14 @@
     {
       "id": 4,
       "subject": "Task 4: Wider formula acceptance + eager signature checks (F-12, F-24, F-13)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** DUFunc/CFunc pass through unwrapped; non-callable formulas and arity mismatches fail at compile_kernel() time naming the qual_name; kw-only formulas no longer reach numba's bare IndexError.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (_wrap_formula; new _check_formula_arity; _generate_body binding wrapped with qual_name; imports inspect/CFunc/DUFunc)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- DUFunc and CFunc formulas compile and compute correctly\n- string formula -> eager TypeError with qual_name\n- arity mismatch and kw-only -> eager ValueError with qual_name\n- varargs accepted; cres skips the check; lazy-typing test stays green\n\n**Verify:** clean caches; venv pytest -k \"dufunc or cfunc_formula or not_callable or arity\" then full file\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v\", \"acceptanceCriteria\": [\"DUFunc and CFunc formulas work end-to-end\", \"string formula eager TypeError with qual_name\", \"arity and kw-only eager ValueError\", \"varargs accepted, cres lazy contract intact\"], \"model\": \"opus\", \"planTask\": 4}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: Validate required + guard External footguns (F-11, F-10, F-17)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** Malformed required entries fail fast naming the entry; required names auto-created by External during this compile warn loudly; an External variable carrying a formula is rejected.\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py (compile_kernel body; _generate_body ext_sorted guard; import QUAL_SEP)\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- non-string entry TypeError; dot-less entry ValueError (entry named)\n- unknown Variables name -> ValueError wrapping the substrate KeyError\n- typo'd External name compiles + UserWarning \"did not exist before compilation\"\n- formula-bearing external -> ValueError \"external but carries a formula\"\n\n**Verify:** clean caches; venv pytest -k \"required_valid or external_typo or external_formula\" then full file\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v\", \"acceptanceCriteria\": [\"TypeError/ValueError name the offending entry\", \"unknown Variables name wrapped as ValueError\", \"External typo warns but compiles\", \"formula-bearing external rejected\"], \"model\": \"opus\", \"planTask\": 5}\n```"
     },
@@ -106,5 +106,5 @@
       "description": "**Goal:** Every .github/workflows/ check passes locally; with explicit user approval THIS session, push to origin/feat/variable-compile-kernel and watch fork numbox_ci green.\n\n**Files:** none modified (gate + push); commits plan docs if untracked\n\n**Acceptance Criteria:**\n- full suite green (caches cleaned, pytest --durations=20)\n- both flake8 rule sets clean repo-wide\n- sphinx 0 new warnings; doc-codeblock clean; lychee clean over the changed-file set vs origin/main\n- explicit user push approval obtained (NEVER push without it)\n- fork numbox_ci green on pushed head (judge only status==completed; gh run watch --exit-status); report 27/27 + PR link https://github.com/nelson2005/numbox/pull/49\n\n**Verify:** plan Task 10 step 1 gate commands, then gh run watch -> success\n\nNOTE: upstream PR #23 cherry-pick is OUT OF SCOPE - separate consent-gated step.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test --durations=20\", \"acceptanceCriteria\": [\"full suite green\", \"both flake8 sets clean\", \"sphinx/doc-codeblock/lychee clean\", \"explicit user push approval obtained\", \"fork numbox_ci green on pushed head\"], \"model\": \"opus\", \"planTask\": 10}\n```"
     }
   ],
-  "lastUpdated": "2026-06-12T00:42:47Z"
+  "lastUpdated": "2026-06-12T02:54:39Z"
 }
