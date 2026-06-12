@@ -774,17 +774,79 @@ def test_digest_mixed_cres_graph_uncached(tmp_path):
     assert files == []
 
 
-def test_dufunc_and_cfunc_formulas_accepted():
-    from numba import vectorize, cfunc
+def test_dufunc_and_cfunc_formulas_accepted(tmp_path):
+    # A CFunc node poisons the whole kernel's cacheability (its .address is an
+    # ASLR-randomized pointer numba cannot disk-cache), so no anchor and no numba
+    # cache files may exist -- and compiling must stay warning-free.
+    probe = tmp_path / "probe.py"
+    probe.write_text(textwrap.dedent("""
+        import warnings
+        from numba import vectorize, cfunc
+        from numba.core.types import float64
+        from numbox.core.variable.variable import Graph
+        from numbox.core.variable.compile_kernel import compile_kernel
 
-    d = vectorize(lambda a: a + 0.5)
-    c = cfunc(float64(float64))(lambda a: a * 2.0)
-    g = Graph({"calc": [
-        {"name": "u", "inputs": {"x": "ext"}, "formula": d},
-        {"name": "v", "inputs": {"u": "calc"}, "formula": c},
-    ]}, ["ext"])
-    out = compile_kernel(g, "calc.v").execute({"ext": {"x": 1.0}})
-    assert out == {"calc.v": 3.0}
+        d = vectorize(lambda a: a + 0.5)
+        c = cfunc(float64(float64))(lambda a: a * 2.0)
+        g = Graph({"calc": [
+            {"name": "u", "inputs": {"x": "ext"}, "formula": d},
+            {"name": "v", "inputs": {"u": "calc"}, "formula": c},
+        ]}, ["ext"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            ck = compile_kernel(g, "calc.v")
+            print(ck.execute({"ext": {"x": 1.0}})["calc.v"])
+    """))
+    cache_dir = tmp_path / "nbcache"
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
+    p = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True, env=env)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == "3.0"
+    files = [q for q in cache_dir.rglob("*") if q.is_file()] if cache_dir.exists() else []
+    assert files == []
+
+
+def test_dufunc_only_kernel_caches_cleanly(tmp_path):
+    # A single DUFunc-formula node must disk-cache cleanly: run twice sharing one
+    # NUMBA_CACHE_DIR under simplefilter("error") (any NumbaWarning fails it). After
+    # run 1 the cache holds at least one .nbi; run 2 is a warm hit that rewrites
+    # nothing -- the (path, mtime) set of all .nbc/.nbi files is identical.
+    probe = tmp_path / "probe.py"
+    probe.write_text(textwrap.dedent("""
+        import warnings
+        from numba import vectorize
+        from numbox.core.variable.variable import Graph
+        from numbox.core.variable.compile_kernel import compile_kernel
+
+        d = vectorize(lambda a: a + 0.5)
+        g = Graph({"calc": [
+            {"name": "u", "inputs": {"x": "ext"}, "formula": d},
+        ]}, ["ext"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            ck = compile_kernel(g, "calc.u")
+            print(ck.execute({"ext": {"x": 1.0}})["calc.u"])
+    """))
+    cache_dir = tmp_path / "nbcache"
+    env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
+
+    def cache_snapshot():
+        return {
+            (str(q), q.stat().st_mtime_ns)
+            for q in cache_dir.rglob("*")
+            if q.is_file() and q.suffix in (".nbc", ".nbi")
+        }
+
+    p1 = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True, env=env)
+    assert p1.returncode == 0, p1.stderr
+    assert p1.stdout.strip() == "1.5"
+    snap1 = cache_snapshot()
+    assert any(q.suffix == ".nbi" for q in cache_dir.rglob("*") if q.is_file())
+
+    p2 = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True, env=env)
+    assert p2.returncode == 0, p2.stderr
+    assert p2.stdout.strip() == "1.5"
+    assert cache_snapshot() == snap1
 
 
 def test_dufunc_cfunc_fingerprints_cacheable_and_distinct():
@@ -799,7 +861,8 @@ def test_dufunc_cfunc_fingerprints_cacheable_and_distinct():
     fp_plain, ok_plain = _formula_fingerprint(inner)
     fp_d, ok_d = _formula_fingerprint(d)
     fp_c, ok_c = _formula_fingerprint(c)
-    assert ok_plain and ok_d and ok_c
+    assert ok_plain and ok_d
+    assert not ok_c
     assert len({fp_plain, fp_d, fp_c}) == 3
 
 

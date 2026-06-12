@@ -171,6 +171,9 @@ def _formula_fingerprint(formula):
     makes the formula un-fingerprintable: the returned text is then a
     per-object placeholder and ``cacheable`` is False, so the kernel is
     compiled without an on-disk cache -- never reused, never wrong.
+    CFunc formulas embed an ASLR-randomized address, so numba can never
+    disk-cache kernels that call them -- they are fingerprinted
+    deterministically but marked uncacheable.
     """
     target = getattr(formula, "py_func", None)
     extra = ""
@@ -184,7 +187,7 @@ def _formula_fingerprint(formula):
     if isinstance(formula, Dispatcher):
         extra += ";targetoptions=" + _canon_value(dict(formula.targetoptions or {}), set())
     try:
-        return _fingerprint_function(target, set()) + extra, True
+        return _fingerprint_function(target, set()) + extra, not isinstance(formula, CFunc)
     except (_Unfingerprintable, RecursionError):
         return f"{repr(formula)} @{id(formula)}", False
 
