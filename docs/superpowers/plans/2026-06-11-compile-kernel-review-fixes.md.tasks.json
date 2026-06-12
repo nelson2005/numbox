@@ -51,7 +51,7 @@
     {
       "id": 6,
       "subject": "Task 6: Contextual RecursionError for deep graphs (F-37)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         5
       ],
@@ -61,14 +61,14 @@
     {
       "id": 7,
       "subject": "Task 7: Save-side cache assertion + coverage gaps (F-15, F-22)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** Suite fails if kernel disk-cache SAVING silently regresses; external-only and mixed-output kernel shapes exercised end-to-end.\n\n**Files:**\n- Test: test/core/test_compile_kernel.py only (import assert_njit_cache_survives_subprocess_roundtrip from test.auxiliary_utils, mirroring test/core/test_proxy.py:15)\n\n**Acceptance Criteria:**\n- cold->warm subprocess roundtrip asserts .nbc/.nbi exist + paths/mtimes stable (helper at test/auxiliary_utils.py:78)\n- external-only output kernel end-to-end (pytest.warns wraps the expected auto-creation warning)\n- mixed external+interior outputs in requested order\n- mutation check (cache default flipped to False) makes the save-side test FAIL, then revert\n\n**Verify:** clean caches; venv pytest -k \"save_side or external_only or mixed_outputs\"\n\n```json:metadata\n{\"files\": [\"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test/core/test_compile_kernel.py -v -k \\\"save_side or external_only or mixed_outputs\\\"\", \"acceptanceCriteria\": [\"save-side roundtrip asserts cache files + stable mtimes\", \"external-only kernel end-to-end\", \"mixed outputs end-to-end\", \"mutation check proves non-vacuity\"], \"model\": \"opus\", \"planTask\": 7}\n```"
     },
     {
       "id": 8,
       "subject": "Task 8: Benchmark per-user tmp module dir (F-23)",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** Benchmark's generated formula module lives in a per-user mode-0700 directory (no shared-/tmp EPERM crash, no attacker-writable exec).\n\n**Files:**\n- Modify: test/compile_kernel_benchmark.py (_formulas_dir above load_formulas; path line ~176; import getpass)\n\n**Acceptance Criteria:**\n- module path <tmp>/ck_bench_<username>/... dir mode 0700 with POSIX ownership check\n- small run (--nodes 8 --size 100 --repeats 2 --profile cheap) completes, module under the per-user dir\n- mtime stable across identical runs\n\n**Verify:** venv python test/compile_kernel_benchmark.py --nodes 8 --size 100 --repeats 2 --profile cheap\n\n```json:metadata\n{\"files\": [\"test/compile_kernel_benchmark.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python /home/erik/projects/numbox/test/compile_kernel_benchmark.py --nodes 8 --size 100 --repeats 2 --profile cheap\", \"acceptanceCriteria\": [\"per-user 0700 dir with ownership check\", \"small run completes with module under per-user dir\", \"mtime stable across identical runs\"], \"model\": \"opus\", \"planTask\": 8}\n```"
     },
@@ -106,5 +106,5 @@
       "description": "**Goal:** Every .github/workflows/ check passes locally; with explicit user approval THIS session, push to origin/feat/variable-compile-kernel and watch fork numbox_ci green.\n\n**Files:** none modified (gate + push); commits plan docs if untracked\n\n**Acceptance Criteria:**\n- full suite green (caches cleaned, pytest --durations=20)\n- both flake8 rule sets clean repo-wide\n- sphinx 0 new warnings; doc-codeblock clean; lychee clean over the changed-file set vs origin/main\n- explicit user push approval obtained (NEVER push without it)\n- fork numbox_ci green on pushed head (judge only status==completed; gh run watch --exit-status); report 27/27 + PR link https://github.com/nelson2005/numbox/pull/49\n\n**Verify:** plan Task 10 step 1 gate commands, then gh run watch -> success\n\nNOTE: upstream PR #23 cherry-pick is OUT OF SCOPE - separate consent-gated step.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest /home/erik/projects/numbox/test --durations=20\", \"acceptanceCriteria\": [\"full suite green\", \"both flake8 sets clean\", \"sphinx/doc-codeblock/lychee clean\", \"explicit user push approval obtained\", \"fork numbox_ci green on pushed head\"], \"model\": \"opus\", \"planTask\": 10}\n```"
     }
   ],
-  "lastUpdated": "2026-06-12T02:54:39Z"
+  "lastUpdated": "2026-06-12T05:23:17Z"
 }
