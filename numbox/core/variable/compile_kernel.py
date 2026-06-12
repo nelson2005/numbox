@@ -13,6 +13,7 @@ distinct kernels never collide. A formula with no canonical fingerprint forces
 the kernel uncached (no anchor, no numba cache) -- never reused, never wrong.
 """
 import hashlib
+import inspect
 import keyword
 import re
 import warnings
@@ -22,8 +23,10 @@ from types import CodeType, FunctionType, ModuleType
 import numpy as np
 
 from numba import njit
+from numba.core.ccallback import CFunc
 from numba.core.dispatcher import Dispatcher
 from numba.core.types.function_type import CompileResultWAP
+from numba.np.ufunc.dufunc import DUFunc
 
 from numbox.core.configurations import jit_options as _default_jit_options
 from numbox.core.variable.variable import make_qual_name
@@ -76,9 +79,11 @@ def _assign_identifiers(variables):
 
 
 def _wrap_formula(formula):
-    """Return an njit-callable for `formula`; non-Dispatcher/CompileResultWAP callables are njit-wrapped."""
-    if isinstance(formula, (Dispatcher, CompileResultWAP)):
+    """Return an njit-callable for `formula`; plain-Python callables are njit-wrapped."""
+    if isinstance(formula, (Dispatcher, CompileResultWAP, DUFunc, CFunc)):
         return formula
+    if not callable(formula):
+        raise TypeError(f"formula {formula!r} is not callable")
     return njit(formula)
 
 
@@ -168,17 +173,35 @@ def _formula_fingerprint(formula):
     compiled without an on-disk cache -- never reused, never wrong.
     """
     target = getattr(formula, "py_func", None)
+    extra = ""
+    if target is None and isinstance(formula, (DUFunc, CFunc)):
+        target = formula.__wrapped__
+        extra = f";kind={type(formula).__name__}"
     if target is None:
         target = formula
     if not isinstance(target, FunctionType):
         return f"{repr(formula)} @{id(formula)}", False
-    extra = ""
     if isinstance(formula, Dispatcher):
-        extra = ";targetoptions=" + _canon_value(dict(formula.targetoptions or {}), set())
+        extra += ";targetoptions=" + _canon_value(dict(formula.targetoptions or {}), set())
     try:
         return _fingerprint_function(target, set()) + extra, True
     except (_Unfingerprintable, RecursionError):
         return f"{repr(formula)} @{id(formula)}", False
+
+
+def _check_formula_arity(formula, n_inputs, qual_name):
+    target = getattr(formula, "py_func", None) or getattr(formula, "__wrapped__", None) or formula
+    try:
+        sig = inspect.signature(target)
+    except (TypeError, ValueError):
+        return
+    try:
+        sig.bind(*range(n_inputs))
+    except TypeError as e:
+        raise ValueError(
+            f"{qual_name!r}: formula signature {sig} cannot accept its "
+            f"{n_inputs} declared input(s) passed positionally ({e})"
+        ) from None
 
 
 def _generate_body(compiled, required, idents):
@@ -213,7 +236,11 @@ def _generate_body(compiled, required, idents):
             )
         temp = idents[var]
         fg = "f_" + temp
-        bindings[fg] = _wrap_formula(var.formula)
+        try:
+            bindings[fg] = _wrap_formula(var.formula)
+        except TypeError as e:
+            raise TypeError(f"{var.qual_name()!r}: {e}") from e
+        _check_formula_arity(var.formula, len(node.inputs), var.qual_name())
         arg_ids = ", ".join(idents[inp] for inp in node.inputs)
         in_names = ", ".join(repr(inp.qual_name()) for inp in node.inputs)
         lines.append(f"    {temp} = {fg}({arg_ids})  # {var.qual_name()!r} = f({in_names})")

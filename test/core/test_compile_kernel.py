@@ -772,3 +772,65 @@ def test_digest_mixed_cres_graph_uncached(tmp_path):
     assert p.stdout.strip() == "9.0 12.0"
     files = [q for q in cache_dir.rglob("*") if q.is_file()] if cache_dir.exists() else []
     assert files == []
+
+
+def test_dufunc_and_cfunc_formulas_accepted():
+    from numba import vectorize, cfunc
+
+    d = vectorize(lambda a: a + 0.5)
+    c = cfunc(float64(float64))(lambda a: a * 2.0)
+    g = Graph({"calc": [
+        {"name": "u", "inputs": {"x": "ext"}, "formula": d},
+        {"name": "v", "inputs": {"u": "calc"}, "formula": c},
+    ]}, ["ext"])
+    out = compile_kernel(g, "calc.v").execute({"ext": {"x": 1.0}})
+    assert out == {"calc.v": 3.0}
+
+
+def test_dufunc_cfunc_fingerprints_cacheable_and_distinct():
+    from numba import vectorize, cfunc
+    from numbox.core.variable.compile_kernel import _formula_fingerprint
+
+    def inner(a):
+        return a + 0.5
+
+    d = vectorize(inner)
+    c = cfunc(float64(float64))(inner)
+    fp_plain, ok_plain = _formula_fingerprint(inner)
+    fp_d, ok_d = _formula_fingerprint(d)
+    fp_c, ok_c = _formula_fingerprint(c)
+    assert ok_plain and ok_d and ok_c
+    assert len({fp_plain, fp_d, fp_c}) == 3
+
+
+def test_not_callable_formula_rejected_eagerly():
+    g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": "lambda y: y"}]}, ["ext"])
+    with pytest.raises(TypeError, match=r"calc\.y.*not callable"):
+        compile_kernel(g, "calc.y")
+
+
+def test_arity_mismatch_rejected_eagerly():
+    def one_arg(x):
+        return x
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"a": "ext", "b": "ext"}, "formula": one_arg}]}, ["ext"])
+    with pytest.raises(ValueError, match=r"calc\.y.*2 declared input"):
+        compile_kernel(g, "calc.y")
+
+
+def test_kwonly_formula_rejected_eagerly():
+    def kw_only(*, y):
+        return y
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": kw_only}]}, ["ext"])
+    with pytest.raises(ValueError, match=r"calc\.y"):
+        compile_kernel(g, "calc.y")
+
+
+def test_varargs_formula_still_accepted():
+    def star(*vals):
+        return vals[0] + vals[1]
+
+    g = Graph({"calc": [{"name": "y", "inputs": {"a": "ext", "b": "ext"}, "formula": star}]}, ["ext"])
+    out = compile_kernel(g, "calc.y").execute({"ext": {"a": 1.0, "b": 2.0}})
+    assert out == {"calc.y": 3.0}
