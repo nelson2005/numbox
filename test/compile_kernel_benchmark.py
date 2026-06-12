@@ -75,6 +75,7 @@ needs an explicit signature + a named, source-resolvable function per formula.
 ----------------------------------------------------------------------------
 """
 import argparse
+import getpass
 import importlib.util
 import os
 import pathlib
@@ -157,6 +158,16 @@ def _atomic_write(path, text):
             os.remove(tmp)
 
 
+def _formulas_dir():
+    d = pathlib.Path(tempfile.gettempdir()) / f"ck_bench_{getpass.getuser()}"
+    d.mkdir(mode=0o700, exist_ok=True)
+    if hasattr(os, "getuid"):
+        if d.stat().st_uid != os.getuid():
+            raise RuntimeError(f"{d} exists but is not owned by the current user")
+        d.chmod(0o700)  # a dir created mode-0755 by an older version stays self-only
+    return d
+
+
 def load_formulas(n_nodes, profile):
     """Return ``[f0 .. f{n-1}]``: N genuinely-distinct arithmetic formulas.
 
@@ -174,7 +185,7 @@ def load_formulas(n_nodes, profile):
         lines += [f"def f{i}(a, b):", f"    return {_body(i, profile)}", "", ""]
     text = "\n".join(lines)
     mod_name = f"_ck_bench_formulas_{profile}_{n_nodes}"
-    path = pathlib.Path(tempfile.gettempdir()) / f"{mod_name}.py"
+    path = _formulas_dir() / f"{mod_name}.py"
     # Only (re)write when content actually changes: rewriting bumps the file's
     # mtime, which invalidates numba's source-stamp and defeats the cross-process
     # formula cache (the warm proxy_cached restart would recompile every body).
