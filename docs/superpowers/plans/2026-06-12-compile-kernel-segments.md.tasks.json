@@ -13,7 +13,7 @@
     {
       "id": 1,
       "subject": "Task 1: Generalize body emission; lock v1 fused source byte-identical",
-      "status": "pending",
+      "status": "completed",
       "model": "opus",
       "description": "**Goal:** _generate_body keeps byte-identical output (golden test) while emission moves to shared _emit_lines; new _generate_segment_body(run_nodes, live_in, live_out, idents) emits a segment kernel (live-ins as params, live-outs as return tuple).\n\n**Files:**\n- Modify: numbox/core/variable/compile_kernel.py:228-289\n- Test: test/core/test_compile_kernel.py\n\n**Acceptance Criteria:**\n- Golden test pins v1 diamond fused source to a literal string and passes (if it fails, fix the TEST to match actual output - never the code)\n- _generate_segment_body: qual-sorted live-in params, v1 line format, trailing-comma return of live-outs\n- Entire existing suite still green\n\n**Verify:** clean caches, venv pytest test/core/test_compile_kernel.py -v -> all pass incl. test_fused_source_golden, test_generate_segment_body\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"venv pytest test/core/test_compile_kernel.py -v per plan conventions\", \"acceptanceCriteria\": [\"golden v1 source test passes\", \"_generate_segment_body correct\", \"existing suite green\"], \"model\": \"opus\"}\n```"
     },
@@ -94,5 +94,5 @@
       "description": "**Goal:** Every check the fork CI runs passes locally before any push is proposed; tasks.json statuses updated. NO push - consent-gated, outside this plan.\n\n**Files:**\n- Modify: docs/superpowers/plans/2026-06-12-compile-kernel-segments.md.tasks.json (statuses)\n\n**Acceptance Criteria:**\n- Full test suite green (whole test/ tree, caches cleaned, --durations=20)\n- Both flake8 passes clean\n- sphinx exit 0, warnings <= 64\n- Every workflow in .github/workflows/ mirrored locally against the changed file set (incl. lychee on changed .py/.rst/.md)\n- No push performed\n\n**Verify:** all gate commands in plan Task 8 exit 0\n\n```json:metadata\n{\"files\": [\"docs/superpowers/plans/2026-06-12-compile-kernel-segments.md.tasks.json\"], \"verifyCommand\": \"full gate command set in plan Task 8\", \"acceptanceCriteria\": [\"full suite green\", \"flake8 x2 clean\", \"sphinx <= 64 warnings\", \"all workflows mirrored\", \"no push\"], \"model\": \"opus\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-12T20:48:26Z"
+  "lastUpdated": "2026-06-12T20:58:38Z"
 }
