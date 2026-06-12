@@ -16,6 +16,7 @@ import hashlib
 import inspect
 import keyword
 import re
+import sys
 import warnings
 
 from types import CodeType, FunctionType, ModuleType
@@ -374,6 +375,12 @@ def compile_kernel(graph, required, *, jit_options=None, cache=None):
         raise ValueError(
             f"required name or one of its dependencies cannot be resolved in the graph: {e}"
         ) from e
+    except RecursionError:
+        raise RecursionError(
+            f"graph dependency depth exceeds Python's recursion limit "
+            f"({sys.getrecursionlimit()}); the traversal needs roughly one stack frame "
+            f"per chained node - raise sys.setrecursionlimit(...) before compile_kernel"
+        ) from None
     for entry in required:
         src, _, name = entry.rpartition(QUAL_SEP)
         if src in pre_existing and name not in pre_existing[src] and name in graph.external[src]:

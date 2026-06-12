@@ -935,3 +935,19 @@ def test_external_variable_with_formula_rejected():
     g.external["ext"].update("x", Variable(name="x", source="ext", formula=lambda: 1.0))
     with pytest.raises(ValueError, match=r"ext\.x.*external but carries a formula"):
         compile_kernel(g, "calc.y")
+
+
+def test_deep_chain_recursion_error_is_contextual():
+    depth = sys.getrecursionlimit() + 100
+
+    def step(x):
+        return x
+
+    specs = [{"name": "n0", "inputs": {"x": "ext"}, "formula": step}]
+    specs += [
+        {"name": f"n{i}", "inputs": {f"n{i - 1}": "calc"}, "formula": step}
+        for i in range(1, depth)
+    ]
+    g = Graph({"calc": specs}, ["ext"])
+    with pytest.raises(RecursionError, match="setrecursionlimit"):
+        compile_kernel(g, f"calc.n{depth - 1}")
