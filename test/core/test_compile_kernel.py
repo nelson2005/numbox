@@ -957,7 +957,7 @@ def test_deep_chain_recursion_error_is_contextual():
         for i in range(1, depth)
     ]
     g = Graph({"calc": specs}, ["ext"])
-    with pytest.raises(RecursionError, match="setrecursionlimit"):
+    with pytest.raises(RecursionError, match="recursion limit"):
         compile_kernel(g, f"calc.n{depth - 1}")
 
 

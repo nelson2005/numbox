@@ -8,38 +8,41 @@ only numba interaction is Dispatcher.compile probes and typeof.
 """
 from bisect import insort
 from dataclasses import dataclass, field
+from typing import Any, Callable
 
 from numba import njit, typeof
 from numba.core.dispatcher import Dispatcher
 from numba.core.errors import NumbaError
+
+from numbox.core.variable.variable import Variable, CompiledNode
 
 
 @dataclass(frozen=True)
 class Segment:
     """One contiguous run of the partition, as reported to users."""
     kind: str                      # "jit" | "python"
-    nodes: tuple                   # qual_names, linear order
-    inputs: tuple                  # live-in qual_names
-    outputs: tuple                 # live-out qual_names
-    source: str = None             # generated source, jit segments only
-    reasons: dict = field(default_factory=dict)   # python segments: demotion reasons
+    nodes: tuple[str, ...]         # qual_names, linear order
+    inputs: tuple[str, ...]        # live-in qual_names
+    outputs: tuple[str, ...]       # live-out qual_names
+    source: str | None = None      # generated source, jit segments only
+    reasons: dict[str, str] = field(default_factory=dict)   # python segments: demotion reasons
 
 
 @dataclass(frozen=True)
 class PartitionReport:
     """What actually runs where, and why -- see CompiledKernel.partition."""
     mode: str                      # "fused" | "segmented"
-    segments: tuple                # of Segment
+    segments: tuple[Segment, ...]  # of Segment
 
     @property
-    def python_nodes(self):
+    def python_nodes(self) -> set[str]:
         names = set()
         for seg in self.segments:
             if seg.kind == "python":
                 names.update(seg.nodes)
         return names
 
-    def __str__(self):
+    def __str__(self) -> str:
         lines = [f"compile_kernel partition: mode={self.mode}, {len(self.segments)} segment(s)"]
         for i, seg in enumerate(self.segments):
             lines.append(
@@ -53,25 +56,25 @@ class PartitionReport:
 
 @dataclass(frozen=True)
 class _JitStep:
-    dispatcher: object
-    in_vars: tuple
-    out_vars: tuple
+    dispatcher: Dispatcher
+    in_vars: tuple[Variable, ...]
+    out_vars: tuple[Variable, ...]
 
 
 @dataclass(frozen=True)
 class _PyStep:
-    var: object
-    py_callable: object
-    in_vars: tuple
+    var: Variable
+    py_callable: Callable
+    in_vars: tuple[Variable, ...]
 
 
 @dataclass(frozen=True)
 class _Plan:
-    steps: tuple
-    external_vars: tuple           # kernel-argument order
-    output_vars: tuple             # required order
+    steps: tuple[_JitStep | _PyStep, ...]
+    external_vars: tuple[Variable, ...]     # kernel-argument order
+    output_vars: tuple[Variable, ...]       # required order
 
-    def run(self, args):
+    def run(self, args: tuple) -> tuple:
         slots = dict(zip(self.external_vars, args))
         for step in self.steps:
             vals = [slots[v] for v in step.in_vars]
@@ -82,11 +85,11 @@ class _Plan:
         return tuple(slots[v] for v in self.output_vars)
 
 
-def _qual(node):
+def _qual(node: CompiledNode) -> str:
     return node.variable.qual_name()
 
 
-def _linearize_from(nodes, demoted, start_jit):
+def _linearize_from(nodes: list[CompiledNode], demoted: set[Variable], start_jit: bool) -> list[CompiledNode]:
     by_var = {n.variable: n for n in nodes}
     indeg = {n: 0 for n in nodes}
     dependents = {}
@@ -115,7 +118,7 @@ def _linearize_from(nodes, demoted, start_jit):
     return order
 
 
-def linearize(nodes, demoted):
+def linearize(nodes: list[CompiledNode], demoted: set[Variable]) -> list[CompiledNode]:
     """Topological order clustering same-color nodes into minimal runs.
 
     Greedy color-sticky Kahn (drain the current color while possible,
@@ -134,7 +137,7 @@ def linearize(nodes, demoted):
     return jit_first
 
 
-def build_runs(order, demoted):
+def build_runs(order: list[CompiledNode], demoted: set[Variable]) -> list[tuple[str, list[CompiledNode]]]:
     """Split a linear order into maximal same-color runs: [(kind, [nodes])]."""
     runs = []
     for n in order:
@@ -146,7 +149,12 @@ def build_runs(order, demoted):
     return runs
 
 
-def segment_liveness(run_nodes, external, required_vars, order):
+def segment_liveness(
+    run_nodes: list[CompiledNode],
+    external: set[Variable],
+    required_vars: list[Variable],
+    order: list[CompiledNode],
+) -> tuple[tuple[Variable, ...], tuple[Variable, ...]]:
     """(live_in, live_out) for one jit run, both sorted by qual_name.
 
     live_in: values the run consumes but does not produce (externals or
@@ -176,7 +184,7 @@ def segment_liveness(run_nodes, external, required_vars, order):
 _REASON_LIMIT = 200
 
 
-def _error_reason(exc):
+def _error_reason(exc: Exception) -> str:
     """First informative line of a numba error -- numba prefixes typing
     failures with a generic pipeline line, which would make every reason
     in a PartitionReport read identically."""
@@ -188,7 +196,7 @@ def _error_reason(exc):
     return f"{type(exc).__name__}: {informative[:_REASON_LIMIT]}"
 
 
-def _untypeable_reason(node, values):
+def _untypeable_reason(node: CompiledNode, values: dict[Variable, Any]) -> str | None:
     for inp in node.inputs:
         try:
             typeof(values[inp])
@@ -200,7 +208,7 @@ def _untypeable_reason(node, values):
     return None
 
 
-def _call_exotic(binding, args, arg_types):
+def _call_exotic(binding, args: list, arg_types: tuple) -> Any:
     """Evaluate a CompileResultWAP/CFunc/DUFunc formula through a one-line
     @njit shim (the same global-binding shape segments use). No Python
     fallback exists for these, so a NumbaError here propagates."""
@@ -212,7 +220,12 @@ def _call_exotic(binding, args, arg_types):
     return shim(*args)
 
 
-def discover(ordered_nodes, external, values, bindings_by_var):
+def discover(
+    ordered_nodes: list[CompiledNode],
+    external: set[Variable],
+    values: dict[Variable, Any],
+    bindings_by_var: dict[Variable, Any],
+) -> dict[Variable, str]:
     """One-pass warm-up + probe.
 
     Mutates `values` ({Variable: value}, pre-seeded with externals) to hold
@@ -227,7 +240,6 @@ def discover(ordered_nodes, external, values, bindings_by_var):
         args = [values[inp] for inp in node.inputs]
         binding = bindings_by_var[var]
         reason = _untypeable_reason(node, values)
-        arg_types = None
         if reason is None:
             arg_types = tuple(typeof(a) for a in args)
             if isinstance(binding, Dispatcher):

@@ -24,10 +24,10 @@ import hashlib
 import inspect
 import keyword
 import re
-import sys
 import warnings
 
 from types import CodeType, FunctionType, ModuleType
+from typing import Any, Callable
 
 import numpy as np
 
@@ -43,7 +43,9 @@ from numbox.core.variable._kernel_partition import (
     PartitionReport, Segment, _JitStep, _Plan, _PyStep,
     build_runs, discover, linearize, segment_liveness,
 )
-from numbox.core.variable.variable import QUAL_SEP, make_qual_name
+from numbox.core.variable.variable import (
+    QUAL_SEP, CompiledGraph, CompiledNode, Graph, Variable, make_qual_name,
+)
 from numbox.utils.preprocessing import (
     _anchor_root, _materialize_anchor, _orphan_anchor_sweep,
 )
@@ -55,7 +57,7 @@ _ANCHOR_SUBDIR = "numbox-compile-kernel"
 _orphan_anchor_sweep(_ANCHOR_SUBDIR)
 
 
-def _sanitize(qual_name):
+def _sanitize(qual_name: str) -> str:
     s = re.sub(r"[^0-9A-Za-z_]", "_", qual_name)
     s = re.sub(r"_+", "_", s).strip("_").lower()
     if not s or s[0].isdigit():
@@ -63,7 +65,7 @@ def _sanitize(qual_name):
     return s
 
 
-def _assign_identifiers(variables):
+def _assign_identifiers(variables: list[Variable]) -> dict[Variable, str]:
     """Map each Variable to a unique, valid, readable Python identifier.
 
     Readable (from the qual_name) with a minimal deterministic sha256 suffix
@@ -92,7 +94,7 @@ def _assign_identifiers(variables):
     return idents
 
 
-def _wrap_formula(formula):
+def _wrap_formula(formula: Callable) -> Dispatcher | CompileResultWAP | DUFunc | CFunc:
     """Return an njit-callable for `formula`; plain-Python callables are njit-wrapped."""
     if isinstance(formula, (Dispatcher, CompileResultWAP, DUFunc, CFunc)):
         return formula
@@ -105,7 +107,7 @@ class _Unfingerprintable(Exception):
     """A value the cache digest cannot canonicalize; the kernel goes uncached."""
 
 
-def _safe_repr(obj):
+def _safe_repr(obj: object) -> str:
     """``repr(obj)`` that never raises -- the fingerprint fallback must always
     yield a string so an un-fingerprintable formula degrades to uncached rather
     than crashing when its ``__repr__`` itself raises."""
@@ -115,7 +117,7 @@ def _safe_repr(obj):
         return f"<{type(obj).__name__} repr-failed>"
 
 
-def _canon_value(value, seen):
+def _canon_value(value: Any, seen: set[int]) -> str:
     if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
         return repr(value)
     if isinstance(value, np.generic):
@@ -146,7 +148,7 @@ def _canon_value(value, seen):
     raise _Unfingerprintable(type(value).__name__)
 
 
-def _fingerprint_codeobj(code, seen):
+def _fingerprint_codeobj(code: CodeType, seen: set[int]) -> str:
     consts = ",".join(
         _fingerprint_codeobj(c, seen) if isinstance(c, CodeType) else _canon_value(c, seen)
         for c in code.co_consts
@@ -157,7 +159,7 @@ def _fingerprint_codeobj(code, seen):
     )
 
 
-def _referenced_global_names(code):
+def _referenced_global_names(code: CodeType) -> set[str]:
     names = set(code.co_names)
     for c in code.co_consts:
         if isinstance(c, CodeType):
@@ -165,7 +167,7 @@ def _referenced_global_names(code):
     return names
 
 
-def _fingerprint_function(func, seen):
+def _fingerprint_function(func: FunctionType, seen: set[int]) -> str:
     if id(func) in seen:
         return f"recursive({func.__qualname__})"
     seen = seen | {id(func)}
@@ -189,7 +191,7 @@ def _fingerprint_function(func, seen):
     )
 
 
-def _formula_fingerprint(formula):
+def _formula_fingerprint(formula) -> tuple[str, bool]:
     """Behavioral identity of a formula for the cache digest.
 
     Returns ``(text, cacheable)``. The text covers every value channel
@@ -223,7 +225,7 @@ def _formula_fingerprint(formula):
         return f"{_safe_repr(formula)} @{id(formula)}", False
 
 
-def _check_formula_arity(formula, n_inputs, qual_name):
+def _check_formula_arity(formula, n_inputs: int, qual_name: str) -> None:
     target = getattr(formula, "py_func", None) or getattr(formula, "__wrapped__", None) or formula
     try:
         sig = inspect.signature(target)
@@ -238,7 +240,7 @@ def _check_formula_arity(formula, n_inputs, qual_name):
         ) from None
 
 
-def _assemble_source(params, lines, out_ids):
+def _assemble_source(params: list[tuple[str, str, str]], lines: list[str], out_ids: list[str]) -> str:
     """Assemble the canonical kernel source; both the fused kernel and every
     segment must share this exact shape so cache digests cannot drift."""
     sig = ", ".join(ident for _, _, ident in params)
@@ -247,7 +249,10 @@ def _assemble_source(params, lines, out_ids):
     return f"def _kernel({sig}):\n{body}{ret}\n"
 
 
-def _emit_lines(nodes, skip, idents, bindings):
+def _emit_lines(
+    nodes: list[CompiledNode], skip: set[Variable],
+    idents: dict[Variable, str], bindings: dict[str, Any],
+) -> list[str]:
     """Emit one body line per node (excluding `skip`), filling `bindings`;
     raises on a missing formula, a non-callable formula, or an arity mismatch."""
     lines = []
@@ -273,7 +278,10 @@ def _emit_lines(nodes, skip, idents, bindings):
     return lines
 
 
-def _generate_segment_body(run_nodes, live_in, live_out, idents):
+def _generate_segment_body(
+    run_nodes: list[CompiledNode], live_in: tuple[Variable, ...],
+    live_out: tuple[Variable, ...], idents: dict[Variable, str],
+) -> tuple[str, dict, list, list]:
     """Like _generate_body, for one jit segment: live-ins are parameters,
     live-outs the return tuple. Same source shape so _compile applies verbatim.
 
@@ -289,7 +297,9 @@ def _generate_segment_body(run_nodes, live_in, live_out, idents):
     return source, bindings, params, outputs
 
 
-def _generate_body(compiled, required, idents):
+def _generate_body(
+    compiled: CompiledGraph, required: list[str], idents: dict[Variable, str],
+) -> tuple[str, dict, list, list]:
     """Generate `def _kernel(...): ...` source (no decorator) + bindings.
 
     Returns (source, bindings, params, outputs):
@@ -331,7 +341,9 @@ def _generate_body(compiled, required, idents):
     return source, bindings, params, outputs
 
 
-def _compile(source, bindings, jit_options, cache):
+def _compile(
+    source: str, bindings: dict[str, Any], jit_options: dict | None, cache: bool | None,
+) -> Dispatcher:
     """Content-addressed compile of the kernel source into an @njit dispatcher."""
     fingerprints = []
     cacheable = True
@@ -398,8 +410,10 @@ class CompiledKernel:
                     the first call resolves the mode).
     """
 
-    def __init__(self, kernel, params, outputs, source, identifiers, ctx,
-                 required_vars, external_vars):
+    def __init__(self, kernel: Dispatcher, params: list[tuple[str, str, str]],
+                 outputs: list[str], source: str, identifiers: dict[str, str],
+                 ctx: tuple, required_vars: list[Variable],
+                 external_vars: list[Variable]) -> None:
         self._fused = kernel
         self._mode = "virgin"
         self._plan = None
@@ -414,7 +428,7 @@ class CompiledKernel:
         self._external_vars = external_vars
 
     @property
-    def kernel(self):
+    def kernel(self) -> Callable:
         if self._mode == "fused":
             # Fused is permanent: later signatures go through numba's own
             # dispatch, and a typing failure there raises as in v1 -- no
@@ -424,7 +438,7 @@ class CompiledKernel:
             return self._run_segmented
         return self._resolve_and_call
 
-    def _fused_report(self):
+    def _fused_report(self) -> PartitionReport:
         compiled, _, _, _, _, external = self._ctx
         nodes = tuple(
             n.variable.qual_name() for n in compiled.ordered_nodes
@@ -435,7 +449,7 @@ class CompiledKernel:
             outputs=tuple(self.outputs), source=self.source, reasons={},
         ),))
 
-    def _resolve_and_call(self, *args):
+    def _resolve_and_call(self, *args) -> tuple:
         if self._mode != "virgin":
             return self.kernel(*args)
         try:
@@ -452,7 +466,7 @@ class CompiledKernel:
             return self._fused(*args)
         return self._discover_and_run(args)
 
-    def _run_segmented(self, *args):
+    def _run_segmented(self, *args) -> tuple:
         try:
             return self._plan.run(args)
         except NumbaError:
@@ -462,7 +476,7 @@ class CompiledKernel:
             # evaluation of the same args, so nothing is masked.
             return self._discover_and_run(args)
 
-    def _discover_and_run(self, args):
+    def _discover_and_run(self, args: tuple) -> tuple:
         compiled, idents, bindings_by_var, jit_options, cache, external = self._ctx
         values = dict(zip(self._external_vars, args))
         demoted = discover(compiled.ordered_nodes, external, values, bindings_by_var)
@@ -515,7 +529,7 @@ class CompiledKernel:
         self.partition = PartitionReport(mode="segmented", segments=tuple(segments))
         return tuple(values[v] for v in self._required_vars)
 
-    def execute(self, external_values):
+    def execute(self, external_values: dict) -> dict:
         """Dict-in / dict-out convenience, symmetric with CompiledGraph.execute."""
         args = []
         for src, name in self._param_keys:
@@ -529,14 +543,17 @@ class CompiledKernel:
         return dict(zip(self.outputs, result))
 
 
-def compile_kernel(graph, required, *, jit_options=None, cache=None):
+def compile_kernel(
+    graph: Graph, required: str | list[str], *,
+    jit_options: dict | None = None, cache: bool | None = None,
+) -> CompiledKernel:
     """Compile `graph` into a fused @njit kernel for the `required` variables.
 
-    :param graph: a `Graph`; its dependency structure and formulas are fused
+    :param graph: its dependency structure and formulas are fused
         into one straight-line @njit function (see `CompiledKernel`).
-    :param required: qualified name or list of qualified names. Order is
-        preserved and fixes the order of `CompiledKernel.outputs` / the
-        kernel's return tuple; a duplicate entry raises `ValueError` (each
+    :param required: Order is preserved and fixes the order of
+        `CompiledKernel.outputs` / the kernel's return tuple; a duplicate
+        entry raises `ValueError` (each
         output is requested once -- the return tuple is positional, so a
         repeat carries no information).
     :param jit_options: merged over numbox's defaults
@@ -600,11 +617,7 @@ def compile_kernel(graph, required, *, jit_options=None, cache=None):
             f"required name or one of its dependencies cannot be resolved in the graph: {e}"
         ) from e
     except RecursionError:
-        raise RecursionError(
-            f"graph dependency depth exceeds Python's recursion limit "
-            f"({sys.getrecursionlimit()}); the traversal needs roughly one stack frame "
-            f"per chained node - raise sys.setrecursionlimit(...) before compile_kernel"
-        ) from None
+        raise RecursionError("Consider raising recursion limit.") from None
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
     source, bindings, params, outputs = _generate_body(compiled, required, idents)
     kernel = _compile(source, bindings, jit_options, cache)
