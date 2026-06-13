@@ -169,9 +169,13 @@ With the demoted set known, re-linearize the node set (edges from
   jit-start alone produces an avoidable extra run when a Python chain and a
   jit chain meet at a jit sink.
 
-Exact minimization of run count in a 2-colored DAG linearization is NP-hard;
-greedy color-stickiness is the documented heuristic and handles the practical
-shapes (pipelines, diamonds, layered DAGs) well. Goykhman's `N1→N5` example
+For two colors the greedy is exactly optimal (the original NP-hardness claim
+here was wrong): starting from color c, greedy run i holds precisely the nodes
+whose longest color-alternating ancestor chain spans i runs, so the run count
+meets the lower bound of 1 + the maximum number of color alternations along
+any directed path; taking the better of the two starting colors yields the
+minimum. Verified against brute-force enumeration on randomized DAGs (a seeded
+regression test keeps it locked). Goykhman's `N1→N5` example
 partitions into exactly `fuse(N1,N2) → py(N3) → fuse(N4,N5)` and is a literal
 test case.
 
