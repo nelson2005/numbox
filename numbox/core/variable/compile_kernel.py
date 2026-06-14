@@ -94,13 +94,23 @@ def _assign_identifiers(variables: list[Variable]) -> dict[Variable, str]:
     return idents
 
 
-def _wrap_formula(formula: Callable) -> Dispatcher | CompileResultWAP | DUFunc | CFunc:
-    """Return an njit-callable for `formula`; plain-Python callables are njit-wrapped."""
+def _effective_flags(jit_options: dict | None) -> dict:
+    """The non-`cache` jit flags for the kernel. Threaded into the inner formula
+    njit-wraps too, so a plain-Python formula computes identically whether reached
+    via discovery, a fused segment, or the fully fused kernel (non-default flags such
+    as `fastmath`/`error_model` otherwise diverge across the discovery boundary)."""
+    opts = {**_default_jit_options, **(jit_options or {})}
+    return {k: v for k, v in opts.items() if k != "cache"}
+
+
+def _wrap_formula(formula: Callable, flags: dict | None = None) -> Dispatcher | CompileResultWAP | DUFunc | CFunc:
+    """Return an njit-callable for `formula`; plain-Python callables are njit-wrapped
+    with the kernel's effective jit `flags` so their semantics match the fused kernel."""
     if isinstance(formula, (Dispatcher, CompileResultWAP, DUFunc, CFunc)):
         return formula
     if not callable(formula):
         raise TypeError(f"formula {formula!r} is not callable")
-    return njit(formula)
+    return njit(**(flags or {}))(formula)
 
 
 class _Unfingerprintable(Exception):
@@ -251,7 +261,7 @@ def _assemble_source(params: list[tuple[str, str, str]], lines: list[str], out_i
 
 def _emit_lines(
     nodes: list[CompiledNode], skip: set[Variable],
-    idents: dict[Variable, str], bindings: dict[str, Any],
+    idents: dict[Variable, str], bindings: dict[str, Any], flags: dict | None = None,
 ) -> list[str]:
     """Emit one body line per node (excluding `skip`), filling `bindings`;
     raises on a missing formula, a non-callable formula, or an arity mismatch."""
@@ -268,7 +278,7 @@ def _emit_lines(
         temp = idents[var]
         fg = "f_" + temp
         try:
-            bindings[fg] = _wrap_formula(var.formula)
+            bindings[fg] = _wrap_formula(var.formula, flags)
         except TypeError as e:
             raise TypeError(f"{var.qual_name()!r}: {e}") from e
         _check_formula_arity(var.formula, len(node.inputs), var.qual_name())
@@ -280,7 +290,7 @@ def _emit_lines(
 
 def _generate_segment_body(
     run_nodes: list[CompiledNode], live_in: tuple[Variable, ...],
-    live_out: tuple[Variable, ...], idents: dict[Variable, str],
+    live_out: tuple[Variable, ...], idents: dict[Variable, str], flags: dict | None = None,
 ) -> tuple[str, dict, list, list]:
     """Like _generate_body, for one jit segment: live-ins are parameters,
     live-outs the return tuple. Same source shape so _compile applies verbatim.
@@ -290,7 +300,7 @@ def _generate_segment_body(
     """
     params = [(v.source, v.name, idents[v]) for v in live_in]
     bindings = {}
-    lines = _emit_lines(run_nodes, set(), idents, bindings)
+    lines = _emit_lines(run_nodes, set(), idents, bindings, flags)
     outputs = [v.qual_name() for v in live_out]
     out_ids = [idents[v] for v in live_out]
     source = _assemble_source(params, lines, out_ids)
@@ -298,7 +308,7 @@ def _generate_segment_body(
 
 
 def _generate_body(
-    compiled: CompiledGraph, required: list[str], idents: dict[Variable, str],
+    compiled: CompiledGraph, required: list[str], idents: dict[Variable, str], flags: dict | None = None,
 ) -> tuple[str, dict, list, list]:
     """Generate `def _kernel(...): ...` source (no decorator) + bindings.
 
@@ -326,7 +336,7 @@ def _generate_body(
     params = [(v.source, v.name, idents[v]) for v in ext_sorted]
 
     bindings = {}
-    lines = _emit_lines(compiled.ordered_nodes, external, idents, bindings)
+    lines = _emit_lines(compiled.ordered_nodes, external, idents, bindings, flags)
 
     by_qual = {n.variable.qual_name(): n.variable for n in compiled.ordered_nodes}
     outputs, out_ids = [], []
@@ -355,7 +365,7 @@ def _compile(
     if cache is not None:
         opts["cache"] = cache
     opts.setdefault("cache", True)
-    flags = {k: v for k, v in opts.items() if k != "cache"}
+    flags = _effective_flags(jit_options)
     try:
         flags_canon = _canon_value(flags, set())
     except (_Unfingerprintable, RecursionError):
@@ -478,8 +488,9 @@ class CompiledKernel:
 
     def _discover_and_run(self, args: tuple) -> tuple:
         compiled, idents, bindings_by_var, jit_options, cache, external = self._ctx
+        flags = _effective_flags(jit_options)
         values = dict(zip(self._external_vars, args))
-        demoted = discover(compiled.ordered_nodes, external, values, bindings_by_var)
+        demoted = discover(compiled.ordered_nodes, external, values, bindings_by_var, flags)
         nodes = [n for n in compiled.ordered_nodes if n.variable not in external]
         order = linearize(nodes, set(demoted))
         runs = build_runs(order, set(demoted))
@@ -509,7 +520,7 @@ class CompiledKernel:
                 run_nodes, external, self._required_vars, order
             )
             src, seg_bindings, _, _ = _generate_segment_body(
-                run_nodes, live_in, live_out, idents
+                run_nodes, live_in, live_out, idents, flags
             )
             disp = _compile(src, seg_bindings, jit_options, cache)
             disp.compile(tuple(typeof(values[v]) for v in live_in))
@@ -619,7 +630,8 @@ def compile_kernel(
     except RecursionError:
         raise RecursionError("Consider raising recursion limit.") from None
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
-    source, bindings, params, outputs = _generate_body(compiled, required, idents)
+    flags = _effective_flags(jit_options)
+    source, bindings, params, outputs = _generate_body(compiled, required, idents, flags)
     kernel = _compile(source, bindings, jit_options, cache)
     external = {v for vs in compiled.required_external_variables.values() for v in vs.values()}
     bindings_by_var = {
@@ -628,7 +640,7 @@ def compile_kernel(
     }
 
     def _registry_var(qual):
-        src, _, name = qual.rpartition(QUAL_SEP)
+        src, name = qual.rsplit(QUAL_SEP, 1)
         return graph.registry[src][name]
 
     required_vars = [_registry_var(q) for q in outputs]

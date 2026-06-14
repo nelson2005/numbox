@@ -1586,3 +1586,27 @@ def test_linearize_run_count_is_optimal_bruteforce():
             runs = 1 + sum(1 for a, b in zip(perm, perm[1:]) if colors[a] != colors[b])
             best = runs if best is None else min(best, runs)
         assert greedy_runs == best, (edges, colors, greedy_runs, best)
+
+
+def test_discovery_path_honors_jit_options():
+    # The discovery path (forced here by an untypeable external) must honor the
+    # kernel's jit_options just like the fused/segment hot path. Under
+    # error_model="numpy", x/0 is inf rather than a ZeroDivisionError; with bare
+    # njit wraps the discovery call would instead raise. Regression for the
+    # inner-wrap flag-threading fix.
+    class Opaque:
+        pass
+
+    specs = [
+        {"name": "p", "inputs": {"opaque": "ext"}, "formula": lambda o: 0.0},
+        {"name": "r", "inputs": {"x": "ext", "y": "ext"}, "formula": lambda a, b: a / b},
+    ]
+    g = Graph({"calc": specs}, ["ext"])
+    ck = compile_kernel(g, ["calc.r", "calc.p"], jit_options={"error_model": "numpy"})
+
+    out = ck.execute({"ext": {"x": 1.0, "y": 0.0, "opaque": Opaque()}})
+    assert out["calc.r"] == float("inf")
+    assert ck.partition.mode == "segmented"  # the discovery/segment path was exercised
+    # the segment hot path (second call) agrees with the discovery call
+    out2 = ck.execute({"ext": {"x": 1.0, "y": 0.0, "opaque": Opaque()}})
+    assert out2["calc.r"] == float("inf")

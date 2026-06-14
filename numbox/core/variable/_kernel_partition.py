@@ -208,14 +208,15 @@ def _untypeable_reason(node: CompiledNode, values: dict[Variable, Any]) -> str |
     return None
 
 
-def _call_exotic(binding, args: list, arg_types: tuple) -> Any:
+def _call_exotic(binding, args: list, arg_types: tuple, flags: dict | None = None) -> Any:
     """Evaluate a CompileResultWAP/CFunc/DUFunc formula through a one-line
     @njit shim (the same global-binding shape segments use). No Python
-    fallback exists for these, so a NumbaError here propagates."""
+    fallback exists for these, so a NumbaError here propagates. `flags` are the
+    kernel's effective jit flags, so the shim matches the fused/segment hot path."""
     names = ", ".join(f"a{i}" for i in range(len(args)))
     ns = {"_formula": binding}
     exec(f"def _shim({names}):\n    return _formula({names})\n", ns)  # nosec B102
-    shim = njit(ns["_shim"])
+    shim = njit(**(flags or {}))(ns["_shim"])
     shim.compile(arg_types)
     return shim(*args)
 
@@ -225,6 +226,7 @@ def discover(
     external: set[Variable],
     values: dict[Variable, Any],
     bindings_by_var: dict[Variable, Any],
+    flags: dict | None = None,
 ) -> dict[Variable, str]:
     """One-pass warm-up + probe.
 
@@ -248,7 +250,7 @@ def discover(
                 except NumbaError as e:
                     reason = _error_reason(e)
             else:
-                values[var] = _call_exotic(binding, args, arg_types)
+                values[var] = _call_exotic(binding, args, arg_types, flags)
                 continue
         elif not isinstance(binding, Dispatcher):
             raise TypeError(
