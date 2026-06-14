@@ -356,3 +356,11 @@ each alternation.
    :members:
    :show-inheritance:
    :undoc-members:
+
+The identifier-assignment and formula helpers used by the compiler live in
+:mod:`numbox.core.variable.utils`.
+
+.. automodule:: numbox.core.variable.utils
+   :members:
+   :show-inheritance:
+   :undoc-members:

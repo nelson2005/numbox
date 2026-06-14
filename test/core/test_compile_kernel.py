@@ -10,8 +10,10 @@ from numba import njit, cfunc, vectorize
 from numba.core.dispatcher import Dispatcher
 from numba.core.types import float64
 from numbox.core.variable.compile_kernel import (
-    _sanitize, _assign_identifiers, _wrap_formula, _generate_body, _compile,
-    compile_kernel, CompiledKernel,
+    _generate_body, _compile, compile_kernel, CompiledKernel,
+)
+from numbox.core.variable.utils import (
+    _sanitize, _assign_identifiers, _wrap_formula,
 )
 from numbox.core.variable.variable import CompiledNode, Variable, Graph, Values
 from numbox.utils.highlevel import cres
