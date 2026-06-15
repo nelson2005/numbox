@@ -247,10 +247,10 @@ kernel's positional inputs and tuple outputs are available as ``.params`` and ``
 the generated kernel text as ``.source``, and the per-variable temporary identifiers as
 ``.identifiers``.
 
-This fused path has two deliberate limitations: it does not honor the
-`cacheable` memoization of individual nodes, and it offers no incremental recompute of
-only the affected nodes. Use :class:`numbox.core.variable.variable.CompiledGraph` (or the
-`core.work` graph) when either of those is needed.
+This fused path does not honor the `cacheable` memoization of individual nodes; use
+:class:`numbox.core.variable.variable.CompiledGraph` (or the `core.work` graph) when that
+is needed. It does, however, support incremental recompute of only the affected nodes via
+``CompiledKernel.recompute`` (see :ref:`compile_kernel_recompute` below).
 
 **Caching.** The fused kernel is cached on disk, content-addressed by a
 fingerprint of the generated kernel source, every formula's behavioral
@@ -351,6 +351,40 @@ itself is per-process. If a later call's types break a segment, the partition
 is re-learned for those values and replaces the previous plan — workloads
 alternating between type families whose partitions differ re-pay discovery on
 each alternation.
+
+.. _compile_kernel_recompute:
+
+Incremental recompute
+*********************
+
+``CompiledKernel.recompute`` is a value-only refresh that re-evaluates only the cone
+of nodes affected by a change, reading every unchanged input from a persistent value
+store seeded by a prior full call. It mirrors
+:meth:`numbox.core.variable.variable.CompiledGraph.recompute`: same types across calls,
+``{source: {name: value}}`` in, a tuple in ``outputs`` order out. A ``changed`` name may
+resolve to an interior node, in which case its value is overridden and only its downstream
+cone recomputes. Do not interleave input-changing throughput ``kernel(...)`` calls between
+``recompute`` calls -- the store is seeded once and a throughput call does not update it.
+
+.. code-block:: python
+
+    from numba import njit
+    from numbox.core.variable.variable import Graph
+    from numbox.core.variable.compile_kernel import compile_kernel
+
+    graph = Graph(
+        variables_lists={"variables": [
+            {"name": "a", "inputs": {"y": "basket"}, "formula": njit(lambda y: y + 1.0)},
+            {"name": "b", "inputs": {"y": "basket"}, "formula": njit(lambda y: y * 2.0)},
+            {"name": "u", "inputs": {"a": "variables", "b": "variables"},
+             "formula": njit(lambda a, b: a + b)},
+        ]},
+        external_source_names=["basket"],
+    )
+
+    ck = compile_kernel(graph, ["variables.u"])
+    assert ck.kernel(100.0) == (301.0,)        # full call seeds the value store
+    assert ck.recompute({"basket": {"y": 101.0}}) == (304.0,)
 
 .. automodule:: numbox.core.variable.compile_kernel
    :members:

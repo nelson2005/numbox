@@ -260,6 +260,9 @@ class CompiledKernel:
                     bare numba dispatcher once fused, the segmented master
                     otherwise. Positional external args (in `params` order)
                     -> tuple (in `outputs` order).
+      recompute   - value-only incremental refresh of only the cone affected
+                    by a change, over a store seeded by a prior `kernel` call;
+                    returns a tuple in `outputs` order (see `recompute`).
       params      - external input qual_names, kernel-argument order.
       outputs     - requested variable qual_names, return-tuple order.
       source      - generated kernel source text.
@@ -522,6 +525,48 @@ class CompiledKernel:
         self._ensure_boundary()
 
     def recompute(self, changed: dict) -> tuple:
+        """Incrementally re-evaluate only the cone affected by `changed`.
+
+        Mirrors :meth:`numbox.core.variable.variable.CompiledGraph.recompute`: this
+        is a value-only refresh, not a recompile. `changed` is
+        ``{source: {name: value}}``; the returned tuple is in `outputs` order. The
+        same variables may carry different values across calls, but their numba types
+        must stay the same as the seeding call (a type change is recovered from once,
+        see below, but the contract is same-types).
+
+        Precondition: a prior full call (``kernel(...)`` / ``execute(...)``) must have
+        seeded the value store. Calling `recompute` first raises ``RuntimeError``.
+
+        What it does: it writes the changed values into a persistent value store,
+        collects the downstream cone of the changed nodes, and re-fuses just that cone
+        -- reading every unchanged input from the store. The cone sub-plan is compiled
+        on first use and kept in a bounded LRU cache keyed on the cone and its live-in
+        boundary, so a recurring change pattern reuses its compiled plan without
+        re-fusing. Nodes that were demoted to plain Python at seed time stay Python in
+        the cone; the jittable remainder fuses into ``@njit`` segments.
+
+        Interior overrides: a `changed` name may resolve to an interior (computed) node
+        rather than an external input -- mirroring the interpreted path. Its value is
+        overridden in the store and only its downstream cone recomputes; the overridden
+        node's own formula is *not* re-run. The first override of a not-yet-seen interior
+        node expands the change-source set and rebuilds the persisted-node boundary (and
+        invalidates cached cone plans, whose boundaries have shifted).
+
+        Limitations:
+
+        - Do not interleave input-changing ``kernel(...)`` throughput calls between
+          `recompute` calls. `recompute` is the stateful entry point: the store is
+          seeded once, and a throughput call does not update it, so a subsequent
+          `recompute` would read stale unchanged values. Use `recompute` for the
+          incremental workflow and the bare kernel for independent one-shot calls.
+        - An interior plain-Python (demoted) node must return a stable numba type across
+          recomputes. The same-types contract extends to demoted outputs: a demoted
+          node whose output type drifts between recomputes is not supported.
+
+        On a live-in type change a cached cone dispatcher fails to compile; the whole
+        cone-plan cache is flushed once, the store re-seeded from the last full call, the
+        change re-applied, and the cone rebuilt against the new types.
+        """
         self._ensure_store()
         changed_vars = self._apply_changes(changed)
         if not changed_vars:
