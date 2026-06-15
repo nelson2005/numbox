@@ -181,6 +181,37 @@ def segment_liveness(
     return tuple(sorted(live_in, key=key)), tuple(sorted(live_out, key=key))
 
 
+def cone_liveness(
+    run_nodes: list[CompiledNode], cone_order: list[CompiledNode],
+    required_vars, boundary: set[Variable],
+) -> tuple[tuple[Variable, ...], tuple[Variable, ...]]:
+    """(live_in, live_out) for one jit run inside a recompute cone.
+
+    live_in: inputs consumed by the run but not produced within it (read from
+    the store). live_out: produced values that are consumed by a later cone
+    step, are required outputs, or are boundary nodes (persisted for other
+    cones). Both sorted by qual_name."""
+    produced = {n.variable for n in run_nodes}
+    live_in = set()
+    for n in run_nodes:
+        for inp in n.inputs:
+            if inp not in produced:
+                live_in.add(inp)
+    later = set()
+    seen = False
+    run_set = set(run_nodes)
+    for n in cone_order:
+        if n in run_set:
+            seen = True
+            continue
+        if seen:
+            later.update(n.inputs)
+    req = set(required_vars)
+    live_out = {v for v in produced if v in later or v in req or v in boundary}
+    key = lambda v: v.qual_name()   # noqa: E731 - tiny local sort key
+    return tuple(sorted(live_in, key=key)), tuple(sorted(live_out, key=key))
+
+
 _REASON_LIMIT = 200
 
 

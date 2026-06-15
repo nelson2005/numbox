@@ -16,7 +16,7 @@ from numbox.core.variable.utils import (
     _sanitize, _assign_identifiers, _wrap_formula,
 )
 from numbox.core.variable.variable import CompiledNode, Variable, Graph, Values
-from numbox.core.variable._kernel_partition import compute_boundary
+from numbox.core.variable._kernel_partition import compute_boundary, cone_liveness
 from numbox.utils.highlevel import cres
 from test.auxiliary_utils import assert_njit_cache_survives_subprocess_roundtrip
 
@@ -1712,3 +1712,28 @@ def test_boundary_matches_reference(factory, req):
     cg, _, sources, required = _compiled_parts(g, req)
     got = compute_boundary(cg.ordered_nodes, sources, required)
     assert got == _boundary_reference(cg, sources, required)
+
+
+def test_cone_liveness_single_run_uses_required_and_boundary():
+    g = _diamond_graph()
+    cg, by_qual, _, _ = _compiled_parts(g, ["variables.u"])
+    nodes = {n.variable: n for n in cg.ordered_nodes}
+    a, b, u, x = (by_qual["variables.a"], by_qual["variables.b"],
+                  by_qual["variables.u"], by_qual["variables.x"])
+    run = [nodes[a], nodes[b], nodes[u]]          # one fused run over the cone of x
+    boundary = {a, u}
+    live_in, live_out = cone_liveness(run, run, {u}, boundary)
+    assert set(live_out) == {a, u}                 # a kept via boundary; b not boundary/required/later -> dropped
+    assert x in set(live_in)                       # x consumed by a,b, produced outside run
+    assert list(live_out) == sorted(live_out, key=lambda v: v.qual_name())
+
+
+def test_cone_liveness_cross_segment_handoff():
+    g = _chain_graph()
+    cg, by_qual, _, _ = _compiled_parts(g, ["variables.p"])
+    nodes = {n.variable: n for n in cg.ordered_nodes}
+    m, n_ = by_qual["variables.m"], by_qual["variables.n"]
+    cone_order = [nodes[m], nodes[n_]]            # two single-node runs
+    run1 = [nodes[m]]
+    live_in, live_out = cone_liveness(run1, cone_order, set(), set())
+    assert m in set(live_out)                      # consumed by later step n, even though not required/boundary
