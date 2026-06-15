@@ -24,6 +24,7 @@ Run it (from the repo root, with numbox installed)::
     python -m test.compile_kernel_benchmark --nodes 1000 --size 10000
     python -m test.compile_kernel_benchmark --profile cheap       # dispatch-bound regime
     python -m test.compile_kernel_benchmark --compile-report      # + cache/compile
+    python -m test.compile_kernel_benchmark --recompute           # incremental recompute
     python test/compile_kernel_benchmark.py --help
 
 ``--profile {cheap,mixed,expensive}`` selects the per-node cost mix, so every
@@ -467,10 +468,209 @@ def run_compile_report(n_nodes, profile):
             shutil.rmtree(cache_dir, ignore_errors=True)
 
 
+# --- recompute report (the --recompute mode) ---------------------------------
+# Seeds a store once with a full call, then drives many `recompute` calls that
+# change a small input subset, and contrasts the steady-state cost against a full
+# `kernel(...)` re-run (the same change applied as a from-scratch evaluation each
+# iteration) and the interpreted `CompiledGraph.recompute`. Three regimes probe
+# the three places recompute can win, break even, or lose:
+#
+#   deep chain      -- a long single-input chain. A change to the FIRST node has a
+#                      cone == the whole chain, so recompute cannot beat a full
+#                      re-run there. To show the real win we change a LATE INTERIOR
+#                      node (an interior override): its downstream cone is a short
+#                      SUFFIX of the chain (the last ~50 nodes), so recompute re-runs
+#                      only that suffix while the full re-run still evaluates all N
+#                      nodes. The win therefore grows with N for a fixed suffix.
+#   diamond         -- x -> {a, b} -> u. Changing the shared root x re-affects the
+#                      whole small graph; this regime measures the boundary-
+#                      persistence machinery cost on a join, not a fusion win.
+#   fan-out columns -- K independent input->chain->output columns. Each recompute
+#                      changes a DIFFERENT single column input, cycling through all
+#                      K so the bounded cone-plan cache is exercised (and, when
+#                      K exceeds the cap, thrashes); recompute touches one column's
+#                      cone while a full re-run evaluates all K columns.
+
+
+def _affine(c, d):
+    """Distinct contractive affine njit formula ``a -> c*a + d`` (|c| < 1)."""
+    def f(a):
+        return c * a + d
+    return njit(f)
+
+
+def build_recompute_chain(n_nodes, suffix=50):
+    """Single-input chain of ``n_nodes`` contractive affine nodes over float64 arrays.
+
+    Returns ``(graph, required, late_name)``. ``late_name`` is the qual_name of a node
+    ``suffix`` steps from the end: overriding it makes the affected cone a short suffix
+    of the chain, so recompute re-runs only that suffix.
+    """
+    specs = [{"name": "v0", "inputs": {"a": "ext"}, "formula": _affine(0.5, 0.1)}]
+    for i in range(1, n_nodes):
+        c = round(0.30 + (i % 13) * 0.05, 3)
+        d = round(-0.20 + (i % 7) * 0.05, 3)
+        specs.append({"name": f"v{i}", "inputs": {f"v{i - 1}": "vars"},
+                      "formula": _affine(c, d)})
+    graph = Graph({"vars": specs}, external_source_names=["ext"])
+    late = max(1, n_nodes - suffix)
+    return graph, f"vars.v{n_nodes - 1}", f"v{late}"
+
+
+def build_recompute_diamond():
+    """The join graph x -> {a, b} -> u; returns ``(graph, required, ext)``."""
+    graph = Graph(
+        variables_lists={"variables": [
+            {"name": "x", "inputs": {"y": "basket"}, "formula": _affine(2.0, 0.0)},
+            {"name": "a", "inputs": {"x": "variables"}, "formula": _affine(0.7, -1.0)},
+            {"name": "b", "inputs": {"x": "variables"}, "formula": _affine(0.3, 0.5)},
+            {"name": "u", "inputs": {"a": "variables", "b": "variables"},
+             "formula": njit(lambda a, b: a + b)},
+        ]},
+        external_source_names=["basket"],
+    )
+    return graph, ["variables.u"], {"basket": {"y": None}}
+
+
+def build_recompute_fanout(width, depth):
+    """``width`` independent columns, each an ``ext.c{k}`` -> depth-long affine chain
+    -> output ``vars.o{k}``. Returns ``(graph, required, ext, col_inputs)`` where
+    ``col_inputs`` is the list of per-column external (src, name) change keys."""
+    specs = []
+    col_inputs = []
+    for k in range(width):
+        specs.append({"name": f"c{k}_0", "inputs": {f"i{k}": "ext"},
+                      "formula": _affine(0.5, 0.1)})
+        for j in range(1, depth):
+            c = round(0.30 + ((k + j) % 13) * 0.05, 3)
+            specs.append({"name": f"c{k}_{j}", "inputs": {f"c{k}_{j - 1}": "vars"},
+                          "formula": _affine(c, 0.05)})
+        specs.append({"name": f"o{k}", "inputs": {f"c{k}_{depth - 1}": "vars"},
+                      "formula": _affine(1.0, 0.0)})
+        col_inputs.append(("ext", f"i{k}"))
+    graph = Graph({"vars": specs}, external_source_names=["ext"])
+    required = [f"vars.o{k}" for k in range(width)]
+    ext = {"ext": {f"i{k}": None for k in range(width)}}
+    return graph, required, ext, col_inputs
+
+
+def _interp_recompute_driver(graph, required, seed_ext, next_change):
+    """Return a 0-arg callable that does ONE interpreted recompute step (warm store).
+
+    ``next_change`` is a 0-arg getter returning the next ``changed`` dict (e.g. the
+    cyclic getter), so the interpreted path cycles the same change sequence as the
+    kernel path."""
+    req = required if isinstance(required, list) else [required]
+    cg = graph.compile(req)
+    values = Values()
+    cg.execute(seed_ext, values)
+
+    def step():
+        cg.recompute(next_change(), values)
+    return step
+
+
+def run_recompute_mode(size, repeats, chain_n, fan_width, fan_depth):
+    a, _ = make_externals(size)
+
+    def cyclic(values):
+        i = [0]
+
+        def nxt():
+            v = values[i[0] % len(values)]
+            i[0] += 1
+            return v
+        return nxt
+
+    rows = []
+
+    # --- deep chain: late interior override -> short suffix cone ------------------
+    suffix = 50
+    g, req, late = build_recompute_chain(chain_n, suffix)
+    ext = {"ext": {"a": a}}
+    print(f"compiling fused kernel for the deep-chain regime (N={chain_n} nodes, "
+          f"cold cache is slow)...", flush=True)
+    t0 = time.perf_counter()
+    ck = compile_kernel(g, req)
+    ck.execute(ext)
+    print(f"  ready in {time.perf_counter() - t0:.1f}s", flush=True)
+    overrides = [a * (0.9 + 0.01 * t) for t in range(8)]
+    nxt = cyclic([{"vars": {late: o}} for o in overrides])
+    ck.recompute(nxt())                                  # warm: cone compile
+    ck.recompute(nxt())
+    steady = best_median(lambda: ck.recompute(nxt()), repeats)[0]
+    # Honest full-re-run baseline: the bare kernel recomputing the whole graph from
+    # the seed external -- exactly the work recompute's suffix cone avoids. (A
+    # from-scratch kernel that took the overridden interior as an external would be a
+    # different, smaller graph, so it is not the apples-to-apples baseline.)
+    full = best_median(lambda: ck.kernel(a), repeats)[0]
+    interp = best_median(
+        _interp_recompute_driver(g, req, ext, cyclic(
+            [{"vars": {late: o}} for o in overrides])), repeats)[0]
+    cones = len(ck._cone_cache)
+    rows.append((f"deep chain (interior override, {suffix}-node suffix cone)",
+                 steady, full, interp, cones, f"N={chain_n}"))
+
+    # --- diamond: change the shared root -----------------------------------------
+    g, req, ext = build_recompute_diamond()
+    ext = {"basket": {"y": a}}
+    ck = compile_kernel(g, req)
+    ck.execute(ext)
+    ys = [a * (1.0 + 0.01 * t) for t in range(8)]
+    nxt = cyclic([{"basket": {"y": y}} for y in ys])
+    ck.recompute(nxt())
+    ck.recompute(nxt())
+    steady = best_median(lambda: ck.recompute(nxt()), repeats)[0]
+    full = best_median(lambda: ck.kernel(a), repeats)[0]
+    interp = best_median(
+        _interp_recompute_driver(g, req, ext, cyclic(
+            [{"basket": {"y": y}} for y in ys])), repeats)[0]
+    cones = len(ck._cone_cache)
+    rows.append(("diamond (root change, whole cone)",
+                 steady, full, interp, cones, "join u"))
+
+    # --- fan-out: cycle a different column each recompute -------------------------
+    g, req, ext, col_inputs = build_recompute_fanout(fan_width, fan_depth)
+    ext = {"ext": {name: a for _src, name in col_inputs}}
+    ck = compile_kernel(g, req)
+    full_args = tuple(a for _ in col_inputs)
+    ck.execute(ext)
+    col_changes = [{src: {name: a * (1.0 + 0.01 * k)}}
+                   for k, (src, name) in enumerate(col_inputs)]
+    nxt = cyclic(col_changes)
+    # Warm a full cycle so every column's cone plan is compiled and cached before
+    # timing. When fan_width <= cap this is a clean steady state (all hits); when
+    # fan_width > cap the LRU evicts and the timed loop pays re-fusion -- the
+    # cache-thrash degradation case, visible as a slow steady-state number.
+    for _ in range(fan_width):
+        ck.recompute(nxt())
+    steady = best_median(lambda: ck.recompute(nxt()), repeats)[0]
+    full = best_median(lambda: ck.kernel(*full_args), repeats)[0]
+    interp = best_median(
+        _interp_recompute_driver(g, req, ext, cyclic(col_changes)),
+        repeats)[0]
+    cones = len(ck._cone_cache)
+    rows.append((f"fan-out {fan_width} cols x {fan_depth} (1-col cone, cycled)",
+                 steady, full, interp, cones, f"cap={ck._cone_cap}"))
+
+    print(f"\nrecompute report, array size S={size}, best of {repeats} "
+          f"(microseconds/call):")
+    print(f"  {'regime':<46}{'recompute':>11}{'full re-run':>13}"
+          f"{'interpreted':>13}{'cones':>7}  {'note'}")
+    for name, steady, full, interp, cones, note in rows:
+        speedup = full / steady if steady else float("nan")
+        print(f"  {name:<46}{steady / 1e3:11.2f}{full / 1e3:13.2f}"
+              f"{interp / 1e3:13.2f}{cones:7d}  {note} ({speedup:.2f}x vs full)")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--nodes", type=int, default=200, help="chain length (default 200)")
-    p.add_argument("--size", type=int, default=1000, help="array length (default 1000)")
+    p.add_argument("--nodes", type=int, default=None,
+                   help="chain length (default 200 for the perf modes, 600 for "
+                        "--recompute so the deep-chain suffix win is visible)")
+    p.add_argument("--size", type=int, default=None,
+                   help="array length (default 1000 for the perf modes, 5000 for "
+                        "--recompute so per-node compute dominates orchestration)")
     p.add_argument("--repeats", type=int, default=30, help="timed reps (default 30)")
     p.add_argument("--profile", choices=("cheap", "mixed", "expensive"), default="mixed",
                    help="per-node cost mix (default mixed: ~1/3 expensive). 'cheap' "
@@ -481,6 +681,17 @@ def main():
                    help="inject K evenly-spaced non-jittable nodes and run the "
                         "segmented-orchestration report instead of the fused perf "
                         "run (default 0: unchanged fused perf run)")
+    p.add_argument("--recompute", action="store_true",
+                   help="run the incremental-recompute report (steady-state recompute "
+                        "vs full kernel re-run vs interpreted CompiledGraph.recompute) "
+                        "across deep-chain, diamond, and fan-out regimes instead of the "
+                        "fused perf run")
+    p.add_argument("--fan-width", type=int, default=50,
+                   help="fan-out regime: number of independent columns (default 50, "
+                        "under the 64 cone-plan cap -> clean cache reuse; set above 64 "
+                        "to exercise LRU thrash)")
+    p.add_argument("--fan-depth", type=int, default=12,
+                   help="fan-out regime: per-column chain depth (default 12)")
     p.add_argument("--_worker", help=argparse.SUPPRESS)  # internal: one compile measurement
     args = p.parse_args()
 
@@ -490,16 +701,26 @@ def main():
     sys.setrecursionlimit(20000)
 
     if args._worker:
-        _compile_worker(args.nodes, args._worker, args.profile)
+        _compile_worker(args.nodes if args.nodes is not None else 200,
+                        args._worker, args.profile)
         return
 
+    if args.recompute:
+        chain_n = args.nodes if args.nodes is not None else 600
+        size = args.size if args.size is not None else 5000
+        run_recompute_mode(size, args.repeats, chain_n,
+                           args.fan_width, args.fan_depth)
+        return
+
+    nodes = args.nodes if args.nodes is not None else 200
+    size = args.size if args.size is not None else 1000
     if args.python_nodes > 0:
-        run_python_nodes_mode(args.nodes, args.size, args.repeats, args.profile,
+        run_python_nodes_mode(nodes, size, args.repeats, args.profile,
                               args.python_nodes)
     else:
-        run_perf(args.nodes, args.size, args.repeats, args.profile)
+        run_perf(nodes, size, args.repeats, args.profile)
     if args.compile_report:
-        run_compile_report(args.nodes, args.profile)
+        run_compile_report(nodes, args.profile)
 
 
 if __name__ == "__main__":
