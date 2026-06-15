@@ -221,6 +221,45 @@ def _call_exotic(binding, args: list, arg_types: tuple, flags: dict | None = Non
     return shim(*args)
 
 
+def _dominators(nodes: list[CompiledNode], sources: set[Variable]) -> dict[Variable, frozenset]:
+    """Dominator set per node for the DAG rooted at a virtual super-source
+    (represented by None) with an edge to every node that is in `sources` or
+    has an external input. `nodes` must be topologically ordered. Each node's
+    set includes the node itself."""
+    by_var = {n.variable: n for n in nodes}
+    dom: dict[Variable, frozenset] = {}
+    for n in nodes:
+        var = n.variable
+        seeds = [dom[inp] for inp in n.inputs if inp in by_var]
+        if var in sources or any(inp not in by_var for inp in n.inputs):
+            seeds.append(frozenset({None}))
+        inter = frozenset.intersection(*seeds) if seeds else frozenset({None})
+        dom[var] = inter | {var}
+    return dom
+
+
+def compute_boundary(
+    nodes: list[CompiledNode], sources: set[Variable], required: set[Variable],
+) -> set[Variable]:
+    """Variables that must live in the recompute store: required outputs, plus
+    any node that fails to dominate a consumer (some change in `sources` can
+    reach the consumer without reaching the node, making it a cone live-in).
+    Nodes that dominate all their consumers are fuse-through (not persisted)."""
+    by_var = {n.variable: n for n in nodes}
+    dom = _dominators(nodes, sources)
+    consumers: dict[Variable, list[Variable]] = {}
+    for n in nodes:
+        for inp in n.inputs:
+            if inp in by_var:
+                consumers.setdefault(inp, []).append(n.variable)
+    boundary = set(required)
+    for n in nodes:
+        var = n.variable
+        if any(var not in dom[c] for c in consumers.get(var, ())):
+            boundary.add(var)
+    return boundary
+
+
 def discover(
     ordered_nodes: list[CompiledNode],
     external: set[Variable],

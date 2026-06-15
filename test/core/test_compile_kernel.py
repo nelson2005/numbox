@@ -16,6 +16,7 @@ from numbox.core.variable.utils import (
     _sanitize, _assign_identifiers, _wrap_formula,
 )
 from numbox.core.variable.variable import CompiledNode, Variable, Graph, Values
+from numbox.core.variable._kernel_partition import compute_boundary
 from numbox.utils.highlevel import cres
 from test.auxiliary_utils import assert_njit_cache_survives_subprocess_roundtrip
 
@@ -1612,3 +1613,102 @@ def test_discovery_path_honors_jit_options():
     # the segment hot path (second call) agrees with the discovery call
     out2 = ck.execute({"ext": {"x": 1.0, "y": 0.0, "opaque": Opaque()}})
     assert out2["calc.r"] == float("inf")
+
+
+def _compiled_parts(g, req):
+    cg = g.compile(req)
+    by_qual = {n.variable.qual_name(): n.variable for n in cg.ordered_nodes}
+    sources = {v for vs in cg.required_external_variables.values() for v in vs.values()}
+    required = {by_qual[q] for q in req}
+    return cg, by_qual, sources, required
+
+
+def _boundary_reference(cg, sources, required):
+    by_var = {n.variable: n for n in cg.ordered_nodes}
+    succ = {}
+    for n in cg.ordered_nodes:
+        for inp in n.inputs:
+            if inp in by_var:
+                succ.setdefault(inp, set()).add(n.variable)
+    seeded = {n.variable for n in cg.ordered_nodes
+              if n.variable in sources or any(i not in by_var for i in n.inputs)}
+
+    def reachable_avoiding(target, avoid):
+        seen, stack = set(), [s for s in seeded if s != avoid]
+        while stack:
+            cur = stack.pop()
+            if cur == target:
+                return True
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(nxt for nxt in succ.get(cur, ()) if nxt != avoid)
+        return False
+
+    boundary = set(required)
+    for n in cg.ordered_nodes:
+        x = n.variable
+        if any(reachable_avoiding(c, x) for c in succ.get(x, ())):
+            boundary.add(x)
+    return boundary
+
+
+def _chain_graph():
+    return Graph(
+        variables_lists={"variables": [
+            {"name": "m", "inputs": {"y": "basket"}, "formula": njit(lambda y: y + 1.0)},
+            {"name": "n", "inputs": {"m": "variables"}, "formula": njit(lambda m: m * 2.0)},
+            {"name": "p", "inputs": {"n": "variables"}, "formula": njit(lambda n: n - 3.0)},
+        ]},
+        external_source_names=["basket"],
+    )
+
+
+def _fanout_graph():
+    return Graph(
+        variables_lists={"variables": [
+            {"name": "o1", "inputs": {"a": "basket"}, "formula": njit(lambda a: a + 1.0)},
+            {"name": "o2", "inputs": {"b": "basket"}, "formula": njit(lambda b: b + 2.0)},
+        ]},
+        external_source_names=["basket"],
+    )
+
+
+def _two_source_reconvergent_graph():
+    return Graph(
+        variables_lists={"variables": [
+            {"name": "p", "inputs": {"a": "basket"}, "formula": njit(lambda a: a + 1.0)},
+            {"name": "q", "inputs": {"b": "basket"}, "formula": njit(lambda b: b - 1.0)},
+            {"name": "j", "inputs": {"p": "variables", "q": "variables"},
+             "formula": njit(lambda p, q: p * q)},
+            {"name": "r", "inputs": {"j": "variables"}, "formula": njit(lambda j: j + 5.0)},
+        ]},
+        external_source_names=["basket"],
+    )
+
+
+def test_boundary_chain_is_required_only():
+    g = _chain_graph()
+    cg, _, sources, required = _compiled_parts(g, ["variables.p"])
+    b = {v.qual_name() for v in compute_boundary(cg.ordered_nodes, sources, required)}
+    assert b == {"variables.p"}
+
+
+def test_boundary_diamond_persists_join_inputs():
+    g = _diamond_graph()
+    cg, _, sources, required = _compiled_parts(g, ["variables.u"])
+    b = {v.qual_name() for v in compute_boundary(cg.ordered_nodes, sources, required)}
+    assert b == {"variables.a", "variables.b", "variables.u"}
+
+
+@pytest.mark.parametrize("factory,req", [
+    (_chain_graph, ["variables.p"]),
+    (_diamond_graph, ["variables.u"]),
+    (_fanout_graph, ["variables.o1", "variables.o2"]),
+    (_two_source_reconvergent_graph, ["variables.r"]),
+])
+def test_boundary_matches_reference(factory, req):
+    g = factory()
+    cg, _, sources, required = _compiled_parts(g, req)
+    got = compute_boundary(cg.ordered_nodes, sources, required)
+    assert got == _boundary_reference(cg, sources, required)
