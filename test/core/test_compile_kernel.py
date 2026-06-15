@@ -1814,3 +1814,35 @@ def test_recompute_runtime_error_propagates():
     ck.execute({"basket": {"y": 1.0}})
     with pytest.raises(ZeroDivisionError):
         ck.recompute({"basket": {"y": 0.0}})
+
+
+def test_recompute_cache_reuses_plan():
+    g = _diamond_graph()
+    ck = compile_kernel(g, ["variables.u"])
+    ck.execute({"basket": {"y": 100}})
+    ck.recompute({"basket": {"y": 101}})
+    key = next(iter(ck._cone_cache))
+    plan_first = ck._cone_cache[key]
+    ck.recompute({"basket": {"y": 102}})
+    assert ck._cone_cache[key] is plan_first        # same cone -> reused plan
+
+
+def test_recompute_cache_cap_evicts():
+    g = _fanout_graph()
+    ck = compile_kernel(g, ["variables.o1", "variables.o2"])
+    ck._cone_cap = 1                                  # force thrash
+    ck.execute({"basket": {"a": 1.0, "b": 2.0}})
+    ck.recompute({"basket": {"a": 3.0}})             # cone {o1}
+    ck.recompute({"basket": {"b": 4.0}})             # cone {o2} -> evicts {o1}
+    assert len(ck._cone_cache) == 1
+    assert tuple(ck.recompute({"basket": {"a": 5.0}})) == (5.0 + 1.0, 4.0 + 2.0)
+
+
+def test_recompute_typechange_flushes_and_recovers():
+    g = _chain_graph()
+    ck = compile_kernel(g, ["variables.p"])
+    ck.execute({"basket": {"y": 10.0}})
+    ck.recompute({"basket": {"y": 11.0}})
+    assert len(ck._cone_cache) >= 1
+    out = ck.recompute({"basket": {"y": np.int64(12)}})   # type change at the boundary
+    assert out == (((12 + 1.0) * 2.0) - 3.0,)

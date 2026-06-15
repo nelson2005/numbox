@@ -23,6 +23,7 @@ uncached (no anchor, no numba cache) -- never reused, never wrong.
 import hashlib
 import warnings
 
+from collections import OrderedDict
 from types import FunctionType
 from typing import Any, Callable
 
@@ -288,7 +289,8 @@ class CompiledKernel:
         self._last_args = None      # external args of the most recent full resolution
         self._sources = None        # change-source Variables (externals; may grow on interior override)
         self._boundary = None       # set[Variable]; persisted-node set, computed lazily
-        self._cone_cache = None     # lazy LRU cache of cone sub-plans
+        self._cone_cache = OrderedDict()  # LRU cache of cone sub-plans, keyed on cone+live-in
+        self._cone_cap = 64         # max distinct cone plans retained before LRU eviction
 
     @property
     def kernel(self) -> Callable:
@@ -448,7 +450,7 @@ class CompiledKernel:
         """Linearize the affected cone, split into runs, and compile each jit run
         against the store's current live-in types (Python runs become _PyStep chains).
         `_demoted` is restricted to cone nodes so only nodes demoted at seed time stay
-        Python. No caching here -- the caller rebuilds the plan per recompute."""
+        Python. Called by `_cone_plan_cached` on a cache miss."""
         compiled, idents, _, jit_options, cache, _ = self._ctx
         flags = _effective_flags(jit_options)
         cone_vars = {n.variable for n in affected}
@@ -472,18 +474,59 @@ class CompiledKernel:
             steps.append(_JitStep(dispatcher=disp, in_vars=live_in, out_vars=live_out))
         return _ConePlan(steps=tuple(steps))
 
+    def _cone_key(self, affected) -> tuple[frozenset, frozenset]:
+        """Cache key for a cone sub-plan: (cone node qual_names, live-in boundary
+        qual_names). Including the live-in boundary keeps an external change and an
+        interior override that share a cone from colliding (their boundaries differ)."""
+        cone_vars = {n.variable for n in affected}
+        live_in_boundary = {inp for n in affected for inp in n.inputs if inp not in cone_vars}
+        return (frozenset(v.qual_name() for v in cone_vars),
+                frozenset(v.qual_name() for v in live_in_boundary))
+
+    def _cone_plan_cached(self, affected) -> _ConePlan:
+        key = self._cone_key(affected)
+        plan = self._cone_cache.get(key)
+        if plan is not None:
+            self._cone_cache.move_to_end(key)
+            return plan
+        plan = self._build_cone_plan(affected)
+        self._cone_cache[key] = plan
+        if len(self._cone_cache) > self._cone_cap:
+            self._cone_cache.popitem(last=False)
+        return plan
+
+    def _flush_and_reseed(self):
+        """Drop the cone-plan cache and re-seed the store + boundary from the last full
+        call. Used to recover when a boundary live-in's type change makes a cached cone
+        dispatcher fail to compile."""
+        self._cone_cache.clear()
+        self._store = None
+        self._boundary = None
+        self._ensure_store()
+        self._ensure_boundary()
+
     def recompute(self, changed: dict) -> tuple:
         self._ensure_store()
         changed_vars = self._apply_changes(changed)
         if not changed_vars:
             return tuple(self._store[v] for v in self._required_vars)
-        self._ensure_boundary()
         compiled = self._ctx[0]
+        self._ensure_boundary()
         affected = compiled._collect_affected(changed_vars)
         if not affected:
             return tuple(self._store[v] for v in self._required_vars)
-        plan = self._build_cone_plan(affected)
-        plan.run_into(self._store)
+        plan = self._cone_plan_cached(affected)
+        try:
+            plan.run_into(self._store)
+        except NumbaError:
+            # A live-in type change invalidates every compiled cone plan; flush
+            # the whole cache once, reseed the store, re-apply the change against
+            # the fresh store, and rebuild against the new types.
+            self._flush_and_reseed()
+            self._apply_changes(changed)
+            affected = compiled._collect_affected(changed_vars)
+            plan = self._cone_plan_cached(affected)
+            plan.run_into(self._store)
         return tuple(self._store[v] for v in self._required_vars)
 
     def execute(self, external_values: dict) -> dict:
