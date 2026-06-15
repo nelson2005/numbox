@@ -52,6 +52,7 @@ jobs:
             --timeout 20
             --accept 200,206,429
             --exclude '^mailto:'
+            --exclude 'man7\.org'
             --exclude-path .git
             --exclude-path venv
             ${{ steps.scope.outputs.files }}
