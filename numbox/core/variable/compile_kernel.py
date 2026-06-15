@@ -283,6 +283,12 @@ class CompiledKernel:
         self.identifiers = identifiers
         self._required_vars = required_vars
         self._external_vars = external_vars
+        self._store = None          # {Variable: value}; seeded on first recompute
+        self._demoted = {}          # {Variable: reason}; frozen demotion verdicts
+        self._last_args = None      # external args of the most recent full resolution
+        self._sources = None        # change-source Variables (externals; may grow on interior override)
+        self._boundary = None       # set[Variable]; persisted-node set, computed lazily
+        self._cone_cache = None     # lazy LRU cache of cone sub-plans
 
     @property
     def kernel(self) -> Callable:
@@ -309,6 +315,7 @@ class CompiledKernel:
     def _resolve_and_call(self, *args) -> tuple:
         if self._mode != "virgin":
             return self.kernel(*args)
+        self._last_args = args
         try:
             arg_types = tuple(typeof(a) for a in args)
         except (ValueError, TypeError):
@@ -383,9 +390,57 @@ class CompiledKernel:
             external_vars=tuple(self._external_vars),
             output_vars=tuple(self._required_vars),
         )
+        self._store = values              # seed store from the already-computed values
+        self._demoted = demoted           # freeze demotion verdicts for cone builds
         self._mode = "segmented"
         self.partition = PartitionReport(mode="segmented", segments=tuple(segments))
         return tuple(values[v] for v in self._required_vars)
+
+    def _ensure_store(self):
+        if self._store is not None:
+            return
+        if self._mode == "virgin" or self._last_args is None:
+            raise RuntimeError(
+                "CompiledKernel.recompute requires a prior full call: call the kernel "
+                "once with the current inputs to seed the value store before recompute()."
+            )
+        compiled, _, bindings_by_var, jit_options, cache, external = self._ctx
+        flags = _effective_flags(jit_options)
+        # A fused first call discarded interior values, so seed by evaluating the
+        # whole graph once from the captured args. Fused-graph formulas are njit-pure,
+        # so the one extra evaluation is observationally safe. Seeding only the
+        # persisted-node closure instead is a possible future optimization.
+        values = dict(zip(self._external_vars, self._last_args))
+        self._demoted = discover(compiled.ordered_nodes, external, values, bindings_by_var, flags)
+        self._store = values
+
+    def _apply_changes(self, changed: dict) -> set:
+        """Write changed values into the store; return the set of changed Variables.
+        External names resolve via required_external_variables; interior names via
+        ordered_nodes (overriding an interior node expands the change-source set)."""
+        compiled = self._ctx[0]
+        changed_vars = set()
+        for src, vals in changed.items():
+            for name, val in vals.items():
+                var = compiled.required_external_variables.get(src, {}).get(name)
+                if var is None:
+                    qual = make_qual_name(src, name)
+                    var = next((n.variable for n in compiled.ordered_nodes
+                                if n.variable.qual_name() == qual), None)
+                    if var is None:
+                        warnings.warn(f"{qual} is not in the calculation path, update has no effect.")
+                        continue
+                self._store[var] = val
+                changed_vars.add(var)
+        return changed_vars
+
+    def recompute(self, changed: dict) -> tuple:
+        self._ensure_store()
+        changed_vars = self._apply_changes(changed)
+        if not changed_vars:
+            return tuple(self._store[v] for v in self._required_vars)
+        # Incremental cone re-fusion + execution wires in here.
+        return tuple(self._store[v] for v in self._required_vars)
 
     def execute(self, external_values: dict) -> dict:
         """Dict-in / dict-out convenience, symmetric with CompiledGraph.execute."""

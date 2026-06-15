@@ -1737,3 +1737,18 @@ def test_cone_liveness_cross_segment_handoff():
     run1 = [nodes[m]]
     live_in, live_out = cone_liveness(run1, cone_order, set(), set())
     assert m in set(live_out)                      # consumed by later step n, even though not required/boundary
+
+
+def test_recompute_precondition_before_full_call():
+    g = _diamond_graph()
+    ck = compile_kernel(g, ["variables.u"])
+    with pytest.raises(RuntimeError) as exc:
+        ck.recompute({"basket": {"y": 100}})
+    assert "recompute" in str(exc.value).lower()
+
+
+def test_recompute_noop_matches_kernel_fused():
+    g = _diamond_graph()
+    ck = compile_kernel(g, ["variables.u", "variables.a"])
+    full = tuple(ck.kernel(100))               # resolves fused, seeds nothing yet
+    assert tuple(ck.recompute({})) == full     # no-op recompute seeds store, returns same
