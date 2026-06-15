@@ -85,6 +85,22 @@ class _Plan:
         return tuple(slots[v] for v in self.output_vars)
 
 
+@dataclass(frozen=True)
+class _ConePlan:
+    """A recompute sub-plan executed in place against a persistent store.
+    Unlike _Plan.run (fresh dict from args, returns output_vars), run_into
+    reads live-ins from and writes every step output back to the shared store."""
+    steps: tuple[_JitStep | _PyStep, ...]
+
+    def run_into(self, store: dict) -> None:
+        for step in self.steps:
+            vals = [store[v] for v in step.in_vars]
+            if isinstance(step, _JitStep):
+                store.update(zip(step.out_vars, step.dispatcher(*vals)))
+            else:
+                store[step.var] = step.py_callable(*vals)
+
+
 def _qual(node: CompiledNode) -> str:
     return node.variable.qual_name()
 

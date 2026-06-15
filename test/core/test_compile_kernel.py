@@ -1752,3 +1752,65 @@ def test_recompute_noop_matches_kernel_fused():
     ck = compile_kernel(g, ["variables.u", "variables.a"])
     full = tuple(ck.kernel(100))               # resolves fused, seeds nothing yet
     assert tuple(ck.recompute({})) == full     # no-op recompute seeds store, returns same
+
+
+def _interp_recompute_sequence(g, req, ext, changes):
+    cg = g.compile(req)
+    by_qual = {n.variable.qual_name(): n.variable for n in cg.ordered_nodes}
+    values = Values()
+    cg.execute(ext, values)
+    out = [tuple(values.get(by_qual[q]).value for q in req)]
+    for ch in changes:
+        cg.recompute(ch, values)
+        out.append(tuple(values.get(by_qual[q]).value for q in req))
+    return out
+
+
+def _kernel_recompute_sequence(g, req, ext, changes):
+    ck = compile_kernel(g, req)
+    out = [tuple(ck.execute(ext)[q] for q in req)]
+    for ch in changes:
+        out.append(tuple(ck.recompute(ch)))
+    return out
+
+
+@pytest.mark.parametrize("factory,req,ext,changes", [
+    (_chain_graph, ["variables.p"], {"basket": {"y": 10.0}},
+     [{"basket": {"y": 11.0}}, {"basket": {"y": 12.0}}, {"basket": {"y": 13.0}}]),
+    (_diamond_graph, ["variables.u", "variables.a"], {"basket": {"y": 100}},
+     [{"basket": {"y": 101}}, {"basket": {"y": 102}}, {"basket": {"y": 103}}]),
+    # The two-source case is the cross-cone freshness guard: alternating a-only /
+    # b-only changes prove a join-parent is re-persisted (a single-source graph
+    # cannot catch boundary staleness, since every change re-affects the whole cone).
+    (_two_source_reconvergent_graph, ["variables.r"], {"basket": {"a": 2.0, "b": 3.0}},
+     [{"basket": {"a": 5.0}}, {"basket": {"b": 7.0}}, {"basket": {"a": 9.0, "b": 1.0}}]),
+])
+def test_recompute_equiv_external(factory, req, ext, changes):
+    g = factory()
+    assert _kernel_recompute_sequence(g, req, ext, changes) == \
+        _interp_recompute_sequence(g, req, ext, changes)
+
+
+def test_recompute_equiv_mixed_cone():
+    g = _chain_graph_with_python_middle()
+    # _chain_graph_with_python_middle: external 'ext.x', chain calc.n1->..->calc.n5
+    # with calc.n3 a non-jittable (Python) node -> segmented mode. Request calc.n5
+    # (downstream of the Python node) and vary the single external 'ext.x'.
+    req = ["calc.n5"]
+    ext = {"ext": {"x": 7.0}}
+    changes = [{"ext": {"x": 8.0}}, {"ext": {"x": 9.0}}]
+    assert _kernel_recompute_sequence(g, req, ext, changes) == \
+        _interp_recompute_sequence(g, req, ext, changes)
+
+
+def test_recompute_runtime_error_propagates():
+    g = Graph(
+        variables_lists={"variables": [
+            {"name": "z", "inputs": {"y": "basket"}, "formula": njit(lambda y: 1.0 / y)},
+        ]},
+        external_source_names=["basket"],
+    )
+    ck = compile_kernel(g, ["variables.z"])
+    ck.execute({"basket": {"y": 1.0}})
+    with pytest.raises(ZeroDivisionError):
+        ck.recompute({"basket": {"y": 0.0}})

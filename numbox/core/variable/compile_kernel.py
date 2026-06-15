@@ -34,8 +34,8 @@ from numba.np.ufunc.dufunc import DUFunc
 
 from numbox.core.configurations import jit_options as _default_jit_options
 from numbox.core.variable._kernel_partition import (
-    PartitionReport, Segment, _JitStep, _Plan, _PyStep,
-    build_runs, discover, linearize, segment_liveness,
+    PartitionReport, Segment, _ConePlan, _JitStep, _Plan, _PyStep,
+    build_runs, compute_boundary, cone_liveness, discover, linearize, segment_liveness,
 )
 from numbox.core.variable.utils import (
     _assign_identifiers, _check_formula_arity, _wrap_formula,
@@ -434,12 +434,56 @@ class CompiledKernel:
                 changed_vars.add(var)
         return changed_vars
 
+    def _ensure_boundary(self):
+        if self._boundary is not None:
+            return
+        compiled = self._ctx[0]
+        if self._sources is None:
+            self._sources = set(self._external_vars)
+        self._boundary = compute_boundary(
+            compiled.ordered_nodes, self._sources, set(self._required_vars)
+        )
+
+    def _build_cone_plan(self, affected: list) -> _ConePlan:
+        """Linearize the affected cone, split into runs, and compile each jit run
+        against the store's current live-in types (Python runs become _PyStep chains).
+        `_demoted` is restricted to cone nodes so only nodes demoted at seed time stay
+        Python. No caching here -- the caller rebuilds the plan per recompute."""
+        compiled, idents, _, jit_options, cache, _ = self._ctx
+        flags = _effective_flags(jit_options)
+        cone_vars = {n.variable for n in affected}
+        demoted_in_cone = {v for v in self._demoted if v in cone_vars}
+        order = linearize(affected, demoted_in_cone)
+        runs = build_runs(order, demoted_in_cone)
+        steps = []
+        for kind, run_nodes in runs:
+            if kind == "python":
+                for n in run_nodes:
+                    steps.append(_PyStep(
+                        var=n.variable,
+                        py_callable=getattr(n.variable.formula, "py_func", n.variable.formula),
+                        in_vars=tuple(n.inputs),
+                    ))
+                continue
+            live_in, live_out = cone_liveness(run_nodes, order, self._required_vars, self._boundary)
+            src, seg_bindings, _, _ = _generate_segment_body(run_nodes, live_in, live_out, idents, flags)
+            disp = _compile(src, seg_bindings, jit_options, cache)
+            disp.compile(tuple(typeof(self._store[v]) for v in live_in))
+            steps.append(_JitStep(dispatcher=disp, in_vars=live_in, out_vars=live_out))
+        return _ConePlan(steps=tuple(steps))
+
     def recompute(self, changed: dict) -> tuple:
         self._ensure_store()
         changed_vars = self._apply_changes(changed)
         if not changed_vars:
             return tuple(self._store[v] for v in self._required_vars)
-        # Incremental cone re-fusion + execution wires in here.
+        self._ensure_boundary()
+        compiled = self._ctx[0]
+        affected = compiled._collect_affected(changed_vars)
+        if not affected:
+            return tuple(self._store[v] for v in self._required_vars)
+        plan = self._build_cone_plan(affected)
+        plan.run_into(self._store)
         return tuple(self._store[v] for v in self._required_vars)
 
     def execute(self, external_values: dict) -> dict:
