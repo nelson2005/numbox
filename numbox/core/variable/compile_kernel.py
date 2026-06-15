@@ -422,9 +422,11 @@ class CompiledKernel:
         ordered_nodes (overriding an interior node expands the change-source set)."""
         compiled = self._ctx[0]
         changed_vars = set()
+        new_interior_sources = set()
         for src, vals in changed.items():
             for name, val in vals.items():
                 var = compiled.required_external_variables.get(src, {}).get(name)
+                is_external = var is not None
                 if var is None:
                     qual = make_qual_name(src, name)
                     var = next((n.variable for n in compiled.ordered_nodes
@@ -434,7 +436,21 @@ class CompiledKernel:
                         continue
                 self._store[var] = val
                 changed_vars.add(var)
+                if not is_external and (self._sources is None or var not in self._sources):
+                    new_interior_sources.add(var)
+        if new_interior_sources:
+            self._expand_sources(new_interior_sources)
         return changed_vars
+
+    def _expand_sources(self, new_sources: set):
+        """Add overridden interior nodes to the change-source set, force the
+        persisted-node boundary to recompute, and invalidate cached cone plans
+        (their boundaries have changed)."""
+        if self._sources is None:
+            self._sources = set(self._external_vars)
+        self._sources |= new_sources
+        self._boundary = None
+        self._cone_cache.clear()
 
     def _ensure_boundary(self):
         if self._boundary is not None:

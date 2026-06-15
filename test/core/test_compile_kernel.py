@@ -1846,3 +1846,45 @@ def test_recompute_typechange_flushes_and_recovers():
     assert len(ck._cone_cache) >= 1
     out = ck.recompute({"basket": {"y": np.int64(12)}})   # type change at the boundary
     assert out == (((12 + 1.0) * 2.0) - 3.0,)
+
+
+def test_recompute_interior_override_matches_interpreted():
+    g = _diamond_graph()
+    req, ext = ["variables.u"], {"basket": {"y": 100}}
+    changes = [{"variables": {"x": 5.0}}, {"basket": {"y": 101}}, {"variables": {"x": 9.0}}]
+    assert _kernel_recompute_sequence(g, req, ext, changes) == \
+        _interp_recompute_sequence(g, req, ext, changes)
+
+
+def test_recompute_interior_override_expands_sources_and_flushes():
+    g = _diamond_graph()
+    ck = compile_kernel(g, ["variables.u"])
+    ck.execute({"basket": {"y": 100}})
+    ck.recompute({"basket": {"y": 101}})
+    assert ck._cone_cache                            # an external cone is cached
+    ext_key = next(iter(ck._cone_cache))             # the external cone's key
+    ck.recompute({"variables": {"x": 5.0}})          # interior override
+    assert any(v.qual_name() == "variables.x" for v in ck._sources)   # x added to sources
+    assert ext_key not in ck._cone_cache             # source expansion flushed the prior cone
+
+
+def test_recompute_external_and_interior_yield_distinct_keys():
+    # An external change to basket.y (cone {x,a,b,u}, live-in {basket.y}) and an
+    # interior override of variables.x (cone {a,b,u}, live-in {variables.x}) produce
+    # different cone node-sets and different live-ins, so once both cones are cached
+    # they coexist as two distinct keys (no collision), and both must compute correct
+    # values. The interior override is applied FIRST so its one-time source expansion
+    # (which clears the cache) precedes the external change; both cones then cache and
+    # coexist. Values are verified against the interpreted oracle.
+    g = _diamond_graph()
+    req, ext = ["variables.u"], {"basket": {"y": 100}}
+    changes = [{"variables": {"x": 5.0}}, {"basket": {"y": 101}}]
+    ck = compile_kernel(g, req)
+    out = [tuple(ck.execute(ext)[q] for q in req)]
+    for ch in changes:
+        out.append(tuple(ck.recompute(ch)))
+    assert len(ck._cone_cache) == 2                   # distinct keys, no collision
+    keys = list(ck._cone_cache)
+    assert len({k[0] for k in keys}) == 2             # cone node-sets differ ({a,b,u} vs {x,a,b,u})
+    assert len({k[1] for k in keys}) == 2             # live-ins differ ({variables.x} vs {basket.y})
+    assert out == _interp_recompute_sequence(g, req, ext, changes)
