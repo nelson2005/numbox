@@ -1,0 +1,61 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-15-compile-kernel-recompute.md",
+  "specPath": "docs/superpowers/specs/2026-06-15-compile-kernel-recompute-design.md",
+  "branch": "feat/compile-kernel-hardened",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: Boundary analysis (dominator-based)",
+      "status": "pending",
+      "description": "**Goal:** Pure `_dominators` + `compute_boundary` in `_kernel_partition.py` (spec §5).\n\n**Verify:** clean caches, then `/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k boundary -v`\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/_kernel_partition.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k boundary -v\", \"acceptanceCriteria\": [\"chain boundary == required only\", \"diamond boundary == {a,b,u}\", \"matches brute-force reference on 4 graph shapes\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Cone-liveness helper",
+      "status": "pending",
+      "description": "**Goal:** Pure `cone_liveness(run_nodes, cone_order, required_vars, boundary)` in `_kernel_partition.py` (spec §7.2, §11).\n\n**Verify:** clean caches, then `/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k cone_liveness -v`\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/_kernel_partition.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k cone_liveness -v\", \"acceptanceCriteria\": [\"single-run live_out = produced ∩ (required ∪ boundary)\", \"cross-segment value persists in earlier run live_out\", \"tuples sorted by qual_name\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Value store, seeding, recompute precondition + no-op",
+      "status": "pending",
+      "description": "**Goal:** `CompiledKernel` value store + seeding (segmented reuse / fused discover), demotion retention, `recompute` precondition + no-op (spec §6, §7.1, §7.4).\n\n**Verify:** clean caches, then `/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k \"recompute_precondition or recompute_noop\" -v`\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k \\\"recompute_precondition or recompute_noop\\\" -v\", \"acceptanceCriteria\": [\"RuntimeError before full call\", \"fused no-op recompute equals kernel outputs\", \"segmented seed reuses values dict, no re-eval\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Cone build, _ConePlan.run_into, incremental recompute (uncached)",
+      "status": "pending",
+      "blockedBy": [1, 2, 3],
+      "description": "**Goal:** Cone sub-plan build + `_ConePlan.run_into(store)` + recompute wiring (external changes); equivalence vs interpreted recompute (spec §4, §5, §10, §11).\n\n**Verify:** clean caches, then `/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k \"recompute_equiv or recompute_runtime_error\" -v`\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/_kernel_partition.py\", \"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k \\\"recompute_equiv or recompute_runtime_error\\\" -v\", \"acceptanceCriteria\": [\"chain/diamond/two-source equal interpreted over 3+ change-sets\", \"mixed jit+python cone equals interpreted\", \"runtime error propagates no demotion\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Cone-plan cache (LRU), type-change flush, degradation",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** LRU cone-plan cache keyed (cone, live-in boundary); type-change flush+reseed; graceful degradation (spec §7.5, §7.6, §9).\n\n**Verify:** clean caches, then `/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k \"recompute_cache or recompute_typechange\" -v`\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k \\\"recompute_cache or recompute_typechange\\\" -v\", \"acceptanceCriteria\": [\"same cone reuses cached plan\", \"cap eviction preserves correctness\", \"type change flushes once + recovers correct\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Interior overrides via lazy source expansion",
+      "status": "pending",
+      "blockedBy": [1, 4, 5],
+      "description": "**Goal:** Support interior-node overrides in `recompute` via lazy change-source expansion (spec §8).\n\n**Verify:** clean caches, then `/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k recompute_interior -v`\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -m pytest test/core/test_compile_kernel.py -k recompute_interior -v\", \"acceptanceCriteria\": [\"interior override matches interpreted over a sequence\", \"first interior override expands sources + recomputes boundary + flushes cache\", \"external vs interior same-cone distinct plans\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Docs (recompute)",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Document `recompute` (contract, precondition, boundary model, limitations) in docstrings + `docs/numbox.core.variable.rst` (spec §15).\n\n**Verify:** `cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html` (exit 0, warnings ≤ baseline); doc-codeblock-flake8 over changed `.rst`.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"docs/numbox.core.variable.rst\"], \"verifyCommand\": \"cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html\", \"acceptanceCriteria\": [\"recompute docstring complete\", \"rst incremental-recompute subsection w/ diamond example\", \"sphinx warnings <= baseline, doc code blocks flake8-clean\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Benchmark extension (recompute)",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** `--recompute` benchmark mode: recompute steady-state vs full re-run vs interpreted, across chain/diamond/fan-out (spec §14).\n\n**Verify:** `/home/erik/projects/numbox/venv/bin/python test/compile_kernel_benchmark.py --recompute`\n\n```json:metadata\n{\"files\": [\"test/compile_kernel_benchmark.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python test/compile_kernel_benchmark.py --recompute\", \"acceptanceCriteria\": [\"--recompute runs chain/diamond/fanout regimes with timings + counts\", \"recompute beats full re-run on chain\", \"fan-out thrash stays >= interpreted baseline\"], \"model\": \"opus\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-15"
+}
