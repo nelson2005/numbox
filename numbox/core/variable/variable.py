@@ -22,6 +22,10 @@ class Namespace(ABC):
         `Variable`s.
         """
         self._variables[key] = var
+        graph = getattr(self, "_graph", None)
+        if graph is not None:
+            graph.compiled_graphs.clear()
+            graph.reverse_dependencies = None
 
     def __contains__(self, key: str) -> bool:
         """
@@ -64,7 +68,12 @@ class Params:
     """Optional per-`Variable` declaration driving static jitability in
     `compile_kernel`. `jitable=False` declares a deliberately plain-Python
     node; `type` is the numba `Type` instance of the variable's value
-    (None means undeclared)."""
+    (None means undeclared).
+
+    Like `formula`, `params` must be attached to a node BEFORE the first
+    `compile()` of any required set containing that node; attaching it after
+    is honored only because `Namespace.update` busts the owning `Graph`'s
+    `compiled_graphs` cache."""
     jitable: bool = True
     type: Any = None
 
@@ -436,6 +445,8 @@ class Graph:
             self.registry[external_name] = external_
         self.compiled_graphs = {}
         self.reverse_dependencies = None
+        for ns in self.registry.values():
+            ns._graph = self
 
     def compile(self, required: list[str] | str, debug: bool = False) -> CompiledGraph:
         """

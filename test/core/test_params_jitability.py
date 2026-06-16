@@ -366,3 +366,17 @@ def test_eager_kernel_no_silent_rediscover_off_contract():
     with pytest.raises(ValueError, match="declared type"):
         ck.recompute({"e": {"x": 3j}})
     assert ck._demoted == demoted_before
+
+
+def test_namespace_update_busts_compiled_graph_cache():
+    g = _graph_all_jittable()
+    # make c.b undeclared so the graph is Case C (partition None until first call)
+    g.registry["c"].update("b", Variable(name="b", source="c", inputs={"a": "c"},
+                                         formula=lambda a: a * 2.0))
+    ck1 = compile_kernel(g, "c.b")
+    assert ck1.partition is None  # Case C: unresolved until a call
+    # now declare c.b and recompile the SAME required set
+    g.registry["c"].update("b", Variable(name="b", source="c", inputs={"a": "c"},
+                                         formula=lambda a: a * 2.0, params=Params(type=float64)))
+    ck2 = compile_kernel(g, "c.b")
+    assert ck2.partition is not None and ck2.partition.mode == "fused"  # not the stale Case-C kernel
