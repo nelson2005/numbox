@@ -230,3 +230,37 @@ def test_undeclared_graph_stays_virgin_with_no_partition():
     assert ck.is_declared is False
     assert ck.partition is None
     assert ck.kernel(3.0) == (8.0,)
+
+
+def _declared_mix():
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0, "params": Params(type=float64)},
+        {"name": "b", "inputs": {"a": "c"}, "formula": lambda a: a * 2.0,
+         "params": Params(jitable=False, type=float64)},
+        {"name": "d", "inputs": {"b": "c"}, "formula": lambda b: b + 1.0, "params": Params(type=float64)},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=float64))
+    return g
+
+
+def test_case_b_segmented_partition_and_result():
+    ck = compile_kernel(_declared_mix(), "c.d")
+    assert ck.partition is not None and ck.partition.mode == "segmented"
+    assert ck.is_declared is True
+    assert "c.b" in ck.partition.python_nodes
+    assert ck.kernel(3.0) == (9.0,)  # ((3+1)*2)+1
+
+
+def test_case_b_no_probing_declared_python_honored():
+    # c.b is trivially jittable (lambda a: a*2.0) yet declared jitable=False;
+    # it must appear as Python (NOT promoted to jit) -- no probing occurs.
+    ck = compile_kernel(_declared_mix(), "c.d")
+    assert "c.b" in ck.partition.python_nodes
+
+
+def test_case_b_formula_bearing_external_raises():
+    g = _declared_mix()
+    g.external["e"].update("x", Variable(name="x", source="e", formula=lambda: 1.0,
+                                         params=Params(type=float64)))
+    with pytest.raises(ValueError, match="external but carries a formula"):
+        compile_kernel(g, "c.d")

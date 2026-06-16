@@ -733,7 +733,7 @@ def compile_kernel(
     case, dispositions, consumed = _classify(compiled)
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
     flags = _effective_flags(jit_options)
-    if case == "A":
+    if case in ("A", "B"):
         for node in compiled.ordered_nodes:
             var = node.variable
             if var in external or dispositions.get(var) != "STATIC_JIT":
@@ -766,6 +766,46 @@ def compile_kernel(
             ck._fused.compile(tuple(v.params.type for v in sig_vars))
         ck._mode = "fused-pending"
         ck.partition = ck._fused_report()
+        return ck
+    if case == "B":
+        demoted = {n.variable for n in compiled.ordered_nodes
+                   if dispositions.get(n.variable) == "STATIC_PY"}
+        nodes = [n for n in compiled.ordered_nodes if n.variable not in external]
+        order = linearize(nodes, demoted)
+        runs = build_runs(order, demoted)
+        steps, segments = [], []
+        for kind, run_nodes in runs:
+            quals = tuple(n.variable.qual_name() for n in run_nodes)
+            if kind == "python":
+                for n in run_nodes:
+                    steps.append(_PyStep(
+                        var=n.variable,
+                        py_callable=getattr(n.variable.formula, "py_func", n.variable.formula),
+                        in_vars=tuple(n.inputs)))
+                reasons = {q: "declared non-jittable" for q in quals}
+                ins = sorted({i for n in run_nodes for i in n.inputs
+                              if i not in {x.variable for x in run_nodes}},
+                             key=lambda v: v.qual_name())
+                segments.append(Segment(kind="python", nodes=quals,
+                                        inputs=tuple(v.qual_name() for v in ins),
+                                        outputs=quals, source=None, reasons=reasons))
+                continue
+            live_in, live_out = segment_liveness(run_nodes, external, required_vars, order)
+            src, seg_bindings, _, _ = _generate_segment_body(run_nodes, live_in, live_out, idents, flags)
+            disp = _compile(src, seg_bindings, jit_options, cache)
+            disp.compile(tuple(v.params.type for v in live_in))
+            steps.append(_JitStep(dispatcher=disp, in_vars=live_in, out_vars=live_out))
+            segments.append(Segment(kind="jit", nodes=quals,
+                                    inputs=tuple(v.qual_name() for v in live_in),
+                                    outputs=tuple(v.qual_name() for v in live_out),
+                                    source=src, reasons={}))
+        ck = CompiledKernel(kernel, params, outputs, source, identifiers, ctx,
+                            required_vars, external_vars, is_declared=True)
+        ck._plan = _Plan(steps=tuple(steps), external_vars=tuple(external_vars),
+                         output_vars=tuple(required_vars))
+        ck._demoted = demoted
+        ck._mode = "segmented"
+        ck.partition = PartitionReport(mode="segmented", segments=tuple(segments))
         return ck
     return CompiledKernel(
         kernel, params, outputs, source, identifiers, ctx, required_vars, external_vars
