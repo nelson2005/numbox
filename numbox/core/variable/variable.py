@@ -59,11 +59,21 @@ class VarSpecBase(TypedDict):
     name: str
 
 
+@dataclass(frozen=True)
+class Params:
+    """Optional per-`Variable` declaration driving static jitability in
+    `compile_kernel`. `jitable=False` declares a deliberately plain-Python
+    node; `type` is the numba `Type` instance of the variable's value
+    (None means undeclared)."""
+    jitable: bool = True
+    type: Any = None
+
+
 class VarSpec(VarSpecBase, total=False):
     inputs: dict[str, str]
     formula: Callable
     metadata: str
-    params: 'Params'
+    params: Params
 
 
 VarValue: TypeAlias = Any
@@ -124,23 +134,13 @@ class External(Namespace):
             self._variables[name] = variable
         return variable
 
-    def declare(self, name: str, params: 'Params') -> 'Variable':
+    def declare(self, name: str, params: Params) -> 'Variable':
         """Pre-seed a typed external before compile (the only supported route
         to attach params to an external, which is otherwise auto-created
         untyped on lookup)."""
         variable = Variable(name=name, source=self.name, params=params)
         self._variables[name] = variable
         return variable
-
-
-@dataclass(frozen=True)
-class Params:
-    """Optional per-`Variable` declaration driving static jitability in
-    `compile_kernel`. `jitable=False` declares a deliberately plain-Python
-    node; `type` is the numba `Type` instance of the variable's value
-    (None means undeclared)."""
-    jitable: bool = True
-    type: Any = None
 
 
 @dataclass(frozen=True)
@@ -178,7 +178,7 @@ class Variable:
     inputs: Mapping[str, str] = field(default_factory=lambda: {})
     formula: Callable = field(default=None)
     metadata: str | None = field(default=None)
-    params: 'Params | None' = field(default=None)
+    params: Params | None = field(default=None)
 
     def __post_init__(self):
         if self.params is not None and not isinstance(self.params, Params):
