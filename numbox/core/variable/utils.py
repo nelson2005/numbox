@@ -72,6 +72,61 @@ def _wrap_formula(formula: Callable, flags: dict | None = None) -> Dispatcher | 
     return njit(**(flags or {}))(formula)
 
 
+def _wrap_formula_typed(formula, sig, flags: dict | None = None):
+    """Like _wrap_formula but binds plain functions to an explicit signature.
+
+    The inner dispatcher is NEVER cached: numba keys its cache on co_code and
+    file (st_mtime, st_size) but not co_consts, so a cached inner formula
+    stale-hits on a numeric-literal-only body edit and would inline a stale body
+    into the freshly content-addressed fused kernel. Exotics (already-compiled
+    dispatchers / cres / DUFunc / CFunc) pass through untouched.
+    """
+    if isinstance(formula, (Dispatcher, CompileResultWAP, DUFunc, CFunc)):
+        return formula
+    if not callable(formula):
+        raise TypeError(f"formula {formula!r} is not callable")
+    opts = {k: v for k, v in (flags or {}).items() if k != "cache"}
+    return njit(sig, **opts)(formula)
+
+
+def _validate_declared_return(formula, input_types: tuple, declared, flags: dict | None = None) -> None:
+    """Raise if the formula's NATURAL return type at `input_types` differs from
+    `declared`.
+
+    njit(sig) silently coerces every convertible scalar mismatch (int<->float,
+    narrowing, sign), so the declared return cannot be trusted to fail fast. The
+    natural type is read by:
+    - CFunc: `_sig.return_type` (data already present).
+    - cres (CompileResultWAP): `signature().return_type` (no `_sig` attribute).
+    - DUFunc (@vectorize): no single return type; probe via an unconstrained
+      @njit shim applying the DUFunc at the declared input types.
+    - plain Python: an unconstrained @njit probe over the declared input types.
+
+    The comparison is identity (no coercion allowed) so the guard truly fires.
+    """
+    opts = {k: v for k, v in (flags or {}).items() if k != "cache"}
+    if isinstance(formula, CFunc):
+        natural = formula._sig.return_type
+    elif isinstance(formula, CompileResultWAP):
+        natural = formula.signature().return_type
+    elif isinstance(formula, DUFunc):
+        names = ", ".join(f"a{i}" for i in range(len(input_types)))
+        ns = {"_f": formula}
+        exec(f"def _shim({names}):\n    return _f({names})\n", ns)  # nosec B102
+        probe = njit(**opts)(ns["_shim"])
+        probe.compile(input_types)
+        natural = probe.nopython_signatures[-1].return_type
+    else:
+        probe = njit(**opts)(formula)
+        probe.compile(input_types)
+        natural = probe.nopython_signatures[-1].return_type
+    if natural != declared:
+        raise ValueError(
+            f"declared type {declared} but formula yields {natural} at "
+            f"input types {input_types}"
+        )
+
+
 def _check_formula_arity(formula, n_inputs: int, qual_name: str) -> None:
     target = getattr(formula, "py_func", None) or getattr(formula, "__wrapped__", None) or formula
     try:

@@ -1,10 +1,13 @@
 import pytest
 from dataclasses import FrozenInstanceError
-from numba import float64, int64
+from numba import cfunc, float64, int64, vectorize
+from numba import njit as _njit, int64 as _int64, float64 as _float64
 from numbox.core.variable.variable import (
     Graph, Params, Variable, Variables, External,
 )
 from numbox.core.variable.compile_kernel import _classify, _validate_externals
+from numbox.core.variable.utils import _validate_declared_return, _wrap_formula_typed
+from numbox.utils.highlevel import cres
 
 
 def test_params_frozen_defaults():
@@ -89,3 +92,67 @@ def test_validate_externals_rejects_formula_bearing():
     compiled = g.compile(["c.a"])
     with pytest.raises(ValueError, match="external but carries a formula"):
         _validate_externals(compiled)
+
+
+def test_njit_probe_reads_natural_return_type():
+    f = _njit(lambda x: x * 1.5)
+    f.compile((_int64,))
+    rt = f.nopython_signatures[-1].return_type
+    assert rt == _float64  # x*1.5 over int64 is float64, NOT int64
+
+
+def test_validate_rejects_coercible_wrong_scalar_type():
+    with pytest.raises(ValueError, match="declared .* but formula yields"):
+        _validate_declared_return(lambda x: x * 1.5, (int64,), int64, flags={})
+
+
+def test_validate_accepts_correct_declaration():
+    _validate_declared_return(lambda x: x * 1.5, (int64,), float64, flags={})  # no raise
+
+
+def test_validate_rejects_nonconvertible_return():
+    with pytest.raises(Exception):
+        _validate_declared_return(lambda x: "s", (int64,), int64, flags={})
+
+
+def test_validate_rejects_dufunc_wrong_output():
+    vf = vectorize(["int64(int64)", "float64(float64)"])(lambda a: a + a)
+    with pytest.raises(ValueError):
+        _validate_declared_return(vf, (int64,), float64, flags={})  # int+int stays int64
+
+
+def test_validate_accepts_cfunc_correct_declaration():
+    cf = cfunc(int64(int64))(lambda x: x + 1)
+    _validate_declared_return(cf, (int64,), int64, flags={})  # no raise
+
+
+def test_validate_rejects_cfunc_wrong_declaration():
+    cf = cfunc(int64(int64))(lambda x: x + 1)
+    with pytest.raises(ValueError, match="declared .* but formula yields"):
+        _validate_declared_return(cf, (int64,), float64, flags={})
+
+
+def test_validate_accepts_cres_correct_declaration():
+    cf = cres(float64(float64))(lambda x: x + 1.0)
+    _validate_declared_return(cf, (float64,), float64, flags={})  # no raise
+
+
+def test_validate_rejects_cres_wrong_declaration():
+    cf = cres(float64(float64))(lambda x: x + 1.0)
+    with pytest.raises(ValueError, match="declared .* but formula yields"):
+        _validate_declared_return(cf, (float64,), int64, flags={})
+
+
+def test_wrap_formula_typed_is_uncached():
+    d = _wrap_formula_typed(lambda x: x + 1.0, float64(float64), flags={})
+    assert d.targetoptions.get("cache") in (None, False)
+
+
+def test_wrap_formula_typed_strips_cache_flag():
+    d = _wrap_formula_typed(lambda x: x + 1.0, float64(float64), flags={"cache": True})
+    assert d.targetoptions.get("cache") in (None, False)
+
+
+def test_wrap_formula_typed_passes_exotics_through():
+    cf = cfunc(int64(int64))(lambda x: x + 1)
+    assert _wrap_formula_typed(cf, int64(int64), flags={}) is cf
