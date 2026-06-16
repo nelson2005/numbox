@@ -148,7 +148,7 @@ class External(Namespace):
         to attach params to an external, which is otherwise auto-created
         untyped on lookup)."""
         variable = Variable(name=name, source=self.name, params=params)
-        self._variables[name] = variable
+        self.update(name, variable)
         return variable
 
 

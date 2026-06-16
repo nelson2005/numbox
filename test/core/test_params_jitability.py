@@ -380,3 +380,15 @@ def test_namespace_update_busts_compiled_graph_cache():
                                          formula=lambda a: a * 2.0, params=Params(type=float64)))
     ck2 = compile_kernel(g, "c.b")
     assert ck2.partition is not None and ck2.partition.mode == "fused"  # not the stale Case-C kernel
+
+
+def test_external_declare_after_compile_busts_cache():
+    g = Graph({"c": [{"name": "a", "inputs": {"x": "e"},
+                      "formula": lambda x: x + 1.0, "params": Params(type=float64)}]}, ["e"])
+    # first compile WITHOUT declaring external x -> x untyped -> consumer UNKNOWN -> Case C
+    ck1 = compile_kernel(g, "c.a")
+    assert ck1.partition is None
+    # declare the external type AFTER first compile, recompile SAME required set
+    g.external["e"].declare("x", Params(type=float64))
+    ck2 = compile_kernel(g, "c.a")
+    assert ck2.partition is not None and ck2.partition.mode == "fused"
