@@ -768,12 +768,13 @@ def compile_kernel(
         ck.partition = ck._fused_report()
         return ck
     if case == "B":
-        demoted = {n.variable for n in compiled.ordered_nodes
+        demoted = {n.variable: "declared non-jittable" for n in compiled.ordered_nodes
                    if dispositions.get(n.variable) == "STATIC_PY"}
         nodes = [n for n in compiled.ordered_nodes if n.variable not in external]
         order = linearize(nodes, demoted)
         runs = build_runs(order, demoted)
         steps, segments = [], []
+        # Same segment structure as _discover_and_run, but with declared types and a static demotion set (no probing).
         for kind, run_nodes in runs:
             quals = tuple(n.variable.qual_name() for n in run_nodes)
             if kind == "python":
@@ -782,7 +783,7 @@ def compile_kernel(
                         var=n.variable,
                         py_callable=getattr(n.variable.formula, "py_func", n.variable.formula),
                         in_vars=tuple(n.inputs)))
-                reasons = {q: "declared non-jittable" for q in quals}
+                reasons = {n.variable.qual_name(): demoted[n.variable] for n in run_nodes}
                 ins = sorted({i for n in run_nodes for i in n.inputs
                               if i not in {x.variable for x in run_nodes}},
                              key=lambda v: v.qual_name())

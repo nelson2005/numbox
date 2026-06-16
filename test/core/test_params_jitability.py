@@ -256,6 +256,12 @@ def test_case_b_no_probing_declared_python_honored():
     # it must appear as Python (NOT promoted to jit) -- no probing occurs.
     ck = compile_kernel(_declared_mix(), "c.d")
     assert "c.b" in ck.partition.python_nodes
+    assert ck.kernel(3.0) == (9.0,)
+    # _store / _last_args are set ONLY by the runtime probe paths
+    # (_resolve_and_call / _discover_and_run); the eager Case-B build and
+    # _run_segmented never touch them, so both stay None -- proof no probe ran.
+    assert ck._store is None
+    assert ck._last_args is None
 
 
 def test_case_b_formula_bearing_external_raises():
