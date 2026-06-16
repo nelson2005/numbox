@@ -31,7 +31,6 @@ from numba import njit, typeof
 from numba.core.ccallback import CFunc
 from numba.core.dispatcher import Dispatcher
 from numba.core.errors import NumbaError
-from numba.core.registry import cpu_target
 from numba.np.ufunc.dufunc import DUFunc
 
 from numbox.core.configurations import jit_options as _default_jit_options
@@ -494,8 +493,11 @@ class CompiledKernel:
         External names resolve via required_external_variables; interior names via
         ordered_nodes (overriding an interior node expands the change-source set)."""
         compiled = self._ctx[0]
-        changed_vars = set()
-        new_interior_sources = set()
+        # First pass: resolve every (src, name) -> var and run the declared
+        # contract check, collecting (var, val, is_external). If ANY check
+        # fails, raise here -- before mutating _store -- so a caught-and-retried
+        # ValueError cannot leave the store partially written.
+        resolved = []
         for src, vals in changed.items():
             for name, val in vals.items():
                 var = compiled.required_external_variables.get(src, {}).get(name)
@@ -507,14 +509,19 @@ class CompiledKernel:
                     if var is None:
                         warnings.warn(f"{qual} is not in the calculation path, update has no effect.")
                         continue
-                if self.is_declared and var.params is not None and var.params.type is not None:
-                    if cpu_target.typing_context.can_convert(typeof(val), var.params.type) is None:
+                if self.is_declared and _is_typed(var):
+                    if self._fused.typingctx.can_convert(typeof(val), var.params.type) is None:
                         raise ValueError(
                             f"declared type {var.params.type}, got {typeof(val)} for {var.qual_name()}")
-                self._store[var] = val
-                changed_vars.add(var)
-                if not is_external and (self._sources is None or var not in self._sources):
-                    new_interior_sources.add(var)
+                resolved.append((var, val, is_external))
+        # Second pass: writes, changed_vars, and interior-override bookkeeping.
+        changed_vars = set()
+        new_interior_sources = set()
+        for var, val, is_external in resolved:
+            self._store[var] = val
+            changed_vars.add(var)
+            if not is_external and (self._sources is None or var not in self._sources):
+                new_interior_sources.add(var)
         if new_interior_sources:
             self._expand_sources(new_interior_sources)
         return changed_vars
@@ -544,7 +551,7 @@ class CompiledKernel:
         declared kernel whose live-in declares a type, use the DECLARED type (so the
         cone matches the eager build's signature); otherwise fall back to the stored
         value's runtime type, as the undeclared path always does."""
-        if self.is_declared and v.params is not None and v.params.type is not None:
+        if self.is_declared and _is_typed(v):
             return v.params.type
         return typeof(self._store[v])
 

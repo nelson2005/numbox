@@ -266,6 +266,14 @@ def test_case_b_no_probing_declared_python_honored():
     assert ck._last_args == (3.0,)
 
 
+def test_case_b_recompute():
+    # Case-B (declared mixed): c.a=x+1 [jit], c.b=a*2 [declared py], c.d=b+1 [jit].
+    ck = compile_kernel(_declared_mix(), "c.d")
+    assert ck.kernel(3.0) == (9.0,)            # ((3+1)*2)+1
+    out = ck.recompute({"e": {"x": 4.0}})
+    assert out == (11.0,)                       # ((4+1)*2)+1
+
+
 def test_case_b_formula_bearing_external_raises():
     g = _declared_mix()
     g.external["e"].update("x", Variable(name="x", source="e", formula=lambda: 1.0,

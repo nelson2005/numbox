@@ -313,7 +313,7 @@ def _evaluate(
     values: dict[Variable, Any],
     bindings_by_var: dict[Variable, Any],
     flags: dict | None,
-    demoted: set[Variable],
+    demoted: set[Variable] | dict[Variable, str],
 ) -> None:
     """Populate `values` for every interior node using a FIXED `demoted` set
     (no probing). Demoted nodes run their py_func; exotic bindings run via the

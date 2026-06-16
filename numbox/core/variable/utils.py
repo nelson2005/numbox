@@ -134,6 +134,8 @@ def _validate_declared_return(formula, input_types: tuple, declared, flags: dict
         probe.compile(input_types)
         natural = probe.nopython_signatures[-1].return_type
     if isinstance(natural, Array) and isinstance(declared, Array):
+        # Normalize both to layout 'A' so only dtype/ndim/readonly mismatches count
+        # (numba assigns C<->A freely).
         mismatch = natural.copy(layout="A") != declared.copy(layout="A")
     else:
         mismatch = natural != declared
