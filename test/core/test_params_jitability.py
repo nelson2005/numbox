@@ -2,10 +2,12 @@ import pytest
 from dataclasses import FrozenInstanceError
 from numba import cfunc, float64, int64, vectorize
 from numba import njit as _njit, int64 as _int64, float64 as _float64
+from numba import njit as _njit_t3
 from numbox.core.variable.variable import (
     Graph, Params, Variable, Variables, External,
 )
 from numbox.core.variable.compile_kernel import _classify, _validate_externals
+from numbox.core.variable._kernel_partition import _evaluate as _evaluate_fn
 from numbox.core.variable.utils import _validate_declared_return, _wrap_formula_typed
 from numbox.utils.highlevel import cres
 
@@ -167,3 +169,20 @@ def test_wrap_formula_typed_strips_cache_flag():
 def test_wrap_formula_typed_passes_exotics_through():
     cf = cfunc(int64(int64))(lambda x: x + 1)
     assert _wrap_formula_typed(cf, int64(int64), flags={}) is cf
+
+
+def test_evaluate_honors_fixed_demotion_set():
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0},
+        {"name": "b", "inputs": {"a": "c"}, "formula": lambda a: a * 2.0},
+    ]}, ["e"])
+    compiled = g.compile(["c.b"])
+    a = g.registry["c"]["a"]
+    b = g.registry["c"]["b"]
+    ext = {v for vs in compiled.required_external_variables.values() for v in vs.values()}
+    x = next(iter(ext))
+    bindings = {a: _njit_t3(a.formula), b: _njit_t3(b.formula)}
+    values = {x: 3.0}
+    demoted = {b}  # force b to run as plain python
+    _evaluate_fn(compiled.ordered_nodes, ext, values, bindings, {}, demoted)
+    assert values[a] == 4.0 and values[b] == 8.0
