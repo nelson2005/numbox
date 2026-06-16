@@ -98,6 +98,55 @@ def _formula_fingerprint(formula) -> tuple[str, bool]:
         return f"{_safe_repr(formula)} @{id(formula)}", False
 
 
+def _validate_externals(compiled: CompiledGraph) -> set:
+    """Run for ALL graphs before classification. Returns the external set and
+    raises the hard error _generate_body raised for a formula-bearing external
+    (hoisted here so a segmented build path cannot bypass it)."""
+    external = {v for vs in compiled.required_external_variables.values() for v in vs.values()}
+    for var in sorted(external, key=lambda v: v.qual_name()):
+        if var.formula is not None:
+            raise ValueError(
+                f"{var.qual_name()!r} is external but carries a formula; CompiledGraph "
+                f"computes such a variable while a fused kernel treats it as a plain "
+                f"input. Move it into a Variables namespace or drop the formula."
+            )
+    return external
+
+
+def _is_typed(var: Variable) -> bool:
+    return var.params is not None and var.params.type is not None
+
+
+def _classify(compiled: CompiledGraph, required: list[str]):
+    """Label interior nodes and pick the case. Returns
+    (case, dispositions: {Variable: str}, consumed_externals: set[Variable])."""
+    external = {v for vs in compiled.required_external_variables.values() for v in vs.values()}
+    consumed = set()
+    dispositions = {}
+    for node in compiled.ordered_nodes:
+        var = node.variable
+        if var in external:
+            continue
+        for inp in node.inputs:
+            if inp in external:
+                consumed.add(inp)
+        p = var.params
+        if p is not None and not p.jitable:
+            dispositions[var] = "STATIC_PY"
+        elif p is not None and p.jitable and p.type is not None and all(_is_typed(i) for i in node.inputs):
+            dispositions[var] = "STATIC_JIT"
+        else:
+            dispositions[var] = "UNKNOWN"
+    vals = set(dispositions.values())
+    if "UNKNOWN" in vals or any(not _is_typed(e) for e in consumed):
+        case = "C"
+    elif "STATIC_PY" in vals:
+        case = "B"
+    else:
+        case = "A"
+    return case, dispositions, consumed
+
+
 def _assemble_source(params: list[tuple[str, str, str]], lines: list[str], out_ids: list[str]) -> str:
     """Assemble the canonical kernel source; both the fused kernel and every
     segment must share this exact shape so cache digests cannot drift."""
@@ -174,13 +223,6 @@ def _generate_body(
         external.update(vars_.values())
 
     ext_sorted = sorted(external, key=lambda v: v.qual_name())
-    for var in ext_sorted:
-        if var.formula is not None:
-            raise ValueError(
-                f"{var.qual_name()!r} is external but carries a formula; CompiledGraph "
-                f"computes such a variable while a fused kernel treats it as a plain "
-                f"input. Move it into a Variables namespace or drop the formula."
-            )
     params = [(v.source, v.name, idents[v]) for v in ext_sorted]
 
     bindings = {}
@@ -679,6 +721,7 @@ def compile_kernel(
         ) from e
     except RecursionError:
         raise RecursionError("Consider raising recursion limit.") from None
+    _validate_externals(compiled)
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
     flags = _effective_flags(jit_options)
     source, bindings, params, outputs = _generate_body(compiled, required, idents, flags)
