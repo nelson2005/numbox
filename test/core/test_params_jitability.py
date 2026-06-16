@@ -111,7 +111,7 @@ def test_validate_accepts_correct_declaration():
 
 
 def test_validate_rejects_nonconvertible_return():
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         _validate_declared_return(lambda x: "s", (int64,), int64, flags={})
 
 
@@ -141,6 +141,17 @@ def test_validate_rejects_cres_wrong_declaration():
     cf = cres(float64(float64))(lambda x: x + 1.0)
     with pytest.raises(ValueError, match="declared .* but formula yields"):
         _validate_declared_return(cf, (float64,), int64, flags={})
+
+
+def test_validate_accepts_dispatcher_correct_declaration():
+    d = _njit(lambda x: x * 1.5)
+    _validate_declared_return(d, (int64,), float64, flags={})  # no raise; natural float64
+
+
+def test_validate_rejects_dispatcher_wrong_declaration():
+    d = _njit(lambda x: x * 1.5)
+    with pytest.raises(ValueError, match="declared .* but formula yields"):
+        _validate_declared_return(d, (int64,), int64, flags={})  # natural float64 != int64
 
 
 def test_wrap_formula_typed_is_uncached():

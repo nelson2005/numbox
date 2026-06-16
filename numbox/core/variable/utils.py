@@ -72,6 +72,12 @@ def _wrap_formula(formula: Callable, flags: dict | None = None) -> Dispatcher | 
     return njit(**(flags or {}))(formula)
 
 
+def _strip_cache(flags: dict | None) -> dict:
+    """Inner formulas must never be cached (a cached inner stale-hits on a
+    numeric-literal edit and inlines a stale body into the fused kernel)."""
+    return {k: v for k, v in (flags or {}).items() if k != "cache"}
+
+
 def _wrap_formula_typed(formula, sig, flags: dict | None = None):
     """Like _wrap_formula but binds plain functions to an explicit signature.
 
@@ -85,7 +91,7 @@ def _wrap_formula_typed(formula, sig, flags: dict | None = None):
         return formula
     if not callable(formula):
         raise TypeError(f"formula {formula!r} is not callable")
-    opts = {k: v for k, v in (flags or {}).items() if k != "cache"}
+    opts = _strip_cache(flags)
     return njit(sig, **opts)(formula)
 
 
@@ -102,9 +108,9 @@ def _validate_declared_return(formula, input_types: tuple, declared, flags: dict
       @njit shim applying the DUFunc at the declared input types.
     - plain Python: an unconstrained @njit probe over the declared input types.
 
-    The comparison is identity (no coercion allowed) so the guard truly fires.
+    The comparison is equality (no coercion allowed) so the guard truly fires.
     """
-    opts = {k: v for k, v in (flags or {}).items() if k != "cache"}
+    opts = _strip_cache(flags)
     if isinstance(formula, CFunc):
         natural = formula._sig.return_type
     elif isinstance(formula, CompileResultWAP):
@@ -116,6 +122,9 @@ def _validate_declared_return(formula, input_types: tuple, declared, flags: dict
         probe = njit(**opts)(ns["_shim"])
         probe.compile(input_types)
         natural = probe.nopython_signatures[-1].return_type
+    elif isinstance(formula, Dispatcher):
+        formula.compile(input_types)
+        natural = formula.nopython_signatures[-1].return_type
     else:
         probe = njit(**opts)(formula)
         probe.compile(input_types)
