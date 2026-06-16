@@ -79,23 +79,6 @@ def _strip_cache(flags: dict | None) -> dict:
     return {k: v for k, v in (flags or {}).items() if k != "cache"}
 
 
-def _wrap_formula_typed(formula, sig, flags: dict | None = None):
-    """Like _wrap_formula but binds plain functions to an explicit signature.
-
-    The inner dispatcher is NEVER cached: numba keys its cache on co_code and
-    file (st_mtime, st_size) but not co_consts, so a cached inner formula
-    stale-hits on a numeric-literal-only body edit and would inline a stale body
-    into the freshly content-addressed fused kernel. Exotics (already-compiled
-    dispatchers / cres / DUFunc / CFunc) pass through untouched.
-    """
-    if isinstance(formula, (Dispatcher, CompileResultWAP, DUFunc, CFunc)):
-        return formula
-    if not callable(formula):
-        raise TypeError(f"formula {formula!r} is not callable")
-    opts = _strip_cache(flags)
-    return njit(sig, **opts)(formula)
-
-
 def _validate_declared_return(formula, input_types: tuple, declared, flags: dict | None = None) -> None:
     """Raise if the formula's NATURAL return type at `input_types` differs from
     `declared`.

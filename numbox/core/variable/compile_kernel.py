@@ -156,7 +156,10 @@ def _classify(compiled: CompiledGraph):
         else:
             dispositions[var] = "UNKNOWN"
     vals = set(dispositions.values())
-    if "UNKNOWN" in vals or any(not _is_typed(e) for e in consumed):
+    # An empty `dispositions` is a fully-undeclared external-only graph (zero
+    # interior nodes); route it to "C" so the "declares nothing = byte-for-byte
+    # today" invariant holds (no eager build, partition None until first call).
+    if not dispositions or "UNKNOWN" in vals or any(not _is_typed(e) for e in consumed):
         case = "C"
     elif "STATIC_PY" in vals:
         case = "B"
@@ -338,6 +341,10 @@ class CompiledKernel:
       partition   - PartitionReport describing what runs where. None until the
                     first call for undeclared graphs; set at build time for
                     fully-declared (eager) graphs.
+      is_declared - True when the graph was fully declared and the mode resolved
+                    eagerly at build; False for a discovery (undeclared) kernel.
+                    Declared kernels enforce the `recompute()` type contract
+                    instead of re-discovering.
     """
 
     def __init__(self, kernel: Dispatcher, params: list[tuple[str, str, str]],
@@ -379,6 +386,11 @@ class CompiledKernel:
         return self._resolve_and_call
 
     def _fused_pending_call(self, *args) -> tuple:
+        # A caller may hold a reference to this bound method across calls; once
+        # the mode has flipped to "fused", go straight to the dispatcher without
+        # re-stamping _last_args (the first call already captured the seeding args).
+        if self._mode == "fused":
+            return self._fused(*args)
         self._last_args = args
         self._mode = "fused"
         return self._fused(*args)
@@ -796,9 +808,14 @@ def compile_kernel(
     hot-path callable: the bare @njit dispatcher once the graph resolves fully
     fused, the Python master when segmented. For an undeclared graph a later
     call whose types break a segment re-learns and replaces the partition (one
-    active plan); a declared kernel does NOT re-discover -- an off-contract input
-    type re-raises crisply. Once fully fused, fused is permanent (a
-    later-signature typing failure raises, as in v1). The discovery call computes
+    active plan); a declared kernel does NOT re-discover. The crisp
+    `declared type X, got Y` contract is enforced at build time and on
+    `recompute()` (`can_convert` against each declared type), NOT on the
+    throughput `kernel(...)` path: throughput retains numba's polymorphic
+    widening across calls, and a later `kernel(...)` whose off-contract type
+    breaks a jit segment raises numba's own typing error (the declared `_demoted`
+    is left untouched -- no silent re-discovery). Once fully fused, fused is
+    permanent (a later-signature typing failure raises, as in v1). The discovery call computes
     jit-node values through per-node dispatchers while later calls use fused
     segments -- identical under default IEEE semantics, but non-default
     jit_options such as fastmath could in principle differ across fusion

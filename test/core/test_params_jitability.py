@@ -9,7 +9,7 @@ from numbox.core.variable.variable import (
 )
 from numbox.core.variable.compile_kernel import _classify, _validate_externals, compile_kernel
 from numbox.core.variable._kernel_partition import _evaluate as _evaluate_fn
-from numbox.core.variable.utils import _validate_declared_return, _wrap_formula_typed
+from numbox.core.variable.utils import _validate_declared_return
 from numbox.utils.highlevel import cres
 
 
@@ -157,21 +157,6 @@ def test_validate_rejects_dispatcher_wrong_declaration():
         _validate_declared_return(d, (int64,), int64, flags={})  # natural float64 != int64
 
 
-def test_wrap_formula_typed_is_uncached():
-    d = _wrap_formula_typed(lambda x: x + 1.0, float64(float64), flags={})
-    assert d.targetoptions.get("cache") in (None, False)
-
-
-def test_wrap_formula_typed_strips_cache_flag():
-    d = _wrap_formula_typed(lambda x: x + 1.0, float64(float64), flags={"cache": True})
-    assert d.targetoptions.get("cache") in (None, False)
-
-
-def test_wrap_formula_typed_passes_exotics_through():
-    cf = cfunc(int64(int64))(lambda x: x + 1)
-    assert _wrap_formula_typed(cf, int64(int64), flags={}) is cf
-
-
 def test_evaluate_honors_fixed_demotion_set():
     g = Graph({"c": [
         {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0},
@@ -231,6 +216,17 @@ def test_undeclared_graph_stays_virgin_with_no_partition():
     assert ck.is_declared is False
     assert ck.partition is None
     assert ck.kernel(3.0) == (8.0,)
+
+
+def test_undeclared_external_only_graph_stays_undiscovered():
+    # Zero interior nodes, nothing declared: the "declares nothing = byte-for-byte
+    # today" invariant requires Case C (undeclared, partition None until first call),
+    # not an eager fused build.
+    g = Graph({"c": []}, ["e"])
+    ck = compile_kernel(g, "e.x")
+    assert ck.is_declared is False
+    assert ck.partition is None
+    assert ck.execute({"e": {"x": 5.5}}) == {"e.x": 5.5}
 
 
 def _declared_mix():
