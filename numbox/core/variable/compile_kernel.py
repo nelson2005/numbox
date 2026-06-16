@@ -13,12 +13,31 @@ partition is described by `CompiledKernel.partition` (a PartitionReport with
 per-node demotion reasons); formulas with no Python fallback
 (cres/CompileResultWAP, CFunc, DUFunc) are always treated as jittable.
 
+Jitability may be either DISCOVERED at the first call (above) or DECLARED up
+front. Each `Variable` carries an OPTIONAL `params` (`Params(jitable, type)`).
+A node with no `params` is discovered exactly as before -- byte-for-byte the
+same behavior. When every node in the required cone is declared (and every
+consumed external is typed), `compile_kernel()` resolves the execution mode at
+BUILD time instead of at the first call: an all-jittable graph compiles eagerly
+into one fused kernel ("fused"), a declared jit/Python mix compiles eagerly into
+a static segment plan ("segmented") with no probing, and `CompiledKernel.partition`
+is populated at build (inspectable before any call). A declared `params.type`
+that the formula does not naturally yield is caught at build by an explicit
+unconstrained return-type probe -- NOT by binding the formula to the declared
+signature, which would silently COERCE a convertible-but-wrong scalar type (a
+node declared int64 over a float-returning body would otherwise return a
+truncated value). Any node left undeclared (or only partially typed) keeps the
+runtime-discovery path; a graph that declares nothing behaves exactly as today.
+
 The on-disk cache is content-addressed per compiled unit (the fused kernel, or
 each jit segment): the digest fingerprints each formula's code, constants,
 default arguments, closure-cell values, referenced globals, and the kernel's
 effective jit flags, so a stale binary is never reused and two distinct
-kernels never collide. A formula with no canonical fingerprint forces its unit
-uncached (no anchor, no numba cache) -- never reused, never wrong.
+kernels never collide. The kernel source never mentions types, so declared
+signatures are appended to the digest as well: two declared-type variants of one
+graph therefore get distinct cache anchors. A formula with no canonical
+fingerprint forces its unit uncached (no anchor, no numba cache) -- never
+reused, never wrong.
 """
 import hashlib
 import warnings
@@ -657,6 +676,16 @@ class CompiledKernel:
         On a live-in type change a cached cone dispatcher fails to compile; the whole
         cone-plan cache is flushed once, the store re-seeded from the last full call, the
         change re-applied, and the cone rebuilt against the new types.
+
+        Declared kernels enforce a contract instead of recovering. For a kernel
+        built from a fully-declared graph, a changed value is checked for numba
+        assignability to the node's declared type: a value numba cannot assign to
+        the declared type raises a crisp ``declared type X, got Y`` error, while a
+        benign difference numba accepts -- a C-contiguous array against an
+        ``'A'``-layout array declaration, or a safe scalar promotion -- is accepted.
+        The check is convertibility, not type identity, and is scoped to declared
+        (eager) kernels; an individually-declared node inside an otherwise
+        discovered kernel keeps the flush-and-reseed recovery above.
         """
         self._ensure_store()
         changed_vars = self._apply_changes(changed)
@@ -722,35 +751,58 @@ def compile_kernel(
     Error timing: structural problems raise here (unknown or malformed
     `required` entries, non-callable formulas, arity mismatches against the
     declared inputs, formula-bearing external variables, graphs deeper than
-    the recursion limit); numba typing problems surface at the kernel's
-    first call (auto-njit of plain-Python formulas is lazy).
+    the recursion limit). For an UNDECLARED (or partially-declared) graph,
+    numba typing problems surface at the kernel's first call (auto-njit of
+    plain-Python formulas is lazy). For a FULLY-DECLARED graph (every node
+    carries `params`, every consumed external is typed) the mode resolves
+    eagerly here, so type errors move to build time: a formula whose natural
+    return at the declared input types is non-convertible to the declared type,
+    a cross-node type mismatch, and -- crucially -- a coercible-but-wrong
+    `params.type`. The last is caught by an explicit unconstrained return-type
+    probe that compares the formula's NATURALLY inferred return type against the
+    declaration; binding the formula to the declared signature does NOT catch
+    it, because numba silently coerces a convertible scalar (declaring int64
+    over a `x * 1.5` body would otherwise compute 7, not 7.5). Fully-declared
+    graphs thus fail fast at build; any-undeclared graph fails at the first
+    call, exactly as today. Runtime errors never demote -- they propagate.
 
     Caching: the kernel digest fingerprints each formula's bytecode,
     constants, default values, closure-cell values, referenced module-level
     globals (including helper functions, recursively), defining module, and
-    the effective jit flags. A formula whose state cannot be fingerprinted
-    (e.g. cres/CompileResultWAP objects, values with no canonical form)
-    downgrades that one kernel to cache=False: always recompiled, never
-    stale. When caching is enabled, a content-addressed anchor `.py` file is
-    written under numba's cache directory; with caching off (or the cache
-    dir unwritable, which warns and degrades) nothing is written.
+    the effective jit flags. Because the generated source never mentions types,
+    a declared graph's signatures are appended to the digest too (the consumed
+    external signature for an eager fused kernel, each segment's live-in/out
+    signature for an eager segment), so two declared-type variants of one
+    type-free graph get distinct cache anchors and never reuse each other's
+    binary. A formula whose state cannot be fingerprinted (e.g.
+    cres/CompileResultWAP objects, values with no canonical form) downgrades
+    that one kernel to cache=False: always recompiled, never stale. When caching
+    is enabled, a content-addressed anchor `.py` file is written under numba's
+    cache directory; with caching off (or the cache dir unwritable, which warns
+    and degrades) nothing is written.
 
-    Non-jittable formulas: the first call resolves the execution mode. If the
-    fully fused kernel cannot be typed for the actual argument types, each
-    node is probed against the real intermediate values; nodes whose formulas
-    fail to *compile* (or whose input values numba cannot type) run in plain
-    Python, and the jittable remainder is fused into segments orchestrated
-    from Python. `CompiledKernel.partition` describes the result, including
-    per-node demotion reasons; it is `None` before the first call. Runtime
-    errors never demote -- they propagate. `CompiledKernel.kernel` is the
-    hot-path callable: the bare @njit dispatcher once the graph resolves
-    fully fused, the Python master when segmented. A later call whose types
-    break a segment re-learns and replaces the partition (one active plan);
-    once fully fused, fused is permanent (a later-signature typing failure
-    raises, as in v1). The discovery call computes jit-node values through
-    per-node dispatchers while later calls use fused segments -- identical
-    under default IEEE semantics, but non-default jit_options such as
-    fastmath could in principle differ across fusion boundaries.
+    Non-jittable formulas: for an undeclared graph the first call resolves the
+    execution mode. If the fully fused kernel cannot be typed for the actual
+    argument types, each node is probed against the real intermediate values;
+    nodes whose formulas fail to *compile* (or whose input values numba cannot
+    type) run in plain Python, and the jittable remainder is fused into segments
+    orchestrated from Python. A declared `jitable=False` node is instead demoted
+    by declaration (no probing): a graph mixing declared jittable and
+    declared-Python nodes resolves eagerly to a "segmented" plan at build,
+    `CompiledKernel.partition` populated immediately with per-node reasons.
+    `CompiledKernel.partition` describes the result, including per-node demotion
+    reasons; it is `None` before the first call only for an undeclared graph
+    (set at build for a fully-declared one). `CompiledKernel.kernel` is the
+    hot-path callable: the bare @njit dispatcher once the graph resolves fully
+    fused, the Python master when segmented. For an undeclared graph a later
+    call whose types break a segment re-learns and replaces the partition (one
+    active plan); a declared kernel does NOT re-discover -- an off-contract input
+    type re-raises crisply. Once fully fused, fused is permanent (a
+    later-signature typing failure raises, as in v1). The discovery call computes
+    jit-node values through per-node dispatchers while later calls use fused
+    segments -- identical under default IEEE semantics, but non-default
+    jit_options such as fastmath could in principle differ across fusion
+    boundaries.
     """
     required = [required] if isinstance(required, str) else list(required)
     for entry in required:
