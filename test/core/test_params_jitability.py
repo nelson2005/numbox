@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 from dataclasses import FrozenInstanceError
 from numba import cfunc, float64, int64, vectorize
@@ -257,11 +258,12 @@ def test_case_b_no_probing_declared_python_honored():
     ck = compile_kernel(_declared_mix(), "c.d")
     assert "c.b" in ck.partition.python_nodes
     assert ck.kernel(3.0) == (9.0,)
-    # _store / _last_args are set ONLY by the runtime probe paths
-    # (_resolve_and_call / _discover_and_run); the eager Case-B build and
-    # _run_segmented never touch them, so both stay None -- proof no probe ran.
+    # _store is set ONLY by the runtime probe paths (_resolve_and_call /
+    # _discover_and_run); the eager Case-B build never touches it, so it stays
+    # None after a kernel call -- proof no probe ran. _last_args is captured by
+    # _run_segmented on its first call so a later recompute precondition holds.
     assert ck._store is None
-    assert ck._last_args is None
+    assert ck._last_args == (3.0,)
 
 
 def test_case_b_formula_bearing_external_raises():
@@ -296,3 +298,63 @@ def test_inner_formula_bindings_stay_uncached():
     bindings_by_var = ck._ctx[2]
     for binding in bindings_by_var.values():
         assert binding.targetoptions.get("cache") in (None, False)
+
+
+def test_declared_array_recompute_accepts_c_contiguous():
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0,
+         "params": Params(type=float64[:])},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=float64[:]))
+    ck = compile_kernel(g, "c.a")
+    base = np.zeros(4)               # C-contiguous; declared layout is 'A'
+    assert ck.kernel(base)[0].tolist() == [1, 1, 1, 1]
+    out = ck.recompute({"e": {"x": np.ones(4)}})   # must NOT raise on layout
+    assert out[0].tolist() == [2, 2, 2, 2]
+
+
+def test_declared_recompute_off_contract_type_raises_crisp():
+    ck = compile_kernel(_graph_all_jittable(), "c.b")
+    ck.kernel(3.0)
+    with pytest.raises(ValueError, match="declared type"):
+        ck.recompute({"e": {"x": 3j}})  # complex where float64 declared
+
+
+def test_case_a_fused_recompute_still_works():
+    ck = compile_kernel(_graph_all_jittable(), "c.b")
+    assert ck.kernel(3.0) == (8.0,)
+    assert ck.recompute({"e": {"x": 4.0}}) == (10.0,)   # via _evaluate seeding
+
+
+def _case_c_with_declared_node():
+    # c.a is declared (STATIC_JIT); c.b is undeclared (UNKNOWN) -> Case C, is_declared False.
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0, "params": Params(type=float64)},
+        {"name": "b", "inputs": {"a": "c"}, "formula": lambda a: a * 2.0},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=float64))
+    return g
+
+
+def test_case_c_declared_node_skips_contract_check():
+    ck = compile_kernel(_case_c_with_declared_node(), "c.b")
+    assert ck.is_declared is False
+    assert ck.kernel(3.0) == (8.0,)
+    # e.x carries params.type=float64, but the kernel is Case C, so the declared
+    # contract check is skipped; an int recompute uses the existing recovery path
+    # and must NOT raise the "declared type" ValueError.
+    out = ck.recompute({"e": {"x": 5}})
+    assert out == (12.0,)
+
+
+def test_eager_kernel_no_silent_rediscover_off_contract():
+    # An eager (declared) kernel must NOT silently re-discover / overwrite its
+    # frozen _demoted on an off-contract input; it raises crisply instead. The
+    # absence of a silent re-probe is observable as the crisp raise (and that
+    # _demoted is untouched).
+    ck = compile_kernel(_graph_all_jittable(), "c.b")
+    ck.kernel(3.0)
+    demoted_before = dict(ck._demoted)
+    with pytest.raises(ValueError, match="declared type"):
+        ck.recompute({"e": {"x": 3j}})
+    assert ck._demoted == demoted_before

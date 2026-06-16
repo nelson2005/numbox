@@ -15,6 +15,7 @@ from typing import Callable
 from numba import njit
 from numba.core.ccallback import CFunc
 from numba.core.dispatcher import Dispatcher
+from numba.core.types import Array
 from numba.core.types.function_type import CompileResultWAP
 from numba.np.ufunc.dufunc import DUFunc
 
@@ -108,7 +109,10 @@ def _validate_declared_return(formula, input_types: tuple, declared, flags: dict
       @njit shim applying the DUFunc at the declared input types.
     - plain Python: an unconstrained @njit probe over the declared input types.
 
-    The comparison is equality (no coercion allowed) so the guard truly fires.
+    The comparison is equality (no coercion allowed) so the guard truly fires,
+    except that array layout is ignored: an elementwise formula naturally yields a
+    C-contiguous array, while a declared `float64[:]` is layout 'A', and numba freely
+    assigns one to the other -- a layout difference is not a declared-type violation.
     """
     opts = _strip_cache(flags)
     if isinstance(formula, CFunc):
@@ -129,7 +133,11 @@ def _validate_declared_return(formula, input_types: tuple, declared, flags: dict
         probe = njit(**opts)(formula)
         probe.compile(input_types)
         natural = probe.nopython_signatures[-1].return_type
-    if natural != declared:
+    if isinstance(natural, Array) and isinstance(declared, Array):
+        mismatch = natural.copy(layout="A") != declared.copy(layout="A")
+    else:
+        mismatch = natural != declared
+    if mismatch:
         raise ValueError(
             f"declared type {declared} but formula yields {natural} at "
             f"input types {input_types}"

@@ -31,12 +31,13 @@ from numba import njit, typeof
 from numba.core.ccallback import CFunc
 from numba.core.dispatcher import Dispatcher
 from numba.core.errors import NumbaError
+from numba.core.registry import cpu_target
 from numba.np.ufunc.dufunc import DUFunc
 
 from numbox.core.configurations import jit_options as _default_jit_options
 from numbox.core.variable._kernel_partition import (
     PartitionReport, Segment, _ConePlan, _JitStep, _Plan, _PyStep,
-    build_runs, compute_boundary, cone_liveness, discover, linearize, segment_liveness,
+    _evaluate, build_runs, compute_boundary, cone_liveness, discover, linearize, segment_liveness,
 )
 from numbox.core.variable.utils import (
     _assign_identifiers, _check_formula_arity, _validate_declared_return, _wrap_formula,
@@ -394,13 +395,19 @@ class CompiledKernel:
         return self._discover_and_run(args)
 
     def _run_segmented(self, *args) -> tuple:
+        if self._last_args is None:
+            self._last_args = args
         try:
             return self._plan.run(args)
         except NumbaError:
             # Deliberately broad: a segment failing to compile for new input
             # types triggers re-discovery. A NumbaError raised inside a
             # python-step formula re-raises from re-discovery's own Python
-            # evaluation of the same args, so nothing is masked.
+            # evaluation of the same args, so nothing is masked. Declared
+            # kernels do NOT re-discover (that would overwrite the authoritative
+            # _demoted); an off-contract input re-raises instead.
+            if self.is_declared:
+                raise
             return self._discover_and_run(args)
 
     def _discover_and_run(self, args: tuple) -> tuple:
@@ -474,7 +481,12 @@ class CompiledKernel:
         # so the one extra evaluation is observationally safe. Seeding only the
         # persisted-node closure instead is a possible future optimization.
         values = dict(zip(self._external_vars, self._last_args))
-        self._demoted = discover(compiled.ordered_nodes, external, values, bindings_by_var, flags)
+        if self.is_declared:
+            # Seed interior values with the FROZEN declared demotion set; re-running
+            # discover would re-probe and could disagree with the declarations.
+            _evaluate(compiled.ordered_nodes, external, values, bindings_by_var, flags, self._demoted)
+        else:
+            self._demoted = discover(compiled.ordered_nodes, external, values, bindings_by_var, flags)
         self._store = values
 
     def _apply_changes(self, changed: dict) -> set:
@@ -495,6 +507,10 @@ class CompiledKernel:
                     if var is None:
                         warnings.warn(f"{qual} is not in the calculation path, update has no effect.")
                         continue
+                if self.is_declared and var.params is not None and var.params.type is not None:
+                    if cpu_target.typing_context.can_convert(typeof(val), var.params.type) is None:
+                        raise ValueError(
+                            f"declared type {var.params.type}, got {typeof(val)} for {var.qual_name()}")
                 self._store[var] = val
                 changed_vars.add(var)
                 if not is_external and (self._sources is None or var not in self._sources):
@@ -523,9 +539,19 @@ class CompiledKernel:
             compiled.ordered_nodes, self._sources, set(self._required_vars)
         )
 
+    def _cone_live_in_type(self, v: Variable):
+        """The numba type to compile a cone jit-segment live-in against. For a
+        declared kernel whose live-in declares a type, use the DECLARED type (so the
+        cone matches the eager build's signature); otherwise fall back to the stored
+        value's runtime type, as the undeclared path always does."""
+        if self.is_declared and v.params is not None and v.params.type is not None:
+            return v.params.type
+        return typeof(self._store[v])
+
     def _build_cone_plan(self, affected: list) -> _ConePlan:
         """Linearize the affected cone, split into runs, and compile each jit run
-        against the store's current live-in types (Python runs become _PyStep chains).
+        against its live-in types (declared types for a declared kernel, else the
+        store's current runtime types; Python runs become _PyStep chains).
         `_demoted` is restricted to cone nodes so only nodes demoted at seed time stay
         Python. Called by `_cone_plan_cached` on a cache miss."""
         compiled, idents, _, jit_options, cache, _ = self._ctx
@@ -547,7 +573,7 @@ class CompiledKernel:
             live_in, live_out = cone_liveness(run_nodes, order, self._required_vars, self._boundary)
             src, seg_bindings, _, _ = _generate_segment_body(run_nodes, live_in, live_out, idents, flags)
             disp = _compile(src, seg_bindings, jit_options, cache)
-            disp.compile(tuple(typeof(self._store[v]) for v in live_in))
+            disp.compile(tuple(self._cone_live_in_type(v) for v in live_in))
             steps.append(_JitStep(dispatcher=disp, in_vars=live_in, out_vars=live_out))
         return _ConePlan(steps=tuple(steps))
 
@@ -640,7 +666,11 @@ class CompiledKernel:
         except NumbaError:
             # A live-in type change invalidates every compiled cone plan; flush
             # the whole cache once, reseed the store, re-apply the change against
-            # the fresh store, and rebuild against the new types.
+            # the fresh store, and rebuild against the new types. Declared kernels
+            # fix every type by contract, so the (d) contract check already
+            # rejected off-contract types crisply; flushing here would be pointless.
+            if self.is_declared:
+                raise
             self._flush_and_reseed()
             self._apply_changes(changed)
             affected = compiled._collect_affected(changed_vars)
