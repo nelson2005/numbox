@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
 from dataclasses import FrozenInstanceError
-from numba import cfunc, float64, int64, vectorize
+from numba import cfunc, float32, float64, int32, int64, vectorize
 from numba import njit as _njit, int64 as _int64, float64 as _float64
 from numba import njit as _njit_t3
+from numba.core.errors import NumbaError
 from numbox.core.variable.variable import (
     Graph, Params, Variable, Variables, External,
 )
@@ -408,3 +409,68 @@ def test_shared_dispatcher_multi_overload_validation():
     ck = compile_kernel(g, ["c.a", "c.b", "c.d"])  # must NOT raise
     assert ck.is_declared is True
     assert ck.execute({"e": {"p": 3, "q": 2.0, "r": 5}}) == {"c.a": 4, "c.b": 3.0, "c.d": 6}
+
+
+def test_declared_exotic_node_end_to_end():
+    # A declared graph carrying a cres (CompileResultWAP) node builds eagerly and
+    # runs end-to-end through compile_kernel; the natural return is read off the
+    # exotic's own signature, so a CORRECT declaration computes the right value.
+    cf = cres(float64(float64))(lambda x: x + 1.0)
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": cf, "params": Params(type=float64)},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=float64))
+    ck = compile_kernel(g, "c.a")
+    assert ck.is_declared is True
+    assert ck.partition is not None and ck.partition.mode == "fused"
+    assert ck.kernel(3.0) == (4.0,)
+
+
+def test_declared_exotic_node_wrong_declaration_raises_at_build():
+    # A WRONG declaration on the exotic node (cres yields float64, declared int64)
+    # is caught at build by the exotic-aware return probe, not at first call.
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"},
+         "formula": cres(float64(float64))(lambda x: x + 1.0), "params": Params(type=int64)},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=float64))
+    with pytest.raises(ValueError, match="declared .* but formula yields"):
+        compile_kernel(g, "c.a")
+
+
+def test_declared_segmented_throughput_off_contract_reraises():
+    # H4: a declared segmented kernel must RE-RAISE on a later kernel() call whose
+    # off-contract input breaks a jit segment -- it must not silently re-discover
+    # and overwrite the frozen _demoted set.
+    ck = compile_kernel(_declared_mix(), "c.d")
+    assert ck.partition.mode == "segmented"
+    assert ck.kernel(3.0) == (9.0,)             # ((3+1)*2)+1
+    demoted_before = dict(ck._demoted)
+    with pytest.raises(NumbaError):
+        ck.kernel("not a number")               # breaks the first jit segment (x + 1.0)
+    assert ck._demoted == demoted_before        # demotion verdicts untouched
+
+
+def test_declared_float32_graph_end_to_end():
+    # A declared narrow-scalar (float32) graph whose body naturally yields float32
+    # builds fused and runs end-to-end.
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + float32(1.0),
+         "params": Params(type=float32)},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=float32))
+    ck = compile_kernel(g, "c.a")
+    assert ck.is_declared is True
+    assert ck.kernel(np.float32(2.0)) == (3.0,)
+
+
+def test_declared_int32_over_widening_body_rejected_at_build():
+    # A declared int32 over an int-arithmetic body is REJECTED at build: numba
+    # widens int32 + 1 to int64, so the natural return (int64) does not match the
+    # declared int32. Documents the rejected narrow-scalar behavior.
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1, "params": Params(type=int32)},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=int32))
+    with pytest.raises(ValueError, match="declared .* but formula yields"):
+        compile_kernel(g, "c.a")
