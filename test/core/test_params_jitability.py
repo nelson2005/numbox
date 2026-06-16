@@ -51,7 +51,7 @@ def _graph_all_jittable():
 def test_classify_case_a_all_jittable():
     g = _graph_all_jittable()
     compiled = g.compile(["c.b"])
-    case, dispositions, consumed = _classify(compiled, ["c.b"])
+    case, dispositions, consumed = _classify(compiled)
     assert case == "A"
     assert all(d == "STATIC_JIT" for d in dispositions.values())
 
@@ -65,7 +65,7 @@ def test_classify_case_b_declared_python_mix():
         name="d", source="c", inputs={"b": "c"},
         formula=lambda b: b + 1.0, params=Params(type=float64)))
     compiled = g.compile(["c.d"])
-    case, dispositions, _ = _classify(compiled, ["c.d"])
+    case, dispositions, _ = _classify(compiled)
     assert case == "B"
     assert dispositions[g.registry["c"]["b"]] == "STATIC_PY"
 
@@ -79,7 +79,7 @@ def test_classify_case_c_untyped_python_boundary():
         name="d", source="c", inputs={"b": "c"},
         formula=lambda b: b + 1.0, params=Params(type=float64)))
     compiled = g.compile(["c.d"])
-    case, _, _ = _classify(compiled, ["c.d"])
+    case, _, _ = _classify(compiled)
     assert case == "C"
 
 

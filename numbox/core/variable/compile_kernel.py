@@ -99,9 +99,8 @@ def _formula_fingerprint(formula) -> tuple[str, bool]:
 
 
 def _validate_externals(compiled: CompiledGraph) -> set:
-    """Run for ALL graphs before classification. Returns the external set and
-    raises the hard error _generate_body raised for a formula-bearing external
-    (hoisted here so a segmented build path cannot bypass it)."""
+    """Raise ValueError if any external variable carries a formula (a fused
+    kernel treats externals as plain inputs). Returns the full external set."""
     external = {v for vs in compiled.required_external_variables.values() for v in vs.values()}
     for var in sorted(external, key=lambda v: v.qual_name()):
         if var.formula is not None:
@@ -117,7 +116,7 @@ def _is_typed(var: Variable) -> bool:
     return var.params is not None and var.params.type is not None
 
 
-def _classify(compiled: CompiledGraph, required: list[str]):
+def _classify(compiled: CompiledGraph):
     """Label interior nodes and pick the case. Returns
     (case, dispositions: {Variable: str}, consumed_externals: set[Variable])."""
     external = {v for vs in compiled.required_external_variables.values() for v in vs.values()}
@@ -721,12 +720,11 @@ def compile_kernel(
         ) from e
     except RecursionError:
         raise RecursionError("Consider raising recursion limit.") from None
-    _validate_externals(compiled)
+    external = _validate_externals(compiled)
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
     flags = _effective_flags(jit_options)
     source, bindings, params, outputs = _generate_body(compiled, required, idents, flags)
     kernel = _compile(source, bindings, jit_options, cache)
-    external = {v for vs in compiled.required_external_variables.values() for v in vs.values()}
     bindings_by_var = {
         n.variable: bindings["f_" + idents[n.variable]]
         for n in compiled.ordered_nodes if n.variable not in external
