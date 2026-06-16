@@ -270,3 +270,29 @@ def test_case_b_formula_bearing_external_raises():
                                          params=Params(type=float64)))
     with pytest.raises(ValueError, match="external but carries a formula"):
         compile_kernel(g, "c.d")
+
+
+def test_declared_type_variants_get_distinct_anchors():
+    def make(t):
+        g = Graph({"c": [{"name": "a", "inputs": {"x": "e"},
+                          "formula": lambda x: x + 1, "params": Params(type=t)}]}, ["e"])
+        g.external["e"].declare("x", Params(type=t))
+        return compile_kernel(g, "c.a", cache=True)
+    ck_i = make(int64)
+    ck_f = make(float64)
+    assert ck_i.kernel(3) == (4,)
+    assert ck_f.kernel(3.0) == (4.0,)
+    assert ck_i.source == ck_f.source              # source is type-free
+    assert ck_i._fused.__name__ != ck_f._fused.__name__   # digests differ via declared sigs
+
+
+def test_inner_formula_bindings_stay_uncached():
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0, "params": Params(type=float64)},
+        {"name": "b", "inputs": {"a": "c"}, "formula": lambda a: a * 2.0, "params": Params(type=float64)},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=float64))
+    ck = compile_kernel(g, "c.b")
+    bindings_by_var = ck._ctx[2]
+    for binding in bindings_by_var.values():
+        assert binding.targetoptions.get("cache") in (None, False)

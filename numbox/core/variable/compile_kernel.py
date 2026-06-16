@@ -242,8 +242,15 @@ def _generate_body(
 
 def _compile(
     source: str, bindings: dict[str, Any], jit_options: dict | None, cache: bool | None,
+    declared_sigs: tuple = (),
 ) -> Dispatcher:
-    """Content-addressed compile of the kernel source into an @njit dispatcher."""
+    """Content-addressed compile of the kernel source into an @njit dispatcher.
+
+    `declared_sigs` carries the unit's declared signature(s) -- the consumed
+    external signature for an eager fused kernel, each segment's live-in/out
+    signature for an eager segment -- folded into the digest via `repr` so two
+    declared-type variants of one type-free source get distinct anchors. Empty
+    for undeclared (Case C) units."""
     fingerprints = []
     cacheable = True
     for fg, formula in bindings.items():
@@ -261,9 +268,10 @@ def _compile(
         flags_canon = repr(sorted(flags.items(), key=repr))
         cacheable = False
     hash_text = (
-        "ck-digest-v2\n" + source
+        "ck-digest-v3\n" + source
         + "\n# formulas:\n" + "\n".join(fingerprints)
         + "\n# flags: " + flags_canon
+        + "\n# declared_sigs: " + repr([repr(s) for s in declared_sigs])
     )
     if not cacheable:
         opts["cache"] = False
@@ -741,11 +749,6 @@ def compile_kernel(
             in_types = tuple(i.params.type for i in node.inputs)
             _validate_declared_return(var.formula, in_types, var.params.type, flags)
     source, bindings, params, outputs = _generate_body(compiled, required, idents, flags)
-    kernel = _compile(source, bindings, jit_options, cache)
-    bindings_by_var = {
-        n.variable: bindings["f_" + idents[n.variable]]
-        for n in compiled.ordered_nodes if n.variable not in external
-    }
 
     def _registry_var(qual):
         src, name = qual.rsplit(QUAL_SEP, 1)
@@ -753,6 +756,18 @@ def compile_kernel(
 
     required_vars = [_registry_var(q) for q in outputs]
     external_vars = [graph.registry[src][name] for src, name, _ in params]
+    # For Case A fold the consumed-external declared signature (kernel-arg order,
+    # matching the eager `.compile` below) into the digest so int64/float64
+    # variants of one type-free source get distinct anchors. Cases B/C pass ().
+    declared_sigs = ()
+    if case == "A":
+        consumed_sig = tuple(v.params.type for v in external_vars if v in consumed)
+        declared_sigs = (consumed_sig,)
+    kernel = _compile(source, bindings, jit_options, cache, declared_sigs)
+    bindings_by_var = {
+        n.variable: bindings["f_" + idents[n.variable]]
+        for n in compiled.ordered_nodes if n.variable not in external
+    }
     ctx = (compiled, idents, bindings_by_var, jit_options, cache, external)
     identifiers = {v.qual_name(): ident for v, ident in idents.items()}
     if case == "A":
@@ -793,7 +808,9 @@ def compile_kernel(
                 continue
             live_in, live_out = segment_liveness(run_nodes, external, required_vars, order)
             src, seg_bindings, _, _ = _generate_segment_body(run_nodes, live_in, live_out, idents, flags)
-            disp = _compile(src, seg_bindings, jit_options, cache)
+            seg_sigs = (tuple(v.params.type for v in live_in),
+                        tuple(v.params.type for v in live_out))
+            disp = _compile(src, seg_bindings, jit_options, cache, seg_sigs)
             disp.compile(tuple(v.params.type for v in live_in))
             steps.append(_JitStep(dispatcher=disp, in_vars=live_in, out_vars=live_out))
             segments.append(Segment(kind="jit", nodes=quals,
