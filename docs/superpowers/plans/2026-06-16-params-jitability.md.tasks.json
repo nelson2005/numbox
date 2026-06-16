@@ -1,0 +1,74 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-16-params-jitability.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Params data model + Variable.params",
+      "status": "pending",
+      "description": "**Goal:** Add the frozen `Params` dataclass and a single optional `Variable.params` field with a construction-time guard, `VarSpec` key, and `External.declare`.\n\n**Verify:** CLEAN && venv/bin/pytest test/core/test_params_jitability.py -v -k task0\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/variable.py\", \"test/core/test_params_jitability.py\"], \"verifyCommand\": \"pytest test/core/test_params_jitability.py -v -k task0\", \"acceptanceCriteria\": [\"Params frozen defaults\", \"Variable.params roundtrip + identity unchanged\", \"dict params raises TypeError\", \"VarSpec passthrough\", \"External.declare typed external\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Shared external validation + classification",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Pure `_classify(compiled, required)` (STATIC_JIT/STATIC_PY/UNKNOWN + consumed externals + case A/B/C) and hoisted `_validate_externals` run for all graphs.\n\n**Verify:** CLEAN && venv/bin/pytest test/core/test_params_jitability.py -v -k task1\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_params_jitability.py\"], \"verifyCommand\": \"pytest test/core/test_params_jitability.py -v -k task1\", \"acceptanceCriteria\": [\"classify A/B/C correct\", \"untyped python boundary -> C\", \"formula-bearing external rejected all cases\", \"reads params off ordered_nodes\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Typed binding + eager return-type validation",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** `_wrap_formula_typed` (uncached inner njit(sig)) + `_validate_declared_return` (unconstrained probe catching coercible-wrong scalar types; CFunc/cres _sig.return_type; DUFunc shim).\n\n**Verify:** CLEAN && venv/bin/pytest test/core/test_params_jitability.py -v -k task2\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/utils.py\", \"test/core/test_params_jitability.py\"], \"verifyCommand\": \"pytest test/core/test_params_jitability.py -v -k task2\", \"acceptanceCriteria\": [\"probe API pinned\", \"coercible wrong type raises\", \"correct declaration ok\", \"non-convertible raises\", \"DUFunc wrong output raises\", \"inner njit uncached\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: _evaluate (fixed-demotion graph evaluation)",
+      "status": "pending",
+      "description": "**Goal:** Add `_evaluate` (populate node values with a GIVEN demotion set, no probing); leave `discover` byte-for-byte unchanged.\n\n**Verify:** CLEAN && venv/bin/pytest test/core/test_params_jitability.py -v -k task3 && pytest test/core/test_compile_kernel.py -q\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/_kernel_partition.py\", \"test/core/test_params_jitability.py\"], \"verifyCommand\": \"pytest test/core/test_params_jitability.py -v -k task3 && pytest test/core/test_compile_kernel.py -q\", \"acceptanceCriteria\": [\"_evaluate honors fixed demotion set\", \"no re-probe/mutation\", \"discover unchanged\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Eager Case A (fused) construction",
+      "status": "pending",
+      "blockedBy": [0, 1, 2],
+      "description": "**Goal:** compile_kernel validates externals, classifies, and builds an eager-fused CompiledKernel for Case A (fused-pending mode, public is_declared, _fused.compile(consumed_sig), partition at build, pass-through external outputs excluded), with a kernel-property one-shot capture branch.\n\n**Verify:** CLEAN && venv/bin/pytest test/core/test_params_jitability.py -v -k task4\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_params_jitability.py\"], \"verifyCommand\": \"pytest test/core/test_params_jitability.py -v -k task4\", \"acceptanceCriteria\": [\"Case A partition fused at build\", \"is_declared True\", \"coercible wrong type raises at build\", \"recompute after fused call works (H2)\", \"pass-through external output compiles (M3)\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Eager Case B (segmented) construction",
+      "status": "pending",
+      "blockedBy": [0, 1, 2],
+      "description": "**Goal:** Case B builds the segmented plan at compile_kernel() from the declared jitable=False demotion set (no probing), segments compiled against DECLARED live-in types; seed _demoted/partition/is_declared.\n\n**Verify:** CLEAN && venv/bin/pytest test/core/test_params_jitability.py -v -k task5\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_params_jitability.py\"], \"verifyCommand\": \"pytest test/core/test_params_jitability.py -v -k task5\", \"acceptanceCriteria\": [\"Case B partition segmented at build + reasons\", \"correct results, no probing\", \"formula-bearing external in B raises (M2)\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Cache-digest extension (declared signatures)",
+      "status": "pending",
+      "blockedBy": [4, 5],
+      "description": "**Goal:** Fold declared signatures (via repr) into the ck-digest hash text (bump to v3); confirm inner formulas stay uncached.\n\n**Verify:** CLEAN && venv/bin/pytest test/core/test_params_jitability.py -v -k task6\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_params_jitability.py\"], \"verifyCommand\": \"pytest test/core/test_params_jitability.py -v -k task6\", \"acceptanceCriteria\": [\"declared variants distinct digests/no reuse\", \"inner formulas uncached\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: recompute composition for declared kernels",
+      "status": "pending",
+      "blockedBy": [3, 4, 5],
+      "description": "**Goal:** _ensure_store uses _evaluate for declared kernels; _apply_changes uses can_convert contract check scoped to eager kernels; _run_segmented no re-discover for declared; drop _flush_and_reseed for declared cones; cone live-ins compiled against declared types.\n\n**Verify:** CLEAN && venv/bin/pytest test/core/test_params_jitability.py -v -k task7 && pytest test/core/test_compile_kernel.py -q\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_params_jitability.py\"], \"verifyCommand\": \"pytest test/core/test_params_jitability.py -v -k task7 && pytest test/core/test_compile_kernel.py -q\", \"acceptanceCriteria\": [\"declared-array recompute accepts C-contiguous (H3)\", \"off-contract type raises crisp\", \"Case-C declared node uses recovery (M8)\", \"eager kernel no silent re-discover (H4)\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Before-first-compile ordering contract",
+      "status": "pending",
+      "blockedBy": [0, 4],
+      "description": "**Goal:** Bust the compiled_graphs cache entry when Namespace.update replaces a Variable, so attaching params after a first compile is not silently ignored.\n\n**Verify:** CLEAN && venv/bin/pytest test/core/test_params_jitability.py -v -k task8\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/variable.py\", \"test/core/test_params_jitability.py\"], \"verifyCommand\": \"pytest test/core/test_params_jitability.py -v -k task8\", \"acceptanceCriteria\": [\"update busts compiled_graphs (no stale Case-C kernel after declaring params)\"], \"model\": \"opus\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: Documentation + sphinx build",
+      "status": "pending",
+      "blockedBy": [4, 5, 6, 7, 8],
+      "description": "**Goal:** Update module/function docstrings and docs/numbox.core.variable.rst (declared params; error timing via explicit probe not njit coercion; digest extension; recompute contract); build docs clean.\n\n**Verify:** cd docs && venv/bin/sphinx-build -b html . _build/html (exit 0)\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"docs/numbox.core.variable.rst\"], \"verifyCommand\": \"cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html\", \"acceptanceCriteria\": [\"docstrings/RST describe declared params + probe-based error timing + digest + recompute contract\", \"sphinx-build exit 0\", \"doc-codeblock-flake8 passes\"], \"model\": \"opus\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-16T06:10:00Z"
+}
