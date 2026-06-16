@@ -308,8 +308,9 @@ class CompiledKernel:
       outputs     - requested variable qual_names, return-tuple order.
       source      - generated kernel source text.
       identifiers - {qual_name: temp identifier} for inspection.
-      partition   - PartitionReport describing what runs where (None until
-                    the first call resolves the mode).
+      partition   - PartitionReport describing what runs where. None until the
+                    first call for undeclared graphs; set at build time for
+                    fully-declared (eager) graphs.
     """
 
     def __init__(self, kernel: Dispatcher, params: list[tuple[str, str, str]],
@@ -353,7 +354,6 @@ class CompiledKernel:
     def _fused_pending_call(self, *args) -> tuple:
         self._last_args = args
         self._mode = "fused"
-        self.partition = self._fused_report()
         return self._fused(*args)
 
     def _fused_report(self) -> PartitionReport:
@@ -733,6 +733,13 @@ def compile_kernel(
     case, dispositions, consumed = _classify(compiled)
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
     flags = _effective_flags(jit_options)
+    if case == "A":
+        for node in compiled.ordered_nodes:
+            var = node.variable
+            if var in external or dispositions.get(var) != "STATIC_JIT":
+                continue
+            in_types = tuple(i.params.type for i in node.inputs)
+            _validate_declared_return(var.formula, in_types, var.params.type, flags)
     source, bindings, params, outputs = _generate_body(compiled, required, idents, flags)
     kernel = _compile(source, bindings, jit_options, cache)
     bindings_by_var = {
@@ -749,15 +756,12 @@ def compile_kernel(
     ctx = (compiled, idents, bindings_by_var, jit_options, cache, external)
     identifiers = {v.qual_name(): ident for v, ident in idents.items()}
     if case == "A":
-        for node in compiled.ordered_nodes:
-            var = node.variable
-            if var in external or dispositions.get(var) != "STATIC_JIT":
-                continue
-            in_types = tuple(i.params.type for i in node.inputs)
-            _validate_declared_return(var.formula, in_types, var.params.type, flags)
         ck = CompiledKernel(kernel, params, outputs, source, identifiers, ctx,
                             required_vars, external_vars, is_declared=True)
         sig_vars = [v for v in external_vars if v in consumed]
+        # Eager-compile only when every kernel param is consumed; a pass-through
+        # external output is a kernel arg but has no declared type, so a partial
+        # signature would be wrong-arity. Such graphs compile lazily on first call.
         if len(sig_vars) == len(external_vars):
             ck._fused.compile(tuple(v.params.type for v in sig_vars))
         ck._mode = "fused-pending"

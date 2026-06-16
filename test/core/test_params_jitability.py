@@ -188,24 +188,15 @@ def test_evaluate_honors_fixed_demotion_set():
     assert values[a] == 4.0 and values[b] == 8.0
 
 
-def _declared_chain():
-    g = Graph({"c": [
-        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0, "params": Params(type=float64)},
-        {"name": "b", "inputs": {"a": "c"}, "formula": lambda a: a * 2.0, "params": Params(type=float64)},
-    ]}, ["e"])
-    g.external["e"].declare("x", Params(type=float64))
-    return g
-
-
 def test_case_a_partition_fused_at_build():
-    ck = compile_kernel(_declared_chain(), "c.b")
+    ck = compile_kernel(_graph_all_jittable(), "c.b")
     assert ck.partition is not None and ck.partition.mode == "fused"
     assert ck.is_declared is True
     assert ck.kernel(3.0) == (8.0,)
 
 
 def test_case_a_recompute_after_fused_call():
-    ck = compile_kernel(_declared_chain(), "c.b")
+    ck = compile_kernel(_graph_all_jittable(), "c.b")
     assert ck.kernel(3.0) == (8.0,)
     assert ck.recompute({"e": {"x": 4.0}}) == (10.0,)
 
