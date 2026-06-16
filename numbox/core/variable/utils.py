@@ -128,7 +128,7 @@ def _validate_declared_return(formula, input_types: tuple, declared, flags: dict
         natural = probe.nopython_signatures[-1].return_type
     elif isinstance(formula, Dispatcher):
         formula.compile(input_types)
-        natural = formula.nopython_signatures[-1].return_type
+        natural = formula.overloads[input_types].signature.return_type
     else:
         probe = njit(**opts)(formula)
         probe.compile(input_types)

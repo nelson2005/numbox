@@ -392,3 +392,23 @@ def test_external_declare_after_compile_busts_cache():
     g.external["e"].declare("x", Params(type=float64))
     ck2 = compile_kernel(g, "c.a")
     assert ck2.partition is not None and ck2.partition.mode == "fused"
+
+
+def test_shared_dispatcher_multi_overload_validation():
+    # Three declared interior nodes all use ONE shared dispatcher carrying
+    # several overloads. Reading the LAST-compiled overload (instead of the one
+    # for the node's own input types) falsely rejects a fully-correct graph: the
+    # int64-input nodes naturally yield int64, but if validation reads the
+    # float64 node's overload it spuriously sees float64 != int64.
+    shared = _njit(lambda x: x + 1)
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"p": "e"}, "formula": shared, "params": Params(type=int64)},
+        {"name": "b", "inputs": {"q": "e"}, "formula": shared, "params": Params(type=float64)},
+        {"name": "d", "inputs": {"r": "e"}, "formula": shared, "params": Params(type=int64)},
+    ]}, ["e"])
+    g.external["e"].declare("p", Params(type=int64))
+    g.external["e"].declare("q", Params(type=float64))
+    g.external["e"].declare("r", Params(type=int64))
+    ck = compile_kernel(g, ["c.a", "c.b", "c.d"])  # must NOT raise
+    assert ck.is_declared is True
+    assert ck.execute({"e": {"p": 3, "q": 2.0, "r": 5}}) == {"c.a": 4, "c.b": 3.0, "c.d": 6}
