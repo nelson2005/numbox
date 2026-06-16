@@ -6,7 +6,7 @@ from numba import njit as _njit_t3
 from numbox.core.variable.variable import (
     Graph, Params, Variable, Variables, External,
 )
-from numbox.core.variable.compile_kernel import _classify, _validate_externals
+from numbox.core.variable.compile_kernel import _classify, _validate_externals, compile_kernel
 from numbox.core.variable._kernel_partition import _evaluate as _evaluate_fn
 from numbox.core.variable.utils import _validate_declared_return, _wrap_formula_typed
 from numbox.utils.highlevel import cres
@@ -186,3 +186,56 @@ def test_evaluate_honors_fixed_demotion_set():
     demoted = {b}  # force b to run as plain python
     _evaluate_fn(compiled.ordered_nodes, ext, values, bindings, {}, demoted)
     assert values[a] == 4.0 and values[b] == 8.0
+
+
+def _declared_chain():
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0, "params": Params(type=float64)},
+        {"name": "b", "inputs": {"a": "c"}, "formula": lambda a: a * 2.0, "params": Params(type=float64)},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=float64))
+    return g
+
+
+def test_case_a_partition_fused_at_build():
+    ck = compile_kernel(_declared_chain(), "c.b")
+    assert ck.partition is not None and ck.partition.mode == "fused"
+    assert ck.is_declared is True
+    assert ck.kernel(3.0) == (8.0,)
+
+
+def test_case_a_recompute_after_fused_call():
+    ck = compile_kernel(_declared_chain(), "c.b")
+    assert ck.kernel(3.0) == (8.0,)
+    assert ck.recompute({"e": {"x": 4.0}}) == (10.0,)
+
+
+def test_case_a_coercible_wrong_type_raises_at_build():
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x * 1.5, "params": Params(type=int64)},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=int64))
+    with pytest.raises(ValueError, match="declared .* but formula yields"):
+        compile_kernel(g, "c.a")
+
+
+def test_case_a_passthrough_external_output_compiles():
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0, "params": Params(type=float64)},
+    ]}, ["e"])
+    g.external["e"].declare("x", Params(type=float64))
+    ck = compile_kernel(g, ["c.a", "e.y"])
+    assert ck.is_declared is True
+    assert ck.partition is not None and ck.partition.mode == "fused"
+    assert ck.execute({"e": {"x": 3.0, "y": 9.0}}) == {"c.a": 4.0, "e.y": 9.0}
+
+
+def test_undeclared_graph_stays_virgin_with_no_partition():
+    g = Graph({"c": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": lambda x: x + 1.0},
+        {"name": "b", "inputs": {"a": "c"}, "formula": lambda a: a * 2.0},
+    ]}, ["e"])
+    ck = compile_kernel(g, "c.b")
+    assert ck.is_declared is False
+    assert ck.partition is None
+    assert ck.kernel(3.0) == (8.0,)

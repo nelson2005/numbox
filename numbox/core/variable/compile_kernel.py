@@ -39,7 +39,7 @@ from numbox.core.variable._kernel_partition import (
     build_runs, compute_boundary, cone_liveness, discover, linearize, segment_liveness,
 )
 from numbox.core.variable.utils import (
-    _assign_identifiers, _check_formula_arity, _wrap_formula,
+    _assign_identifiers, _check_formula_arity, _validate_declared_return, _wrap_formula,
 )
 from numbox.core.variable.variable import (
     QUAL_SEP, CompiledGraph, CompiledNode, Graph, Variable, make_qual_name,
@@ -315,8 +315,9 @@ class CompiledKernel:
     def __init__(self, kernel: Dispatcher, params: list[tuple[str, str, str]],
                  outputs: list[str], source: str, identifiers: dict[str, str],
                  ctx: tuple, required_vars: list[Variable],
-                 external_vars: list[Variable]) -> None:
+                 external_vars: list[Variable], is_declared: bool = False) -> None:
         self._fused = kernel
+        self.is_declared = is_declared
         self._mode = "virgin"
         self._plan = None
         self.partition = None
@@ -343,9 +344,17 @@ class CompiledKernel:
             # dispatch, and a typing failure there raises as in v1 -- no
             # segmentation fallback from fused mode.
             return self._fused
+        if self._mode == "fused-pending":
+            return self._fused_pending_call
         if self._mode == "segmented":
             return self._run_segmented
         return self._resolve_and_call
+
+    def _fused_pending_call(self, *args) -> tuple:
+        self._last_args = args
+        self._mode = "fused"
+        self.partition = self._fused_report()
+        return self._fused(*args)
 
     def _fused_report(self) -> PartitionReport:
         compiled, _, _, _, _, external = self._ctx
@@ -721,6 +730,7 @@ def compile_kernel(
     except RecursionError:
         raise RecursionError("Consider raising recursion limit.") from None
     external = _validate_externals(compiled)
+    case, dispositions, consumed = _classify(compiled)
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
     flags = _effective_flags(jit_options)
     source, bindings, params, outputs = _generate_body(compiled, required, idents, flags)
@@ -738,6 +748,21 @@ def compile_kernel(
     external_vars = [graph.registry[src][name] for src, name, _ in params]
     ctx = (compiled, idents, bindings_by_var, jit_options, cache, external)
     identifiers = {v.qual_name(): ident for v, ident in idents.items()}
+    if case == "A":
+        for node in compiled.ordered_nodes:
+            var = node.variable
+            if var in external or dispositions.get(var) != "STATIC_JIT":
+                continue
+            in_types = tuple(i.params.type for i in node.inputs)
+            _validate_declared_return(var.formula, in_types, var.params.type, flags)
+        ck = CompiledKernel(kernel, params, outputs, source, identifiers, ctx,
+                            required_vars, external_vars, is_declared=True)
+        sig_vars = [v for v in external_vars if v in consumed]
+        if len(sig_vars) == len(external_vars):
+            ck._fused.compile(tuple(v.params.type for v in sig_vars))
+        ck._mode = "fused-pending"
+        ck.partition = ck._fused_report()
+        return ck
     return CompiledKernel(
         kernel, params, outputs, source, identifiers, ctx, required_vars, external_vars
     )
