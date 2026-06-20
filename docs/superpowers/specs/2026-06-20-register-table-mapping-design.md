@@ -1,6 +1,6 @@
 # Overload `register_table` to expose a dict of 1-D numpy arrays as a read-only SQLite virtual table
 
-**Status:** design — awaiting user review
+**Status:** design — approved 2026-06-20 (keep both query surfaces)
 **Date:** 2026-06-20
 **Branch:** `feat/register-table-mapping` (off `origin/main` @ `2036fae`; 0 behind `upstream/main` @ `af6bed2`, verified by fresh fetch)
 **Scope:** numbox feature; **read-only**; follows the fork feature-branch → fork PR → (later) upstream PR workflow.
@@ -147,9 +147,8 @@ not mutate or resize any column array while the table is registered.
 
 Registration installs the module on the `db` handle; *any* SQL executed against that handle invokes
 the vtab callbacks, regardless of which driver issues it. The user asked for **both** the stdlib and
-the numpy/compiled surfaces; both are first-class and tested below. (Note: a scope review argued
-these two surfaces mainly exercise pre-existing infrastructure and could be a separate PR — see
-"Open decision for review".)
+the numpy/compiled surfaces; both are first-class and tested below (decision confirmed at review —
+see "Resolved decisions").
 
 1. **numbox C connection** — `db = sqlite3_open(":memory:")`, then `register_table(db, name, cols)`,
    then query via numbox's `sqlite3_prepare_v2`/`sqlite3_step`/`sqlite3_column_*` bindings (the
@@ -247,15 +246,14 @@ For the mapping path:
 - No `CLAUDE.md` "2-D float64" correction here — that line's description of `query_to_array` is stale
   (it returns a structured array); fixing it is a separate, flagged follow-up.
 
-## Open decision for review
+## Resolved decisions
 
-The scope reviewer recommended dropping query surfaces **2 (stdlib `Connection`)** and
-**3 (`query_to_array`)** from this PR, arguing they integrate pre-existing infrastructure and widen
-the diff (the stdlib test also needs the `_libraries_coordinated()`/macOS-skip seam). They are kept
-because the user explicitly asked for **both** surfaces, and both tests do add *new* coverage (the
-columnar vtable under each driver; the stdlib registration path is untested anywhere today). If a
-leaner PR is preferred, surfaces 2 and 3 can be deferred to a follow-up with no impact on the core
-generalization. **Decision pending user review.**
+- **Keep both query surfaces in this PR** (decided 2026-06-20). A scope review suggested deferring
+  surfaces **2 (stdlib `Connection`)** and **3 (`query_to_array`)** to a follow-up, since they
+  integrate pre-existing infrastructure and the stdlib test needs the
+  `_libraries_coordinated()`/macOS-skip seam. Both are kept: they add *new* coverage (the columnar
+  vtable under each driver; the stdlib registration path is untested anywhere today), and both were
+  explicitly requested.
 
 ## Workflow / integration
 
