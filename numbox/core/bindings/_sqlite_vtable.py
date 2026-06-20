@@ -487,6 +487,44 @@ def _cmp(op, cv, rv):
 
 
 @njit(**jit_options)
+def _int_float_cmp(i, r):
+    """Exact sign of (i - r) for an int64 cell i vs a REAL constraint r, mirroring
+    SQLite's sqlite3IntFloatCompare. Compares without widening i to f64 (which is
+    lossy above 2**53), so an int column constrained by a REAL literal is never
+    mis-pruned at any magnitude. Returns -1, 0, or +1."""
+    if r < -9.223372036854775808e18:   # r < INT64_MIN -> i > r
+        return 1
+    if r >= 9.223372036854775808e18:   # r >= 2**63 > INT64_MAX -> i < r
+        return -1
+    y = int64(r)                       # truncates toward zero; r is in [INT64_MIN, 2**63)
+    if i < y:
+        return -1
+    if i > y:
+        return 1
+    s = float64(i)                     # i == y here, so s == r exactly in every reachable case
+    if s < r:
+        return -1
+    if s > r:
+        return 1
+    return 0
+
+
+@njit(**jit_options)
+def _cmp_if(op, i, r):
+    """Truth of (int64 cell i) OP (REAL constraint r), via the exact _int_float_cmp."""
+    c = _int_float_cmp(i, r)
+    if op == SQLITE_INDEX_CONSTRAINT_EQ:
+        return c == 0
+    elif op == SQLITE_INDEX_CONSTRAINT_GT:
+        return c > 0
+    elif op == SQLITE_INDEX_CONSTRAINT_GE:
+        return c >= 0
+    elif op == SQLITE_INDEX_CONSTRAINT_LT:
+        return c < 0
+    return c <= 0
+
+
+@njit(**jit_options)
 def _row_matches(cur):
     c = carray(_cast_int_to_void_p(cur), (1,), dtype=_CUR_DTYPE)
     if c[0].n_pred == 0:
@@ -495,10 +533,13 @@ def _row_matches(cur):
     preds = carray(_cast_int_to_void_p(c[0].pred_p), (c[0].n_pred,), dtype=_PRED_DTYPE)
     for k in range(c[0].n_pred):
         op = preds[k].op
-        if preds[k].is_int != 0:
+        mode = preds[k].is_int
+        if mode == 1:
             ok = _cmp(op, _cell_value_i64(d, c[0].rowid, preds[k].col), preds[k].ival)
-        else:
+        elif mode == 0:
             ok = _cmp(op, _cell_value_f64(d, c[0].rowid, preds[k].col), preds[k].fval)
+        else:
+            ok = _cmp_if(op, _cell_value_i64(d, c[0].rowid, preds[k].col), preds[k].fval)
         if not ok:
             return False
     return True
@@ -540,13 +581,22 @@ def _xfilter(cur, idx_num, idx_str, argc, argv):
                 preds[k].col = col
                 preds[k].op = spec[k].op
                 # Route by the RHS value's numeric type, not just the column tag:
-                # an int column constrained by a REAL literal (fractional or out of
-                # int64 range) must compare in the float domain, else int64 truncation
-                # of the threshold prunes rows the omit=0 re-check can never resurface.
-                if _is_int_tag(col_tags[col]) and sqlite3_value_numeric_type(vals[k]) != SQLITE_FLOAT:
-                    preds[k].is_int = 1
-                    preds[k].ival = sqlite3_value_int64(vals[k])
-                    preds[k].fval = 0.0
+                # an int column constrained by a REAL literal must compare without
+                # int64 truncation of the threshold, else rows the omit=0 re-check
+                # can never resurface get pruned.
+                if _is_int_tag(col_tags[col]):
+                    if sqlite3_value_numeric_type(vals[k]) == SQLITE_FLOAT:
+                        # int column vs a REAL literal: compare EXACTLY (mode 2),
+                        # never via int64 truncation (drops rows for fractional /
+                        # out-of-range RHS) nor via f64 widening of the cell (drops
+                        # rows for integer-valued RHS above 2**53).
+                        preds[k].is_int = 2
+                        preds[k].ival = 0
+                        preds[k].fval = sqlite3_value_double(vals[k])
+                    else:
+                        preds[k].is_int = 1
+                        preds[k].ival = sqlite3_value_int64(vals[k])
+                        preds[k].fval = 0.0
                 else:
                     preds[k].is_int = 0
                     preds[k].ival = 0

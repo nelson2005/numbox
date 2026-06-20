@@ -806,6 +806,39 @@ def test_pushdown_int64_out_of_range_real_rhs_match_stdlib():
     sqlite3_close(db)
 
 
+def test_pushdown_int64_integer_valued_real_rhs_match_stdlib():
+    # An int column constrained by an INTEGER-VALUED REAL literal at high
+    # magnitude must compare EXACTLY: widening the int64 cell to f64 (the old
+    # float-domain path) is lossy above 2**53, so (2**53+1) collapses to 2**53
+    # and "c > 2**53.0" wrongly drops the 2**53+1 row. Cross-check against stdlib
+    # sqlite3 on identical data, both above +2**53 and below -2**53.
+    import sqlite3 as pysqlite
+    base = 1 << 53
+    cases = [
+        ([base, base + 1, base + 2, base + 3, base + 4], ">", "9007199254740992.0"),
+        ([base, base + 1, base + 2, base + 3, base + 4], ">=", "9007199254740994.0"),
+        ([-base - 4, -base - 3, -base - 2, -base - 1, -base], "<", "-9007199254740992.0"),
+        ([-base - 4, -base - 3, -base - 2, -base - 1, -base], "<=", "-9007199254740994.0"),
+    ]
+    for vals, op, rhs in cases:
+        ref = pysqlite.connect(":memory:")
+        ref.execute("CREATE TABLE t(c INTEGER)")
+        ref.executemany("INSERT INTO t VALUES (?)", [(int(v),) for v in vals])
+        db = _open_memory()
+        a = np.array([[v] for v in vals], dtype=np.int64)
+        register_table(db, "t", a, columns=["c"])
+        sql = "SELECT c FROM t WHERE c %s %s" % (op, rhs)
+        exp = sorted(r[0] for r in ref.execute(sql))
+        assert sorted(_select_col0(db, sql)) == exp, (sql, exp)
+        # prove the REAL-RHS predicate is actually pushed to xFilter, not just
+        # caught by SQLite's omit=0 re-check of surfaced rows
+        plan = _fetchall(db, "EXPLAIN QUERY PLAN " + sql)
+        text = " ".join(str(field) for row in plan for field in row).upper()
+        assert "VIRTUAL TABLE INDEX 1:" in text, text
+        ref.close()
+        sqlite3_close(db)
+
+
 def test_pushdown_uint64_high_magnitude_consistent():
     db = _open_memory()
     vals = [(1 << 63), (1 << 63) + 5, (1 << 63) + 1]
