@@ -5,6 +5,7 @@ import sys
 import textwrap
 from ctypes import addressof, c_int64, cast, c_char_p, string_at
 
+import sqlite3
 import pytest
 import numpy as np
 from numbox.utils.cstrings import c_string
@@ -15,9 +16,18 @@ from numbox.core.bindings import (
     sqlite3_column_int64, sqlite3_column_double,
     sqlite3_column_text, sqlite3_column_blob, sqlite3_column_bytes,
 )
+from numbox.core.bindings import query_to_array
+from numbox.core.bindings._sqlite_conn import sqlite3_libversion
+from numbox.utils.pysqlite_bridge import extract_connection_ptr
 from numbox.core.bindings._sqlite_vtable import utf32_to_utf8, _nul_trimmed_len
 from numbox.core.bindings._sqlite_vtable import _build_descriptor, _TAG_I64, _TAG_F64, _TAG_U
 from numbox.utils.lowlevel import array_data_p
+
+
+def _libraries_coordinated():
+    """True if numbox's bindings and Python's sqlite3 use the same libsqlite3."""
+    numbox_version = c_char_p(sqlite3_libversion()).value.decode()
+    return numbox_version == sqlite3.sqlite_version
 
 
 def test_imports():
@@ -911,4 +921,32 @@ def test_columnar_zero_rows():
             "b": np.array([], dtype=np.float64)}
     register_table(db, "t", cols)
     assert _fetchall(db, "SELECT a, b FROM t") == []
+    sqlite3_close(db)
+
+
+def test_columnar_on_stdlib_connection():
+    if not _libraries_coordinated():
+        pytest.skip("uncoordinated libsqlite3 (see numbox.utils.pysqlite_bridge)")
+    conn = sqlite3.connect(":memory:")
+    try:
+        cols = {"id": np.array([1, 2, 3], dtype=np.int64),
+                "px": np.array([100.0, 250.0, 50.0], dtype=np.float64)}
+        register_table(extract_connection_ptr(conn), "trades", cols)
+        rows = conn.execute("SELECT id FROM trades WHERE px > 100 ORDER BY id").fetchall()
+        assert rows == [(2,)]
+    finally:
+        conn.close()
+
+
+def test_columnar_query_to_array():
+    db = _open_memory()
+    cols = {"id": np.array([1, 2, 3], dtype=np.int64),
+            "px": np.array([100.0, 250.0, 50.0], dtype=np.float64)}
+    register_table(db, "trades", cols)
+    out_dtype = np.dtype([("id", "i8"), ("px", "f8")])
+    with c_string("SELECT id, px FROM trades WHERE px > 100 ORDER BY id") as sql_p:
+        out = query_to_array(db, sql_p, out_dtype)
+    assert out.dtype == out_dtype
+    assert out["id"].tolist() == [2]
+    assert out["px"].tolist() == [250.0]
     sqlite3_close(db)
