@@ -751,6 +751,61 @@ def test_pushdown_int64_above_2_53_range():
     sqlite3_close(db)
 
 
+def test_pushdown_int_column_fractional_rhs_match_stdlib():
+    # Int columns constrained by a fractional REAL literal must compare in the
+    # float domain: sqlite3_value_int64 would truncate the threshold toward zero
+    # (4.5 -> 4, -4.5 -> -4) and drop rows the omit=0 re-check never resurfaces.
+    # Cross-check signed int dtypes against stdlib sqlite3 on identical data.
+    import sqlite3 as pysqlite
+    cases = [
+        (np.int8, [3, 4, 5]),
+        (np.int8, [-5, -4, -3]),
+        (np.int32, [3, 4, 5]),
+        (np.int32, [-5, -4, -3]),
+        (np.int64, [3, 4, 5]),
+        (np.int64, [-5, -4, -3]),
+    ]
+    for dtype, vals in cases:
+        ref = pysqlite.connect(":memory:")
+        ref.execute("CREATE TABLE t(c INTEGER)")
+        ref.executemany("INSERT INTO t VALUES (?)", [(int(v),) for v in vals])
+        db = _open_memory()
+        a = np.array([[v] for v in vals], dtype=dtype)
+        register_table(db, "t", a, columns=["c"])
+        for op in ("<", "<=", ">", ">="):
+            for rhs in ("4.5", "-4.5", "0.5", "-0.5"):
+                sql = "SELECT c FROM t WHERE c %s %s" % (op, rhs)
+                exp = sorted(r[0] for r in ref.execute(sql))
+                assert sorted(_select_col0(db, sql)) == exp, (dtype, sql)
+        # prove the fractional predicate is actually pushed to xFilter, not just
+        # caught by SQLite's omit=0 re-check of surfaced rows
+        plan = _fetchall(db, "EXPLAIN QUERY PLAN SELECT c FROM t WHERE c < 4.5")
+        text = " ".join(str(field) for row in plan for field in row).upper()
+        assert "VIRTUAL TABLE INDEX 1:" in text, text
+        ref.close()
+        sqlite3_close(db)
+
+
+def test_pushdown_int64_out_of_range_real_rhs_match_stdlib():
+    # An out-of-int64-range REAL literal (~1e23) must compare in the float
+    # domain: sqlite3_value_int64 clamps it to INT64_MAX, turning "c < clamp"
+    # into "c < INT64_MAX" which wrongly drops the INT64_MAX row.
+    import sqlite3 as pysqlite
+    INT64_MAX = (1 << 63) - 1
+    vals = [-5, 0, 5, INT64_MAX]
+    ref = pysqlite.connect(":memory:")
+    ref.execute("CREATE TABLE t(c INTEGER)")
+    ref.executemany("INSERT INTO t VALUES (?)", [(int(v),) for v in vals])
+    db = _open_memory()
+    a = np.array([[v] for v in vals], dtype=np.int64)
+    register_table(db, "t", a, columns=["c"])
+    sql = "SELECT c FROM t WHERE c < 99999999999999999999999"
+    exp = sorted(r[0] for r in ref.execute(sql))
+    assert sorted(_select_col0(db, sql)) == exp, (sql, exp)
+    ref.close()
+    sqlite3_close(db)
+
+
 def test_pushdown_uint64_high_magnitude_consistent():
     db = _open_memory()
     vals = [(1 << 63), (1 << 63) + 5, (1 << 63) + 1]

@@ -21,6 +21,7 @@ from numba.core.types import (
 
 from numbox.core.bindings import (
     SQLITE_OK, SQLITE_STATIC, SQLITE_TRANSIENT, SQLITE_ERROR, SQLITE_NOMEM,
+    SQLITE_FLOAT,
     SQLITE_INDEX_CONSTRAINT_EQ, SQLITE_INDEX_CONSTRAINT_GT,
     SQLITE_INDEX_CONSTRAINT_GE, SQLITE_INDEX_CONSTRAINT_LT,
     SQLITE_INDEX_CONSTRAINT_LE,
@@ -29,7 +30,7 @@ from numbox.core.bindings import (
     sqlite3_errmsg, sqlite3_free, sqlite3_malloc,
     sqlite3_result_int64, sqlite3_result_double,
     sqlite3_result_text, sqlite3_result_blob, sqlite3_result_error,
-    sqlite3_value_double, sqlite3_value_int64,
+    sqlite3_value_double, sqlite3_value_int64, sqlite3_value_numeric_type,
 )
 from numbox.core.bindings._sqlite_typemap import (
     _TAG_I8, _TAG_I16, _TAG_I32, _TAG_I64, _TAG_U8, _TAG_U16, _TAG_U32, _TAG_U64,
@@ -538,7 +539,11 @@ def _xfilter(cur, idx_num, idx_str, argc, argv):
                 col = spec[k].col
                 preds[k].col = col
                 preds[k].op = spec[k].op
-                if _is_int_tag(col_tags[col]):
+                # Route by the RHS value's numeric type, not just the column tag:
+                # an int column constrained by a REAL literal (fractional or out of
+                # int64 range) must compare in the float domain, else int64 truncation
+                # of the threshold prunes rows the omit=0 re-check can never resurface.
+                if _is_int_tag(col_tags[col]) and sqlite3_value_numeric_type(vals[k]) != SQLITE_FLOAT:
                     preds[k].is_int = 1
                     preds[k].ival = sqlite3_value_int64(vals[k])
                     preds[k].fval = 0.0
