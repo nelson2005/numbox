@@ -1,0 +1,47 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-20-numbox-deep-review.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Scaffold work tree + authoritative targets.json",
+      "status": "pending",
+      "description": "**Goal:** Create the review directory tree and the single authoritative unit matrix every later step derives from.\n\n**Files:** Create docs/reviews/2026-06-20-numbox/targets.json and the findings/verified/{MEM,COR,DES,SEC,TST} + bin + prompts dirs.\n\n**Acceptance Criteria:** valid JSON, all listed source paths exist, 29 targets / 89 review units, five-dimension findings+verified dirs present.\n\n**Verify:** venv-python loads targets.json, asserts files exist, prints `targets: 29 review units: 89`.\n\n```json:metadata\n{\"files\": [\"docs/reviews/2026-06-20-numbox/targets.json\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import json,pathlib;b=pathlib.Path('/home/erik/projects/numbox');t=json.loads((b/'docs/reviews/2026-06-20-numbox/targets.json').read_text());print('review units:',sum(len(x['dimensions']) for x in t['targets']))\\\"\", \"acceptanceCriteria\": [\"valid JSON, all paths exist\", \"29 targets, 89 review units\", \"five-dimension findings/ and verified/ dirs\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Findings schema + per-dimension review prompts",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Lock the findings output shape and per-dimension review instructions.\n\n**Files:** Create findings.schema.json and prompts/{MEM,COR,DES,SEC,TST,verify}.md.\n\n**Acceptance Criteria:** schema valid JSON; six prompt files non-empty; each template enforces read-only source + single-file schema-conforming output.\n\n**Verify:** load schema JSON; assert each prompt non-empty; print `task1 ok`.\n\n```json:metadata\n{\"files\": [\"docs/reviews/2026-06-20-numbox/findings.schema.json\", \"docs/reviews/2026-06-20-numbox/prompts/MEM.md\", \"docs/reviews/2026-06-20-numbox/prompts/COR.md\", \"docs/reviews/2026-06-20-numbox/prompts/DES.md\", \"docs/reviews/2026-06-20-numbox/prompts/SEC.md\", \"docs/reviews/2026-06-20-numbox/prompts/TST.md\", \"docs/reviews/2026-06-20-numbox/prompts/verify.md\"], \"verifyCommand\": \"R=/home/erik/projects/numbox/docs/reviews/2026-06-20-numbox; /home/erik/projects/numbox/venv/bin/python -c \\\"import json;json.load(open('$R/findings.schema.json'))\\\" && for f in MEM COR DES SEC TST verify; do test -s \\\"$R/prompts/$f.md\\\"; done && echo task1 ok\", \"acceptanceCriteria\": [\"schema valid JSON\", \"six prompts non-empty\", \"templates enforce read-only + single-file output\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: pending.py resume engine + test",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Deterministic helper that reads targets.json + on-disk findings/verified and prints the ordered work queue (lossless resume).\n\n**Files:** Create bin/pending.py and bin/test_pending.py.\n\n**Acceptance Criteria:** empty tree summary = 89 review pending / 0 verify / complete false; completed findings file removes its review and exposes its verify; --next 10 prints <=10 reviews-before-verifies MEM-first; test passes.\n\n**Verify:** run test_pending.py -> OK.\n\n```json:metadata\n{\"files\": [\"docs/reviews/2026-06-20-numbox/bin/pending.py\", \"docs/reviews/2026-06-20-numbox/bin/test_pending.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python /home/erik/projects/numbox/docs/reviews/2026-06-20-numbox/bin/test_pending.py\", \"acceptanceCriteria\": [\"empty tree: 89 review pending, complete false\", \"findings file exposes its verify unit\", \"test prints OK\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: RUNBOOK.md paced driver procedure",
+      "status": "pending",
+      "blockedBy": [1, 2],
+      "description": "**Goal:** Document the exact per-hour turn for identical, lossless driving/resume.\n\n**Files:** Create RUNBOOK.md.\n\n**Acceptance Criteria:** exact scan/prompt-assembly/10-dispatch/commit/ScheduleWakeup-vs-synthesize commands; review=Opus, verify=Sonnet named; cold-session resume command from on-disk state.\n\n**Verify:** `test -s RUNBOOK.md && echo ok`.\n\n```json:metadata\n{\"files\": [\"docs/reviews/2026-06-20-numbox/RUNBOOK.md\"], \"verifyCommand\": \"test -s /home/erik/projects/numbox/docs/reviews/2026-06-20-numbox/RUNBOOK.md && echo ok\", \"acceptanceCriteria\": [\"scan/dispatch/commit/wakeup commands present\", \"review=Opus verify=Sonnet explicit\", \"cold-resume command documented\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Synthesis template (report + fix-plan)",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Define reproducible generation of REPORT.md + numbox-review.tasks.json from verified findings.\n\n**Files:** Create prompts/synthesis.md.\n\n**Acceptance Criteria:** keep only confirmed, group MEM-first by severity; tasks.json one-per-finding/cluster with model/files/acceptanceCriteria; uncertain verdicts surfaced in Human-triage, never dropped.\n\n**Verify:** `test -s prompts/synthesis.md && echo ok`.\n\n```json:metadata\n{\"files\": [\"docs/reviews/2026-06-20-numbox/prompts/synthesis.md\"], \"verifyCommand\": \"test -s /home/erik/projects/numbox/docs/reviews/2026-06-20-numbox/prompts/synthesis.md && echo ok\", \"acceptanceCriteria\": [\"confirmed-only, MEM-first by severity\", \"tasks.json with per-task model\", \"uncertain in Human-triage\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Run the paced review to completion",
+      "status": "pending",
+      "blockedBy": [0, 1, 2, 3, 4],
+      "description": "**Goal:** Execute the runbook (~180 agents at 10/hour ~18 batches) to committed REPORT.md + numbox-review.tasks.json, every batch durably committed.\n\n**Files:** Create (during run) findings/**, verified/**, REPORT.md, numbox-review.tasks.json.\n\n**Acceptance Criteria:** each batch <=10 agents committed before next wake; summary eventually complete:true with verify_done==review_total; REPORT.md confirmed-only MEM-first + Human-triage; tasks.json valid, every task has model; only docs/reviews/ touched, nothing pushed.\n\n**Verify:** pending.py --summary complete:true; assert all tasks have model; git status clean.\n\n```json:metadata\n{\"files\": [\"docs/reviews/2026-06-20-numbox/REPORT.md\", \"docs/reviews/2026-06-20-numbox/numbox-review.tasks.json\"], \"verifyCommand\": \"R=/home/erik/projects/numbox/docs/reviews/2026-06-20-numbox; /home/erik/projects/numbox/venv/bin/python \\\"$R/bin/pending.py\\\" --summary; git -C /home/erik/projects/numbox status --short\", \"acceptanceCriteria\": [\"each batch <=10 agents, committed before next wake\", \"summary complete:true verify_done==review_total\", \"REPORT.md confirmed-only MEM-first + Human-triage\", \"tasks.json valid, every task has model\", \"only docs/reviews touched, nothing pushed\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-20"
+}
