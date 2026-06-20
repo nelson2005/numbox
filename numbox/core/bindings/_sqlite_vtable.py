@@ -229,6 +229,7 @@ def _build_descriptor_columnar(mapping, text_as_blob):
     if not names:
         raise ValueError("mapping must have at least one column")
     bases, strides, tags, widths = [], [], [], []
+    col_arrays = []
     nrows = None
     for n in names:
         col = mapping[n]
@@ -244,7 +245,8 @@ def _build_descriptor_columnar(mapping, text_as_blob):
         widths.append(int(col.dtype.itemsize))
         bases.append(col.ctypes.data)
         strides.append(int(col.strides[0]))
-    cols = tuple(mapping[n] for n in names)
+        col_arrays.append(col)
+    cols = tuple(col_arrays)
     return _finalize_descriptor(nrows, names, tags, widths, bases, strides, cols)
 
 

@@ -901,5 +901,14 @@ def test_columnar_rejects_empty_mapping():
 
 
 def test_columnar_rejects_object_dtype():
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises(TypeError):
         register_table(0, "t", {"a": np.array(["x", "y"], dtype=object)})
+
+
+def test_columnar_zero_rows():
+    db = _open_memory()
+    cols = {"a": np.array([], dtype=np.int64),
+            "b": np.array([], dtype=np.float64)}
+    register_table(db, "t", cols)
+    assert _fetchall(db, "SELECT a, b FROM t") == []
+    sqlite3_close(db)
