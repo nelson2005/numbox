@@ -174,7 +174,10 @@ def _finalize_descriptor(nrows, col_names, tags, widths, bases, strides, arrays)
     """Build the _DESC_DTYPE descriptor + keep-alive from per-column layout."""
     if not col_names:
         raise ValueError("table must have at least one column")
-    scratch = max([w + 1 for w, t in zip(widths, tags) if t == _TAG_U], default=0)
+    for n in col_names:
+        if not isinstance(n, str):
+            raise TypeError("column name must be a string, got %r" % (type(n),))
+    scratch = max((w + 1 for w, t in zip(widths, tags) if t == _TAG_U), default=0)
     bases_buf = np.array(bases, dtype=np.int64)
     strides_buf = np.array(strides, dtype=np.int64)
     tags_buf = np.array(tags, dtype=tags_buf_t)

@@ -353,6 +353,12 @@ def test_structured_columns_rename():
     sqlite3_close(db)
 
 
+def test_columns_rename_rejects_non_string():
+    a = np.array([[1, 2]], dtype=np.int64)
+    with pytest.raises(TypeError):
+        register_table(0, "t", a, columns=[1, 2])
+
+
 def test_two_unicode_columns_single_cursor():
     # Both U columns of a row are decoded into the SAME per-cursor scratch
     # buffer, so SQLite must copy the first result before the second xColumn
@@ -1107,6 +1113,22 @@ def test_columnar_strided_string_column():
     register_table(db, "t", cols)
     assert _fetchall(db, "SELECT s, n FROM t ORDER BY s") == [("aa", 1), ("bb", 2), ("cc", 3)]
     sqlite3_close(db)
+
+
+def test_columnar_negative_stride_column():
+    backing = np.array([10, 20, 30, 40], dtype=np.int64)
+    rev = backing[::-1]            # negative stride; rev.ctypes.data is the physical-last element
+    assert rev.strides[0] < 0
+    db = _open_memory()
+    register_table(db, "t", {"a": rev})
+    assert _fetchall(db, "SELECT a FROM t") == [(40,), (30,), (20,), (10,)]
+    assert _fetchall(db, "SELECT a FROM t WHERE a > 15 ORDER BY a") == [(20,), (30,), (40,)]
+    sqlite3_close(db)
+
+
+def test_columnar_rejects_non_string_key():
+    with pytest.raises(TypeError):
+        register_table(0, "t", {1: np.array([1, 2], dtype=np.int64)})
 
 
 def test_columnar_rejects_columns_kwarg():
