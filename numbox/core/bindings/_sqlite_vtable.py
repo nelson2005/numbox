@@ -10,6 +10,7 @@ our own members after it. Each is modelled as a numpy structured dtype with that
 base nested as field 'base'. See https://www.sqlite.org/vtab.html.
 """
 import ctypes
+from collections.abc import Mapping
 
 import numpy as np
 from numba import carray, cfunc, njit, types
@@ -221,6 +222,30 @@ def _build_descriptor(arr, columns, text_as_blob):
     bases = [base + int(o) for o in offs]
     strides = [row_stride] * len(col_names)
     return _finalize_descriptor(arr.shape[0], col_names, tags, widths, bases, strides, (arr,))
+
+
+def _build_descriptor_columnar(mapping, text_as_blob):
+    names = list(mapping.keys())
+    if not names:
+        raise ValueError("mapping must have at least one column")
+    bases, strides, tags, widths = [], [], [], []
+    nrows = None
+    for n in names:
+        col = mapping[n]
+        if not isinstance(col, np.ndarray):
+            raise TypeError("column %r must be a 1-D numpy array, got %r" % (n, type(col)))
+        if col.ndim != 1:
+            raise ValueError("column %r must be 1-D, got ndim=%d" % (n, col.ndim))
+        if nrows is None:
+            nrows = int(col.shape[0])
+        elif int(col.shape[0]) != nrows:
+            raise ValueError("column %r length %d != %d" % (n, col.shape[0], nrows))
+        tags.append(_col_tag(col.dtype, text_as_blob))
+        widths.append(int(col.dtype.itemsize))
+        bases.append(col.ctypes.data)
+        strides.append(int(col.strides[0]))
+    cols = tuple(mapping[n] for n in names)
+    return _finalize_descriptor(nrows, names, tags, widths, bases, strides, cols)
 
 
 @cfunc(types.int32(types.intp, types.intp, types.int32, types.intp, types.intp, types.intp), cache=_CACHE)
@@ -653,32 +678,38 @@ def _raise_rc(db, name, rc):
     raise RuntimeError("registration failed for %r (rc=%d)%s" % (name, rc, detail))
 
 
-def register_table(db, name, arr, columns=None, *, text_as_blob=False):
-    """Expose a numpy array as a read-only eponymous SQLite virtual table
+def register_table(db, name, data, columns=None, *, text_as_blob=False):
+    """Expose tabular data as a read-only eponymous SQLite virtual table
     (queryable directly as ``name`` with no CREATE VIRTUAL TABLE, since the
     module's xCreate is its xConnect).
 
-    The registration's keep-alive lives in the module-level ``_DATA_ANCHOR``
-    and is released by SQLite via ``xDestroy`` (on connection close
-    or re-registration of the same name). The caller must not
-    mutate or resize the array while the table is registered -- the view is
-    zero-copy, so queries read the array's buffer directly (numeric reads
-    alias it, and ``'S'``/BLOB values are handed to SQLite as
-    ``SQLITE_STATIC`` pointers into it).
+    ``data`` may be:
 
-    Registering a second table under an existing name follows SQLite's
-    module-registration semantics: the later registration replaces the earlier one
-    (it does not raise). Column names may be any string (they are quoted in the
-    generated schema).
+    - a 1-D numpy **structured array** (row-major; column names from the dtype,
+      optionally renamed/reordered by ``columns``);
+    - a 2-D numpy **array** (row-major; ``columns`` required, one name per column);
+    - a **mapping** (e.g. a ``dict``) of column-name -> 1-D numpy array (columnar;
+      all arrays must share one length; the keys name the columns, so passing
+      ``columns`` raises ``ValueError`` -- rename/reorder by building the mapping
+      with the desired keys and order before calling). Mapping values must already
+      be ``numpy.ndarray`` (no coercion); a non-array value raises ``TypeError`` and
+      a non-1-D array raises ``ValueError``.
+
+    The registration's keep-alive lives in the module-level ``_DATA_ANCHOR`` and is
+    released by SQLite via ``xDestroy`` (on connection close or re-registration of
+    the same name). The caller must not mutate or resize the array(s) while the
+    table is registered -- the view is zero-copy, so queries read each column's
+    buffer directly (numeric reads alias it, and ``'S'``/BLOB values are handed to
+    SQLite as ``SQLITE_STATIC`` pointers into it).
 
     Value semantics:
 
     - ``uint64`` values >= 2**63 are stored as SQLite's signed INTEGER and
       therefore wrap to negative.
-    - Floats pass through as REAL, including +/-inf -- EXCEPT NaN: SQLite coerces
-      a NaN ``REAL`` to SQL NULL (via ``sqlite3IsNaN``), so a NaN cell reads back
-      as NULL, not as a REAL NaN. There is no other source of SQL NULL (numpy has
-      no missing value), so every non-NaN cell is non-NULL.
+    - Floats pass through as REAL, including +/-inf -- EXCEPT NaN: SQLite coerces a
+      NaN ``REAL`` to SQL NULL (via ``sqlite3IsNaN``), so a NaN cell reads back as
+      NULL. numpy has no missing value, so every non-NaN cell is non-NULL. Masked
+      arrays are unsupported: the mask is ignored.
 
     String columns:
 
@@ -689,10 +720,19 @@ def register_table(db, name, arr, columns=None, *, text_as_blob=False):
     - Fixed-width ``'S'``/``'U'`` columns are NUL-padded by numpy; trailing NUL
       padding is trimmed on read while interior NULs are preserved.
     - A TEXT value with an interior NUL is stored faithfully (an explicit byte
-      length is passed), but C-string readers and most SQL text functions
-      truncate at the first NUL; read it via ``sqlite3_column_bytes`` + the
-      text/blob pointer, or use ``text_as_blob=True`` for full fidelity.
+      length is passed), but C-string readers and most SQL text functions truncate
+      at the first NUL; read it via ``sqlite3_column_bytes`` + the text/blob
+      pointer, or use ``text_as_blob=True`` for full fidelity.
     """
-    built = _build_descriptor(arr, columns, text_as_blob)
+    if isinstance(data, np.ndarray):
+        built = _build_descriptor(data, columns, text_as_blob)
+    elif isinstance(data, Mapping):
+        if columns is not None:
+            raise ValueError("columns must be omitted when data is a mapping; "
+                             "the dict keys name the columns")
+        built = _build_descriptor_columnar(data, text_as_blob)
+    else:
+        raise TypeError("data must be a numpy.ndarray or a mapping of name -> 1-D array, "
+                        "got %r" % (type(data),))
     handle = _VTableHandle(built)
     _register_with_destroy(db, name, _THE_MODULE_P, built.c.ctypes.data, handle)

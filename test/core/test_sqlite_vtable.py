@@ -784,3 +784,122 @@ def test_xdestroy_deferred_while_statement_open():
     assert sqlite3_close(db.value) == 0  # now it closes and fires xDestroy
     assert len(v._DATA_ANCHOR) == n_before - 1
     del h
+
+
+# ---- columnar (mapping) overload ----
+
+def test_columnar_int64_roundtrip():
+    db = _open_memory()
+    cols = {"a": np.array([1, 2, 3], dtype=np.int64),
+            "b": np.array([10, 20, 30], dtype=np.int64)}
+    register_table(db, "t", cols)
+    assert _fetchall(db, "SELECT a, b FROM t ORDER BY a") == [(1, 10), (2, 20), (3, 30)]
+    sqlite3_close(db)
+
+
+def test_columnar_mixed_dtypes():
+    db = _open_memory()
+    cols = {"i": np.array([1, 2], dtype=np.int32),
+            "f": np.array([1.5, 2.5], dtype=np.float64),
+            "b": np.array([True, False], dtype=np.bool_)}
+    register_table(db, "t", cols)
+    assert _fetchall(db, "SELECT i, f, b FROM t ORDER BY i") == [(1, 1.5, 1), (2, 2.5, 0)]
+    sqlite3_close(db)
+
+
+def test_columnar_pushdown_eq_range():
+    db = _open_memory()
+    cols = {"a": np.array([1, 2, 3, 4], dtype=np.int64),
+            "b": np.array([10, 20, 30, 40], dtype=np.int64)}
+    register_table(db, "t", cols)
+    assert _fetchall(db, "SELECT b FROM t WHERE a = 3") == [(30,)]
+    assert _fetchall(db, "SELECT b FROM t WHERE a >= 3 ORDER BY a") == [(30,), (40,)]
+    sqlite3_close(db)
+
+
+def test_columnar_unicode_and_bytes():
+    db = _open_memory()
+    cols = {"u": np.array(["foo", "héllo"], dtype="U6"),
+            "s": np.array([b"ab", b"cde"], dtype="S4")}
+    register_table(db, "t", cols)
+    assert _fetchall(db, "SELECT u, s FROM t ORDER BY u") == [("foo", "ab"), ("héllo", "cde")]
+    sqlite3_close(db)
+
+
+def test_columnar_text_as_blob():
+    db = _open_memory()
+    cols = {"s": np.array([b"\xff\xfe", b"\x01\x02"], dtype="S2")}
+    register_table(db, "t", cols, text_as_blob=True)
+    assert _fetchall(db, "SELECT s FROM t") == [(b"\xff\xfe",), (b"\x01\x02",)]
+    sqlite3_close(db)
+
+
+def test_columnar_uint64_wraps_signed():
+    db = _open_memory()
+    cols = {"x": np.array([2 ** 63], dtype=np.uint64)}
+    register_table(db, "t", cols)
+    assert _fetchall(db, "SELECT x FROM t") == [(-(2 ** 63),)]
+    sqlite3_close(db)
+
+
+def test_columnar_nan_reads_as_null():
+    db = _open_memory()
+    cols = {"x": np.array([1.0, np.nan, 3.0], dtype=np.float64)}
+    register_table(db, "t", cols)
+    assert _fetchall(db, "SELECT x FROM t") == [(1.0,), (None,), (3.0,)]
+    sqlite3_close(db)
+
+
+def test_columnar_join_two_tables():
+    db = _open_memory()
+    left = {"id": np.array([1, 2, 3], dtype=np.int64),
+            "v": np.array([10, 20, 30], dtype=np.int64)}
+    right = {"id": np.array([2, 3, 4], dtype=np.int64),
+             "w": np.array([200, 300, 400], dtype=np.int64)}
+    register_table(db, "lhs", left)
+    register_table(db, "rhs", right)
+    got = _fetchall(db, "SELECT lhs.id, v, w FROM lhs JOIN rhs ON lhs.id = rhs.id ORDER BY lhs.id")
+    assert got == [(2, 20, 200), (3, 30, 300)]
+    sqlite3_close(db)
+
+
+def test_columnar_strided_column():
+    db = _open_memory()
+    backing = np.array([1, 99, 2, 99, 3, 99], dtype=np.int64)
+    strided = backing[::2]            # values 1,2,3; stride 16 bytes; non-contiguous
+    assert not strided.flags["C_CONTIGUOUS"]
+    cols = {"a": strided, "b": np.array([10, 20, 30], dtype=np.int64)}
+    register_table(db, "t", cols)
+    assert _fetchall(db, "SELECT a, b FROM t ORDER BY a") == [(1, 10), (2, 20), (3, 30)]
+    sqlite3_close(db)
+
+
+def test_columnar_rejects_columns_kwarg():
+    with pytest.raises(ValueError):
+        register_table(0, "t", {"a": np.array([1], dtype=np.int64)}, columns=["a"])
+
+
+def test_columnar_rejects_non_array_value():
+    with pytest.raises(TypeError):
+        register_table(0, "t", {"a": [1, 2, 3]})
+
+
+def test_columnar_rejects_non_1d_value():
+    with pytest.raises(ValueError):
+        register_table(0, "t", {"a": np.zeros((2, 2), dtype=np.int64)})
+
+
+def test_columnar_rejects_unequal_lengths():
+    with pytest.raises(ValueError):
+        register_table(0, "t", {"a": np.array([1, 2], dtype=np.int64),
+                                "b": np.array([1], dtype=np.int64)})
+
+
+def test_columnar_rejects_empty_mapping():
+    with pytest.raises(ValueError):
+        register_table(0, "t", {})
+
+
+def test_columnar_rejects_object_dtype():
+    with pytest.raises((TypeError, ValueError)):
+        register_table(0, "t", {"a": np.array(["x", "y"], dtype=object)})
