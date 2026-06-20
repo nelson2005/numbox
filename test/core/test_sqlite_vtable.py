@@ -884,6 +884,17 @@ def test_columnar_strided_column():
     sqlite3_close(db)
 
 
+def test_columnar_strided_string_column():
+    db = _open_memory()
+    backing = np.array(["aa", "zz", "bb", "zz", "cc", "zz"], dtype="U6")
+    strided = backing[::2]            # "aa","bb","cc"; non-contiguous (stride 2*itemsize)
+    assert not strided.flags["C_CONTIGUOUS"]
+    cols = {"s": strided, "n": np.array([1, 2, 3], dtype=np.int64)}
+    register_table(db, "t", cols)
+    assert _fetchall(db, "SELECT s, n FROM t ORDER BY s") == [("aa", 1), ("bb", 2), ("cc", 3)]
+    sqlite3_close(db)
+
+
 def test_columnar_rejects_columns_kwarg():
     with pytest.raises(ValueError):
         register_table(0, "t", {"a": np.array([1], dtype=np.int64)}, columns=["a"])
