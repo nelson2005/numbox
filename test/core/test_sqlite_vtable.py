@@ -77,8 +77,9 @@ def test_nul_trimmed_len_keeps_interior():
 def test_descriptor_2d_int64():
     a = np.arange(6, dtype=np.int64).reshape(3, 2)
     d = _build_descriptor(a, ["a", "b"], False)
-    assert (d.nrows, d.ncols, d.row_stride) == (3, 2, a.strides[0])
-    assert list(d.offsets) == [0, 8]
+    assert (d.nrows, d.ncols) == (3, 2)
+    assert list(d.strides) == [a.strides[0], a.strides[0]]
+    assert [b - a.ctypes.data for b in d.bases] == [0, 8]
     assert list(d.tags) == [_TAG_I64, _TAG_I64]
     assert d.schema == b'CREATE TABLE x("a" INTEGER, "b" INTEGER)\x00'
 
@@ -89,7 +90,7 @@ def test_descriptor_structured_mixed():
     d = _build_descriptor(a, None, False)
     assert d.ncols == 3
     assert list(d.tags) == [_TAG_U, _TAG_I64, _TAG_F64]
-    assert list(d.offsets) == [dt.fields["t"][1], dt.fields["q"][1], dt.fields["p"][1]]
+    assert [b - a.ctypes.data for b in d.bases] == [dt.fields["t"][1], dt.fields["q"][1], dt.fields["p"][1]]
     assert d.scratch_bytes == 6 * 4 + 1
     assert d.schema == b'CREATE TABLE x("t" TEXT, "q" INTEGER, "p" REAL)\x00'
 
@@ -120,7 +121,7 @@ def test_widest_unicode_width_accepted():
 
 def test_descriptor_dtype_itemsize():
     from numbox.core.bindings._sqlite_vtable import _DESC_DTYPE
-    assert _DESC_DTYPE.itemsize == 72
+    assert _DESC_DTYPE.itemsize == 64
 
 
 def test_index_info_offsets_match_c_abi():

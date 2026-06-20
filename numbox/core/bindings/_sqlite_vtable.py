@@ -55,11 +55,11 @@ load_lib("sqlite3")
 # padding after the i4 ncols so every i8 field stays 8-aligned.
 _DESC_DTYPE = np.dtype([
     ("nrows", "i8"), ("ncols", "i4"),
-    ("row_stride", "i8"), ("data_base", "i8"),
-    ("col_offsets", "i8"), ("col_tags", "i8"), ("col_widths", "i8"),
+    ("col_bases", "i8"), ("col_strides", "i8"),
+    ("col_tags", "i8"), ("col_widths", "i8"),
     ("schema_ptr", "i8"), ("scratch_bytes", "i8"),
 ], align=True)
-assert _DESC_DTYPE.itemsize == 72
+assert _DESC_DTYPE.itemsize == 64
 
 # struct sqlite3_vtab { const sqlite3_module *pModule; int nRef; char *zErrMsg; }
 # https://www.sqlite.org/c3ref/vtab.html -- SQLite owns/sets these fields.
@@ -149,21 +149,47 @@ def sqlite3_declare_vtab(db, z_sql):
 
 
 class _BuiltDescriptor:
-    """The numpy structured-array descriptor plus every buffer whose pointer it holds."""
-    __slots__ = ("c", "offsets", "tags", "widths", "schema",
-                 "nrows", "ncols", "row_stride", "scratch_bytes", "arr")
+    """Keep-alive for the descriptor array, the buffers it points into, and the
+    underlying column data array(s). The C descriptor ``c`` is the source of
+    truth; nothing here is read by the cfuncs."""
+    __slots__ = ("c", "bases", "strides", "tags", "widths", "schema",
+                 "nrows", "ncols", "scratch_bytes", "arrays")
 
-    def __init__(self, c, offsets, tags, widths, schema, arr):
+    def __init__(self, c, bases, strides, tags, widths, schema, arrays):
         self.c = c
-        self.offsets = offsets
+        self.bases = bases
+        self.strides = strides
         self.tags = tags
         self.widths = widths
         self.schema = schema
-        self.arr = arr
+        self.arrays = arrays
         self.nrows = int(c["nrows"][0])
         self.ncols = int(c["ncols"][0])
-        self.row_stride = int(c["row_stride"][0])
         self.scratch_bytes = int(c["scratch_bytes"][0])
+
+
+def _finalize_descriptor(nrows, col_names, tags, widths, bases, strides, arrays):
+    """Build the _DESC_DTYPE descriptor + keep-alive from per-column layout."""
+    if not col_names:
+        raise ValueError("table must have at least one column")
+    scratch = max([w + 1 for w, t in zip(widths, tags) if t == _TAG_U], default=0)
+    bases_buf = np.array(bases, dtype=np.int64)
+    strides_buf = np.array(strides, dtype=np.int64)
+    tags_buf = np.array(tags, dtype=tags_buf_t)
+    widths_buf = np.array(widths, dtype=np.int64)
+    cols_sql = ", ".join('"%s" %s' % (n.replace('"', '""'), _SQL_TYPE[t]) for n, t in zip(col_names, tags))
+    schema = ("CREATE TABLE x(%s)" % cols_sql).encode("utf-8") + b"\x00"
+
+    c = np.zeros(1, _DESC_DTYPE)
+    c["nrows"] = int(nrows)
+    c["ncols"] = len(col_names)
+    c["col_bases"] = bases_buf.ctypes.data
+    c["col_strides"] = strides_buf.ctypes.data
+    c["col_tags"] = tags_buf.ctypes.data
+    c["col_widths"] = widths_buf.ctypes.data
+    c["schema_ptr"] = ctypes.cast(ctypes.c_char_p(schema), ctypes.c_void_p).value
+    c["scratch_bytes"] = int(scratch)
+    return _BuiltDescriptor(c, bases_buf, strides_buf, tags_buf, widths_buf, schema, tuple(arrays))
 
 
 def _build_descriptor(arr, columns, text_as_blob):
@@ -188,29 +214,13 @@ def _build_descriptor(arr, columns, text_as_blob):
         sub = [arr.dtype] * arr.shape[1]
         offs = [j * arr.strides[1] for j in range(arr.shape[1])]
 
-    if not col_names:
-        raise ValueError("array must have at least one column")
     tags = [_col_tag(dt, text_as_blob) for dt in sub]
     widths = [int(dt.itemsize) for dt in sub]
-    scratch = max([w + 1 for w, t in zip(widths, tags) if t == _TAG_U], default=0)
-
-    offsets_buf = np.array(offs, dtype=np.int64)
-    tags_buf = np.array(tags, dtype=tags_buf_t)
-    widths_buf = np.array(widths, dtype=np.int64)
-    cols_sql = ", ".join('"%s" %s' % (n.replace('"', '""'), _SQL_TYPE[t]) for n, t in zip(col_names, tags))
-    schema = ("CREATE TABLE x(%s)" % cols_sql).encode("utf-8") + b"\x00"
-
-    c = np.zeros(1, _DESC_DTYPE)
-    c["nrows"] = int(arr.shape[0])
-    c["ncols"] = len(col_names)
-    c["row_stride"] = int(arr.strides[0])
-    c["data_base"] = arr.ctypes.data
-    c["col_offsets"] = offsets_buf.ctypes.data
-    c["col_tags"] = tags_buf.ctypes.data
-    c["col_widths"] = widths_buf.ctypes.data
-    c["schema_ptr"] = ctypes.cast(ctypes.c_char_p(schema), ctypes.c_void_p).value
-    c["scratch_bytes"] = int(scratch)
-    return _BuiltDescriptor(c, offsets_buf, tags_buf, widths_buf, schema, arr)
+    base = arr.ctypes.data
+    row_stride = int(arr.strides[0])
+    bases = [base + int(o) for o in offs]
+    strides = [row_stride] * len(col_names)
+    return _finalize_descriptor(arr.shape[0], col_names, tags, widths, bases, strides, (arr,))
 
 
 @cfunc(types.int32(types.intp, types.intp, types.int32, types.intp, types.intp, types.intp), cache=_CACHE)
@@ -369,11 +379,10 @@ def _cell_value_f64(d, rowid, col):
     ladder (same addr math, same load_unaligned widths). xBestIndex only
     claims tags up to _TAG_BOOL; the string/blob tags fall through to 0."""
     ncols = d[0].ncols
-    base = d[0].data_base
-    row_stride = d[0].row_stride
-    offsets = carray(_cast_int_to_void_p(d[0].col_offsets), (ncols,), dtype=np.int64)
+    bases = carray(_cast_int_to_void_p(d[0].col_bases), (ncols,), dtype=np.int64)
+    strides = carray(_cast_int_to_void_p(d[0].col_strides), (ncols,), dtype=np.int64)
     tags = carray(_cast_int_to_void_p(d[0].col_tags), (ncols,), dtype=tags_buf_t)
-    addr = base + rowid * row_stride + offsets[col]
+    addr = bases[col] + rowid * strides[col]
     tag = tags[col]
     if tag == _TAG_I8:
         return float64(load_unaligned(addr, int8))
@@ -405,11 +414,10 @@ def _cell_value_i64(d, rowid, col):
     """Read an integer cell at (rowid, col) as int64, mirroring _xcolumn's
     sqlite3_result_int64 (uint64 wrapped to the same int64 SQLite sees)."""
     ncols = d[0].ncols
-    base = d[0].data_base
-    row_stride = d[0].row_stride
-    offsets = carray(_cast_int_to_void_p(d[0].col_offsets), (ncols,), dtype=np.int64)
+    bases = carray(_cast_int_to_void_p(d[0].col_bases), (ncols,), dtype=np.int64)
+    strides = carray(_cast_int_to_void_p(d[0].col_strides), (ncols,), dtype=np.int64)
     tags = carray(_cast_int_to_void_p(d[0].col_tags), (ncols,), dtype=tags_buf_t)
-    addr = base + rowid * row_stride + offsets[col]
+    addr = bases[col] + rowid * strides[col]
     tag = tags[col]
     if tag == _TAG_I8:
         return int64(load_unaligned(addr, int8))
@@ -551,12 +559,11 @@ def _xcolumn(cur, ctx, j):
         rowid = c[0].rowid
         d = carray(_cast_int_to_void_p(c[0].descriptor), (1,), dtype=_DESC_DTYPE)
         ncols = d[0].ncols
-        base = d[0].data_base
-        row_stride = d[0].row_stride
-        offsets = carray(_cast_int_to_void_p(d[0].col_offsets), (ncols,), dtype=np.int64)
+        bases = carray(_cast_int_to_void_p(d[0].col_bases), (ncols,), dtype=np.int64)
+        strides = carray(_cast_int_to_void_p(d[0].col_strides), (ncols,), dtype=np.int64)
         tags = carray(_cast_int_to_void_p(d[0].col_tags), (ncols,), dtype=tags_buf_t)
         widths = carray(_cast_int_to_void_p(d[0].col_widths), (ncols,), dtype=np.int64)
-        addr = base + rowid * row_stride + offsets[j]
+        addr = bases[j] + rowid * strides[j]
         tag = tags[j]
         if tag == _TAG_I8:
             sqlite3_result_int64(ctx, int64(load_unaligned(addr, int8)))
