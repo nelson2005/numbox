@@ -1,7 +1,7 @@
-"""Expose a numpy array as a read-only SQLite virtual table (register_table).
+"""Expose a numpy array or a mapping of 1-D arrays as a read-only SQLite virtual table (register_table).
 
 A single generic sqlite3_module (built once at import) serves every table; the
-per-table base pointer / strides / dtype tags / schema live in a numpy
+per-column base pointers / strides / dtype tags / schema live in a numpy
 structured-array descriptor whose data pointer is passed as pClientData.
 
 The sqlite3_vtab and sqlite3_vtab_cursor that our xCreate/xOpen callbacks
