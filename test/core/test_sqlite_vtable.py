@@ -94,6 +94,25 @@ def test_descriptor_2d_int64():
     assert d.schema == b'CREATE TABLE x("a" INTEGER, "b" INTEGER)\x00'
 
 
+def test_descriptor_columnar_layout():
+    from numbox.core.bindings._sqlite_vtable import _build_descriptor_columnar
+    a = np.arange(3, dtype=np.int64)
+    b = np.arange(3, dtype=np.float64)
+    d = _build_descriptor_columnar({"a": a, "b": b}, False)
+    assert (d.nrows, d.ncols) == (3, 2)
+    assert list(d.tags) == [_TAG_I64, _TAG_F64]
+    assert [base for base in d.bases] == [a.ctypes.data, b.ctypes.data]
+    assert list(d.strides) == [8, 8]
+    assert d.schema == b'CREATE TABLE x("a" INTEGER, "b" REAL)\x00'
+
+
+def test_descriptor_structured_columns_rename_length_mismatch():
+    dt = np.dtype([("x", "i8"), ("y", "f8"), ("z", "i4")])
+    a = np.zeros(2, dtype=dt)
+    with pytest.raises(ValueError):
+        _build_descriptor(a, ["a", "b"], False)
+
+
 def test_descriptor_structured_mixed():
     dt = np.dtype([("t", "U6"), ("q", "i8"), ("p", "f8")])
     a = np.zeros(2, dtype=dt)
@@ -170,6 +189,44 @@ def test_xbestindex_sets_cardinality():
     view = ii.view(_IDX_INFO_DTYPE)[0]
     assert int(view["estimatedRows"]) == 4
     assert float(view["estimatedCost"]) == 4.0
+
+
+def test_xbestindex_estimates_bound_branch():
+    # With nbound usable EQ constraints on numeric columns, estimatedRows is the
+    # heuristic nrows // (nbound + 1) + 1 and estimatedCost is float(nrows).
+    from numbox.core.bindings._sqlite_vtable import (
+        _xbestindex, _build_descriptor, _VTAB_DTYPE, _VTAB_SIZE, _IDX_INFO_DTYPE,
+        _CONSTRAINT_DTYPE, _USAGE_DTYPE,
+    )
+    from numbox.core.bindings import SQLITE_INDEX_CONSTRAINT_EQ, sqlite3_free
+    nrows = 10
+    arr = np.arange(nrows * 3, dtype=np.int64).reshape(nrows, 3)
+    built = _build_descriptor(arr, ["a", "b", "c"], False)
+    vtab = np.zeros(_VTAB_SIZE // 8, dtype=np.int64)
+    vtab.view(_VTAB_DTYPE)[0]["descriptor"] = built.c.ctypes.data
+
+    nbound = 2
+    cons = np.zeros(nbound, dtype=_CONSTRAINT_DTYPE)
+    for i in range(nbound):
+        cons[i]["iColumn"] = i
+        cons[i]["op"] = SQLITE_INDEX_CONSTRAINT_EQ
+        cons[i]["usable"] = 1
+    usage = np.zeros(nbound, dtype=_USAGE_DTYPE)
+    ii = np.zeros(1, dtype=_IDX_INFO_DTYPE)
+    ii[0]["nConstraint"] = nbound
+    ii[0]["aConstraint"] = cons.ctypes.data
+    ii[0]["aConstraintUsage"] = usage.ctypes.data
+    rc = _xbestindex.ctypes(int(vtab.ctypes.data), int(ii.ctypes.data))
+    assert rc == 0
+    view = ii.view(_IDX_INFO_DTYPE)[0]
+    assert int(view["idxNum"]) == nbound
+    assert usage["argvIndex"].tolist() == [1, 2]
+    assert int(view["estimatedRows"]) == nrows // (nbound + 1) + 1
+    assert float(view["estimatedCost"]) == float(nrows)
+    # xBestIndex handed the serialised (col, op) idxStr to SQLite; free it here
+    # since no real connection owns it in this direct-call harness.
+    if int(view["needToFreeIdxStr"]):
+        sqlite3_free(int(view["idxStr"]))
 
 
 _SQLITE_ROW = 100
@@ -287,6 +344,15 @@ def test_structured_text_and_unicode():
     sqlite3_close(db)
 
 
+def test_structured_columns_rename():
+    db = _open_memory()
+    dt = np.dtype([("x", "i8"), ("y", "f8")])
+    a = np.array([(1, 10.5), (2, 20.5), (3, 30.5)], dtype=dt)
+    register_table(db, "t", a, columns=["id", "price"])
+    assert _fetchall(db, "SELECT id, price FROM t ORDER BY id") == [(1, 10.5), (2, 20.5), (3, 30.5)]
+    sqlite3_close(db)
+
+
 def test_two_unicode_columns_single_cursor():
     # Both U columns of a row are decoded into the SAME per-cursor scratch
     # buffer, so SQLite must copy the first result before the second xColumn
@@ -379,6 +445,22 @@ def test_join_two_tables():
     h2 = register_table(db, "rhs", b, columns=["id", "w"])  # noqa: F841
     got = _fetchall(db, "SELECT lhs.v, rhs.w FROM lhs JOIN rhs ON lhs.id = rhs.id ORDER BY lhs.id")
     assert got == [(100, 7), (200, 9)]
+    sqlite3_close(db)
+
+
+def test_join_refilters_inner_cursor_per_outer_row():
+    # A nested-loop join re-invokes xFilter on the inner vtable cursor once per
+    # outer row, each time with a DIFFERENT bound value on the join key. This
+    # exercises the per-xFilter free+realloc of pred_p and the rowid reset; a
+    # correct joined result across multiple distinct outer keys demonstrates it.
+    db = _open_memory()
+    outer = np.array([[1], [2], [3], [2]], dtype=np.int64)
+    inner = np.array([[1, 10], [2, 20], [2, 21], [3, 30]], dtype=np.int64)
+    h1 = register_table(db, "o", outer, columns=["k"])  # noqa: F841
+    h2 = register_table(db, "i", inner, columns=["k", "v"])  # noqa: F841
+    got = sorted(_fetchall(db, "SELECT o.k, i.v FROM o JOIN i ON i.k = o.k"))
+    exp = sorted((ok, iv) for (ok,) in outer.tolist() for (ik, iv) in inner.tolist() if ik == ok)
+    assert got == exp, (got, exp)
     sqlite3_close(db)
 
 
@@ -685,6 +767,50 @@ def test_pushdown_explain_uses_index():
     full = _fetchall(db, "EXPLAIN QUERY PLAN SELECT c FROM t")
     full_text = " ".join(str(field) for row in full for field in row).upper()
     assert "VIRTUAL TABLE INDEX 0:" in full_text, full_text
+    sqlite3_close(db)
+
+
+def test_text_column_where_not_pushed_down():
+    # String/text columns are non-numeric, so xBestIndex never claims a WHERE on
+    # them: the plan stays at idxNum 0 (full scan) and the omit=0 re-check filters
+    # the surfaced rows -- the full-scan fallback must still return correct rows.
+    db = _open_memory()
+    dt = np.dtype([("name", "U4"), ("a", "i8")])
+    a = np.array([("foo", 1), ("bar", 2), ("foo", 3)], dtype=dt)
+    register_table(db, "t", a)
+    plan = _fetchall(db, "EXPLAIN QUERY PLAN SELECT a FROM t WHERE name = 'foo'")
+    text = " ".join(str(field) for row in plan for field in row).upper()
+    assert "INDEX 0" in text, text
+    assert sorted(_select_col0(db, "SELECT a FROM t WHERE name = 'foo'")) == [1, 3]
+    sqlite3_close(db)
+
+
+def test_rowid_constraint_not_pushed_down():
+    # The 0 <= col < ncols guard in xBestIndex excludes the iColumn == -1 rowid
+    # sentinel, so a rowid constraint is never claimed (idxNum stays 0). rowid is
+    # the 0-based scan position; the full-scan fallback must still be correct.
+    db = _open_memory()
+    a = np.array([[10], [20], [30]], dtype=np.int64)
+    h = register_table(db, "t", a, columns=["a"])  # noqa: F841
+    assert _fetchall(db, "SELECT a FROM t WHERE rowid >= 1 ORDER BY a") == [(20,), (30,)]
+    assert _fetchall(db, "SELECT a FROM t WHERE rowid = 2") == [(30,)]
+    plan = _fetchall(db, "EXPLAIN QUERY PLAN SELECT a FROM t WHERE rowid >= 1")
+    text = " ".join(str(field) for row in plan for field in row).upper()
+    assert "INDEX 0" in text, text
+    sqlite3_close(db)
+
+
+@pytest.mark.parametrize("dt", [np.int32, np.uint16, np.float32])
+def test_pushdown_smaller_dtypes_match_fullscan(dt):
+    # EQ + a range op pushed down on the smaller numeric dtypes, cross-checked
+    # against a full-scan (stdlib-equivalent) expectation.
+    db = _open_memory()
+    vals = [3, 5, 7, 5, 9, 1, 5]
+    a = np.array([[v] for v in vals], dtype=dt)
+    h = register_table(db, "t", a, columns=["c"])  # noqa: F841
+    typed = [dt(v).item() for v in vals]
+    assert sorted(_select_col0(db, "SELECT c FROM t WHERE c = 5")) == sorted(v for v in typed if v == 5)
+    assert sorted(_select_col0(db, "SELECT c FROM t WHERE c >= 5")) == sorted(v for v in typed if v >= 5)
     sqlite3_close(db)
 
 

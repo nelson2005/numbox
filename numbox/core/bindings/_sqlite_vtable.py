@@ -547,6 +547,8 @@ def _row_matches(cur):
 
 @njit(**jit_options)
 def _seek_match(cur):
+    # No try/except: pure pointer arithmetic + bounded loads (0 <= col < ncols,
+    # rowid bounded by nrows), no NRT-managed allocation that could raise.
     c = carray(_cast_int_to_void_p(cur), (1,), dtype=_CUR_DTYPE)
     d = carray(_cast_int_to_void_p(c[0].descriptor), (1,), dtype=_DESC_DTYPE)
     while c[0].rowid < d[0].nrows and not _row_matches(cur):
@@ -612,6 +614,8 @@ def _xfilter(cur, idx_num, idx_str, argc, argv):
 
 @cfunc(types.int32(types.intp), cache=_CACHE)
 def _xnext(cur):
+    # No try/except: pure pointer arithmetic + bounded loads (0 <= col < ncols,
+    # rowid bounded by nrows), no NRT-managed allocation that could raise.
     c = carray(_cast_int_to_void_p(cur), (1,), dtype=_CUR_DTYPE)
     c[0].rowid = c[0].rowid + 1
     _seek_match(cur)
@@ -620,6 +624,8 @@ def _xnext(cur):
 
 @cfunc(types.int32(types.intp), cache=_CACHE)
 def _xeof(cur):
+    # No try/except: pure pointer arithmetic + bounded loads (0 <= col < ncols,
+    # rowid bounded by nrows), no NRT-managed allocation that could raise.
     c = carray(_cast_int_to_void_p(cur), (1,), dtype=_CUR_DTYPE)
     d = carray(_cast_int_to_void_p(c[0].descriptor), (1,), dtype=_DESC_DTYPE)
     if c[0].rowid >= d[0].nrows:
@@ -629,6 +635,8 @@ def _xeof(cur):
 
 @cfunc(types.int32(types.intp, types.intp), cache=_CACHE)
 def _xrowid(cur, p_rowid):
+    # No try/except: pure pointer arithmetic + bounded loads (0 <= col < ncols,
+    # rowid bounded by nrows), no NRT-managed allocation that could raise.
     c = carray(_cast_int_to_void_p(cur), (1,), dtype=_CUR_DTYPE)
     store_at(p_rowid, c[0].rowid)
     return SQLITE_OK
@@ -743,7 +751,8 @@ def register_table(db, name, data, columns=None, *, text_as_blob=False):
     ``data`` may be:
 
     - a 1-D numpy **structured array** (row-major; column names from the dtype,
-      optionally renamed/reordered by ``columns``);
+      optionally renamed by ``columns`` (column order always follows the dtype
+      field order; to reorder, reindex the array or pass a mapping));
     - a 2-D numpy **array** (row-major; ``columns`` required, one name per column);
     - a **mapping** (e.g. a ``dict``) of column-name -> 1-D numpy array (columnar;
       all arrays must share one length; the keys name the columns, so passing
