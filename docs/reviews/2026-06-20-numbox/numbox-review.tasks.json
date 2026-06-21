@@ -1,0 +1,1063 @@
+{
+  "planFor": "numbox deep review 2026-06-20",
+  "sourceReport": "docs/reviews/2026-06-20-numbox/REPORT.md",
+  "lastUpdated": "2026-06-20-numbox-review",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Fix signed-char C-string reader in get_str_from_p_as_int (non-ASCII bytes raise)",
+      "severity": "high",
+      "dimension": "MEM",
+      "files": [
+        "numbox/utils/lowlevel.py"
+      ],
+      "findingIds": [
+        "MEM-lowlevel-1",
+        "COR-lowlevel-1"
+      ],
+      "description": "get_str_from_p_as_int builds its carray view with numba's signed int8 `char`, so any byte 0x80-0xFF reads back negative and chr() raises ValueError inside @njit. This is the canonical reader CLAUDE.md points at for sqlite3_errmsg, paths, strerror, exec messages (all UTF-8). Fix: view the buffer through an unsigned 8-bit dtype (uint8) so bytes are 0..255 before chr(). Decide and document the decode contract: byte-at-a-time chr() yields per-byte Latin-1 codepoints, not decoded UTF-8 text; if faithful UTF-8 is intended, accumulate bytes and .decode('utf-8'). At minimum land the unsigned-dtype change to stop the crash.",
+      "acceptanceCriteria": [
+        "Add a regression test that reads a C buffer holding non-ASCII bytes (e.g. UTF-8 0xC3 0xA9 'A' NUL) via get_str_from_p_as_int from @njit; it fails before the fix (ValueError chr out of range) and passes after.",
+        "Add the empty-string and an all-high-byte case (TST-tst_utils_core-5) to test/utils/test_lowlevel.py.",
+        "The chosen decode contract (per-byte codepoints vs UTF-8 decode) is stated in the function docstring and matches the test assertions.",
+        "Full pytest suite passes after cleaning __pycache__ and the numba cache."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 2,
+      "subject": "Make BaseTuple ABI size/offset model account for alignment padding (match numba StructModel)",
+      "severity": "high",
+      "dimension": "MEM",
+      "files": [
+        "numbox/core/bindings/abi.py",
+        "test/core/test_abi.py"
+      ],
+      "findingIds": [
+        "MEM-abi-1",
+        "COR-abi-1"
+      ],
+      "description": "_struct_bytes/_iter_struct_fields bit-pack BaseTuple fields with no inter-field padding, but numba lowers tuples to a non-packed LLVM LiteralStructType (natural alignment), which call.py codegen actually passes. The classifier's SMALL/LARGE threshold and the exactly-16-byte INT/INT repack gate therefore disagree with reality: e.g. (int32,double,int32) bit-packs to 16 (SMALL) but is really 24 bytes (should be LARGE, sret), and (int32,double) eightbyte classification flips. Result on SysV-x86-64/AAPCS64: silent wrong result or stack corruption. Fix: derive tuple size/offsets from the actual data-model layout (LLVM struct element offsets / ABI size from context.get_value_type), or replicate natural-alignment layout (align each field up to its size, pad total to max-field alignment) so tuples match the Record path.",
+      "acceptanceCriteria": [
+        "Update test/core/test_abi.py:226-227 expectations and add cases: _struct_bytes((int32,int64))==16 (not 12); (int32,double,int32) classifies STRUCT_LARGE; (int32,double) eightbytes are (INTEGER, SSE). All fail before, pass after.",
+        "Add an end-to-end call-through test for a by-value tuple arg/return whose padded layout differs from the bit-packed size, asserting the correct value survives (no dropped field).",
+        "Existing abi/call tests still pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 3,
+      "subject": "Surface user-fn exceptions at the xFilter cfunc boundary instead of returning a silent empty result",
+      "severity": "high",
+      "dimension": "MEM",
+      "files": [
+        "numbox/core/bindings/_sqlite_tvf.py"
+      ],
+      "findingIds": [
+        "MEM-sqlite_tvf-1",
+        "COR-sqlite_tvf-1"
+      ],
+      "description": "_tvf_xfilter has no try/except and always returns SQLITE_OK; when the user fn (or an NRT alloc in the impl) raises, numba's @cfunc boundary swallows it and returns 0 (==SQLITE_OK), leaving the cursor empty (zeroed before fn is called), so SELECT * FROM f(...) reports success with zero rows \u2014 indistinguishable from a legitimately-empty TVF. xFilter signals failure via its OWN return code (the sibling cfuncs already return SQLITE_ERROR on except). Fix: wrap the impl call in a BARE try/except (not try/finally \u2014 numba 0.65.1 reraises on finally) and return SQLITE_ERROR on exception; optionally set the vtab zErrMsg via sqlite3_mprintf for a message.",
+      "acceptanceCriteria": [
+        "Add a regression test: register a TVF whose fn raises (e.g. on a bad arg or via an explicit raise); the query must error (SQLITE_ERROR propagated) rather than return zero rows. Fails before, passes after.",
+        "Add a test that a legitimately-empty TVF result still returns zero rows successfully (no false error).",
+        "The cfunc uses try/except (not try/finally); existing tvf tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 4,
+      "subject": "Document the borrowed-pointer keep-alive contract on extract_connection_ptr",
+      "severity": "medium",
+      "dimension": "MEM",
+      "files": [
+        "numbox/utils/pysqlite_bridge.py"
+      ],
+      "findingIds": [
+        "MEM-pysqlite_bridge-1"
+      ],
+      "description": "extract_connection_ptr returns the raw sqlite3* (owned by the Python Connection) as a bare int with no documented lifetime. A caller that drops/closes conn then uses the int in @njit gets a use-after-free. Cannot bake a reference into an int, so the contract is the mechanism. Fix: document in the Returns section that the pointer is borrowed from conn, valid only while conn is alive and open; the caller must retain conn for the entire @njit-use lifetime and must not use it after conn.close(). Mirror the SQLITE_STATIC-style ownership note already used for bind_text/bind_blob.",
+      "acceptanceCriteria": [
+        "The docstring Returns (and/or a Notes/Warning) section explicitly states the borrow + keep-alive + no-use-after-close invariant.",
+        "Docs build (sphinx) still succeeds; no behavioral code change required."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 5,
+      "subject": "Add printf-family format-spec vs argument cross-validation at typing time",
+      "severity": "medium",
+      "dimension": "SEC",
+      "files": [
+        "numbox/core/bindings/_fmtio.py"
+      ],
+      "findingIds": [
+        "SEC-libc_fmtio-1",
+        "COR-libc_fmtio-2"
+      ],
+      "description": "printf/fprintf/snprintf validate only that each variadic arg is some scalar; they never parse the literal format's conversion specifiers, so spec count and per-spec type are unchecked. printf('%d %d', x) reads an unpushed varargs slot (garbage/info-disclosure/crash); printf('%s', 5) passes the type check but libc dereferences the int as char*; printf('%d', 3.5) reads a GP register for an SSE-passed float (silent wrong result). Pure-Python mode raises on the same calls, so the modes diverge. Fix: at typing time scan the literal format's specifiers (reuse/extend the existing %n specifier regex) and require (a) specifier count == len(args_ty) and (b) each specifier class matches its arg type (%d/%i/%x/%u->Integer/Boolean; %f/%e/%g->Float; %s->UnicodeType or intp; %p->intp), raising TypingError on mismatch.",
+      "acceptanceCriteria": [
+        "Add tests asserting TypingError for: too few args (printf('%d %d', x)); %s with an integer arg; %d with a float arg. Each fails (compiles/miscompiles) before, raises cleanly after.",
+        "Add tests that correct spec/arg combinations still compile and produce correct output in both @njit and pure-Python modes.",
+        "The module docstring's C-compiler-grade-checking claim now matches behavior; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 6,
+      "subject": "Preserve explicit recompute overrides for variables downstream of another override",
+      "severity": "medium",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/variable/variable.py"
+      ],
+      "findingIds": [
+        "COR-variable-1"
+      ],
+      "description": "When one recompute() supplies explicit values for A and B where B (a formula node) transitively depends on A, _collect_affected (seeded with all changed_vars) pulls B into the affected set, then the null+recompute pass overwrites B's just-assigned override by recomputing it from A. Fix: after collecting affected_nodes, exclude any node whose variable is in changed_vars from the null+recompute pass (treat an explicit override as an injected value), and document the precedence rule in the recompute docstring.",
+      "acceptanceCriteria": [
+        "Add a regression test: a graph where B=f(A); call recompute supplying explicit new A and explicit new B; assert B retains the user-supplied value (not the recomputed-from-A value). Fails before, passes after.",
+        "Existing variable/recompute tests still pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 7,
+      "subject": "Reject or correctly handle '.' in Variable/source names (qualified-name round-trip)",
+      "severity": "medium",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/variable/variable.py"
+      ],
+      "findingIds": [
+        "COR-variable-2"
+      ],
+      "description": "Qualified names are f'{source}.{name}' and decomposed with rsplit('.',1), which is not invertible when a name or source contains '.': 'a.b' under 's' -> 's.a.b' -> source 's.a', name 'b' (KeyError, or a silently wrong lookup if such a source/var exists). Fix: validate at Variable/Namespace construction that neither source nor name contains QUAL_SEP and raise a clear error (document '.' as reserved), OR carry (source,name) tuples through _topological_order/recompute/explain instead of re-splitting a flat string.",
+      "acceptanceCriteria": [
+        "Add a regression test that constructing/looking up a Variable whose name contains '.' either raises a clear error (validation route) or resolves correctly (tuple route). The mis-resolution/KeyError reproduces before the fix.",
+        "Existing variable tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 8,
+      "subject": "Stop re-deriving make_structref method params from source regex (repr-mismatch and nested-paren failures)",
+      "severity": "medium",
+      "dimension": "COR",
+      "files": [
+        "numbox/utils/highlevel.py",
+        "numbox/utils/standard.py"
+      ],
+      "findingIds": [
+        "COR-highlevel-1",
+        "COR-highlevel-2"
+      ],
+      "description": "make_structref's header validation captures the param list with re.findall(...([^)]*)...) and asserts it equals a repr()-rendered params_str. This rejects valid methods two ways: (1) any default whose source spelling differs from repr() (n=1_000, n=0x10, s=\"a, b\"); (2) any signature containing a nested ')' (x=factory(), f: Callable[[int],int]) which the [^)]* capture truncates. Both fire an opaque AssertionError on valid input. Fix: use inspect.signature/ast on the method object (already available via make_params_strings) as the single source of truth and drop the regex cross-check (or compare on a normalized AST form).",
+      "acceptanceCriteria": [
+        "Add regression tests for make_structref struct_methods with: a default like n=1_000 and n=0x10; a string default with embedded comma; a default calling a factory (x=g()); a Callable[[int],int] annotation. Each AssertionErrors before, succeeds after.",
+        "Existing make_structref tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 9,
+      "subject": "Make the @proxy cache-anchor fail loudly for functions in the first 12 lines of a file",
+      "severity": "medium",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/proxy/proxy.py"
+      ],
+      "findingIds": [
+        "COR-proxy-1"
+      ],
+      "description": "The anchor prepend = max(0, co_firstlineno - njit_lineno_in_txt(=13)) clamps to 0 when a @proxy function sits above line 13, landing the generated @njit at line 13 instead of the real decorator line \u2014 re-opening the inspect.findsource backward-scan/TokenError hazard the mechanism exists to prevent. No in-repo binding triggers it, but downstream files (numbduck/numbarrow) can. Fix: detect co_firstlineno < njit_lineno_in_txt and either raise a clear error telling the user to move the function down, or restructure code_txt so the @njit line is line 1; at minimum assert the resulting co_firstlineno alignment so the failure is visible.",
+      "acceptanceCriteria": [
+        "Add a regression test that decorating a @proxy function whose co_firstlineno < 13 either raises the new clear error or anchors correctly (assert the wrapper's @njit lands at co_firstlineno). The silent mis-anchor reproduces before the fix.",
+        "Existing proxy tests and the in-repo bindings still compile; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 10,
+      "subject": "Fold each node's declared ty into the builder kernel fingerprint",
+      "severity": "medium",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/work/builder.py"
+      ],
+      "findingIds": [
+        "COR-work_builder-1"
+      ],
+      "description": "The content-addressed _make_<hash> kernel name is derived only from the generated body text and derive_hashes. An explicit End/Derived ty enters codegen only as the bare global name {name}_ty, so two graphs differing only in an explicit ty (with identical names/structure/derive/init-values) produce the same make_name and identical runtime arg signatures \u2014 risking a stale cached kernel that builds Work nodes of the wrong data type. Fix: fold each node's declared type (get_ty(spec), mangled via itanium_mangler.mangle_type_or_value as highlevel.hash_type already does) into hash_str before computing hash_.",
+      "acceptanceCriteria": [
+        "Add a regression test: build two graphs identical except for an explicit End/Derived ty (e.g. int32 vs int64) with cache=True; assert their _make names differ AND the produced Work data field types differ (no stale-cache cross-contamination). The collision reproduces before the fix (clean numba cache first).",
+        "Existing builder/work tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 11,
+      "subject": "Guard explain() against derive nodes not registered by builder.make_graph",
+      "severity": "medium",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/work/explain.py"
+      ],
+      "findingIds": [
+        "COR-work_print_explain-1"
+      ],
+      "description": "get_func_code does _derive_funcs.get(p).__name__, but _derive_funcs is populated only by builder._derived_cres; a Work derive built via make_work/ll_make_work is unregistered, so .get() returns None and None.__name__ raises AttributeError. Fix: guard the lookup \u2014 raise a clear error ('explain() requires a builder.make_graph graph') or fall back to the node name without source; document the limitation.",
+      "acceptanceCriteria": [
+        "Add a regression test calling explain() on a graph with a derive node built outside builder.make_graph; it raises the clear error (or prints a defined fallback) instead of AttributeError. Fails before, passes after.",
+        "Existing explain tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 12,
+      "subject": "Fix one-sided get_input bounds check to reject negative indices (node and work)",
+      "severity": "medium",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/work/node.py",
+        "numbox/core/work/work.py"
+      ],
+      "findingIds": [
+        "COR-work_node-1",
+        "COR-work-1"
+      ],
+      "description": "ol_get_input in both node.py:81-88 and work.py:356-364 only checks `i >= num_inputs`. A negative i passes and reaches the typed/reflected List, which honors Python negative indexing, so get_input(-1) silently returns the last input instead of raising the intended out-of-range NumbaError. Fix: change both guards to `if i < 0 or i >= num_inputs:`.",
+      "acceptanceCriteria": [
+        "Add a regression test calling get_input(-1) on a node/work with >=1 input; it raises NumbaError (not a silently-wrong node). Reproduces the wrong-node return before the fix for BOTH node.py and work.py paths.",
+        "Existing node/work tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 13,
+      "subject": "Factor the duplicated UTF-8 decode state machine shared by _put_unicode and utf8_to_utf32",
+      "severity": "medium",
+      "dimension": "DES",
+      "files": [
+        "numbox/core/bindings/_sqlite_query.py",
+        "numbox/core/bindings/_sqlite_typemap.py"
+      ],
+      "findingIds": [
+        "DES-sqlite_query-1"
+      ],
+      "description": "_put_unicode reimplements the entire UTF-8 validation/decode machine already in _sqlite_typemap.utf8_to_utf32 (byte-for-byte identical 1/2/3/4-byte forms, overlong/surrogate/range checks, U+FFFD fallback); the copies differ only in the emit step (tracked-array write via scratch8+_copy_bytes vs raw-pointer store_unaligned). Two copies of a security-sensitive decoder is a divergence hazard. Fix: factor the decode loop so only the emit step varies (decode into a shared helper / tracked uint32 scratch; keep _put_unicode's tracked-array write local). Preserve the macOS-arm64 DCE-avoidance property of the query path.",
+      "acceptanceCriteria": [
+        "Both _put_unicode and utf8_to_utf32 share one decode implementation (no duplicated branch ladder).",
+        "Existing query_to_array / vtable / typemap tests pass unchanged, including the multibyte/emoji and overlong/surrogate cases; full pytest suite passes after cache clean (verify on macOS-arm64 if available that the query path still writes non-zero results)."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 14,
+      "subject": "Factor the 14-branch tag->sqlite3_result cell-emit ladder shared by tvf and vtable",
+      "severity": "medium",
+      "dimension": "DES",
+      "files": [
+        "numbox/core/bindings/_sqlite_tvf.py",
+        "numbox/core/bindings/_sqlite_vtable.py",
+        "numbox/core/bindings/_sqlite_typemap.py"
+      ],
+      "findingIds": [
+        "DES-sqlite_tvf-1"
+      ],
+      "description": "_tvf_xcolumn (308-343) is a near-verbatim copy of _sqlite_vtable._xcolumn (661-696) \u2014 same 14 tag branches, loads, casts, NUL-trim + utf32->utf8 \u2014 differing only by _SQLITE_TRANSIENT vs SQLITE_STATIC; the per-tag load is duplicated a third time in _cell_value_f64/_cell_value_i64. Fix: factor a single @njit helper into _sqlite_typemap.py, e.g. _emit_cell(ctx, addr, tag, width, scratch, str_destructor), taking the destructor sentinel as an argument, and call it from both xcolumn bodies.",
+      "acceptanceCriteria": [
+        "Both _tvf_xcolumn and _xcolumn call one shared cell-emit helper (destructor passed as an argument); no duplicated 14-branch ladder remains.",
+        "Existing register_tvf and register_table/vtable tests pass unchanged; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 15,
+      "subject": "Extract a shared _build_plan helper for Case-B eager and _discover_and_run run-orchestration",
+      "severity": "medium",
+      "dimension": "DES",
+      "files": [
+        "numbox/core/variable/compile_kernel.py",
+        "numbox/core/variable/_kernel_partition.py"
+      ],
+      "findingIds": [
+        "DES-compile_kernel-1"
+      ],
+      "description": "The Case-B eager build loop (906-934) reimplements the for-kind,run_nodes-in-runs orchestration already in _discover_and_run (450-485) \u2014 both build _PyStep/_JitStep chains and Segments via segment_liveness->_generate_segment_body->_compile->disp.compile. The only real differences are declared types vs runtime typeof for the compile arg, and whether seg_sigs is folded into the digest. Fix: extract a single _build_plan(runs, *, ..., live_in_types) returning (steps, segments), parameterized by a callable that maps live_in -> compile types (declared for Case B, typeof for discovery) and whether seg_sigs are folded; call from both sites.",
+      "acceptanceCriteria": [
+        "Case B and _discover_and_run both delegate to one shared _build_plan; no duplicated run-orchestration loop remains.",
+        "Existing variable/compile-kernel tests (eager and discovered plans) pass unchanged; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 16,
+      "subject": "Extract one _codegen_method helper for the four registry-cached work overloads",
+      "severity": "medium",
+      "dimension": "DES",
+      "files": [
+        "numbox/core/work/work.py"
+      ],
+      "findingIds": [
+        "DES-work-3"
+      ],
+      "description": "ol_calculate/ol_load/ol_combine/ol_make_inputs_vector repeat the identical skeleton: read sources_ty, look up a per-method registry, return on hit, build ns, ensure_presence_of_source_getters_in_ns, compile a per-method code string, exec, cache, return. Only the code-builder, registry, exec name and ns extras vary. Fix: extract one _codegen_method(num_sources, registry, make_code, exec_name, ns_extras=None) and reduce each overload to a one-line call. Behavior-preserving internal refactor, no public-API change.",
+      "acceptanceCriteria": [
+        "The four overloads share one codegen helper; the registry lookup/ns-build/exec/cache logic exists in a single place.",
+        "Existing work tests (calculate/load/combine/inputs-vector) pass unchanged; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 17,
+      "subject": "Document why _incref_meminfo survives removerefctpass (symmetry with _release_meminfo)",
+      "severity": "medium",
+      "dimension": "DES",
+      "files": [
+        "numbox/utils/meminfo.py"
+      ],
+      "findingIds": [
+        "DES-meminfo-1"
+      ],
+      "description": "_release_meminfo calls NRT_MemInfo_release directly with a multi-line note explaining why a plain NRT_decref would be stripped by removerefctpass; _incref_meminfo has the identical void(intp) shape but uses context.nrt.incref with no note on why that incref survives the same pass. _sqlite_tvf.py already relies on the inlined incref surviving. Fix: add a one-paragraph docstring to _incref_meminfo stating explicitly why the incref is not stripped (removerefctpass rewrites/strips only the decref side), OR if it is actually vulnerable, switch to a direct NRT_incref via cgutils.get_or_insert_function mirroring _release_meminfo.",
+      "acceptanceCriteria": [
+        "_incref_meminfo carries a docstring stating the removerefctpass invariant (or is switched to a direct NRT_incref for symmetry).",
+        "Refcount-sensitive tests (Any/Work/tvf meminfo) still pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 18,
+      "subject": "Stop timer.py from reconfiguring the root logger and logging routine timing at WARNING; add a Timer test",
+      "severity": "medium",
+      "dimension": "DES",
+      "files": [
+        "numbox/utils/timer.py",
+        "test/utils/test_timer.py"
+      ],
+      "findingIds": [
+        "DES-utils_misc-1",
+        "TST-tst_utils_core-6"
+      ],
+      "description": "Importing numbox.utils.timer calls logging.basicConfig(level=WARNING) at module top level (a library permanently reconfiguring the process-wide root logger) and emits per-call timing via logger.warning(...). Fix: drop the module-level basicConfig (let the application own root-logger config) and emit timing via logger.info(...). Only in-repo callers (stress_work_runner, benchmark_work) read timer.times, not the log level. Also add the missing Timer unit test.",
+      "acceptanceCriteria": [
+        "timer import no longer calls logging.basicConfig; timing is emitted at INFO not WARNING.",
+        "Add test/utils/test_timer.py exercising Timer()(func): it records into Timer.times keyed by __name__ and returns the wrapped result.",
+        "Full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 19,
+      "subject": "Test register_tvf string/unicode/blob output columns and the per-cursor scratch path",
+      "severity": "medium",
+      "dimension": "TST",
+      "files": [
+        "test/core/test_sqlite_tvf.py"
+      ],
+      "findingIds": [
+        "TST-tst_sqlite-1"
+      ],
+      "description": "Every register_tvf test uses an int/float-only out_dtype, so _tvf_xcolumn's _TAG_S/_TAG_U/_TAG_BLOB branches and the per-cursor scratch (sizing + SQLITE_TRANSIENT) never execute \u2014 a wrong offset/width//4/scratch-size/TRANSIENT choice would ship undetected. Fix: add a register_tvf test whose out_dtype includes a 'U' (e.g. U6), an 'S' (e.g. S4) and a BLOB column, with an interior-NUL and a multi-byte/emoji codepoint, asserting round-trip via sqlite3_column_text/_blob/_bytes (mirror the vtable test_structured_text_and_unicode / two-unicode-columns tests).",
+      "acceptanceCriteria": [
+        "A new register_tvf test exercises U, S and BLOB output columns including interior-NUL and multibyte/emoji, asserting correct round-trip.",
+        "The test executes the _TAG_S/_TAG_U/_TAG_BLOB branches and a non-zero per-cursor scratch; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 20,
+      "subject": "Add a refcount assertion for Any.reset old-payload release",
+      "severity": "medium",
+      "dimension": "TST",
+      "files": [
+        "test/core/test_any_type.py"
+      ],
+      "findingIds": [
+        "TST-tst_utils_core-4"
+      ],
+      "description": "ol_reset overwrites self.p on every reset; correctness depends on numba's structref setattr decref'ing the old field exactly once, but test_10 never asserts the previously-held content's refcount dropped \u2014 a leak or double-free on overwrite would pass. Fix: extend test_10 (or add a test) to bind a structref, reset Any onto it, capture get_nrt_refcount, reset Any onto a different value, and assert the first structref's refcount dropped by exactly 1.",
+      "acceptanceCriteria": [
+        "A test asserts the old payload's refcount drops by exactly 1 after reset onto a different value (neither leaked nor double-freed).",
+        "The assertion would fail under a simulated missing/extra decref; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 21,
+      "subject": "Add a unit test for the Windows DLL search-order resolution (_resolve_lib_path)",
+      "severity": "medium",
+      "dimension": "TST",
+      "files": [
+        "test/core/test_bindings.py"
+      ],
+      "findingIds": [
+        "TST-tst_bindings_abi_libc-2"
+      ],
+      "description": "_resolve_lib_path implements the security-relevant rule that sqlite3 MUST return the CPython-bundled DLL and NEVER fall back to find_library (a PATH-resident third-party sqlite3.dll writes to NULL in sqlite3_open from a foreign process), but no test asserts it. A regression re-enabling the fallback would pass CI and only crash on a runner with AWS CLI on PATH. Fix: add a pure-logic test monkeypatching utils.platform_='Windows' and the candidate-existence check, asserting (a) _resolve_lib_path('sqlite3') returns the bundled path and returns None (not find_library) when the bundled DLL is absent, and (b) for a non-sqlite3 name the bundled path is preferred over find_library when both exist. Runnable on any host.",
+      "acceptanceCriteria": [
+        "A host-independent test asserts the sqlite3 bundled-path preference and the no-find_library-fallback rule, plus the non-sqlite3 bundled-over-find_library preference.",
+        "The test fails if the sqlite3 find_library fallback is re-enabled; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 22,
+      "subject": "Add an Alpine (musl) CI job exercising the strerror_safe musl runtime path and a musl symbol canary",
+      "severity": "medium",
+      "dimension": "TST",
+      "files": [
+        ".github/workflows/numbox_ci.yml",
+        "numbox/core/bindings/_strerror.py"
+      ],
+      "findingIds": [
+        "TST-tst_bindings_abi_libc-4",
+        "TST-tst_bindings_abi_libc-1"
+      ],
+      "description": "_strerror.py depends on a musl-specific invariant (__xpg_strerror_r weak-aliases musl's POSIX strerror_r), but the only test is a Linux-only IR-text probe that never runs through musl's actual strerror_r, and the matrix has no Alpine container \u2014 so the musl path is never run end-to-end. Separately, the _strerror docstring claims a 'musl_symbol_check CI canary' that does not exist. Fix: add a single Alpine (musl) CI job (one Python version is enough) running test/core/test_strerror_safe.py runtime tests plus the all-families subprocess probe, AND add an `nm -D` canary asserting both strerror_r and __xpg_strerror_r resolve in the musl container; then reconcile the _strerror docstring (point it at the now-real canary, or soften to match the rst wording).",
+      "acceptanceCriteria": [
+        "numbox_ci.yml has an Alpine/musl job that runs the strerror_safe runtime tests and the all-families probe, and an nm -D symbol canary.",
+        "The _strerror.py docstring matches reality (canary now exists, or wording softened).",
+        "The new job passes in CI; pytest --durations=20 is included per CI convention."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 23,
+      "subject": "Gate the Sphinx docs build on PRs with -W --keep-going",
+      "severity": "medium",
+      "dimension": "TST",
+      "files": [
+        ".github/workflows/docs.yml"
+      ],
+      "findingIds": [
+        "TST-tst_docs_build-5"
+      ],
+      "description": "docs.yml runs sphinx-build only on push to main and without -W/--keep-going, so a PR that breaks the build or introduces dangling xrefs / broken automodule targets is never checked before merge and warnings never fail CI. Fix: add a pull_request-triggered docs job (build only, skip the gh-pages deploy step) and add -W --keep-going to the sphinx-build invocation so broken automodule targets and dangling xrefs fail the build.",
+      "acceptanceCriteria": [
+        "docs.yml builds on pull_request (without deploying) and fails on any sphinx warning (-W --keep-going).",
+        "After the doc-content fixes (other tasks) land, the gated build passes; before them it would fail \u2014 confirm by running sphinx-build -W locally."
+      ],
+      "model": "sonnet",
+      "reasoning": "max"
+    },
+    {
+      "id": 24,
+      "subject": "Fix doc drift: pysqlite_bridge import-preload claim and Py_DEBUG support statement",
+      "severity": "medium",
+      "dimension": "TST",
+      "files": [
+        "docs/numbox.utils.rst",
+        "test/utils/test_pysqlite_bridge.py"
+      ],
+      "findingIds": [
+        "TST-tst_utils_core-1",
+        "TST-tst_utils_core-2"
+      ],
+      "description": "Two factual errors in numbox.utils.rst: (1) lines 210-217 claim importing pysqlite_bridge preloads libsqlite3 with RTLD_GLOBAL so JIT compiles resolve sqlite3 symbols to the same library \u2014 no such preload exists; the real macOS fix is the add_symbol path in the module docstring. (2) lines 219-221 say Py_DEBUG builds are unsupported, but _pyobject_head_fields() detects them via sys.gettotalrefcount and prepends _ob_next/_ob_prev so the db offset is correct. Fix: rewrite the import-order paragraph to match the add_symbol mechanism (or delete it); update the Py_DEBUG paragraph to state debug builds ARE handled; add a test asserting _pyobject_head_fields() includes the two extra pointers under a simulated debug build.",
+      "acceptanceCriteria": [
+        "The import-order paragraph no longer claims a non-existent RTLD_GLOBAL preload (matches add_symbol).",
+        "The Py_DEBUG paragraph states debug builds are handled via gettotalrefcount detection.",
+        "A test pins _pyobject_head_fields() debug-build behavior; sphinx build succeeds; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 25,
+      "subject": "Document _sqlite_typemap in sphinx (conventions list + automodule)",
+      "severity": "medium",
+      "dimension": "TST",
+      "files": [
+        "docs/numbox.core.bindings.rst"
+      ],
+      "findingIds": [
+        "TST-tst_docs_build-1",
+        "TST-tst_sqlite-2"
+      ],
+      "description": "_sqlite_typemap.py exposes public API (utf32_to_utf8, utf8_to_utf32, tags_buf_t) but has no automodule directive and is absent from the 'Bindings module conventions' family list \u2014 the lone omission among the _sqlite_*/_* modules and a violation of CLAUDE.md 'Adding a New Binding' step 5. Fix: add numbox.core.bindings._sqlite_typemap to the conventions family list and add a per-module automodule section under Modules, mirroring the _sqlite_udf_helpers block.",
+      "acceptanceCriteria": [
+        "_sqlite_typemap appears in both the conventions family list and as a per-module automodule section.",
+        "sphinx-build succeeds (run cd docs && sphinx-build -b html . _build/html, exit 0, warnings not increased)."
+      ],
+      "model": "sonnet",
+      "reasoning": "max"
+    },
+    {
+      "id": 26,
+      "subject": "Fix work.rst broken VoidType xref and dead graph-manager example",
+      "severity": "medium",
+      "dimension": "TST",
+      "files": [
+        "docs/numbox.core.work.rst"
+      ],
+      "findingIds": [
+        "TST-tst_docs_build-3",
+        "TST-tst_docs_build-2"
+      ],
+      "description": "Two doc defects in work.rst: (1) line 341 :class:`numbox.core.utils.void_type.VoidType` points at a non-existent path (VoidType is at numbox.utils.void_type \u2014 a stray 'core.'). (2) lines 524-526,542 the graph-manager example imports default_jit_options, _make_work, and references ol_make_work \u2014 none exist, so copy-paste hits ImportError and the :func: xref dangles. Fix: correct the xref to numbox.utils.void_type.VoidType (and ensure VoidType is reachable via an automodule \u2014 see the utils.rst automodule task); update the example to `from numbox.core.configurations import jit_options` / @njit(**jit_options), replace _make_work with make_work (or ll_make_work from lowlevel_work_utils), and fix the line-542 xref to a real symbol (e.g. make_work).",
+      "acceptanceCriteria": [
+        "The VoidType xref resolves to numbox.utils.void_type.VoidType; the example imports only existing symbols and the line-542 xref targets a real symbol.",
+        "sphinx-build -W succeeds (no dangling-xref / import-target warnings from work.rst)."
+      ],
+      "model": "sonnet",
+      "reasoning": "max"
+    },
+    {
+      "id": 27,
+      "subject": "Fix _python_fmt_compat stripping the length modifier from a %%-escaped sequence",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/bindings/_fmtio.py"
+      ],
+      "findingIds": [
+        "COR-libc_fmtio-1"
+      ],
+      "description": "In pure-Python mode, _LENGTH_MODIFIER_RE.sub runs with no prior %%-stripping, so '%%ld' matches the second '%' of the escape pair and drops the 'l' ('%%ld'->'%%d'->'%d') while libc emits '%ld' \u2014 breaking the same-source-either-mode invariant. Fix: mirror the %n checker (replace '%%' with a sentinel before the sub, restore after) or anchor the regex so it cannot start on the second '%' of an escaped pair.",
+      "acceptanceCriteria": [
+        "Add a test asserting _python_fmt_compat('%%ld') yields a string that '%'-formats to '%ld' (matching libc), and a 'value is 50%%ld' case. Fails before, passes after.",
+        "Full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 28,
+      "subject": "Validate NUMBOX_JIT_OPTIONS parses to a dict, not just valid JSON",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/configurations.py"
+      ],
+      "findingIds": [
+        "COR-configurations-1",
+        "DES-configurations-1"
+      ],
+      "description": "get_jit_options only guards JSONDecodeError; a value that is valid JSON but not an object (null/true/42/[]/\"cache\") is returned verbatim and bound to module-level jit_options, then dict-splatted as @njit(**jit_options) across dozens of sites, raising TypeError 'argument after ** must be a mapping' at import time far from the cause. Fix: after json.loads, validate isinstance(as_json, dict) and raise ValueError (matching the existing JSONDecodeError->ValueError style) with an actionable message.",
+      "acceptanceCriteria": [
+        "Add a test setting NUMBOX_JIT_OPTIONS to a non-object JSON value and asserting get_jit_options raises ValueError at parse time (not a remote ** splat TypeError). Fails before, passes after.",
+        "A valid JSON object still parses; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 29,
+      "subject": "Extend the @proxy reserved-name guard to cover the intrinsic name",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/proxy/proxy.py"
+      ],
+      "findingIds": [
+        "COR-proxy-2"
+      ],
+      "description": "The exec'd source defines both the intrinsic _{name} and the wrapper {name}, but the pre-exec guard only checks the wrapper name, so a pre-existing collision on the intrinsic name is silently shadowed (only the diagnostic ValueError is lost; no module corruption). Fix: extend the guard to also test the intrinsic name (make_proxy_name(func_proxy_name)) against ns and raise the same ValueError.",
+      "acceptanceCriteria": [
+        "Add a test where ns contains a name colliding with the generated intrinsic name and assert proxy raises the reserved-name ValueError. Fails before, passes after.",
+        "Full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 30,
+      "subject": "Make make_node fail with a clean cycle error instead of RecursionError on a cyclic registry",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/variable/node.py"
+      ],
+      "findingIds": [
+        "COR-variable_node_utils-1"
+      ],
+      "description": "_make writes made[key] only after recursing into inputs, so a cyclic registry (A<->B) never terminates and raises RecursionError, disagreeing with Graph._topological_order's explicit 'Cycle detected' guard. Fix: insert a sentinel into made[key] before recursing and detect re-entry to raise a clear cycle error (or mirror the visiting-set guard).",
+      "acceptanceCriteria": [
+        "Add a test building make_node over a cyclic registry and assert a clear cycle error (not RecursionError). Fails before, passes after.",
+        "Existing make_node/DAG tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 31,
+      "subject": "Define Vector getitem/setitem index semantics vs logical size",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/vector/vector.py"
+      ],
+      "findingIds": [
+        "COR-vector-1"
+      ],
+      "description": "v[i]/v[i]=x index the capacity-sized buffer with no comparison against v.size, so size<=i<capacity returns an uninitialized slot and i>=capacity is unchecked OOB. The existing test deliberately sets v.size by hand, so the raw-buffer idiom appears intended. Fix: document on the getitem/setitem overloads that the index is unchecked against size (valid only for 0<=i<size, caller owns the bound); OR if logical-vector semantics are intended, add an i<v.size IndexError check.",
+      "acceptanceCriteria": [
+        "Either the overload docstrings state the unchecked-index contract, or an i<size bound is enforced and tested with an out-of-range access.",
+        "Existing vector tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 32,
+      "subject": "Tighten the digest cache-key against fingerprint boundary collisions",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/utils/digest.py"
+      ],
+      "findingIds": [
+        "COR-fingerprint_digest-2"
+      ],
+      "description": "digest() folds each fn's fingerprint into the same sha256 stream back-to-back with no delimiter/length prefix, so in principle two distinct (subject, fns) inputs with identical concatenated bytes collide on the cache key (stale kernel -> wrong result); implausible in practice but cheap to close. Fix: fold a fixed delimiter and a count before each fn, e.g. h.update(f'fn{i}\\x00'.encode()) (or a leading len(fns)).",
+      "acceptanceCriteria": [
+        "A boundary-shifting pair of inputs that previously produced the same digest now produces distinct digests (add a constructed test).",
+        "Full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 33,
+      "subject": "Fix sqlite3_trace_v2 uMask signature to uint32",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/bindings/signatures.py"
+      ],
+      "findingIds": [
+        "COR-sqlite_hooks-1"
+      ],
+      "description": "signatures.py:173 declares uMask as int32 for a C `unsigned uMask`, inconsistent with sibling unsigned params (sqlite3_value_subtype/sqlite3_result_subtype use uint32). No behavioral change for the documented masks (all small positive), but a high-bit edge case is latent. Fix: change to int32(intp, uint32, intp, intp).",
+      "acceptanceCriteria": [
+        "signatures['sqlite3_trace_v2'] is int32(intp, uint32, intp, intp); existing trace tests (if any) still pass.",
+        "Full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 34,
+      "subject": "Check the clock_gettime return value in monotonic_ns (POSIX path)",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/utils/clock.py"
+      ],
+      "findingIds": [
+        "COR-utils_misc-2"
+      ],
+      "description": "The POSIX monotonic_ns codegen discards the i32 return of clock_gettime; the timespec is pre-zeroed so a -1 return yields a silent 0 ns, violating the contract on the failure path (theoretical for CLOCK_MONOTONIC). Fix: branch on the i32 return and trap/raise on non-zero, OR document this as best-effort in the docstring.",
+      "acceptanceCriteria": [
+        "Either the i32 return is checked (and a non-zero return is surfaced) or the docstring documents the best-effort 0-on-failure behavior.",
+        "Existing clock tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 35,
+      "subject": "Guard the xBestIndex bound_mask against >=64 hidden TVF args",
+      "severity": "low",
+      "dimension": "MEM",
+      "files": [
+        "numbox/core/bindings/_sqlite_tvf.py"
+      ],
+      "findingIds": [
+        "MEM-sqlite_tvf-2",
+        "COR-sqlite_tvf-2"
+      ],
+      "description": "bound_mask is uint64 and the all-bound target is (uint64(1)<<uint64(n_hidden))-1; a shift by >=64 is undefined at LLVM (poison/0), so a TVF with >=64 (and especially >=65) hidden args produces an undefined/wrong all-bound mask. n_hidden=len(arg_tags) is user-controlled with no upper-bound guard. Fix: add an explicit guard in _build_tvf_descriptor/register_tvf rejecting len(arg_tags)>63 with a clear ValueError, or use a count-based all-bound test that avoids the 64-bit shift.",
+      "acceptanceCriteria": [
+        "Add a test registering a TVF with >63 hidden args and assert a clear ValueError (or correct rejection) rather than undefined behavior.",
+        "Existing tvf tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 36,
+      "subject": "Emit a clean TypingError for nested-tuple fields in the abi tuple path",
+      "severity": "low",
+      "dimension": "MEM",
+      "files": [
+        "numbox/core/bindings/abi.py"
+      ],
+      "findingIds": [
+        "MEM-abi-2"
+      ],
+      "description": "_struct_bytes/_iter_struct_fields dereference .bitwidth on every tuple field unconditionally, so a tuple containing a struct-shaped field raises a raw AttributeError instead of the clean caller-naming TypingError the surrounding code emits for the not-struct case. Robustness, not a live failure (nested-aggregate tuple signatures aren't a supported shape). Fix: guard the tuple-element loop to raise the same TypingError naming the caller when a field lacks .bitwidth / is struct-shaped (or document flat-scalar-only tuples).",
+      "acceptanceCriteria": [
+        "Add a test passing a Tuple-of-Tuple / Tuple-of-Record binding signature and assert the clean caller-naming TypingError (not AttributeError).",
+        "Existing abi tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 37,
+      "subject": "Harden sscanf against unbounded %s / %[ writes (defense-in-depth)",
+      "severity": "low",
+      "dimension": "SEC",
+      "files": [
+        "numbox/core/bindings/_fmtio.py"
+      ],
+      "findingIds": [
+        "SEC-libc_fmtio-2"
+      ],
+      "description": "sscanf validates only that output args are intp pointers; it does not require a max field width on %s/%[, so sscanf(buf, '%s', out) over untrusted input overflows the caller buffer (classic C sscanf overflow). The format is a developer-written compile-time literal (the developer can write '%63s'), so this is defense-in-depth. Fix: reject width-less %s/%[ in the sscanf typing function, OR at minimum document the overflow hazard in the sscanf docstring and recommend an explicit max field width.",
+      "acceptanceCriteria": [
+        "Either width-less %s/%[ is rejected at typing time (with a test asserting the TypingError) or the sscanf docstring documents the unbounded-write hazard and recommends a max field width.",
+        "Existing sscanf tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 38,
+      "subject": "Document/harden the generic Windows find_library load path against DLL planting (defense-in-depth)",
+      "severity": "low",
+      "dimension": "SEC",
+      "files": [
+        "numbox/core/bindings/utils.py"
+      ],
+      "findingIds": [
+        "SEC-bindings_utils-1"
+      ],
+      "description": "For a non-c/m/sqlite3 Windows library with no bundled DLL, _resolve_lib_path falls through to find_library(name) (may return a bare filename) and _load_lib_with_handle calls CDLL(path, winmode=0) (default DLL search order for a bare name) \u2014 a DLL-planting surface if such a binding is ever added. No library numbox currently loads reaches this branch. Fix: when/if a binding uses the generic find_library path, resolve to an absolute path before CDLL or pass winmode=LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, following the absolute-bundled-path pattern used for sqlite3. At minimum add a code comment documenting the hazard at the find_library fallback.",
+      "acceptanceCriteria": [
+        "The generic find_library fallback either resolves to an absolute path / uses safe winmode flags, or carries a comment documenting the planting hazard and the required mitigation for future bindings.",
+        "Existing bindings load correctly on all platforms in CI; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 39,
+      "subject": "Add an id-based cycle guard to _canon_value for self-referential containers",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/utils/fingerprint.py"
+      ],
+      "findingIds": [
+        "COR-fingerprint_digest-1"
+      ],
+      "description": "A self-referential built-in container reachable from a default/closure/global drives _canon_value into unbounded recursion -> RecursionError. Not a wrong-result bug (both consumers catch RecursionError and degrade), but a robustness edge. Fix (optional but recommended): add an id-based cycle guard for tuple/list/set/dict in _canon_value (insert id(value) into seen on entry, short-circuit on re-entry), mirroring the function guard at fingerprint.py:92-94.",
+      "acceptanceCriteria": [
+        "Add a test fingerprinting a function with a self-referential container default/global and assert it returns a stable result (or the documented degraded fallback) without RecursionError.",
+        "Full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 40,
+      "subject": "Soften or strengthen libraries_coordinated() identity claim",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/utils/pysqlite_bridge.py"
+      ],
+      "findingIds": [
+        "COR-pysqlite_bridge-1"
+      ],
+      "description": "libraries_coordinated() compares only SQLITE_VERSION strings yet the docstring frames it as proving the two libsqlite3 resolve to 'the same library'; equal version strings don't establish binary identity. Stable opaque-handle ABI across same-major versions makes this a contract/heuristic gap, not a demonstrated wrong-result path. Fix: soften the docstring to state it is a version-string check (a strong proxy, not proof), OR strengthen by also comparing sqlite3_libversion_number() / a resolved-symbol pointer-identity check.",
+      "acceptanceCriteria": [
+        "The docstring accurately describes the guarantee (version-string proxy), or the check is strengthened with a stricter comparison and a test.",
+        "Existing pysqlite_bridge tests pass; sphinx build succeeds; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 41,
+      "subject": "Fix == vs is comparison against inspect._empty in make_params_strings",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/utils/standard.py"
+      ],
+      "findingIds": [
+        "COR-utils_misc-1",
+        "COR-highlevel-3"
+      ],
+      "description": "make_params_strings tests 'no default' with `v.default == inspect._empty` rather than identity; for a default whose __eq__ returns a non-bool against the sentinel (e.g. y=np.zeros(3)) the comparison returns an array and the surrounding ternary raises 'truth value of an array is ambiguous' at codegen-string assembly, pre-empting the intended visible repr/exec failure. Affects both the cres/standard path and the make_structref struct-methods path. Fix: use identity \u2014 `v.default is inspect._empty`.",
+      "acceptanceCriteria": [
+        "make_params_strings uses `is inspect._empty`; add a test with a numpy-array default that previously raised the array-truthiness ValueError and now reaches the intended path. Fails before, passes after.",
+        "Existing standard/highlevel tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 42,
+      "subject": "Document the unique-name + acyclic precondition (or add an identity-keyed visited guard) on Work all_inputs_names/all_end_nodes",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/work/node.py"
+      ],
+      "findingIds": [
+        "COR-work_node-2"
+      ],
+      "description": "all_inputs_names/all_end_nodes dedup purely on the string name, collapsing distinct same-named nodes, and the recursive helpers re-descend into every input unconditionally so a cycle recurses to stack exhaustion (termination relies on the undocumented DAG + unique-name contract). Fix: document the unique-name + acyclic precondition on these methods, OR guard re-descent with a visited set keyed on node identity (not name) so a cycle yields a defined error and shared subtrees are walked once.",
+      "acceptanceCriteria": [
+        "Either the methods document the precondition, or a visited-by-identity guard is added and a test asserts a cyclic graph yields a defined error (not stack overflow).",
+        "Existing work-node tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 43,
+      "subject": "Route derive fingerprinting through a structured code+consts+globals helper (or document the delegation)",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/work/builder.py"
+      ],
+      "findingIds": [
+        "COR-work_builder-2"
+      ],
+      "description": "derive_hashes fingerprints a derive by getsource() text only, so a referenced global/closure whose value changes without a text change does not shift the builder anchor (mostly benign \u2014 the derive is compiled separately and numba's derive cache governs the body). Fix: if numbox/utils/fingerprint.py provides a structured code+consts+closure+globals fingerprint, route derive fingerprinting through it; otherwise document that derive cache correctness is delegated to numba and that pure-literal derive edits require a cache clear.",
+      "acceptanceCriteria": [
+        "Either derive fingerprinting uses the structured helper, or a comment/docstring documents the numba-delegation and the cache-clear requirement for pure-literal edits.",
+        "Existing builder tests pass; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 44,
+      "subject": "Remove dead state and dead parameters across work / variable / bindings codegen",
+      "severity": "low",
+      "dimension": "DES",
+      "files": [
+        "numbox/core/work/work.py",
+        "numbox/core/work/builder.py",
+        "numbox/core/variable/_kernel_partition.py",
+        "numbox/core/work/combine_utils.py",
+        "numbox/core/variable/compile_kernel.py"
+      ],
+      "findingIds": [
+        "DES-work-1",
+        "DES-work_builder-1",
+        "DES-work_builder-2",
+        "DES-kernel_partition-1",
+        "DES-work_combine_loader_lowlevel-2",
+        "DES-compile_kernel-3"
+      ],
+      "description": "Remove confirmed write-only state and dead parameters (each traced to be unused): work.py _source_getter_registry (write-only); builder.py dead `registry` param on _infer_end_and_derived_nodes and the stored-never-read `registry` field on End/Derived NamedTuples; _kernel_partition.py dead `external` param on segment_liveness (drop it at both call sites compile_kernel.py:471-472, :924); combine_utils.py unused `field_ind` enumerate index; compile_kernel.py `in_names` computed only to embed in a source comment. Surgical deletions only.",
+      "acceptanceCriteria": [
+        "Each named dead symbol/parameter is removed along with its now-orphaned threading; no remaining reference exists (grep clean).",
+        "flake8 --max-line-length=127 clean; full pytest suite passes after cache clean."
+      ],
+      "model": "sonnet",
+      "reasoning": "max"
+    },
+    {
+      "id": 45,
+      "subject": "Factor duplicated codegen helpers in the bindings/work/variable layers",
+      "severity": "low",
+      "dimension": "DES",
+      "files": [
+        "numbox/utils/lowlevel.py",
+        "numbox/core/bindings/_fmtio.py",
+        "numbox/core/bindings/_sqlite_query.py",
+        "numbox/core/bindings/_sqlite_udf_helpers.py",
+        "numbox/core/bindings/_sqlite_tvf.py",
+        "numbox/core/bindings/call.py",
+        "numbox/core/bindings/utils.py",
+        "numbox/core/bindings/_errno.py",
+        "numbox/core/any/any_type.py",
+        "numbox/core/vector/vector.py",
+        "numbox/core/work/node.py",
+        "numbox/core/work/work.py",
+        "numbox/core/variable/_kernel_partition.py",
+        "numbox/core/variable/compile_kernel.py",
+        "numbox/utils/pysqlite_bridge.py"
+      ],
+      "findingIds": [
+        "DES-lowlevel-1",
+        "DES-lowlevel-2",
+        "DES-kernel_partition-2",
+        "DES-sqlite_query-2",
+        "DES-libc_fmtio-1",
+        "DES-libc_fmtio-2",
+        "DES-sqlite_udf-2",
+        "DES-sqlite_udf-3",
+        "DES-sqlite_udf-1",
+        "DES-sqlite_tvf-3",
+        "DES-call-1",
+        "DES-bindings_utils-1",
+        "DES-any-1",
+        "DES-vector-1",
+        "DES-work_node-1",
+        "DES-work-4",
+        "DES-compile_kernel-2",
+        "DES-compile_kernel-4",
+        "DES-pysqlite_bridge-1",
+        "DES-libc_stdio_strerror_errno-1"
+      ],
+      "description": "Behavior-preserving consolidation of confirmed duplication. Notable items: lowlevel.py extract a _require_intp_pointer helper for the verbatim 4-way pointer-type TypingError guard (DES-lowlevel-1) and factor the aligned/unaligned load+store inner codegen keeping the public 4-way API split (DES-lowlevel-2); _sqlite_query _TAG_S/_TAG_BLOB single shared accessor+copy (DES-sqlite_query-2); _fmtio %n-rejection \u00d72 and sscanf arg-type check \u00d74 (DES-libc_fmtio-1/-2); _sqlite_udf_helpers shared scaffolding/idioms with _sqlite_tvf (DES-sqlite_udf-1/-2/-3); _sqlite_tvf xConnect/xDisconnect/xRowid/xEof boilerplate shared with the vtable module (DES-sqlite_tvf-3); call.py {i64,i64} literal struct \u00d73 (DES-call-1); bindings/utils.py per-platform CDLL block \u00d72 (DES-bindings_utils-1); _errno size_t/intp construction consistency (DES-libc_stdio_strerror_errno-1); any_type payload-wrap \u00d72 (DES-any-1); vector grow-and-copy \u00d72 (DES-vector-1); work node.py traversal body and Work/Node get_inputs_names/depends_on copy-paste (DES-work_node-1, DES-work-4); compile_kernel live-in two-ways and duplicated sort-key lambda (DES-compile_kernel-2/-4); pysqlite_bridge version-string \u00d72 (DES-pysqlite_bridge-1); _kernel_partition segment_liveness/cone_liveness shared live-in (DES-kernel_partition-2, only if it does not obscure cone-vs-segment intent). Preserve the macOS-arm64 DCE-avoidance and removerefctpass properties; do NOT collapse the intentional public aligned/unaligned API split.",
+      "acceptanceCriteria": [
+        "Each cited duplication is reduced to a single implementation (or, where consolidation would obscure intent e.g. kernel_partition, explicitly left with a documented rationale); no behavior change.",
+        "flake8 --max-line-length=127 clean; full pytest suite passes after cache clean (confirm DCE-sensitive query/tvf paths still write non-zero results, ideally on macOS-arm64)."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 46,
+      "subject": "Clean up single-use wrappers, naming, and unused public surface across bindings/work/utils",
+      "severity": "low",
+      "dimension": "DES",
+      "files": [
+        "numbox/core/bindings/_sqlite_vtable.py",
+        "numbox/core/work/print_tree.py",
+        "numbox/core/work/explain.py",
+        "numbox/core/work/combine_utils.py",
+        "numbox/core/proxy/proxy.py",
+        "numbox/core/bindings/_math.py",
+        "numbox/core/bindings/_fmtio.py",
+        "numbox/core/bindings/_strerror.py",
+        "numbox/core/bindings/_sqlite_tvf.py",
+        "numbox/core/bindings/_sqlite_typemap.py",
+        "numbox/core/bindings/abi.py",
+        "numbox/utils/highlevel.py",
+        "numbox/core/work/work.py",
+        "numbox/core/variable/utils.py",
+        "numbox/core/variable/variable.py"
+      ],
+      "findingIds": [
+        "DES-sqlite_vtable-1",
+        "DES-sqlite_vtable-2",
+        "DES-work_print_explain-1",
+        "DES-work_print_explain-2",
+        "DES-work_combine_loader_lowlevel-1",
+        "DES-proxy-1",
+        "DES-libc_math-1",
+        "DES-libc_fmtio-3",
+        "DES-libc_stdio_strerror_errno-2",
+        "DES-sqlite_tvf-2",
+        "DES-sqlite_typemap_constants-1",
+        "DES-abi-1",
+        "DES-abi-2",
+        "DES-highlevel-1",
+        "DES-highlevel-3",
+        "DES-highlevel-2",
+        "DES-work-2",
+        "DES-work-5",
+        "DES-variable_node_utils-1",
+        "DES-variable-2",
+        "DES-variable-1"
+      ],
+      "description": "Localized hygiene cleanups (each confirmed): drop the redundant single-use _VTableHandle wrapper anchoring _BuiltDescriptor directly and remove its variadic *objs (DES-sqlite_vtable-1/-2); underscore-prefix print_tree internal helpers and rename the make_graph that shadows builder.make_graph (DES-work_print_explain-1); replace explain.py's bare magic [1] index with a named accessor (DES-work_print_explain-2); fix the combine_utils overload name that contradicts behavior (DES-work_combine_loader_lowlevel-1); clarify proxy.py's self-referential dict.update of inline='always' (DES-proxy-1); address _math round/pow builtin-shadowing in the star-imported namespace (DES-libc_math-1); drop the unused get_unicode_data_p arg threaded through sscanf (DES-libc_fmtio-3); move/clearly-mark the _strerror test-only IR-probe helper (DES-libc_stdio_strerror_errno-2); remove the written-never-read _TVF_DESC_DTYPE.itemsize field (DES-sqlite_tvf-2); resolve _sqlite_typemap.utf8_to_utf32 having no production caller \u2014 tie to the decode-dedup task or mark intended-public (DES-sqlite_typemap_constants-1); fix abi.py docstring caller attribution and the `size` loop-var shadow (DES-abi-1/-2); address highlevel unused public hash_type/prune_type, identity list-comprehension, and six redundant exec-ns entries (DES-highlevel-1/-3/-2); drop redundant work.py ns overrides and align the assert-after-def placement with the Node sibling (DES-work-2/-5); complete the variable/utils module docstring (DES-variable_node_utils-1); replace the O(N) linear scan over ordered_nodes with a lookup (DES-variable-2); remove the dead defensive string-normalization branch in _topological_order (DES-variable-1). Treat any public-surface removal (hash_type/prune_type, round/pow naming) cautiously \u2014 confirm no downstream (numbduck/numbarrow) relies on it before deleting; otherwise document instead.",
+      "acceptanceCriteria": [
+        "Each cited item is resolved (cleaned up, renamed, or \u2014 for public surface with possible downstream use \u2014 explicitly documented as kept with rationale).",
+        "No public API is removed without confirming no downstream consumer; flake8 --max-line-length=127 clean; full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 47,
+      "subject": "Add automodule sections for undocumented public utils/work/variable modules and fix the .variables doc-drift",
+      "severity": "low",
+      "dimension": "TST",
+      "files": [
+        "docs/numbox.utils.rst",
+        "docs/numbox.core.work.rst",
+        "docs/numbox.core.variable.rst"
+      ],
+      "findingIds": [
+        "TST-tst_utils_core-3",
+        "DES-utils_misc-2",
+        "TST-tst_docs_build-4",
+        "TST-tst_variable_work-1"
+      ],
+      "description": "Doc-grouping gaps and drift: numbox.utils.rst omits automodule for clock/meminfo/standard/void_type (TST-tst_utils_core-3, DES-utils_misc-2) \u2014 also required for the work.rst VoidType xref to resolve; numbox.core.work.rst public modules referenced by :func: xrefs (lines 473,480,199,408-412) have no automodule (undocumented API + dangling xrefs) (TST-tst_docs_build-4); numbox.core.variable.rst:129-133 references a nonexistent `.variables` attribute on the Variables namespace (TST-tst_variable_work-1). Fix: add the missing automodule sections mirroring existing blocks; correct the .variables reference to the actual attribute/API.",
+      "acceptanceCriteria": [
+        "utils.rst has automodule for clock/meminfo/standard/void_type; the work.rst :func:-referenced public modules have automodule; the variable.rst .variables reference points at a real attribute.",
+        "sphinx-build -W succeeds (no missing-automodule / dangling-xref warnings from these files)."
+      ],
+      "model": "sonnet",
+      "reasoning": "max"
+    },
+    {
+      "id": 48,
+      "subject": "Add tests for untested public binding wrappers and helper edge cases",
+      "severity": "low",
+      "dimension": "TST",
+      "files": [
+        "test/core/test_bindings.py",
+        "test/core/test_sqlite_constants.py",
+        "test/utils/test_lowlevel.py",
+        "test/utils/test_digest.py"
+      ],
+      "findingIds": [
+        "TST-tst_bindings_abi_libc-3",
+        "TST-tst_bindings_abi_libc-6",
+        "TST-tst_bindings_abi_libc-5",
+        "TST-tst_sqlite-5",
+        "TST-tst_utils_core-5",
+        "TST-tst_utils_core-7"
+      ],
+      "description": "Add direct tests for currently-untested public surface: _c.py puts/fputc/putchar/feof/ferror/clearerr (TST-tst_bindings_abi_libc-3); bindings/utils.py intp_ll_type/extract_literal_str edge cases (TST-tst_bindings_abi_libc-6); the documented %ld Win64 truncation footgun (TST-tst_bindings_abi_libc-5 \u2014 an asserting test, skip/xfail off-Win64 as appropriate); the result/type/flag/destructor sqlite constants beyond the 8 index-constraint ops (TST-tst_sqlite-5); get_str_from_p_as_int empty-string and multibyte edges (TST-tst_utils_core-5 \u2014 coordinate with the MEM-1 fix); digest's _Unfingerprintable fallback for a real non-codeless FunctionType (TST-tst_utils_core-7).",
+      "acceptanceCriteria": [
+        "Each named untested wrapper/helper/constant-group has a direct asserting test.",
+        "The get_str_from_p_as_int multibyte test aligns with the MEM-1 fix (passes after that fix); full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    },
+    {
+      "id": 49,
+      "subject": "Add tests for untested sqlite cell-truncation, typemap end-of-buffer, and declared-kernel recompute paths",
+      "severity": "low",
+      "dimension": "TST",
+      "files": [
+        "test/core/test_sqlite.py",
+        "test/core/test_params_jitability.py"
+      ],
+      "findingIds": [
+        "TST-tst_sqlite-3",
+        "TST-tst_sqlite-4",
+        "TST-tst_variable_work-3",
+        "TST-tst_variable_work-2"
+      ],
+      "description": "Add edge-case tests: query_to_array oversized-cell truncation (nbytes>=field width) for TEXT/BLOB/U \u2014 assert the truncated prefix and that no adjacent field is corrupted (TST-tst_sqlite-3, coordinate with the _sqlite_query dedup task); utf8_to_utf32 truncated multi-byte sequence at end-of-buffer (the i+N<nbytes guards) (TST-tst_sqlite-4); _evaluate seeding of a declared kernel with a demoted (Case B) node via recompute (TST-tst_variable_work-3); recompute interior-override on a declared/eager kernel (TST-tst_variable_work-2).",
+      "acceptanceCriteria": [
+        "Each named untested path has an asserting test (truncation prefix + adjacent-field integrity; end-of-buffer multibyte; Case-B declared-kernel seeding; declared-kernel interior override).",
+        "Full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max"
+    }
+  ]
+}
