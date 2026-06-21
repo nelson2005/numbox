@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "numbox review findings file",
+  "description": "One file per (target x dimension) review unit. Written to findings/<DIM>/<target>.json.",
+  "type": "object",
+  "required": ["target", "dimension", "files_reviewed", "findings"],
+  "additionalProperties": false,
+  "properties": {
+    "target": {"type": "string", "description": "target name from targets.json"},
+    "dimension": {"type": "string", "enum": ["MEM", "COR", "DES", "SEC", "TST"]},
+    "files_reviewed": {"type": "array", "items": {"type": "string"}, "description": "repo-relative paths actually read"},
+    "reviewer_model": {"type": "string"},
+    "summary": {"type": "string", "description": "1-3 sentences: overall state of this target on this dimension; explicitly note if clean (no findings)"},
+    "findings": {
+      "type": "array",
+      "description": "may be empty (a clean unit is a valid, valuable result)",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "title", "file", "lines", "claim", "evidence", "recommendation", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "description": "<DIM>-<target>-<n>, e.g. MEM-sqlite_vtable-1"},
+          "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+          "title": {"type": "string", "description": "short imperative-free description of the issue"},
+          "file": {"type": "string", "description": "repo-relative path of the offending code"},
+          "lines": {"type": "string", "description": "line number or range, e.g. 120 or 120-135"},
+          "claim": {"type": "string", "description": "the concrete defect and the failure it causes (wrong result / leak / crash / UB / etc.). Be specific about WHEN it triggers."},
+          "evidence": {"type": "string", "description": "the actual code (quoted) or the precise reasoning chain that grounds the claim. Must reference code you read this session — never an assumed API."},
+          "recommendation": {"type": "string", "description": "concrete fix; cite the canonical helper/pattern if one exists"},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    }
+  }
+}
