@@ -1,0 +1,22 @@
+{
+  "target": "bindings_utils",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/utils.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Essentially clean on the SEC dimension. utils.py only loads shared libraries by developer-controlled name/path; no untrusted runtime input reaches a buffer, format string, SQL, or path sink. The one genuine security decision in the module (Windows sqlite3 resolution) is deliberately hardened against the documented AWS-CLI PATH-planting hazard by forcing the absolute CPython-bundled DLL and refusing the find_library fallback. One low-severity defense-in-depth observation about the generic Windows find_library + winmode=0 fallback is recorded; it is not reachable by any name numbox currently loads.",
+  "findings": [
+    {
+      "id": "SEC-bindings_utils-1",
+      "severity": "low",
+      "title": "Generic Windows fallback loads find_library() result with winmode=0 (default DLL search order)",
+      "file": "numbox/core/bindings/utils.py",
+      "lines": "109-163",
+      "claim": "For a Windows library name that is neither 'c'/'m' nor 'sqlite3' and that has no bundled DLL under sys.prefix/DLLs or Library/bin, _resolve_lib_path falls through to find_library(name) (line 111), which can return a bare DLL filename rather than an absolute path. _load_lib_with_handle then calls CDLL(path, winmode=0) (line 163). winmode=0 passes flags=0 to LoadLibraryEx, i.e. no LOAD_LIBRARY_SEARCH_* flags, so a bare name is resolved via the default Windows DLL search order. If a future numbox binding loads such a library, an attacker who can place a malicious DLL of that name earlier in the search order than the system copy could get it loaded (DLL planting / hijack). Note: no library numbox currently loads reaches this branch — 'c'/'m' go through find_msvcrt() and the historical msvcrt fallback, and 'sqlite3' is forced to the absolute bundled path and explicitly never uses find_library (lines 102-108). So this is latent/defense-in-depth, not a presently-reachable hole, and on Vista+ the current working directory is not in the default search path by default, further limiting the planting surface.",
+      "evidence": "Line 111: `return find_library(name)` (Windows, non-c/m, no bundled DLL). find_library on Windows may return a bare filename. Line 163: `return CDLL(path, winmode=0)`. winmode=0 => LoadLibraryEx flags=0 => default DLL search order for a bare name. Contrast with the sqlite3 branch (lines 102-108) which returns the absolute `bundled` path and the comment 'Never fall back to find_library', showing the authors already recognize the planting hazard for the one library that matters today.",
+      "recommendation": "When/if a binding is added that resolves a Windows library via the generic find_library path, either resolve to an absolute path before CDLL, or pass winmode=ctypes.LOAD_LIBRARY_SEARCH_SYSTEM32 (and/or LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) so a bare name cannot be hijacked from an attacker-writable directory. The existing absolute-bundled-path pattern used for sqlite3 (lines 101-108) is the canonical mitigation to follow.",
+      "confidence": "medium"
+    }
+  ]
+}

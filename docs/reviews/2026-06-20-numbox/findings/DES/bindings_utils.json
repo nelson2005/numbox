@@ -1,0 +1,23 @@
+{
+  "target": "bindings_utils",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/utils.py",
+    "numbox/utils/highlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Small, well-factored loader module: per-platform path resolution, a cached name-keyed loader, and a path-based loader, plus two compile-time-literal/IR helpers. One genuine low-severity duplication: the per-platform CDLL-loading block (RTLD_GLOBAL on Linux/Darwin, winmode=0 on Windows, else raise) is copied verbatim in _load_lib_with_handle and load_lib_path. No dead code, no public/private discipline issues, no comment/code drift. Otherwise clean on the DES dimension.",
+  "findings": [
+    {
+      "id": "DES-bindings_utils-1",
+      "severity": "low",
+      "title": "Duplicated per-platform CDLL-loading block in _load_lib_with_handle and load_lib_path",
+      "file": "numbox/core/bindings/utils.py",
+      "lines": "159-164",
+      "claim": "The platform-dispatch that actually constructs the CDLL handle (RTLD_GLOBAL mode on Darwin/Linux, winmode=0 on Windows, else raise unsupported-platform) is copy-pasted across _load_lib_with_handle (lines 159-164) and load_lib_path (lines 178-183). They are character-for-character identical except for the variable name (path). A future change to the load mode (e.g. adding a platform, changing RTLD flags, or fixing the Windows winmode) must be applied in two places; missing one silently desynchronizes the two loaders.",
+      "evidence": "_load_lib_with_handle (159-164):\n    if platform_ in (\"Darwin\", \"Linux\"):\n        from os import RTLD_GLOBAL\n        return CDLL(path, mode=RTLD_GLOBAL)\n    if platform_ == \"Windows\":\n        return CDLL(path, winmode=0)\n    raise RuntimeError(f\"Platform {platform_} is not supported, yet.\")\nload_lib_path (178-183):\n    if platform_ in (\"Darwin\", \"Linux\"):\n        from os import RTLD_GLOBAL\n        return CDLL(path, mode=RTLD_GLOBAL)\n    if platform_ == \"Windows\":\n        return CDLL(path, winmode=0)\n    raise RuntimeError(f\"Platform {platform_} is not supported, yet.\")\nThe two blocks differ only in the parameter name they pass to CDLL (both bound to a path string), confirmed by reading both functions end-to-end in the same file.",
+      "recommendation": "Extract the shared block into a tiny private helper, e.g. `def _cdll_global(path): ...` returning the platform-correct CDLL handle, and call it from both _load_lib_with_handle and load_lib_path. Local, low-risk, removes the desync hazard. (The historical Windows c/m msvcrt fallback in _load_lib_with_handle stays where it is — it is name-keyed and does not belong in the path-based loader.)",
+      "confidence": "high"
+    }
+  ]
+}

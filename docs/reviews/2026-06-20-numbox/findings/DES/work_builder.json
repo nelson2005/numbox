@@ -1,0 +1,37 @@
+{
+  "target": "work_builder",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/work/builder.py",
+    "numbox/core/work/builder_utils.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/utils/highlevel.py",
+    "numbox/core/work/explain.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The work-graph builder is compact and mostly well-factored: the codegen path composes the canonical ll_make_work / cres helpers, _derive_funcs is genuinely consumed by explain.py, and the trailing-comma tuple idiom is intentional. Two small design hazards remain: a dead `registry` parameter threaded through _infer_end_and_derived_nodes recursion, and a `registry` field on the End/Derived NamedTuples that is stored but never read off the instance. Both are low severity.",
+  "findings": [
+    {
+      "id": "DES-work_builder-1",
+      "severity": "low",
+      "title": "Dead `registry` parameter threaded through _infer_end_and_derived_nodes",
+      "file": "numbox/core/work/builder.py",
+      "lines": "124-132",
+      "claim": "The recursive helper `_infer_end_and_derived_nodes(spec, all_inputs_, all_derived_, registry)` accepts a `registry` argument that is never read inside the function body — it is only forwarded verbatim to the recursive call. The registry is actually consumed one level up in `infer_end_and_derived_nodes` (lines 140-141). The parameter is dead surface that suggests the recursion needs the registry when it does not.",
+      "evidence": "Lines 124-132: `def _infer_end_and_derived_nodes(spec, all_inputs_, all_derived_, registry):` then the body uses only `spec.name`, `all_inputs_`, `all_derived_`, `get_ty(spec)`, and `spec.sources`; the only mention of `registry` is the forward at line 131 `_infer_end_and_derived_nodes(source, all_inputs_, all_derived_, registry)`. The caller at lines 140-141 is where registry is read: `all_inputs_lst = [registry[name] for name in all_inputs_.keys()]`.",
+      "recommendation": "Drop the `registry` parameter from `_infer_end_and_derived_nodes` (and the corresponding argument at the recursive call and at line 139), since the function never uses it. Local, zero-behavior-change cleanup.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-work_builder-2",
+      "severity": "low",
+      "title": "`registry` field on End/Derived NamedTuples is stored but never read off the instance",
+      "file": "numbox/core/work/builder.py",
+      "lines": "25-26, 50-53",
+      "claim": "`End` and `Derived` declare a `registry: dict = None` field. The registry that actually drives insertion is selected inside `_new` via `kwargs.get(\"registry\", _specs_registry)` (line 31) and used only to choose which dict to insert into (lines 33-36); the value also lands in the namedtuple's `registry` field but that stored field is never read anywhere. A reader expects `spec.registry` to be load-bearing when it is inert dead state.",
+      "evidence": "Line 26 `registry: dict = None` (and line 52). Line 31 `registry = kwargs.get(\"registry\", _specs_registry)` selects the target dict; lines 33-37 use that local. A repo-wide grep for `.registry` reads (builder/explain/work) shows no read of `spec.registry` / `input_.registry` / `derived_.registry`; the only `.registry` reads are the unrelated `Graph.registry` in the variable subsystem (numbox/core/variable/*.py, e.g. variable.py:420).",
+      "recommendation": "Either drop the `registry` field from the `End`/`Derived` NamedTuple definitions (the selection in `_new` already covers behavior) or, if it is intended to record provenance, document that it is informational only. Prefer removal for simplicity; verify no external consumer reads the field first.",
+      "confidence": "medium"
+    }
+  ]
+}

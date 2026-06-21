@@ -1,0 +1,16 @@
+{
+  "target": "sqlite_conn_stmt_exec",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_conn.py",
+    "numbox/core/bindings/_sqlite_stmt.py",
+    "numbox/core/bindings/_sqlite_exec.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/proxy/proxy.py",
+    "numbox/core/bindings/utils.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. All three files are thin @proxy wrappers over scalar/pointer C signatures; no @cfunc body, no NRT refcount/meminfo/structref operations, and no struct-by-value or Record-return ABI paths are present here, so none of the MEM hazards (cfunc exception swallow/leak, refcount imbalance, sret/eightbyte repack, struct ABI) apply. The errmsg/expanded_sql lifetime concerns are caller responsibilities the bindings themselves model correctly. No findings.",
+  "findings": []
+}

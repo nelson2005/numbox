@@ -1,0 +1,24 @@
+{
+  "target": "vector",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/vector/vector.py",
+    "numbox/core/configurations.py",
+    "test/core/test_vector.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The growth/realloc logic is correct: create asserts capacity >= 1 and vectors only grow, so buf.shape[0] is always >= 1 and the *2 doubling in vector_push and the while-doubling in vector_extend always strictly increase capacity and terminate; the prefix copy and tail assignment slices are correct, including the empty-src/empty-dst/both-empty cases which the test suite covers. The one substantive correctness/contract hazard is that getitem/setitem index the underlying buf (sized to capacity) rather than the logical size, so v[i] for size <= i < capacity silently returns uninitialized garbage and i >= capacity is out of bounds; this is an intentional raw-buffer idiom (a test sets v.size directly), so it is reported low-confidence as a contract hazard rather than a definite bug.",
+  "findings": [
+    {
+      "id": "COR-vector-1",
+      "severity": "low",
+      "title": "getitem/setitem index capacity-sized buf, not logical size",
+      "file": "numbox/core/vector/vector.py",
+      "lines": "104-117",
+      "claim": "operator.getitem returns v.buf[i] and operator.setitem writes v.buf[i] with no comparison against v.size. len(v) returns v.size (lines 96-101). Because buf is allocated to capacity (numpy.empty(capacity) in create, line 87) and capacity can exceed size, v[i] for size <= i < capacity silently returns an uninitialized buffer slot (garbage, e.g. stale value left by a prior shrink-free design or numpy.empty noise) rather than signalling end-of-vector, and i >= capacity is an out-of-bounds buffer access (numba arrays do not bounds-check by default). A caller that trusts len(v) as the valid index range is safe, but any code that probes v[i] beyond size gets a wrong value with no error.",
+      "evidence": "getitem impl is `return v.buf[i]` (line 108) and setitem impl is `v.buf[i] = val` (line 116); neither references v.size. len is `return v.size` (line 100). create does `v.buf = numpy.empty(capacity, dtype=np_dtype); v.size = 0` (lines 87-89) so the buffer holds capacity uninitialized cells while size is 0. The test test_getitem_setitem (test/core/test_vector.py:29-44) sets `v.size = 2` by hand then reads v[0], v[1], confirming getitem indexes the raw buffer with the logical/raw distinction left to the caller.",
+      "recommendation": "If raw-buffer semantics are intended (matching numba array idiom), document on the getitem/setitem overloads that the index is unchecked against size and is only valid for 0 <= i < size; the caller owns the bound. If logical-vector semantics are intended, add an `i < v.size` check raising IndexError. Given the existing test deliberately manipulates v.size, the raw idiom appears intended, so a docstring note is the minimal fix.",
+      "confidence": "low"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "target": "libc_fmtio",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_fmtio.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. The printf-family bindings hold no NRT refcounts, allocate no meminfo, and hand no @cfunc to a C library, so the classic numbox MEM hazards (refcount imbalance, @cfunc exception swallow/leak, cfunc-data lifetime) do not arise. The varargs ABI promotion, pointer-as-intp casts, snprintf size handling, and the pure-Python NUL-terminated buffer write are all bounded and correct on the supported 64-bit platforms. No findings.",
+  "findings": []
+}

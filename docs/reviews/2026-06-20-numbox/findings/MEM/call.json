@@ -1,0 +1,12 @@
+{
+  "target": "call",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/abi.py",
+    "numbox/core/bindings/utils.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. _call_lib_func is a pure-value ABI shim over scalar / struct-by-value C types: it touches no NRT-managed objects (no meminfo, structref, reflected list), so there is no incref/decref surface to balance. Symbol resolution uses an extern declaration via get_or_insert_function (cache=True-safe across ASLR), and ll.address_of_symbol is correctly consumed only as a typing-time presence check, never baked into IR. sret and byval lowering, the 16-byte INT/INT eightbyte repack, alloca lifetimes, and the SysV optnone/noinline guard against llvmlite#300 copy-elision are all handled correctly per platform; the repack helpers over-align their {i64,i64} slots to avoid the misaligned-load UB. No memory, ABI, or refcount defect found.",
+  "findings": []
+}

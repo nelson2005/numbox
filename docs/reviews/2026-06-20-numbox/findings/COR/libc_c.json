@@ -1,0 +1,14 @@
+{
+  "target": "libc_c",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_c.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/abi.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on COR. Every libc wrapper in _c.py forwards its arguments to _call_lib_func in the exact C order, and each signatures_c entry matches the real C prototype's argument count, order, and width for all platforms numbox supports. The platform-variable-type trap (long/time_t) is correctly avoided: none of the affected functions (fseek/ftell/fsetpos/fgetpos/time/clock/strtol/strtoul) are exposed here. size_t and pointer parameters use intp, which is 64-bit on every supported ABI (win_x64, sysv_x86_64, aapcs64 per abi.py _current_platform, all of which reject non-64-bit hosts), so no truncation occurs.",
+  "findings": []
+}

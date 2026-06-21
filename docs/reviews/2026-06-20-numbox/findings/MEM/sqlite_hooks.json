@@ -1,0 +1,12 @@
+{
+  "target": "sqlite_hooks",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_hooks.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. _sqlite_hooks.py is a thin pointer-passing layer: six @proxy wrappers that forward db/callback/context pointers to the SQLite hook-registration functions via _call_lib_func. It contains no @cfunc callback bodies (so no exception-swallow / NRT-leak surface), no NRT/meminfo refcount handling, and only scalar (intp/int32/void) signatures (no struct-by-value, no sret, no eightbyte repack). cfunc lifetime and the @cfunc exception/error-signaling contract are explicitly and correctly delegated to the caller in the module docstring.",
+  "findings": []
+}

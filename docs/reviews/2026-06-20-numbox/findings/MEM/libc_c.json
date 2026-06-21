@@ -1,0 +1,14 @@
+{
+  "target": "libc_c",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_c.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. _c.py is a set of thin @proxy scalar-FFI wrappers (every signature uses intp/int32 args and returns) routed through _call_lib_func, which classifies them all as _CLASS_SCALAR (direct pass) -- so no struct-by-value, eightbyte, sret, or repack path is ever exercised, and there is no NRT/refcount/cfunc surface to leak. The platform-variable C-type hazard called out in the target notes (long/time_t -> register corruption on Windows LLP64) does not apply: those functions (fseek/time/strtol) are deliberately absent from this module; the only platform-variable types present are size_t (modeled as intp -- pointer-width, correct on every supported 64-bit ABI) and int (int32, correct everywhere). Library lifetime is handled correctly: load_lib(\"c\") caches and pins the CDLL handle for process lifetime, preventing the dlclose-after-return UAF of JIT-resolved extern symbols.",
+  "findings": []
+}

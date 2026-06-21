@@ -1,0 +1,35 @@
+{
+  "target": "proxy",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/proxy/proxy.py",
+    "numbox/utils/standard.py",
+    "docs/numbox.core.proxy.rst"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The proxy decorator's main code paths (signature selection, intrinsic/wrapper codegen, CompileResultWAP exposure, name-collision guard, proxy_if_available stubbing) are correct for the in-repo callers. One genuine latent correctness bug: the cache-anchor prepend math under-counts when the decorated function's first line is within the first 12 lines of its source file, so the wrapper's @njit no longer lands on the user's @proxy line and the documented findsource/TokenError hazard re-opens. A second, contained low-severity gap: the reserved-name guard checks only the wrapper name, not the intrinsic name it also defines.",
+  "findings": [
+    {
+      "id": "COR-proxy-1",
+      "severity": "medium",
+      "title": "Cache-anchor prepend mis-lands for functions in the first 12 lines of a file",
+      "file": "numbox/core/proxy/proxy.py",
+      "lines": "87-93",
+      "claim": "The anchor that makes the generated wrapper's @njit decorator land exactly on the user's @proxy line silently fails whenever func.__code__.co_firstlineno < njit_lineno_in_txt (= 13). For such a function prepend = max(0, co_firstlineno - 13) = 0, so the wrapper's @njit is compiled at file line 13 instead of at the real decorator line. That re-opens precisely the inspect.findsource backward-scan / TokenError hazard the mechanism is documented to prevent (docs/numbox.core.proxy.rst, 'The hazard this avoids'): findsource(wrapper) starts at line 13 and scans backward for r'^(\\s*@)', which can match an unrelated line or an '@' inside a docstring above it and then raise TokenError, or mis-anchor the cache stamp. No in-repo binding triggers it today (all @proxy decorations sit below line 13 because of import headers), but it is reachable by any downstream file (e.g. numbduck/numbarrow) that places a @proxy-decorated function near the top of a module.",
+      "evidence": "Line 88-91: `njit_lineno_in_txt = next(i + 1 for i, line in enumerate(code_lines) if line.startswith('@njit('))` then `prepend = max(0, func.__code__.co_firstlineno - njit_lineno_in_txt)`. code_txt (line 57-72) begins with a leading newline and an @intrinsic block, so the @njit line is at relative line 13 (confirmed by reconstructing code_txt and running the same `next(...)` generator: njit_lineno_in_txt = 13). When co_firstlineno is 1..12 the subtraction is negative and clamped to 0, so `prefixed = '\\n' * 0 + code_txt` keeps @njit at line 13. The docstring at lines 82-86 and docs/numbox.core.proxy.rst lines 24-51 state the wrapper's @njit MUST land at func.__code__.co_firstlineno for findsource to match on its first check; the clamp violates that invariant for early-in-file functions.",
+      "recommendation": "Detect and reject (or handle) the under-anchored case instead of clamping silently: if func.__code__.co_firstlineno < njit_lineno_in_txt, raise a clear error telling the user to move the @proxy function below line njit_lineno_in_txt, or restructure code_txt so the @njit line is line 1 (strip the leading blank line and emit the @intrinsic block AFTER the @njit wrapper, or build the prefix from a measured offset of 1). At minimum assert prepend produces co_firstlineno alignment so the failure is visible rather than a silent mis-anchor.",
+      "confidence": "high"
+    },
+    {
+      "id": "COR-proxy-2",
+      "severity": "low",
+      "title": "Reserved-name guard checks the wrapper name but not the intrinsic name it also defines",
+      "file": "numbox/core/proxy/proxy.py",
+      "lines": "80-81",
+      "claim": "The exec'd source defines TWO names: the intrinsic `_{func_proxy_name}` (e.g. `___cos`, line 59) and the wrapper `{func_proxy_name}` (e.g. `__cos`, line 70). The pre-exec guard only checks `ns.get(func_proxy_name)`, so a pre-existing intrinsic-name collision (a module global literally named `___cos`) is not reported and is silently shadowed inside `ns` during exec. Impact is contained because `ns` is a fresh merged dict (line 73-79), not the user's real module __dict__, so the user's module is not mutated and the returned dispatcher is still the intended wrapper — the only loss is the diagnostic ValueError the guard is meant to provide for the symmetric case.",
+      "evidence": "Line 59 defines `def _{func_proxy_name}(...)` (intrinsic) and line 70 defines `def {func_proxy_name}(...)` (wrapper). Guard at line 80-81: `if ns.get(func_proxy_name) is not None: raise ValueError(...)` — only the wrapper name is tested. `ns` is built at line 73-79 as `{**inspect.getmodule(func).__dict__, **{...}}` (a new dict), and `exec(code, ns)` (line 94) writes only into `ns`; `dispatcher = ns[func_proxy_name]` (line 95) reads the wrapper back. So a colliding `_{func_proxy_name}` would be overwritten in ns without warning, but cannot corrupt the user's module.",
+      "recommendation": "Extend the guard to also check the intrinsic name, e.g. test both `func_proxy_name` and `make_proxy_name(func_proxy_name)` (i.e. `_{func_proxy_name}`) against `ns`, so a reserved-name clash on either generated symbol raises the same ValueError.",
+      "confidence": "high"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "target": "sqlite_query",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_query.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/core/configurations.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/bindings/signatures.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. query_to_array materialises results entirely through numba-tracked array writes (scratch8 typed views + _copy_bytes into an out.view(np.uint8) buffer), correctly sidestepping the documented macOS-arm64 dead-code-elimination of raw-pointer stores. All buffer writes are width-bounded, the geometric-growth buffer is zero-initialised on each (re)allocation, the returned slice is .copy()'d into a fresh NRT-owned array (no shared-meminfo lifetime hazard), and there are no @cfunc bodies, manual incref/decref, or borrow/release pairs to unbalance. No memory, refcount, ABI, or UB defect found.",
+  "findings": []
+}

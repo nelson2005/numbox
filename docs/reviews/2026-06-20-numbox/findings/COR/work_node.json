@@ -1,0 +1,36 @@
+{
+  "target": "work_node",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/work/node.py",
+    "numbox/core/work/node_base.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Two correctness gaps found, both low/medium. The get_input bounds check only guards the upper bound (i >= num_inputs) and ignores negative i, so a negative index is silently passed to the typed List and returns the wrong element instead of raising. The name-based deduplication in the recursive traversals (_all_input_names / _all_end_nodes / all_end_nodes) collapses distinct nodes that share a name and provides no cycle guard, but the descent is otherwise correct for the DAG/unique-name contract these graphs are built under. No wrong-result bug found in the cast round-trip or the structref construction path.",
+  "findings": [
+    {
+      "id": "COR-work_node-1",
+      "severity": "medium",
+      "title": "get_input bounds check ignores negative indices",
+      "file": "numbox/core/work/node.py",
+      "lines": "81-88",
+      "claim": "ol_get_input only validates the upper bound. A negative i (e.g. get_input(-1)) passes num_inputs and the check `if i >= num_inputs` is False, so `self.inputs[i]` is evaluated with a negative index. numba's typed List applies Python-style negative indexing, so get_input(-1) silently returns the LAST input instead of raising the intended out-of-range NumbaError. The caller asked for input -1 (an invalid id) and gets a wrong node back rather than an error.",
+      "evidence": "Lines 83-87: `def _(self, i): num_inputs = len(self.inputs); if i >= num_inputs: raise NumbaError(...); return self.inputs[i]`. The guard is one-sided. The Python wrapper get_input at line 22-23 (`return cast(self._get_input(i), typeof(self))`) and the njit _get_input at line 25-27 pass i through unchecked, so any negative i reaches `self.inputs[i]`. numba typed List indexing mirrors Python list semantics (negative index = from-end), making get_input(-1) return inputs[num_inputs-1] silently. A large negative (i < -num_inputs) would instead raise an IndexError from the List, so the error message is inconsistent with the i>=num_inputs path.",
+      "recommendation": "Change the guard to `if i < 0 or i >= num_inputs:` so the existing NumbaError message covers the full invalid range, matching the index contract the message implies (\"Requested input {i} while the node has {num_inputs} inputs\").",
+      "confidence": "medium"
+    },
+    {
+      "id": "COR-work_node-2",
+      "severity": "low",
+      "title": "name-based dedup collapses distinct same-named nodes and recursion has no cycle guard",
+      "file": "numbox/core/work/node.py",
+      "lines": "101-148",
+      "claim": "all_inputs_names / all_end_nodes dedup purely on the string `name` (`if name_ not in names_`), so two structurally distinct input nodes that happen to share a name are reported once, losing one. Separately, the recursive helpers (_all_input_names line 109, _all_end_nodes line 134) descend into every input unconditionally; the name-dedup only suppresses re-appending, not re-descent, so the traversal terminates only because the graph is assumed acyclic. A cycle (or a self-referential input) would recurse until stack exhaustion rather than terminating. On a wide diamond it also re-walks shared subtrees (bounded-impact redundancy, not a wrong result).",
+      "evidence": "Line 107 `if name_ not in names_: names_.append(name_)` and line 132 `if name_ not in names_ and len(_cast(input_, NodeType).inputs) == 0:` key on name only. Line 109 `_all_input_names(input_, names_)` and line 134 `_all_end_nodes(input_, names_)` run for every input every time, with no visited-set on node identity and no cycle check. Termination relies entirely on the (undocumented) DAG + unique-name contract; there is no docstring on these methods stating it.",
+      "recommendation": "Document the unique-name + acyclic precondition on these methods, or guard re-descent with a visited set keyed on node identity (not name) so a cycle yields a defined error instead of stack overflow and shared subtrees are walked once.",
+      "confidence": "medium"
+    }
+  ]
+}

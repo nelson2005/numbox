@@ -1,0 +1,37 @@
+{
+  "target": "sqlite_tvf",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_tvf.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_vtable.py",
+    "numbox/utils/meminfo.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The NRT pinning lifecycle (incref via the strip-proof _incref_meminfo intrinsic in xFilter, single release_meminfo in xClose and on re-filter, both guarded by mi_p!=0) is balanced and leak-free on every path I traced; the cfunc bodies that allocate (xConnect/xOpen) free correctly on their error paths, scratch is sized 4*cp+1, and TVF strings stay TRANSIENT (correct, the per-cursor NRT array is replaced each xFilter). One real MEM/correctness defect: an exception in the user fn is swallowed at the xFilter cfunc boundary and reported to SQLite as SQLITE_OK with zero rows (silent wrong result) even though xFilter's own return code could surface SQLITE_ERROR. One low-severity n_hidden>=64 bitmask edge.",
+  "findings": [
+    {
+      "id": "MEM-sqlite_tvf-1",
+      "severity": "high",
+      "title": "User fn exception swallowed at xFilter cfunc boundary -> silent empty result instead of SQL error",
+      "file": "numbox/core/bindings/_sqlite_tvf.py",
+      "lines": "456-463",
+      "claim": "When the user's fn (or _tvf_xfilter_impl's NRT allocation) raises, numba's @cfunc boundary swallows the exception, prints to stderr, and returns the int32 zero default. _tvf_xfilter unconditionally returns SQLITE_OK, so the query completes successfully with zero rows: the caller of `SELECT * FROM f(...)` gets a silently-wrong empty result set rather than an error. This triggers on any fn that raises (bad arg, allocation failure inside fn, a bug in fn) and on a NOMEM from structref_meminfo/array materialization inside the njit impl.",
+      "evidence": "_tvf_xfilter has no try/except and returns the constant SQLITE_OK: `def _tvf_xfilter(cur, idx_num, idx_str, argc, argv):` ... `xfilter_impl(cur, argc, argv)` / `return SQLITE_OK` (lines 462-463). The generated _tvf_xfilter_impl (_XFILTER_SRC, lines 110-132) also has no try/except; it calls `result = {fn_call}` (line 125) where {fn_call} is `_fn(...)`. The inline comment (lines 458-461) acknowledges the swallow but asserts 'there is no handle to call sqlite3_result_error'. That is true for sqlite3_result_error, but xFilter signals failure via its OWN return code: a non-SQLITE_OK return from xFilter aborts the SQL statement with an error (every other cfunc here -- xConnect line 168, xOpen line 252, xColumn line 347 -- returns SQLITE_ERROR on `except Exception`). So the error CAN be surfaced; returning SQLITE_OK on failure is the defect.",
+      "recommendation": "Wrap the impl call in a bare try/except inside _tvf_xfilter (NOT try/finally -- numba 0.65.1 RERAISEs on finally) and return SQLITE_ERROR on exception, e.g. `try: xfilter_impl(cur, argc, argv); return SQLITE_OK except Exception: return SQLITE_ERROR`. This both surfaces the error to SQLite and guarantees the cfunc boundary is never crossed by an in-flight exception (matching the catch-only pattern used by the other TVF cfuncs).",
+      "confidence": "high"
+    },
+    {
+      "id": "MEM-sqlite_tvf-2",
+      "severity": "low",
+      "title": "xBestIndex bound_mask uses a 64-bit shift that is undefined for n_hidden >= 64",
+      "file": "numbox/core/bindings/_sqlite_tvf.py",
+      "lines": "192-202",
+      "claim": "bound_mask is a uint64 and the all-bound target is `(uint64(1) << uint64(n_hidden)) - uint64(1)`. A shift of a 64-bit value by >= 64 is undefined at the LLVM level (typically yields 0/poison). For n_hidden == 64 the target accidentally still equals UINT64_MAX (`0 - 1`) and matches a fully-set mask, but for n_hidden >= 65 the per-arg bit `uint64(1) << uint64(h)` for h>=64 also shifts out of range, so a hidden arg can never set its bit and xBestIndex would wrongly reject (or accept) plans. This is unreachable in practice (a TVF with >= 64 hidden scalar args is absurd) but is latent UB in the bitmask logic.",
+      "evidence": "`bound_mask = uint64(0)` (line 192); inside the loop `bound_mask |= uint64(1) << uint64(h)` (line 200); the all-bound check `if bound_mask != (uint64(1) << uint64(n_hidden)) - uint64(1): return SQLITE_CONSTRAINT` (lines 202-203). n_hidden comes from d[0].n_hidden = len(arg_tags), the number of TVF scalar arguments. No upper-bound guard exists on the arg count in _build_tvf_descriptor (lines 384-389 only validate tag kinds).",
+      "recommendation": "Either document/enforce a hidden-arg cap (e.g. raise in _build_tvf_descriptor if len(arg_tags) > 63) or use a count-based all-bound test that avoids the 64-bit shift. Low priority given the input is internal and absurd at that scale.",
+      "confidence": "medium"
+    }
+  ]
+}

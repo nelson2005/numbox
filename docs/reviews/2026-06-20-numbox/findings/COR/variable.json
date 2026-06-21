@@ -1,0 +1,31 @@
+{
+  "target": "variable",
+  "dimension": "COR",
+  "files_reviewed": ["numbox/core/variable/variable.py"],
+  "reviewer_model": "opus",
+  "summary": "The variable graph (topological order, external-variable discovery, diamond/fan-out cone selection in _collect_affected) is correct for the common single-override path. Two genuine correctness hazards remain: recompute silently discards a user-supplied override for a computed variable that is itself downstream of another simultaneously-overridden variable, and the QUAL_SEP='.' qual-name parsing via rsplit(.,1) mis-parses any variable or source name containing a dot.",
+  "findings": [
+    {
+      "id": "COR-variable-1",
+      "severity": "medium",
+      "title": "recompute silently discards an explicit override for a computed variable that is downstream of another overridden variable in the same call",
+      "file": "numbox/core/variable/variable.py",
+      "lines": "386-402",
+      "claim": "When a single recompute() call supplies explicit new values for two variables A and B where B (a Variables-source / formula node) transitively depends on A, B's user-supplied value is silently overwritten by recomputation from A. The docstring promises to honor 'new values of changed Variables coming from either External or Variables source', so the dropped B value is a wrong result.",
+      "evidence": "Line 397 assigns each changed variable's value directly: `values.get(variable).value = val` and adds it to `changed_vars` (line 398). Then `affected_nodes = self._collect_affected(changed_vars)` (line 399). In `_collect_affected` (lines 342-349) the stack is seeded with ALL changed_vars; popping A reaches `self.dependents.get(A)` which includes B's CompiledNode (B lists A as an input, so __post_init__ at lines 280-283 registered B under dependents[A]). B is therefore added to `affected`. Lines 400-401 then null every affected node (`values.get(node.variable).value = _null`), nulling B's just-assigned override, and line 402 `_calculate(affected_nodes, ...)` recomputes B from A's new value via `node.variable.formula(*args)` (line 377), overwriting the explicit val_B. There is no guard excluding directly-changed nodes from the affected/recompute set.",
+      "recommendation": "After collecting affected_nodes, exclude any node whose variable is in changed_vars from the null+recompute pass (e.g. `affected_nodes = [n for n in affected_nodes if n.variable not in changed_vars]`), so an explicit override is preserved and treated as an injected value (matching the intended single-override semantics already correct on line 397). Document the precedence rule in the recompute docstring.",
+      "confidence": "high"
+    },
+    {
+      "id": "COR-variable-2",
+      "severity": "medium",
+      "title": "QUAL_SEP='.' qualified-name parsing via rsplit('.',1) mis-parses any source or variable name containing a dot",
+      "file": "numbox/core/variable/variable.py",
+      "lines": "94-105, 494, 579",
+      "claim": "Qualified names are formed as f\"{source}.{name}\" (make_qual_name, line 105) and later decomposed with `rsplit(QUAL_SEP, 1)` (lines 494, 579). If a variable name (or source name) contains a '.', the round-trip is not invertible: rsplit splits on the LAST dot, so a name like 'a.b' under source 's' yields qual 's.a.b' which decomposes to source='s.a', name='b'. This produces a KeyError 'Unknown source s.a' in _topological_order/_get_source (lines 471, 495-496) and explain (line 579), or — if a source 's.a' with a variable 'b' happens to exist — a silently wrong lookup resolving to the wrong Variable. No validation rejects dots in names (Variables.__init__ line 216 and External auto-create line 134 accept arbitrary name strings).",
+      "evidence": "Line 94 `QUAL_SEP = \".\"`; line 105 `return f\"{namespace_name}{QUAL_SEP}{var_name}\"`; line 494 `source_name, variable_name = qual_name.rsplit(QUAL_SEP, 1)`; identical at line 579. Names flow in unvalidated from VarSpec via `Variables.__init__` (`{variable[\"name\"]: Variable(source=self.name, **variable) ...}`, line 216) and from `External.__getitem__` (`Variable(name=name, source=self.name)`, lines 134-137); no character check exists on either path.",
+      "recommendation": "Either validate at Variable/Namespace construction that neither source nor name contains QUAL_SEP (raise a clear error), or stop round-tripping through a flat string: carry (source, name) tuples through _topological_order/recompute/explain rather than reconstructing and re-splitting qual_name strings. Document '.' as a reserved character if validation is the chosen route.",
+      "confidence": "medium"
+    }
+  ]
+}

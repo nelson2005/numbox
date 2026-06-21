@@ -1,0 +1,47 @@
+{
+  "target": "sqlite_vtable",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_vtable.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/cstrings.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Well-factored module: the file composes the canonical lowlevel/typemap helpers (load_unaligned/store_at/_cast_int_to_void_p/_nul_trimmed_len/utf32_to_utf8) rather than reinventing them, keeps internals underscore-prefixed with register_table as the only public surface, and the apparent tag-ladder duplication across _xcolumn / _cell_value_i64 / _cell_value_f64 is intentional and documented (int/float call sites are kept separate to avoid lossy phi-unification). One genuine simplification finding: _VTableHandle is a single-use, redundant keep-alive wrapper around _BuiltDescriptor, which is already itself the keep-alive. Two low-severity notes on a no-op variadic and a stale docstring constant.",
+  "findings": [
+    {
+      "id": "DES-sqlite_vtable-1",
+      "severity": "low",
+      "title": "_VTableHandle is a redundant single-use wrapper around _BuiltDescriptor (which is already the keep-alive)",
+      "file": "numbox/core/bindings/_sqlite_vtable.py",
+      "lines": "730-739, 806-807",
+      "claim": "register_table builds `built` (a _BuiltDescriptor, whose docstring states it 'Keep[s]-alive ... the descriptor array, the buffers it points into, and the underlying column data array(s)') and then immediately wraps it in a second keep-alive class: `handle = _VTableHandle(built)`, anchored via `_DATA_ANCHOR[client_ptr] = handle`. _BuiltDescriptor already holds every object that must outlive the registration (c, bases, strides, tags, widths, schema, arrays), and `client_ptr = built.c.ctypes.data` keeps `built.c` reachable through `built`. Anchoring `built` directly would keep exactly the same graph alive; _VTableHandle adds an extra indirection layer with no behavioral contribution (its own docstring says 'SQLite reads the array buffer directly' and nothing reads _keep). It is a single-use class — grep shows _VTableHandle is constructed only at line 806.",
+      "evidence": "Line 153-157: `class _BuiltDescriptor: \"\"\"Keep-alive for the descriptor array, the buffers it points into, and the underlying column data array(s)...\"\"\"`. Line 730-738: `class _VTableHandle: \"\"\"Keeps the array + descriptor + buffers alive...\"\"\" __slots__ = (\"_keep\",); def __init__(self, *objs): self._keep = objs`. Line 806-807: `handle = _VTableHandle(built); _register_with_destroy(db, name, _THE_MODULE_P, built.c.ctypes.data, handle)`. grep across numbox/ + test/ shows _VTableHandle referenced only at its definition (730) and its sole construction (806); _BuiltDescriptor only at definition (153) and creation (197). The two classes have overlapping, near-identical docstrings describing the same keep-alive purpose.",
+      "recommendation": "Drop _VTableHandle and anchor the _BuiltDescriptor directly: `_DATA_ANCHOR[client_ptr] = built` (pass `built` as the handle into _register_with_destroy). Local, low-risk — the GC reachability is identical (built already transitively keeps every buffer + the column arrays alive, and client_ptr derives from built.c). Removes one class and one allocation per registration.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-sqlite_vtable-2",
+      "severity": "low",
+      "title": "_VTableHandle.__init__ uses variadic *objs but is only ever called with one object",
+      "file": "numbox/core/bindings/_sqlite_vtable.py",
+      "lines": "737-738",
+      "claim": "_VTableHandle.__init__(self, *objs) accepts an arbitrary number of objects into self._keep, but the only call site (line 806) passes exactly one (`built`). The variadic signature is speculative flexibility with no caller — it suggests the class once held multiple separate keep-alives that have since been consolidated into _BuiltDescriptor. Harmless but misleading about the design.",
+      "evidence": "Line 737-738: `def __init__(self, *objs): self._keep = objs`. Sole call site line 806: `handle = _VTableHandle(built)` — one positional arg. No other construction exists (grep confirmed).",
+      "recommendation": "Moot if DES-sqlite_vtable-1 is taken (class removed). Otherwise narrow to a single explicit parameter: `def __init__(self, obj): self._keep = obj`.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-sqlite_vtable-3",
+      "severity": "low",
+      "title": "Stale numeric literal in _int_float_cmp comment: 'r >= 2**63' annotates the boundary 9.223372036854775808e18",
+      "file": "numbox/core/bindings/_sqlite_vtable.py",
+      "lines": "498-502",
+      "claim": "Minor comment/code drift. The guard at line 498 compares against the literal -9.223372036854775808e18 with comment 'r < INT64_MIN -> i > r', and line 499 against +9.223372036854775808e18 with 'r >= 2**63 > INT64_MAX -> i < r'. The two literals share the same magnitude (2**63), but the INT64_MIN comment describes -2**63 (which IS representable as int64) while the code uses strict `<` so that the exact value -2**63 falls through to the `int64(r)` truncation path at line 502. The logic is correct, but the paired comments using 'INT64_MIN' and '2**63' for the same magnitude with asymmetric operators (`<` vs `>=`) makes the boundary handling harder to verify than necessary.",
+      "evidence": "Line 498: `if r < -9.223372036854775808e18:   # r < INT64_MIN -> i > r`. Line 499: `if r >= 9.223372036854775808e18:   # r >= 2**63 > INT64_MAX -> i < r`. Line 502: `y = int64(r)                       # truncates toward zero; r is in [INT64_MIN, 2**63)`. The line-502 comment correctly states the surviving range is [INT64_MIN, 2**63), confirming -2**63 is intentionally handled by truncation, not the early return — but the line-498 comment 'r < INT64_MIN' could read as if -2**63 takes the early branch.",
+      "recommendation": "Align the comment wording with the half-open interval already stated on line 502, e.g. note on line 498 that the strict `<` deliberately lets r == -2**63 (== INT64_MIN, exactly representable) fall through to the exact-truncation path. Pure comment edit, no code change.",
+      "confidence": "medium"
+    }
+  ]
+}

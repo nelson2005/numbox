@@ -1,0 +1,24 @@
+{
+  "target": "call",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/abi.py",
+    "numbox/core/bindings/utils.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "call.py is well-factored on the DES dimension: ABI classification is cleanly delegated to abi.py, the literal-str extraction is shared via utils.extract_literal_str, the presence-only func_p_as_int check is intentional and documented, and the two repack helpers are genuine inverses (not redundant). The only real finding is a low-severity micro-duplication: the {i64,i64} literal-struct LLVM type is reconstructed in three places.",
+  "findings": [
+    {
+      "id": "DES-call-1",
+      "severity": "low",
+      "title": "{i64,i64} literal struct type reconstructed in three places",
+      "file": "numbox/core/bindings/call.py",
+      "lines": "176-177, 252-253, 272-273",
+      "claim": "The canonical eightbyte-pair LLVM type `llir.LiteralStructType([llir.IntType(64), llir.IntType(64)])` is hand-constructed identically in three separate locations (the return-repack branch of the codegen closure, `_repack_to_i64_pair`, and `_repack_from_i64_pair`). This is a small maintenance hazard: the repack contract hinges on this exact shape, and three copies invite drift if the shape ever needs to change (e.g. an alignment tweak). No functional defect — purely a duplication smell.",
+      "evidence": "Line 176-177 (in codegen, needs_ret_repack branch): `i64x2_ll_ty = llir.LiteralStructType([llir.IntType(64), llir.IntType(64)])`. Identical text at line 252-253 inside `_repack_to_i64_pair`: `i64x2_ll_ty = llir.LiteralStructType([llir.IntType(64), llir.IntType(64)])`. Identical text again at line 272-273 inside `_repack_from_i64_pair`. All three describe the same canonical `{i64, i64}` eightbyte-pair shape that the repack workaround for llvmlite#300 depends on.",
+      "recommendation": "Hoist a single module-level constant, e.g. `_I64X2_LL_TY = llir.LiteralStructType([llir.IntType(64), llir.IntType(64)])`, and reference it at all three sites. LLVM IR type objects are pure value descriptors, so sharing one instance is safe. Local, low-risk, removes the drift surface and names the shared invariant.",
+      "confidence": "high"
+    }
+  ]
+}

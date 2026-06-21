@@ -1,0 +1,35 @@
+{
+  "target": "libc_fmtio",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_fmtio.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The %n rejection regex is correct and exhaustive (BSD 'q', MS I32/I64, %%n vs %%%n all handled), length-modifier stripping for pure-Python is solid, and the snprintf C99 size/NUL semantics match between modes. Two genuine correctness issues found: (1) a cross-mode output divergence where _python_fmt_compat strips a length modifier out of a literal %%-escaped sequence; (2) no format-spec / argument cross-validation in the @njit path, so a spec/type mismatch (e.g. %d + float) silently miscompiles where pure-Python's % operator raises.",
+  "findings": [
+    {
+      "id": "COR-libc_fmtio-1",
+      "severity": "low",
+      "title": "_python_fmt_compat strips length modifier from a literal %%-escaped sequence (cross-mode output divergence)",
+      "file": "numbox/core/bindings/_fmtio.py",
+      "lines": "154-161",
+      "claim": "In pure-Python mode, a format string containing a %%-escape immediately followed by text that looks like a length-modifier + conversion letter (e.g. \"%%ld\", \"value is 50%%ld\") has its length modifier wrongly stripped, so pure-Python output differs from @njit/libc output. \"%%ld\" should print the literal characters \"%ld\" in BOTH modes; instead pure-Python prints \"%d\". This breaks the module's stated invariant that the same source runs unchanged in either mode (module docstring lines 5-15).",
+      "evidence": "_LENGTH_MODIFIER_RE (line 154-156) is `%([-+0# ]*[0-9*]*\\.?[0-9*]*)(hh|ll|h|l|L|j|z|t|q|I32|I64)([diouxXfFeEgGaAcsp])`. _python_fmt_compat (line 159-161) does `_LENGTH_MODIFIER_RE.sub(r'%\\1\\3', fmt)` with NO prior %%-stripping. For input '%%ld' the regex matches the SECOND '%' of the escape pair against directive `%ld`, dropping the 'l'. Verified at runtime: `_python_fmt_compat('%%ld') == '%%d'` and `'%%d' % () == '%d'`, whereas libc given the literal '%%ld' emits '%ld'. Also confirmed: 'value is 50%%ld of total' -> '%d' form. Contrast with _reject_percent_n_or_raise (line 252) which DOES guard this exact hazard: `stripped = fmt_str.replace('%%', '\\x00\\x00')` before matching — the length-modifier path simply omits that same step.",
+      "recommendation": "Mirror the %n checker: in _python_fmt_compat, replace '%%' with a sentinel (e.g. '\\x00\\x00') before applying _LENGTH_MODIFIER_RE.sub, then restore '%%' afterward — or anchor the regex so it cannot start on the second '%' of an escaped pair. The canonical pattern already exists at line 252.",
+      "confidence": "high"
+    },
+    {
+      "id": "COR-libc_fmtio-2",
+      "severity": "medium",
+      "title": "No format-spec / argument cross-validation in @njit path: spec-vs-type or spec-vs-count mismatch silently miscompiles where pure-Python raises",
+      "file": "numbox/core/bindings/_fmtio.py",
+      "lines": "210-227, 271-301",
+      "claim": "The @njit codegen layer validates each arg is a printf-able scalar (_validate_writer_arg_type) but never cross-checks the argument types/count against the conversion specifiers in the literal format string. A type mismatch such as printf(\"%d\\n\", 3.5) is accepted: the float64 is passed through in an SSE register while libc reads a GP integer register for %d, returning a silent wrong result. A count mismatch such as printf(\"%d %d\\n\", 5) reads an undefined varargs slot (garbage / crash). In pure-Python mode the very same calls raise cleanly (Python's % raises TypeError 'not enough arguments for format string' / '%d format: a number is required, not float'), so the two modes diverge: one errors, the other miscompiles. Triggers whenever a caller's specifiers don't line up with the supplied args by type or count in @njit.",
+      "evidence": "_validate_writer_arg_type (line 210-227) only checks `isinstance(unliteral(ty), (Float, Integer, Boolean, UnicodeType))` per-arg — it has the literal fmt_str available in the intrinsic (extract_literal_str at e.g. line 312) but never parses its specifiers nor compares specifier count to len(args_ty). _emit_variadic_call (line 271-301) promotes args via _promote_for_varargs and emits `builder.call(fn, ...)` with `var_arg=True` (line 299) — no specifier-driven typing. By contrast the pure-Python wrappers (e.g. printf line 537: `text = _python_fmt_compat(fmt) % args`) let Python's % operator enforce spec/arg agreement and raise on mismatch. The %n regex already parses specifiers, so a specifier walk is feasible here.",
+      "recommendation": "At typing time, scan the literal format string for conversion specifiers (reuse/extend the existing specifier regex) and verify (a) the specifier count equals len(args_ty) and (b) each specifier's expected class (integer d/i/o/u/x/X/c, float e/f/g/a, string s, pointer p) matches the corresponding arg type — raising TypingError on mismatch. This restores cross-mode parity (Python already raises) and closes the silent-wrong-result / undefined-varargs-read window. If full type matching is deemed too strict, at minimum enforce the specifier-count check, which is unambiguous and catches the crash-prone under-supply case.",
+      "confidence": "high"
+    }
+  ]
+}

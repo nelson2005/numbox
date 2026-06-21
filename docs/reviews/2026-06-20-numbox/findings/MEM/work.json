@@ -1,0 +1,15 @@
+{
+  "target": "work",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/work/work.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/core/work/node.py",
+    "numbox/core/work/node_base.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. work.py is pure numba structref/intrinsic code with no @cfunc/C-ABI boundary, no raw unaligned pointer access, and no symbol resolution, so the cfunc-exception-swallow, struct-by-value-ABI, align-1, and cache=True hunts do not apply. The NRT refcount discipline across all generated kernels (_calculate_/_loader_/_combine_/_inputs_vector_) and the supporting intrinsics (_get_source_N, _call_derive, _cast_to_work_data, as_node) is balanced: borrowed values are incref'd exactly when promoted to owned locals or stored into a struct field, and numba's auto-decref of locals plus struct-setattr decref-of-old close every path including the early returns.",
+  "findings": []
+}

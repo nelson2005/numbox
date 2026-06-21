@@ -1,0 +1,25 @@
+{
+  "target": "work_node",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/work/node.py",
+    "numbox/core/work/node_base.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/work/work.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Largely clean and idiomatic: the Python-proxy / @njit-shim / overload_method triple repeated across the Node methods is the standard StructRefProxy bridge pattern (matching work.py and node_base.py), not duplication to remove. The one real design issue is that each recursive traversal is written twice — once as a module-level @njit helper and once again, body-inlined, inside the matching overload — so a logic change must be kept in sync across two near-identical copies.",
+  "findings": [
+    {
+      "id": "DES-work_node-1",
+      "severity": "low",
+      "title": "all_inputs_names / all_end_nodes traversal body duplicated between module helper and overload",
+      "file": "numbox/core/work/node.py",
+      "lines": "101-148",
+      "claim": "The recursive traversal logic for collecting input names exists in two near-identical copies: the module-level @njit helper `_all_input_names` (101-109) and the body inlined inside `ol_all_inputs_names` (112-123). The same duplication repeats for end-node collection: `_all_end_nodes` (126-134) vs `ol_all_end_nodes` (137-148). The overload re-implements the helper's loop (iterate inputs, dedup-append name, recurse) instead of delegating to it, so any change to the dedup/recursion rule (e.g. fixing a traversal-order or visited-set bug) must be made in two places and can silently drift.",
+      "evidence": "Helper `_all_input_names` (104-109): `for i in range(len(node.inputs)): input_ = node.get_input(i); name_ = input_.name; if name_ not in names_: names_.append(name_); _all_input_names(input_, names_)`. Overload `ol_all_inputs_names` (116-122) repeats the same loop verbatim against `self` before calling `_all_input_names(input_node, names)`. The overload could instead be just `names = List.empty_list(unicode_type); _all_input_names(self, names); return names`. The `_all_end_nodes` (129-134) vs `ol_all_end_nodes` (141-147) pair has the identical structure with the extra `len(_cast(input_, NodeType).inputs) == 0` leaf test duplicated on both sides.",
+      "recommendation": "Have each overload allocate the result list and delegate to the corresponding module-level recursive helper rather than re-inlining the first level of the loop, e.g. `def _(self): names = List.empty_list(unicode_type); _all_input_names(self, names); return names`. The helper already accepts a NodeType-castable node (it `_cast(node_, NodeType)` on entry), and `self` is a NodeType here, so the single delegation is type-compatible and removes the second copy. Low-risk, local change.",
+      "confidence": "high"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "target": "sqlite_hooks",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_hooks.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the DES dimension. _sqlite_hooks.py is a minimal, well-factored thin-wrapper module that follows the documented 'Adding a New Binding' pattern exactly: each of the six hook wrappers is a one-line @proxy-decorated call to _call_lib_func, __all__ matches the public surface, naming/argument order are consistent with the C API and sibling modules, the docstring's callback shapes are accurate, and there is no dead code, no reinvented primitive, and no duplication beyond the intentional per-function wrapper idiom shared across all ~25 binding files. No findings.",
+  "findings": []
+}

@@ -1,0 +1,69 @@
+{
+  "target": "work",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/work/work.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/core/work/node.py",
+    "numbox/core/work/node_base.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "work.py is generally well-factored, but carries one piece of dead state (a write-only registry), two redundant namespace injections of already-module-level names, and a clearly-collapsible four-way duplication of the registry-cached codegen skeleton across ol_calculate/ol_load/ol_combine/ol_make_inputs_vector. There is also minor copy-paste between Work and Node for get_inputs_names/depends_on. All findings are low/medium, local, and low-risk to fix.",
+  "findings": [
+    {
+      "id": "DES-work-1",
+      "severity": "low",
+      "title": "_source_getter_registry is write-only dead state",
+      "file": "numbox/core/work/work.py",
+      "lines": "169,211-216",
+      "claim": "_source_getter_registry is populated but never read; it does not gate any work, so it is dead state that misleads a reader into thinking source-getter generation is memoized when it is not. ensure_presence_of_source_getters_in_ns unconditionally recompiles and re-execs the source-getter code for every index on every call.",
+      "evidence": "Line 169 `_source_getter_registry = {}`. The only other reference (grep confirmed module-wide) is line 216 `_source_getter_registry[source_i] = True` inside the unconditional loop in `ensure_presence_of_source_getters_in_ns` (lines 211-216): `for source_i in range(num_sources_): source_getter_code_txt = _make_source_getter(source_i); source_getter_code = compile(...); exec(source_getter_code, ns_); _source_getter_registry[source_i] = True`. The loop body never consults the registry to skip already-generated indices, so the dict's value is never used.",
+      "recommendation": "Either delete `_source_getter_registry` entirely (the generated `_get_source_{i}` names already land in `ns`, so re-exec is harmless overwrite), or actually use it to short-circuit: `if source_i in _source_getter_registry: continue`. Deleting is the simpler surgical change consistent with the repo's bias.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-work-2",
+      "severity": "low",
+      "title": "Redundant ns overrides re-inject already-module-level names (new, boolean, Dict)",
+      "file": "numbox/core/work/work.py",
+      "lines": "346,414",
+      "claim": "Two overload methods build their exec namespace by overriding the module dict with names that are already module-level imports, so the override adds nothing and falsely signals that these names are special to the generated code.",
+      "evidence": "Line 414 `ns = {**getmodule(_file_anchor).__dict__, **{\"new\": new}}` — but `new` is imported at module top (line 9 `from numba.experimental.structref import define_boxing, new`) and is therefore already in `getmodule(_file_anchor).__dict__`; moreover `_make_inputs_vector_code` (lines 377-396) never references `new` (it uses `List.empty_list`, `is_not_null`, `_cast`, `_get_source_*`). Line 346 `ns = {**getmodule(_file_anchor).__dict__, **{\"boolean\": boolean, \"Dict\": Dict}}` — both `boolean` (line 6) and `Dict` (line 11) are already module-level imports, so the override re-binds the same objects under the same names.",
+      "recommendation": "Drop the `**{...}` overrides and use `ns = getmodule(_file_anchor).__dict__` at both lines 346 and 414 (matching the plain form already used at lines 232 and 297). If a future intent is to isolate the exec namespace, that should be a deliberate copy at all four sites, not an ad-hoc override at two.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-work-3",
+      "severity": "medium",
+      "title": "Four-way duplication of the registry-cached codegen skeleton",
+      "file": "numbox/core/work/work.py",
+      "lines": "219-239,287-304,336-353,402-421",
+      "claim": "ol_calculate, ol_load, ol_combine, and ol_make_inputs_vector each repeat the identical skeleton: read sources_ty/num_sources, look up a per-method registry, return on hit, build ns, call ensure_presence_of_source_getters_in_ns, compile a per-method code string, exec, cache the resulting function in the registry, return it. The only per-method variation is the code-builder function, the registry object, the exec'd function name, and the ns extras. Maintaining four copies invites the kind of drift already visible in finding DES-2.",
+      "evidence": "ol_load (287-304): `sources_ty = work_ty.field_dict[\"sources\"]; num_sources = sources_ty.count; _loader = _loader_registry.get(num_sources, None); if _loader is not None: return _loader; ns = getmodule(_file_anchor).__dict__; ensure_presence_of_source_getters_in_ns(num_sources, ns); code_txt = _make_loader_code(num_sources); code = compile(code_txt, getfile(_file_anchor), mode=\"exec\"); exec(code, ns); _loader = ns[\"_loader_\"]; _loader_registry[num_sources] = _loader; return _loader`. ol_combine (336-353) and ol_make_inputs_vector (411-421) are line-for-line the same shape (different registry, code-builder, ns, and `ns[\"_..._\"]` key); ol_calculate (229-239) is the same with the leading NoneType short-circuit. The registries `_calculate_registry`/`_loader_registry`/`_combine_registry`/`_inputs_vector_registry` (208,284,333,399) only exist to serve this skeleton.",
+      "recommendation": "Extract one helper, e.g. `_codegen_method(num_sources, registry, make_code, exec_name, ns_extras=None)`, that does the registry lookup, ns build (`getmodule(_file_anchor).__dict__` plus optional extras), `ensure_presence_of_source_getters_in_ns`, compile/exec, cache, and return. Each overload then becomes a one-line call. Low risk: behavior-preserving refactor of internal codegen, no public-API change.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-work-4",
+      "severity": "low",
+      "title": "get_inputs_names and depends_on copy-pasted between Work and Node",
+      "file": "numbox/core/work/work.py",
+      "lines": "367-374,454-465",
+      "claim": "Work.ol_get_inputs_names is byte-identical to Node.ol_get_inputs_names, and Work.ol_depends_on duplicates Node.ol_depends_on's structure; the two sibling wrappers will drift independently.",
+      "evidence": "work.py 367-374 `def _(self): names_ = List.empty_list(unicode_type); for s in self.inputs: names_.append(s.name); return names_` is identical to node.py 91-98 (same body). work.py ol_depends_on (454-465) mirrors node.py ol_depends_on (151-161): both branch on `isinstance(obj_ty, (Literal, UnicodeType,))`, both define `_(self, name_)` returning `name_ in <node>.all_inputs_names()` and `_(self, obj_)` returning `obj_.name in <node>.all_inputs_names()`; Work routes through `self.as_node()` first while Node uses `self` directly.",
+      "recommendation": "Low-priority: the Work variants differ only by an `as_node()` hop, so full unification is awkward across the two StructRef classes; at minimum factor the inner names-collection body (`List.empty_list(unicode_type)` + append loop) into a shared njit helper to keep the two get_inputs_names in sync. Acceptable to leave as-is given the small size and StructRef-class boundary — note the drift risk.",
+      "confidence": "medium"
+    },
+    {
+      "id": "DES-work-5",
+      "severity": "low",
+      "title": "assert-after-def placement inconsistent with Node sibling",
+      "file": "numbox/core/work/work.py",
+      "lines": "460-465",
+      "claim": "In ol_depends_on the `assert isinstance(obj_ty, WorkTypeClass)` is placed after the inner `def _` in the else branch, so the type guard runs after the function object is built rather than before it; the Node sibling places the same guard before its def. Both are reachable, but the ordering inconsistency is a small readability/consistency drift.",
+      "evidence": "work.py 461-465: `else:` then `def _(self, obj_): ... return obj_.name in node.all_inputs_names()` then `assert isinstance(obj_ty, WorkTypeClass), f\"Cannot handle {obj_ty}\"` then (outside else) `return _`. Compare node.py 153-161 where the else branch is `assert isinstance(obj_ty, NodeTypeClass), ...` first, then `def _`.",
+      "recommendation": "Move the assert above the `def _` in the else branch to match node.py ordering (guard-then-build). Pure consistency; no behavior change.",
+      "confidence": "high"
+    }
+  ]
+}

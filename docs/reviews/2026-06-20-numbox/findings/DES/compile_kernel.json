@@ -1,0 +1,58 @@
+{
+  "target": "compile_kernel",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/variable/compile_kernel.py",
+    "numbox/core/variable/utils.py",
+    "numbox/core/variable/_kernel_partition.py",
+    "numbox/utils/fingerprint.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "A dense but well-factored compiler. The shared kernel-source assembly (_assemble_source), liveness/run helpers, and content-addressed digest are correctly centralized and reused. The one substantive DES issue is a near-duplicated segment-orchestration loop: the eager Case-B build in compile_kernel() reimplements, line-for-line, the run -> (_PyStep chain | jit Segment + _JitStep) construction already in _discover_and_run, with the Python-run input computation written two different ways for the same result. A couple of low-severity items (a computed-only-for-a-comment value, a duplicated inline sort-key lambda).",
+  "findings": [
+    {
+      "id": "DES-compile_kernel-1",
+      "severity": "medium",
+      "title": "Case-B eager segment loop duplicates _discover_and_run's run-orchestration",
+      "file": "numbox/core/variable/compile_kernel.py",
+      "lines": "906-934",
+      "claim": "The eager Case-B build loop reimplements the same `for kind, run_nodes in runs:` orchestration already implemented in `_discover_and_run` (lines 450-485): both build a `_PyStep` chain + a python `Segment` (with reasons) for python runs, and for jit runs both call `segment_liveness` -> `_generate_segment_body` -> `_compile` -> `disp.compile(...)` -> `_JitStep` + jit `Segment`. The author flags this explicitly at line 907 ('Same segment structure as _discover_and_run, but with declared types and a static demotion set'). The only real differences are (a) declared types vs runtime `typeof` for the `disp.compile` arg, and (b) `seg_sigs` folded into the digest. Two copies of a ~30-line non-trivial loop must be kept in lockstep: a future change to liveness handling, Segment fields, or step construction has to be made in both places or the eager-declared and discovered plans silently diverge.",
+      "evidence": "compile_kernel.py:908 `for kind, run_nodes in runs:` ... 911-915 `_PyStep(var=..., py_callable=getattr(n.variable.formula, \"py_func\", n.variable.formula), in_vars=tuple(n.inputs))` ... 924-930 `live_in, live_out = segment_liveness(...)`, `_generate_segment_body(...)`, `_compile(...)`, `disp.compile(...)`, `_JitStep(...)`. The identical shapes appear in _discover_and_run at 458-462 (`_PyStep(...)`) and 471-479 (`segment_liveness` / `_generate_segment_body` / `_compile` / `disp.compile` / `_JitStep`). Line 907 comment confirms intent to mirror.",
+      "recommendation": "Extract a single `_build_plan(runs, *, idents, jit_options, cache, flags, external, required_vars, order, live_in_types)` helper in _kernel_partition.py (or compile_kernel.py) returning `(steps, segments)`, parameterized by how each jit run's compile-types are obtained (a callable `live_in -> tuple[type]`: declared `v.params.type` for Case B, `typeof(values[v])` for discovery) and whether `seg_sigs` are folded into `_compile`. Call it from both Case B and `_discover_and_run`. This is local and low risk: both sites already produce structurally identical `steps`/`segments`, and a shared helper removes the lockstep-maintenance hazard the inline comment is warning about.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-compile_kernel-2",
+      "severity": "low",
+      "title": "Python-run live-in computation written two different ways for the same result",
+      "file": "numbox/core/variable/compile_kernel.py",
+      "lines": "454-462, 917-919",
+      "claim": "The two duplicated loops (see DES-compile_kernel-1) compute the python-segment `inputs` set with two distinct idioms that are functionally equivalent, which obscures that they are the same computation and invites a real divergence if one is edited. `_discover_and_run` uses a running `produced` set (`ins.update(i for i in n.inputs if i not in produced); produced.add(n.variable)`), while Case B uses a one-shot set comprehension excluding any run member (`{i for n in run_nodes for i in n.inputs if i not in {x.variable for x in run_nodes}}`). Since a python run is topologically ordered, both exclude exactly the run-internal producers, so the resulting `inputs` tuple is identical -- but a reader cannot tell that at a glance, and the recomputed inner `{x.variable for x in run_nodes}` set on every iteration in the Case-B form is needless work.",
+      "evidence": "compile_kernel.py:454-462 builds `ins` via running `produced`; 917-919 builds the same set via `{i for n in run_nodes for i in n.inputs if i not in {x.variable for x in run_nodes}}`. Both feed a python `Segment(... inputs=tuple(sorted(...)) ...)`. Within a python run all members are demoted and `order` is topological, so 'not produced earlier in the run' and 'not a run member' select the same external/earlier inputs.",
+      "recommendation": "Fold this into the shared helper recommended in DES-compile_kernel-1 so there is one canonical computation of the python-run live-ins. If kept separate, lift `run_set = {x.variable for x in run_nodes}` out of the comprehension in the Case-B form so it is computed once.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-compile_kernel-3",
+      "severity": "low",
+      "title": "in_names in _emit_lines is computed only to embed in a source comment",
+      "file": "numbox/core/variable/compile_kernel.py",
+      "lines": "195-196",
+      "claim": "`in_names` is built on every node solely to be interpolated into the trailing `# 'qual' = f('in0', 'in1')` comment of the generated source line. It contributes nothing executable and is part of the kernel source text -- which feeds the content-addressed digest (the whole `source` is hashed at _compile line 284) -- so the readability comment is also load-bearing for cache identity. This is intentional readability scaffolding, but worth noting because it couples a debug-comment string to the cache key: an inert change to how `in_names` renders would invalidate every kernel anchor.",
+      "evidence": "compile_kernel.py:195 `in_names = \", \".join(repr(inp.qual_name()) for inp in node.inputs)`; 196 `lines.append(f\"    {temp} = {fg}({arg_ids})  # {var.qual_name()!r} = f({in_names})\")`. The assembled `source` (via _assemble_source) is hashed verbatim into the digest at _compile line 283-291 ('ck-digest-v3\\n' + source + ...).",
+      "recommendation": "Leave as-is (the comment aids inspection of `CompiledKernel.source` and the coupling to the digest is harmless -- a comment change correctly re-keys the anchor). Flagging only so a future 'clean up the comment' edit is understood to be a cache-invalidating change, not a cosmetic one.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-compile_kernel-4",
+      "severity": "low",
+      "title": "Identical inline qual_name sort-key lambda duplicated across helpers",
+      "file": "numbox/core/variable/compile_kernel.py",
+      "lines": "464",
+      "claim": "The one-line `key = lambda v: v.qual_name()` sort key (each with a `# noqa: E731` to silence the lambda-assignment warning) is repeated in compile_kernel._discover_and_run (line 464) and twice in _kernel_partition.py (segment_liveness line 196, cone_liveness line 227). It is the canonical 'sort Variables by qual_name' ordering used everywhere segments/liveness are built. A tiny module-level `def _by_qual(v): return v.qual_name()` would remove the three copies and the three noqa pragmas.",
+      "evidence": "compile_kernel.py:464 `key = lambda v: v.qual_name()   # noqa: E731 - tiny local sort key`; _kernel_partition.py:196 and :227 the same lambda with the same noqa. `_kernel_partition.py` already has a `_qual(node)` for CompiledNode (line 104), but no shared Variable-level key.",
+      "recommendation": "Add a single `_by_qual(v): return v.qual_name()` in _kernel_partition.py and import/use it at all three sites (Variable-level, distinct from the existing CompiledNode-level `_qual`). Trivial and removes three noqa pragmas. Style-only; defer if the owner prefers the inline form.",
+      "confidence": "high"
+    }
+  ]
+}

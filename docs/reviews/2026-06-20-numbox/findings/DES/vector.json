@@ -1,0 +1,23 @@
+{
+  "target": "vector",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/vector/vector.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Small, well-factored module (142 lines). The make_vector factory, deleted-ctor guard, StructRefProxy properties and the three operator overloads are idiomatic and free of dead code, hidden config, or stale comments. The only DES observation is a minor duplication of the grow-and-copy reallocation block between vector_push and vector_extend; both are local and low-impact.",
+  "findings": [
+    {
+      "id": "DES-vector-1",
+      "severity": "low",
+      "title": "Reallocation grow-and-copy block duplicated between vector_push and vector_extend",
+      "file": "numbox/core/vector/vector.py",
+      "lines": "120-141",
+      "claim": "The three-line 'allocate a new buffer, copy the live prefix, swap it in' idiom is copy-pasted in vector_push (lines 123-125) and vector_extend (lines 137-139). A future change to the growth/copy strategy (e.g. switching to numpy.resize, copying via a typed view, or adjusting the growth factor) must be made in two places and can drift between push and extend. This is a maintenance hazard, not a runtime defect.",
+      "evidence": "vector_push: `new_buf = numpy.empty(v.buf.shape[0] * 2, v.buf.dtype)` / `new_buf[:v.size] = v.buf[:v.size]` / `v.buf = new_buf` (lines 123-125). vector_extend repeats the same shape: `new_buf = numpy.empty(cap, dst.buf.dtype)` / `new_buf[:dst.size] = dst.buf[:dst.size]` / `dst.buf = new_buf` (lines 137-139). The only real difference is how the new capacity is computed (single double vs. `while cap < needed: cap *= 2`).",
+      "recommendation": "Optional, low-risk: extract an `@njit(**jit_options)` helper `_grow_to(v, new_cap)` that allocates `numpy.empty(new_cap, v.buf.dtype)`, copies `[:v.size]`, and assigns `v.buf`, then call it from both. Keep the distinct capacity calculations (push needs exactly one doubling since it only ever adds one slot; extend must loop to reach `needed`) at the call sites. Given the repo's surgical-change bias and that this is two short call sites, leaving it as-is is also defensible.",
+      "confidence": "high"
+    }
+  ]
+}

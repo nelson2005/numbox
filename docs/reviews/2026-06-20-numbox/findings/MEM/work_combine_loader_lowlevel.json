@@ -1,0 +1,19 @@
+{
+  "target": "work_combine_loader_lowlevel",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/work/combine_utils.py",
+    "numbox/core/work/loader_utils.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/core/work/work_utils.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/highlevel.py",
+    "numbox/core/work/node_base.py",
+    "numbox/core/work/node.py",
+    "numbox/core/work/work.py",
+    "numbox/core/any/any_type.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on MEM. The only raw-NRT code in this target is ll_make_work's codegen in lowlevel_work_utils.py; every NRT-managed payload field of the new WorkType is initialized before the dtor (imp_dtor) could run, the source incref/decref accounting is balanced and faithfully mirrors the canonical _uniformize_tuple_of_structs idiom, and the null-meminfo node store is a safe no-op for the dtor. combine_utils.py and loader_utils.py are pure Python-source->@njit codegen with no manual refcount manipulation (numba's standard machinery owns the balance); work_utils.py is a plain Python helper with no JIT/pointer code. No leak, double-decref, uninitialized-field decref, or ABI defect found.",
+  "findings": []
+}

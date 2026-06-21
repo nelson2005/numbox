@@ -1,0 +1,14 @@
+{
+  "target": "libc_math",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_math.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/proxy/proxy.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on COR. All 42 libm wrappers (33 single-arg + 9 two-arg) declare float64(float64) / float64(float64, float64) signatures that exactly match the real C double prototypes; there are no platform-variable C types (no long/time_t/size_t), so no LP64-vs-LLP64 register corruption risk. Two-argument argument order is preserved correctly into _call_lib_func (atan2(y, x), pow(x, y), fmod(x, y), remainder(x, y), hypot, fmax/fmin, fdim, copysign). Integer/other-typed arguments are coerced to float64 at the proxy boundary by the eager @njit(float64(float64)) signature before _call_lib_func ever sees them, so the intrinsic's use of the caller's actual arg type cannot select a wrong (integer-register) ABI for these wrappers. Domain edge values (NaN, +/-inf, signed zero, out-of-domain) are intentionally passed through to libm and returned faithfully, which is correct behavior, not a defect. No wrong-result, edge-case, or invariant bug found within the COR lens.",
+  "findings": []
+}

@@ -1,0 +1,46 @@
+{
+  "target": "libc_fmtio",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_fmtio.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "_fmtio.py is well-factored: shared codegen (_emit_variadic_call), shared arg validation/promotion helpers, and a single exec'd-source impl builder eliminate most cross-binding duplication, and it correctly composes the canonical get_unicode_data_p / array_data_p primitives rather than reinventing them. Only low-severity design nits remain: duplicated %n-rejection logic across the two dual-mode entry points, the scanf arg-type check inlined twice instead of a helper paralleling _validate_writer_arg_type, and a genuinely-unused get_unicode_data_p argument threaded into the sscanf overload's impl builder.",
+  "findings": [
+    {
+      "id": "DES-libc_fmtio-1",
+      "severity": "low",
+      "title": "%n-rejection logic duplicated across _reject_percent_n_or_raise and _reject_percent_n_in_python",
+      "file": "numbox/core/bindings/_fmtio.py",
+      "lines": "237-259, 504-518",
+      "claim": "Two functions implement the identical %n detection: same `_PERCENT_N_RE`, the same `stripped = fmt.replace('%%', '\\x00\\x00')` pre-pass, and a near-identical message body. They differ only in the raised exception type (TypingError vs ValueError). The %%-stripping line and the regex search are copy-pasted; a future change to the directive grammar (or the %% handling) must be made in lockstep in both places or the @njit and pure-Python modes silently diverge on what they reject.",
+      "evidence": "_reject_percent_n_or_raise (237-253): `stripped = fmt_str.replace('%%', '\\x00\\x00')` then `if _PERCENT_N_RE.search(stripped):`. _reject_percent_n_in_python (511-512): `stripped = fmt.replace('%%', '\\x00\\x00')` then `if _PERCENT_N_RE.search(stripped):`. The detection half is byte-for-byte identical; only the raise differs.",
+      "recommendation": "Extract the detection into a single private predicate, e.g. `def _has_percent_n(fmt): return bool(_PERCENT_N_RE.search(fmt.replace('%%', '\\x00\\x00')))`, and have both wrappers call it and raise their own exception type. Keeps the two distinct error types (the deliberate dual-mode split) while making the grammar single-sourced. Local, low-risk.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-libc_fmtio-2",
+      "severity": "low",
+      "title": "sscanf arg-type check (ty != intp) inlined in four places instead of a shared validator",
+      "file": "numbox/core/bindings/_fmtio.py",
+      "lines": "401-405, 677-681",
+      "claim": "The writer family (printf/fprintf/snprintf) routes all per-arg type validation through the shared `_validate_writer_arg_type` helper, but sscanf hand-inlines the same `if ty != intp: raise TypingError(...args[{i}] must be intp (output pointer)...)` loop in both its @intrinsic (401-405) and its @overload (677-681). The two inlined copies must be kept message-consistent by hand, breaking the otherwise-uniform 'one validator, called from both the typing and overload layers' design used by every sibling binding.",
+      "evidence": "_sscanf_intrinsic 401-405: `for i, ty in enumerate(tuple(args_ty)): if ty != intp: raise TypingError(f\"sscanf: args[{i}] must be intp (output pointer), got {ty!r}\")`. _overload_sscanf 677-681 repeats the identical loop/message. Compare the writer family which calls `_validate_writer_arg_type(name, i, ty)` from both layers (e.g. 316-317 intrinsic, 548 overload).",
+      "recommendation": "Add a `_validate_scanf_arg_type(name, idx, ty)` private helper (mirroring `_validate_writer_arg_type`) and call it from both sscanf layers, single-sourcing the intp-only contract and its error message.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-libc_fmtio-3",
+      "severity": "low",
+      "title": "sscanf overload threads a get_unicode_data_p argument that the generated impl never references",
+      "file": "numbox/core/bindings/_fmtio.py",
+      "lines": "682-685, 461-467",
+      "claim": "`_overload_sscanf` passes `_get_unicode_data_p_lazy()` into `_build_overload_impl`, but for sscanf every arg is intp so `_build_args_tuple_expr_from_starargs` emits only `args[i]` index expressions and never a `get_unicode_data_p(...)` call. The helper is therefore placed into the exec namespace (`ns = {\"_intr\": ..., \"get_unicode_data_p\": ...}`) but is unreferenced dead surface for the scanf path, and the call site even self-documents this with the comment `# unused (no UnicodeType in args)`.",
+      "evidence": "_overload_sscanf 682-685: `impl = _build_overload_impl(\"sscanf\", [\"buf\", \"fmt\"], args, _sscanf_intrinsic, _get_unicode_data_p_lazy(),  # unused (no UnicodeType in args))`. _build_overload_impl 465: `ns = {\"_intr\": intrinsic_callable, \"get_unicode_data_p\": get_unicode_data_p}` — the name is bound but the generated `src` for an all-intp arg list (from _build_args_tuple_expr_from_starargs, 444-447) only emits `args[{i}]`, never `get_unicode_data_p(args[{i}])`.",
+      "recommendation": "Either make the `get_unicode_data_p` parameter of `_build_overload_impl` optional (default None, only inject into ns when provided) and pass nothing from sscanf, or accept it as harmless and leave the explanatory comment. Pure cleanup; no behavior change.",
+      "confidence": "high"
+    }
+  ]
+}

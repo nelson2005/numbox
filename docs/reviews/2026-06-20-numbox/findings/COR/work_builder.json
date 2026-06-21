@@ -1,0 +1,40 @@
+{
+  "target": "work_builder",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/work/builder.py",
+    "numbox/core/work/builder_utils.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/utils/highlevel.py",
+    "numbox/core/configurations.py",
+    "numbox/core/work/node.py",
+    "numbox/core/work/node_base.py",
+    "numbox/core/work/work.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "work_builder is largely correct on the COR dimension. The generated-kernel codegen (single-source trailing-comma tuple, positional alignment of make_params vs call args, registry-based duplicate-name guard, init values and derive cres passed as runtime args rather than baked in) is sound. One genuine but narrow correctness hazard found: the content-addressed kernel fingerprint (`hash_`) does not cover the explicit-type value of an End node, so two graphs that differ only by an explicit `ty` (with an identical init value) can collide on the same `_make_<hash>` kernel name. A second, minor robustness gap exists in the derive-source hashing.",
+  "findings": [
+    {
+      "id": "COR-work_builder-1",
+      "severity": "medium",
+      "title": "Explicit End/Derived `ty` not included in the kernel fingerprint",
+      "file": "numbox/core/work/builder.py",
+      "lines": "73-77, 106-116, 170-184",
+      "claim": "The content-addressed kernel name `_make_<hash_>` is derived (line 170-171) only from the generated body text and `derive_hashes`. When an End (or Derived) node supplies an explicit `ty` whose value differs from `typeof(init_value)`, the type value enters only `ns[type_name]` (line 75) and is referenced in the generated source as the bare global identifier `{name_}_ty`; the body *text* is identical regardless of the type object's value. Two `make_graph` calls (using distinct per-call registries, since the default registry forbids name reuse) that share node names, structure, derive source, and init *values* but differ only in an explicit `ty` produce the SAME `make_name` and the SAME runtime arg types (init values are typed identically). If numba's disk cache key for the generated `@njit(**jit_options)` kernel does not incorporate the value of the module-global type object referenced inside it, the second graph can hit a stale cached kernel that constructs Work nodes of the first graph's declared data type, silently returning a graph with the wrong `data` field type.",
+      "evidence": "Line 75: `ns[type_name] = ty_` and line 76 returns `...ll_make_work(\"{name_}\", {init_name}, (), None, {type_name})` -- the type enters codegen only as the global name `{name_}_ty`. Line 170: `hash_str = f\"code_block = {code_txt.getvalue()} derive_hashes = {derive_hashes}\"`; `code_txt` here is the body lines, which contain the literal text `{name_}_ty` but never the type value. Line 81 `get_ty` returns `spec_.ty or typeof(spec_.init_value)`, so an explicit `ty` can diverge from `typeof(init_value)` (e.g. int32 vs the int64 numba infers). `ll_make_work` (lowlevel_work_utils.py line 120-124) does `data_ty = data_ty_ref.instance_type` and builds `_create_work_type(data_ty, ...)`, so the explicit type genuinely changes the produced WorkType. Default jit_options is `{\"cache\": True}` (configurations.py line 11-13), so the kernel is disk-cached. The init value travels as a runtime arg (line 71, 114, 177), so two such graphs present identical arg signatures and cannot be distinguished by numba's signature-based cache index.",
+      "recommendation": "Fold the declared type of every node (e.g. `get_ty(spec_)` for each input and derived node, mangled via `numba.core.itanium_mangler.mangle_type_or_value` as already done in `highlevel.hash_type`) into `hash_str` before computing `hash_` at line 170-171, so a type-only change shifts `make_name`. Cheapest correct fix: append the list of per-node mangled declared types to the `derive_hashes`-style accumulator.",
+      "confidence": "low"
+    },
+    {
+      "id": "COR-work_builder-2",
+      "severity": "low",
+      "title": "Derive fingerprint hashes only `getsource`, missing referenced globals/closures",
+      "file": "numbox/core/work/builder.py",
+      "lines": "108",
+      "claim": "`derive_hashes.append(sha256(getsource(derive_func)...))` fingerprints a derive function solely by its source text. A derive that references a module-level global or a closure cell whose value changes (without the source text changing) is not reflected in `hash_`, so the builder-level fingerprint that anchors the `_make_<hash>` kernel does not change. In practice the derive is compiled separately via `cres`/`njit` and passed as a runtime arg (line 109-113, 177), so numba's own caching of the derive governs the derive body; the builder fingerprint gap is therefore mostly benign for the derive itself. The residual risk is only that the *builder* anchor will not invalidate on such a change, relying entirely on numba's derive cache (which itself hashes co_code but not co_consts/globals) to catch it.",
+      "evidence": "Line 108: `derive_hashes.append(sha256(getsource(derive_func).encode(\"utf-8\")).hexdigest())` -- only source text. The COR lens explicitly flags that numba hashes `co_code` but not `co_consts`/referenced globals, so a pure-numeric-literal or global-value change inside a derive may not shift any hash. The derive is passed as a runtime arg (`_make_args.append(derive_name)` line 112; `ns[derive_name] = derive_` line 113), so the builder fingerprint is not the sole guard, which is why this is low severity rather than a wrong-result defect.",
+      "recommendation": "If the existing structured fingerprint helper in `numbox/utils/fingerprint.py` covers code+consts+closure+globals, route derive fingerprinting through it instead of bare `getsource`; otherwise document that derive cache correctness is delegated to numba and that pure-literal derive edits require a cache clear.",
+      "confidence": "low"
+    }
+  ]
+}

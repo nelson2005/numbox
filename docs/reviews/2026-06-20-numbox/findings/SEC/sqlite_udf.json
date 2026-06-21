@@ -1,0 +1,16 @@
+{
+  "target": "sqlite_udf",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_udf.py",
+    "numbox/core/bindings/_sqlite_udf_helpers.py",
+    "numbox/utils/cstrings.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/meminfo.py",
+    "numbox/core/bindings/_sqlite_result.py",
+    "numbox/core/bindings/signatures.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on SEC (empty findings is the correct result). The UDF/UDAF target is a thin binding plus a callback-generation helper; every input-validation and C-boundary surface I traced is sound. (1) The caller-controlled UDF name flows into a content-addressed anchor FILENAME via _stem (line 248-249), but _stem replaces every non-alphanumeric char with '_', so no path traversal / separator / absolute-path injection reaches _anchor_path. (2) The same name reaches SQLite only through `with c_string(name)` (lines 288, 335), and c_string raises ValueError on any embedded NUL (cstrings.py:64-68) -- no silent truncation. (3) The sqlite3_result_error(ctx, get_unicode_data_p(\"...\"), -1) calls pass pointers to ASCII string LITERALS; get_unicode_data_p is documented safe for ASCII (cstrings.py:7-9), the signature is void(intp, intp, int32) with n_bytes=-1 = NUL-terminated (signatures.py:197), the arg is a message not a printf format (no format-string surface), and SQLite copies it (no UAF). (4) The aggregate-context slot is allocated as 8 bytes (sqlite3_aggregate_context(ctx, 8), line 95) and read as a 1-element np.intp carray (line 98) = exactly 8 bytes on supported 64-bit platforms (no over-read; xFinal/xInverse/xValue allocate 0 and NULL-guard before reading). No reachable bounds / format / SQL-injection / path / encoding hazard found.",
+  "findings": []
+}

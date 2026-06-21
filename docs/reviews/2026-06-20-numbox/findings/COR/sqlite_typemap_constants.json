@@ -1,0 +1,15 @@
+{
+  "target": "sqlite_typemap_constants",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/configurations.py",
+    "numbox/core/bindings/_sqlite_vtable.py",
+    "numbox/core/bindings/_sqlite_query.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on correctness. The packed-cell tag map (_NUMERIC_TAGS/_SQL_TYPE/_col_tag) is complete (all 14 tags 0-13 mapped to a SQL type) and consistent; the UTF-32<->UTF-8 converters are bounds-correct, malformed-input-safe (U+FFFD substitution with one-byte error recovery, no over-read of the source carray, no over-write of dst), preserve interior NULs and trim only trailing NULs; the scratch-buffer sizing contract between the vtable (scratch = w+1) and utf32_to_utf8 (needs 4*(w//4)+1 = w+1 bytes) is an exact match; and every SQLITE_* sentinel/result/type/flag/constraint constant matches the stable sqlite3.h values (3.34.0-current). No COR finding to report.",
+  "findings": []
+}

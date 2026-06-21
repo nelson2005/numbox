@@ -1,0 +1,12 @@
+{
+  "target": "bindings_utils",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/utils.py",
+    "numbox/core/bindings/_strerror.py",
+    "numbox/core/proxy/proxy.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the COR dimension. utils.py is library loading + path resolution plus two small intrinsic helpers (extract_literal_str, intp_ll_type). All None-returning paths are handled (clean RuntimeError or the preserved Windows c/m msvcrt fallback), the literal-string extraction validates both the Literal wrapper and the str payload, and intp_ll_type derives the size_t/intp LLVM width correctly via context.get_value_type(intp) or the bitwidth-equivalent fallback. No platform-variable C-type hazard lives here (no signatures), no off-by-one/edge-case/wrong-result logic found. No findings.",
+  "findings": []
+}

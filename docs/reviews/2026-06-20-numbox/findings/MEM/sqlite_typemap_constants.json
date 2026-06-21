@@ -1,0 +1,12 @@
+{
+  "target": "sqlite_typemap_constants",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. The packed-cell UTF-32/UTF-8 converters correctly use the align-1 load_unaligned/store_unaligned primitives for the potentially-misaligned packed-dtype src/dst pointers (never the aligned load_at/store_at), and all destination/continuation-byte writes and reads are bounds-checked against the documented buffer contracts, with no overflow on empty/edge inputs. The constants module is pure integer literals (no pointers/refcounts) and the salient sentinel values cross-check against the SQLite C API. No refcount, alignment, or buffer-overflow defects found.",
+  "findings": []
+}

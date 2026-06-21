@@ -1,0 +1,26 @@
+{
+  "target": "variable_node_utils",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/variable/node.py",
+    "numbox/core/variable/utils.py",
+    "numbox/core/variable/variable.py",
+    "numbox/core/variable/compile_kernel.py",
+    "numbox/utils/fingerprint.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Largely clean on correctness. The identifier-assignment collision loop (_assign_identifiers), the formula-arity check (_check_formula_arity), and the declared-return validator (_validate_declared_return, including its deliberate keyed-overload lookup for user Dispatchers and its layout-A normalization) are all sound and consistent with their callers in compile_kernel. One low-severity robustness gap: make_node memoizes after recursing, so a cyclic registry triggers unbounded recursion (RecursionError) instead of the clean cycle error that Graph._topological_order raises on the same input.",
+  "findings": [
+    {
+      "id": "COR-variable_node_utils-1",
+      "severity": "low",
+      "title": "make_node recurses before memoizing, so a cyclic registry yields RecursionError instead of a clean cycle error",
+      "file": "numbox/core/variable/node.py",
+      "lines": "22-31",
+      "claim": "_make stores node_ in the `made` cache (line 30) only AFTER it has finished recursing into all inputs (line 28). On a registry where two variables depend on each other (A.inputs has B, B.inputs has A), _make(A) -> _make(B) -> _make(A): the inner _make(A) still sees made.get((A,...)) is None (the entry is written only on the way out), so recursion never terminates and Python raises RecursionError. Graph._topological_order in variable.py guards the same cyclic input explicitly (RuntimeError 'Cycle detected at ...' via the `visiting` set), but make_node bypasses Graph.compile and offers no such guard, so the two entry points disagree on the same malformed graph.",
+      "evidence": "node.py lines 22-31: `def _make(name_, source_):` `key = (name_, source_)` / `node_ = made.get(key)` / `if node_: return node_` / `variable_ = registry_[source_][name_]` / `inputs_ = [_make(inp_name, inp_source) for inp_name, inp_source in variable_.inputs.items()]` / `node_ = Node(variable_, inputs_)` / `made[key] = node_`. The cache write at `made[key] = node_` happens after the `inputs_ = [...]` recursion, so it cannot break a cycle. Contrast variable.py:487-501 `visit` which adds `qual_name` to `visiting` before recursing and raises `RuntimeError(f\"Cycle detected at {qual_name}\")` on re-entry. make_node is reached directly in tests (test/core/test_variable.py:113,233) without going through Graph.compile, so it does not inherit that guard.",
+      "recommendation": "Either insert the partially-built node (or a sentinel) into `made[key]` before recursing into inputs and detect re-entry to raise a 'Cycle detected' error, or mirror variable.py's `visiting`-set guard so make_node fails fast with the same message rather than RecursionError. Severity is low because the graphs make_node operates on are intended to be DAGs and it is a diagnostic/test helper, but the inconsistency with _topological_order's explicit cycle check is a latent foot-gun.",
+      "confidence": "high"
+    }
+  ]
+}

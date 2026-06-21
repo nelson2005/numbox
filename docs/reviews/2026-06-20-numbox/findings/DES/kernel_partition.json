@@ -1,0 +1,35 @@
+{
+  "target": "kernel_partition",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/variable/_kernel_partition.py",
+    "numbox/core/variable/variable.py",
+    "numbox/core/variable/compile_kernel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Well-factored partition module: tight, single-purpose helpers with clear docstrings, no planning/task refs in comments, consistent qual_name sort-key idiom, correct private/public underscore discipline (only the dataclasses/helpers consumed by compile_kernel are exported, all internal). Two low-severity design hazards: a dead `external` parameter on `segment_liveness` (declared, threaded through two call sites, never read), and near-verbatim duplication between `segment_liveness` and `cone_liveness` (live_in computation identical; live_out differs only by a boundary term).",
+  "findings": [
+    {
+      "id": "DES-kernel_partition-1",
+      "severity": "low",
+      "title": "Dead `external` parameter on segment_liveness, threaded through both call sites",
+      "file": "numbox/core/variable/_kernel_partition.py",
+      "lines": "168-197",
+      "claim": "segment_liveness declares parameter `external: set[Variable]` (line 170) but the body never references it; live_in is computed purely from `produced`/`n.inputs` and live_out from `order`/`required_vars`. Both call sites in compile_kernel.py (lines 471-472 and 924) construct and pass `external` solely to satisfy this unused parameter. It is dead surface that misleads a reader into thinking externals are special-cased in liveness (they are already handled because external producers are simply absent from `produced`).",
+      "evidence": "Signature line 170 `external: set[Variable],`. The body (lines 180-197) reads only `run_nodes`, `produced`, `n.inputs`, `order`, `required_vars` — `external` does not appear. A grep over the whole file shows `external` occurring at line 170 (this decl), 176 (docstring text), and lines 312/329 and 345/359 where it is the (genuinely used) parameter of `_evaluate` and `discover`. Call sites: compile_kernel.py:471-472 `segment_liveness(run_nodes, external, self._required_vars, order)` and compile_kernel.py:924 `segment_liveness(run_nodes, external, required_vars, order)`. Contrast cone_liveness (line 200) which has the same job but no `external` parameter and works correctly.",
+      "recommendation": "Drop the `external` parameter from segment_liveness and remove the argument at compile_kernel.py:471-472 and :924. Local, low-risk: the value was never consumed. (cone_liveness already shows the parameter-free shape is sufficient.)",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-kernel_partition-2",
+      "severity": "low",
+      "title": "segment_liveness and cone_liveness duplicate the live_in / scan-for-later-consumers logic",
+      "file": "numbox/core/variable/_kernel_partition.py",
+      "lines": "168-228",
+      "claim": "segment_liveness (168-197) and cone_liveness (200-228) are near-identical. Both compute `produced = {n.variable for n in run_nodes}`, the identical live_in loop, the identical 'scan the order, flip a seen flag past this run, accumulate later inputs' loop, and the identical qual_name sort. They differ only in the live_out predicate: segment_liveness uses `v in after or v in required`, cone_liveness adds `or v in boundary`. Maintaining two copies risks the two drifting (e.g. a future live_in fix applied to one but not the other).",
+      "evidence": "segment_liveness lines 180-197 vs cone_liveness lines 210-228: live_in block (`produced = {...}`, `live_in = set()`, `for n in run_nodes: for inp in n.inputs: if inp not in produced: live_in.add(inp)`) is byte-for-byte equivalent (`after`/`later`, `seen_any`/`seen` are the only name differences). live_out lines 195 (`{v for v in produced if v in after or v in set(required_vars)}`) vs 226 (`{v for v in produced if v in later or v in req or v in boundary}`). Both end with the same `key = lambda v: v.qual_name()` sort (lines 196-197 / 227-228).",
+      "recommendation": "Parameterize a single helper, e.g. `_liveness(run_nodes, order, required_vars, boundary=frozenset())` returning `(live_in, live_out)` with `live_out = {v for v in produced if v in later or v in required or v in boundary}`; segment_liveness passes the empty default. Low risk and removes a drift hazard; only adopt if it does not obscure the cone-vs-segment intent (a thin wrapper preserving both public names is acceptable).",
+      "confidence": "high"
+    }
+  ]
+}

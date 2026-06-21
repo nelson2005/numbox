@@ -1,0 +1,18 @@
+{
+  "target": "sqlite_bind_column_value_result_blob",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_bind.py",
+    "numbox/core/bindings/_sqlite_column.py",
+    "numbox/core/bindings/_sqlite_value.py",
+    "numbox/core/bindings/_sqlite_result.py",
+    "numbox/core/bindings/_sqlite_blob.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/utils.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on SEC. All five modules are faithful 1:1 passthrough wrappers (each function is a single _call_lib_func('name', (args...)) with no internal logic). They introduce no buffer copy, length arithmetic, string formatting, SQL interpolation, NUL handling, or path resolution of their own, so there is no numbox-owned validation surface to get wrong here. The destructor sentinels (SQLITE_STATIC=0, SQLITE_TRANSIENT=-1, _sqlite_constants.py:101-102) are correct and the bind/result destructor is a caller-supplied parameter, not chosen internally. All length-arg widths match the C ABI exactly (bind_text/bind_blob/result_text/result_blob n = int32 = C `int`; result_text64/blob64/zeroblob64 = uint64 = sqlite3_uint64; blob_read/blob_write N/iOffset = int32; blob_open rowid = int64, flags = int32), so the wrappers do not introduce any truncation beyond the C API's own int-typed contract (and using int64 there would itself be the ABI bug). NUL/interior-byte handling, NaN->NULL on result_double, and packed-cell encoding are SQLite's own documented behavior or live in the typemap/cstrings targets, not this one.",
+  "findings": []
+}

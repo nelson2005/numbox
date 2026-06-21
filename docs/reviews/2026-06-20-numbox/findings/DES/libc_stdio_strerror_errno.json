@@ -1,0 +1,37 @@
+{
+  "target": "libc_stdio_strerror_errno",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_stdio.py",
+    "numbox/core/bindings/_strerror.py",
+    "numbox/core/bindings/_errno.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "These three libc wrappers are well-factored and consistent on the DES dimension: each uses the canonical load_lib(\"c\") init, the @proxy(..., jit_options=jit_options) wrapper pattern, an explicit __all__, the extern-ref symbol-resolution discipline (get_or_insert_function / extern global, never a literal address), and per-platform symbol dicts whose distinct shapes justify not unifying them. No duplication across files, no dead/unused imports, no unreachable production branches (the strerror_r selector fallback is documented, CI-canary-verified defense-in-depth). Two low-severity nits only: an inconsistent inline construction of the size_t LLVM type vs the shared intp_ll_type helper, and a test-only IR-probe helper that lives in the production module and re-derives codegen's function type.",
+  "findings": [
+    {
+      "id": "DES-libc_stdio_strerror_errno-1",
+      "severity": "low",
+      "title": "Inconsistent size_t/intp LLVM-type construction: shared helper used in one sibling, inlined in the other two",
+      "file": "numbox/core/bindings/_errno.py",
+      "lines": "35",
+      "claim": "The bindings package provides a single canonical helper, intp_ll_type(context), to derive the platform-width size_t/intp LLVM type inside codegen. _strerror.py uses it (intp_ll_type(context)), but _errno.py (_errno_ptr codegen) and _stdio.py (_stdio_handle codegen) inline context.get_value_type(intp) instead. The forms are semantically identical, so this is a consistency nit, not a correctness defect; it slightly raises the maintenance surface (three call sites, two idioms for one concept).",
+      "evidence": "utils.py:33-46 defines intp_ll_type(context=None): 'if context is not None: return context.get_value_type(intp)'. _strerror.py:83 uses it: 'size_t_ll = intp_ll_type(context)'. _errno.py:34 inlines it: 'intp_ll = context.get_value_type(intp)'. _stdio.py:58 inlines it: 'intp_ll = context.get_value_type(intp)'. All three resolve to the same LLVM type when a context is passed.",
+      "recommendation": "For consistency, import intp_ll_type into _errno.py and _stdio.py and replace 'context.get_value_type(intp)' with 'intp_ll_type(context)' at the two sites (low risk: identical output). Alternatively leave as-is — the inline form is equally canonical — but pick one idiom across the three sibling modules.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-libc_stdio_strerror_errno-2",
+      "severity": "low",
+      "title": "Test-only IR-probe helper lives in production module and re-derives codegen's function type",
+      "file": "numbox/core/bindings/_strerror.py",
+      "lines": "95-114",
+      "claim": "_render_ir_for_probe is a test-support function (its docstring states it is used by test_strerror_safe.py for IR inspection) that resides in the production module _strerror.py. It re-constructs the POSIX strerror_r function type (FunctionType(i32, [i32, i8p, intp_ll_type()])) that the real _strerror_safe.codegen already constructs (line 89), so the two declarations can drift if the libc signature shape ever changes. It is not dead code (tests reference it), but it is a module-organization / mild-duplication smell on the DES lens.",
+      "evidence": "_strerror.py:95-114 _render_ir_for_probe docstring: 'Used by the IR-inspection test (test_strerror_safe.py)'. Line 112: 'func_ty = llir.FunctionType(i32, [i32, i8p, intp_ll_type()])'. The production codegen at line 89 independently builds the same shape: 'func_ty = llir.FunctionType(i32, [i32, i8p, size_t_ll])'. Two parallel constructions of the same POSIX strerror_r type.",
+      "recommendation": "Low priority. If touched, factor the POSIX func-type construction into one helper consumed by both codegen and the probe so the shape lives in a single place, or move the probe into the test module if it can import the needed pieces. Given it is small and well-documented, leaving it is also defensible.",
+      "confidence": "high"
+    }
+  ]
+}

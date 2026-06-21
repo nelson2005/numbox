@@ -1,0 +1,24 @@
+{
+  "target": "proxy",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/proxy/proxy.py",
+    "numbox/utils/standard.py",
+    "numbox/utils/highlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "proxy.py is a small, well-factored module that correctly composes the existing make_params_strings helper and documents its cache-anchor mechanism. One low-severity design smell: a self-referential dict.update call that obscures the intent of setting inline='always'. The proxy_if_available/cres_if_available parallelism is intentional cross-module structure (different __name__ semantics, mutually cross-referenced docstrings) and is not reported.",
+  "findings": [
+    {
+      "id": "DES-proxy-1",
+      "severity": "low",
+      "title": "Self-referential dict.update obscures setting inline='always'",
+      "file": "numbox/core/proxy/proxy.py",
+      "lines": "48-49",
+      "claim": "jit_opts.update(jit_opts, inline='always') passes jit_opts as the positional argument to its own update method. Merging a dict into itself is a no-op; the only effective operation is the inline='always' keyword. The code works but reads as if the positional self-merge is load-bearing, which it is not, and a reader can mistake it for a bug. It is dead effort wrapped around a single key assignment.",
+      "evidence": "Line 48: `jit_opts = jit_options.copy()`. Line 49: `jit_opts.update(jit_opts, inline='always')`. dict.update(self, **kwargs) first applies the positional mapping (jit_opts onto itself = no change) then the keyword (inline='always'). The net effect is identical to `jit_opts['inline'] = 'always'`. jit_opts is then consumed only at line 69 (`@njit(sig, **jit_opts)`) and line 76 (placed into the exec namespace), so only the resulting inline flag matters.",
+      "recommendation": "Replace line 49 with `jit_opts['inline'] = 'always'` (or `jit_opts.update(inline='always')`). Local, zero behavior change, removes the self-merge that suggests an intent the code does not have.",
+      "confidence": "high"
+    }
+  ]
+}

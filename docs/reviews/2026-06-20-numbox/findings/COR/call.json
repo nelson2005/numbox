@@ -1,0 +1,13 @@
+{
+  "target": "call",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/abi.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/core/bindings/signatures.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the COR dimension. _call_lib_func's ABI dispatch (scalar/small/large classification, use_sret threshold, INT/INT eightbyte repack, Win64 register-passable gating, boundary-spanning float-field SSE rule) is internally consistent and matches the SysV x86-64 / AAPCS64 / Win64 conventions it documents; every size boundary (<=16 small, Win64 1/2/4/8 register-passable) is correct, and the canonical-{i64,i64} short-circuit correctly suppresses the repack for lldiv_t. The extern-ref resolution path (get_or_insert_function by name, literal address used only as a presence check) is the documented cache=True-safe pattern, not a defect. No wrong-result, edge-case, or contract-drift bug was found in call.py itself. One model dependency worth noting but NOT reported as a call.py defect: the BaseTuple field-layout model in the helper _iter_struct_fields/_struct_bytes (abi.py) assumes no inter-field C padding (sequential bit-packing), so a C struct like {int32; int64} described to a binding as a Tuple((int32,int64)) would be sized 12 and offset the i64 at 4 rather than the real C 16/offset-8 layout; this is a documented constraint of the abi.py model (its own review target), and call.py consumes those helpers correctly.",
+  "findings": []
+}

@@ -1,0 +1,44 @@
+{
+  "target": "work_print_explain",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/work/print_tree.py",
+    "numbox/core/work/explain.py",
+    "numbox/core/work/work.py",
+    "numbox/core/work/builder.py",
+    "numbox/core/work/node.py",
+    "numbox/core/work/node_base.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/highlevel.py",
+    "test/core/test_print_tree.py",
+    "test/random_graph.py",
+    "test/core/test_builder.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Both modules are correct on the tree-shaped graphs the tests exercise. The two COR concerns are reconvergence/diamond handling: print_tree's _build_graph has no visited-set so a DAG (which real Work graphs are) is expanded as a tree (shared subtrees rendered repeatedly) with a latent ImmutableItemDict collision, and explain()'s get_func_code crashes with AttributeError when a derive node was not built through builder.make_graph (which is the only thing that populates _derive_funcs). The derive_func_ptrs[1]==id(derive_cres) lookup is sound for builder-built graphs (confirmed by test_builder).",
+  "findings": [
+    {
+      "id": "COR-work_print_explain-1",
+      "severity": "medium",
+      "title": "explain() raises AttributeError on derive nodes not built via builder.make_graph",
+      "file": "numbox/core/work/explain.py",
+      "lines": "8-10",
+      "claim": "get_func_code does `_derive_funcs.get(derive_func_p_).__name__`. `_derive_funcs` is populated ONLY by builder._derived_cres (`_derive_funcs[id(derive_cres)] = derive`, builder.py:95). A Work derive node constructed directly through make_work / ll_make_work (work.py:147, lowlevel_work_utils.py:107) never registers its derive in `_derive_funcs`. Calling explain() on such a graph makes `_derive_funcs.get(...)` return None, and `None.__name__` raises `AttributeError: 'NoneType' object has no attribute '__name__'` instead of a meaningful error or correct output.",
+      "evidence": "explain.py:8-10 `def get_func_code(derive_func_p_): derive_func_ = _derive_funcs.get(derive_func_p_); return derive_func_.__name__, indent(getsource(derive_func_), \"    \")` — unguarded .get(). The only writer to _derive_funcs is builder.py:84,95 `_derive_funcs = {}` ... `_derive_funcs[id(derive_cres)] = derive`. make_work (work.py:146-148) and ll_make_work (lowlevel_work_utils.py:106-139) never touch _derive_funcs. test_builder.py:167 exercises explain() only on make_graph-built graphs, so this path is untested.",
+      "recommendation": "Guard the lookup: if `_derive_funcs.get(derive_func_p_)` is None, raise a clear error (e.g. 'explain() requires a graph built via builder.make_graph; derive function pointer not registered') or fall back to printing the node name without source. Document that explain() only supports builder-constructed graphs.",
+      "confidence": "medium"
+    },
+    {
+      "id": "COR-work_print_explain-2",
+      "severity": "low",
+      "title": "_build_graph has no visited set: reconverging (diamond) graphs are re-rendered and can collide in ImmutableItemDict",
+      "file": "numbox/core/work/print_tree.py",
+      "lines": "22-43",
+      "claim": "_build_graph recurses unconditionally into every input (`for i, input_ in enumerate(node_inputs): ... _build_graph(node.get_input(i), ...)`) with no record of already-visited nodes. Real Work graphs are DAGs that reconverge (a single End/Derived can be a source of multiple Derived nodes — the dedup logic in explain.py:14 and node.py:107,132 exists precisely because of this). On such a graph make_image renders the shared subtree once per parent path (misleading output: the same node appears multiple times), and because graph writes go through ImmutableItemDict whose __setitem__ raises `ValueError(f\"Already stored {value} in {key}\")` (print_tree.py:9-12), a coordinate collision between two reconverging paths crashes make_image rather than printing.",
+      "evidence": "print_tree.py:22-38 recurses per input with no `if node in seen` guard; line 23 `graph[(row, col)] = str(node)` and line 27 `graph[(row, col + 1)] = HORIZONTAL_SEP` write unconditionally into the ImmutableItemDict (lines 8-12) which forbids overwrite. All coverage uses strict trees: test_print_tree.py builds n1..n5 / w1..w5 with each node used once, and test/random_graph.py:17-29 generates a fresh unique name per node and never reuses an existing node as a second parent's input — so the reconvergence case is entirely untested.",
+      "recommendation": "Either document make_image as a tree-only/expanded-tree renderer and add a diamond test asserting the (possibly duplicated) expected layout, or track visited node names and render a shared node once with a back-reference. At minimum add a DAG test to pin down whether the ImmutableItemDict collision is reachable.",
+      "confidence": "low"
+    }
+  ]
+}

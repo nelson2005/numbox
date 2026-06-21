@@ -1,0 +1,17 @@
+{
+  "target": "sqlite_bind_column_value_result_blob",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_bind.py",
+    "numbox/core/bindings/_sqlite_column.py",
+    "numbox/core/bindings/_sqlite_value.py",
+    "numbox/core/bindings/_sqlite_result.py",
+    "numbox/core/bindings/_sqlite_blob.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/core/proxy/proxy.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on DES. All five modules are textbook thin @proxy wrappers that follow the documented binding pattern (CLAUDE.md 'Adding a New Binding') verbatim: each function body is a single `_call_lib_func(\"name\", (args...))` call with the signature pulled from the shared `signatures` dict. The cross-module repetition is the intended, prescribed convention (one wrapper per C entry point), not extractable duplication. No dead code, no hand-rolled byte loops or pointer casts that should compose a `utils/lowlevel.py` helper, consistent naming/arg-order/return-types across siblings, and correct public/private discipline (every name is a public wrapper, all listed in `__all__`, star-imported). The seeming inconsistency where `_sqlite_column.py` captures `_sqlite3_lib = load_lib(\"sqlite3\")` while bind/value/result/blob call `load_lib(\"sqlite3\")` without capturing is correct: only `_sqlite_column.py` needs the handle to feed `proxy_if_available(lib, ...)` for the three SQLITE_ENABLE_COLUMN_METADATA-gated accessors; the others have nothing to gate.",
+  "findings": []
+}
