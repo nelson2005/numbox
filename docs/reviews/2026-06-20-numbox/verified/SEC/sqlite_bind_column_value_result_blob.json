@@ -1,0 +1,7 @@
+{
+  "target": "sqlite_bind_column_value_result_blob",
+  "dimension": "SEC",
+  "verifier_model": "sonnet",
+  "summary": "no findings to verify",
+  "verdicts": []
+}

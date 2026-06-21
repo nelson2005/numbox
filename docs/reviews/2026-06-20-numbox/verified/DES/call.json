@@ -1,0 +1,14 @@
+{
+  "target": "call",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-call-1",
+      "severity": "low",
+      "title": "{i64,i64} literal struct type reconstructed in three places",
+      "verdict": "confirmed",
+      "reasoning": "Independently verified against the live source. Lines 176-177 inside the `needs_ret_repack` branch of `_call_lib_func` codegen: `i64x2_ll_ty = llir.LiteralStructType([llir.IntType(64), llir.IntType(64)])`. Identical construction at lines 252-253 inside `_repack_to_i64_pair` and again at lines 272-273 inside `_repack_from_i64_pair`. A grep for `LiteralStructType` and `_I64X2` confirms no module-level constant exists. The finding's evidence quotes are accurate and the duplication is real. Severity of low is appropriate — this is a maintenance smell with no functional defect."
+    }
+  ]
+}

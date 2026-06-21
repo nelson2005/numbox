@@ -1,0 +1,39 @@
+{
+  "target": "utils_misc",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/utils/clock.py",
+    "numbox/utils/preprocessing.py",
+    "numbox/utils/standard.py",
+    "numbox/utils/timer.py",
+    "numbox/utils/void_type.py",
+    "numbox/core/proxy/proxy.py",
+    "numbox/utils/highlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Largely clean on correctness. The Windows QPC->ns decomposition correctly avoids int64 overflow, the POSIX timespec layout (int64/int64) matches 64-bit Linux/macOS, and the anchor orphan-sweep age filter is sound. Two genuine low-severity correctness nits: an equality (==) rather than identity (is) comparison against inspect._empty in standard.py that can change a clean codegen failure into a confusing exception, and clock_gettime's return code being ignored so a (practically impossible) clock failure yields a silent 0 nanoseconds.",
+  "findings": [
+    {
+      "id": "COR-utils_misc-1",
+      "severity": "low",
+      "title": "Default-vs-empty test uses == instead of is against inspect._empty",
+      "file": "numbox/utils/standard.py",
+      "lines": "45-47",
+      "claim": "`v.default == inspect._empty` compares for equality rather than identity. The Parameter.empty sentinel is meant to be tested with `is`. When a parameter has a default whose `__eq__` does not return a plain bool against the sentinel (e.g. a numpy array default `def f(x, y=np.zeros(3))`), `v.default == inspect._empty` evaluates to a numpy array, and the surrounding `... if <array> else ...` raises `ValueError: The truth value of an array ... is ambiguous`. This converts what the docstring promises will be a visible repr/exec failure into an unrelated ValueError raised earlier, at codegen-string assembly time, obscuring the real cause.",
+      "evidence": "Line 46: `[k if v.default == inspect._empty else f'{k}={v.default!r}' for k, v in func_params.items()]`. `inspect._empty` (a.k.a. `inspect.Parameter.empty`) is a singleton sentinel; CPython's own inspect code tests it with identity. The docstring (lines 30-36) states non-round-tripping defaults 'are visible failures, not silent miscompiles', but the `==` form can pre-empt that with a ValueError from the ternary's truthiness test on a non-bool `__eq__` result.",
+      "recommendation": "Use identity: `k if v.default is inspect._empty else f'{k}={v.default!r}'`. This matches CPython's sentinel-comparison convention and guarantees a scalar bool, preserving the intended downstream repr/exec failure path.",
+      "confidence": "high"
+    },
+    {
+      "id": "COR-utils_misc-2",
+      "severity": "low",
+      "title": "clock_gettime return value ignored; failure yields silent 0 ns",
+      "file": "numbox/utils/clock.py",
+      "lines": "93-104",
+      "claim": "The POSIX `monotonic_ns` codegen calls `clock_gettime(CLOCK_MONOTONIC, &ts)` but discards the i32 return value. The timespec is pre-zeroed (lines 95-97), so if the call ever returns -1 (EFAULT/EINVAL — e.g. an unsupported clock id), `monotonic_ns()` returns 0 nanoseconds silently rather than signalling an error. With CLOCK_MONOTONIC on supported platforms this essentially never fails, so impact is theoretical, but the contract ('nanoseconds since an unspecified epoch') is silently violated on the failure path.",
+      "evidence": "Lines 99-104: `fn = get_or_insert_function(builder.module, fn_ty, \"clock_gettime\")`; `builder.call(fn, [_CLK_ID, ts_ptr])` — the call's result is not bound or checked. Pre-zeroing at lines 95-97 (`zero_ts = ir.Constant(_timespec_ty, [0, 0])`) means a failed call leaves sec=nsec=0, so the function returns `0*1e9 + 0 == 0`.",
+      "recommendation": "Either accept this as documented best-effort (note it in the docstring), or branch on the i32 return and trap/raise on non-zero. Given CLOCK_MONOTONIC's reliability this is optional; flagged for completeness.",
+      "confidence": "medium"
+    }
+  ]
+}

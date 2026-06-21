@@ -1,0 +1,24 @@
+{
+  "target": "pysqlite_bridge",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/utils/pysqlite_bridge.py",
+    "numbox/core/bindings/_sqlite_conn.py",
+    "numbox/core/bindings/signatures.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Small, well-factored module: internals correctly underscore-prefixed (_PysqliteConnection, _pyobject_head_fields), public surface (libraries_coordinated, extract_connection_ptr) intentional, no reinvention of lowlevel primitives, no dead code. One minor low-severity finding: the numbox-sqlite-version string computation is duplicated verbatim between the guard and the error-message path.",
+  "findings": [
+    {
+      "id": "DES-pysqlite_bridge-1",
+      "severity": "low",
+      "title": "Duplicated numbox-sqlite version-string computation across guard and error path",
+      "file": "numbox/utils/pysqlite_bridge.py",
+      "lines": "106, 148",
+      "claim": "The expression that materializes numbox's linked sqlite version string is written verbatim in two places: line 106 inside libraries_coordinated(), and line 148 inside extract_connection_ptr() solely to build the RuntimeError message after the guard already failed. The same library call and decode are performed twice on the unsafe path, and the two sites can drift independently if the decoding idiom ever changes.",
+      "evidence": "Line 106 in libraries_coordinated(): `numbox_version = ctypes.c_char_p(sqlite3_libversion()).value.decode()` then `return numbox_version == sqlite3.sqlite_version`. Line 148 in extract_connection_ptr(), inside the `if not libraries_coordinated():` block: `numbox_version = ctypes.c_char_p(sqlite3_libversion()).value.decode()` then the f-string error uses `{numbox_version!r}`. Confirmed sqlite3_libversion returns intp (signatures.py:109 `\"sqlite3_libversion\": intp()`) so both sites wrap the same int-as-pointer in c_char_p identically.",
+      "recommendation": "Extract a tiny private helper, e.g. `def _numbox_sqlite_version(): return ctypes.c_char_p(sqlite3_libversion()).value.decode()`, and call it from both libraries_coordinated() (line 106) and the error-message branch (line 148). Local, low-risk, removes the verbatim duplication.",
+      "confidence": "high"
+    }
+  ]
+}

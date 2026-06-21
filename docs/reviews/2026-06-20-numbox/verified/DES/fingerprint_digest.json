@@ -1,0 +1,7 @@
+{
+  "target": "fingerprint_digest",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "summary": "no findings to verify",
+  "verdicts": []
+}

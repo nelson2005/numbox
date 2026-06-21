@@ -1,0 +1,92 @@
+{
+  "target": "tst_docs_build",
+  "dimension": "TST",
+  "files_reviewed": [
+    "docs/conf.py",
+    "docs/index.rst",
+    "docs/modules.rst",
+    "docs/numbox.core.any.rst",
+    "docs/numbox.core.bindings.rst",
+    "docs/numbox.core.proxy.rst",
+    "docs/numbox.core.variable.rst",
+    "docs/numbox.core.vector.rst",
+    "docs/numbox.core.work.rst",
+    "docs/numbox.utils.rst",
+    "docs/_static/work_registry.py",
+    ".github/workflows/numbox_ci.yml",
+    ".github/workflows/docs.yml",
+    ".github/workflows/doc-codeblock-flake8.yml",
+    ".github/workflows/link-check.yml",
+    ".github/workflows/security_scan.yml",
+    "numbox/core/bindings/__init__.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/configurations.py",
+    "numbox/core/work/work.py",
+    "numbox/core/work/explain.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/core/variable/node.py",
+    "numbox/utils/void_type.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/meminfo.py",
+    "README.md"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Sphinx config and most automodule coverage is sound, but there is real doc/API drift: the _sqlite_typemap bindings module is entirely undocumented (violating the project's own documented convention), the work.rst graph-manager example imports three symbols that do not exist anywhere in the source (default_jit_options, _make_work, ol_make_work), and a :class: xref points at a non-existent module path (numbox.core.utils.void_type). A CI-parity gap compounds this: docs.yml builds sphinx only on push-to-main with no -W, so a PR introducing broken xrefs or a stale automodule target is never gated.",
+  "findings": [
+    {
+      "id": "TST-tst_docs_build-1",
+      "severity": "medium",
+      "title": "_sqlite_typemap bindings module entirely missing from sphinx docs",
+      "file": "docs/numbox.core.bindings.rst",
+      "lines": "19-31, 448-651",
+      "claim": "numbox/core/bindings/_sqlite_typemap.py exists on disk and exposes public (non-underscore) API (utf32_to_utf8, utf8_to_utf32, tags_buf_t) but has NO automodule directive in numbox.core.bindings.rst and is absent from the 'Bindings module conventions' family list. Every other _sqlite_* / _* binding module in the family (including the sibling helper module _sqlite_udf_helpers) has its own automodule section; _sqlite_typemap is the lone omission. CLAUDE.md's own 'Adding a New Binding' step 5 mandates that a new _*.py module be added both to the conventions family list AND as a per-module automodule section, so this is a documented-convention violation, and the UTF-8/UTF-32 transcoding helpers (a non-trivial, correctness-sensitive surface) are undocumented.",
+      "evidence": "_sqlite_typemap.py defines public `def utf32_to_utf8(src, n_codepoints, dst)` (line 34), `def utf8_to_utf32(src, nbytes, dst, width_cp)` (line 67), and `tags_buf_t = np.int32` (line 21). The bindings.rst 'Modules' section (lines 451-651) lists automodule directives for abi, _c, _errno, _stdio, _strerror, _fmtio, _math, _sqlite_conn/_stmt/_bind/_column/_exec/_blob/_hooks/_constants/_value/_result/_udf/_udf_helpers/_vtable/_query/_tvf, call, signatures, utils -- `grep -n typemap docs/numbox.core.bindings.rst` returns nothing. The conventions family list (rst lines 22-27) also omits _sqlite_typemap. CLAUDE.md: 'for a **new** `_*.py` module ... also update `docs/numbox.core.bindings.rst`: the \"Bindings module conventions\" family list AND add ... the per-module `automodule` section'.",
+      "recommendation": "Add `numbox.core.bindings._sqlite_typemap` to the conventions family list (rst ~line 25) and add a per-module `.. automodule:: numbox.core.bindings._sqlite_typemap` section under 'Modules', mirroring the _sqlite_udf_helpers block.",
+      "confidence": "high"
+    },
+    {
+      "id": "TST-tst_docs_build-2",
+      "severity": "medium",
+      "title": "work.rst graph-manager example imports three non-existent symbols",
+      "file": "docs/numbox.core.work.rst",
+      "lines": "524-526, 542",
+      "claim": "The 'graph manager' example block (a literal `::` block, so NOT scanned by doc-codeblock-flake8) imports `default_jit_options` from numbox.core.configurations and `_make_work` from numbox.core.work.work, and the following prose references `:func:`numbox.core.work.work.ol_make_work``. None of these three symbols exists anywhere in the source tree. A user copy-pasting the example hits ImportError on the first two; the :func: xref to ol_make_work is a dangling reference (Sphinx nitpick warning). This is stale documentation describing a renamed API.",
+      "evidence": "rst line 524 `from numbox.core.configurations import default_jit_options` and line 530 `@njit(**default_jit_options)`; but configurations.py exports only `def get_jit_options()` (line 5), `jit_options = get_jit_options()` (line 19), and `MAX_STR_LENGTH` (line 22) -- `grep -rn default_jit_options numbox/` finds it ONLY as a local import alias `from numbox.core.configurations import jit_options as _default_jit_options` in compile_kernel.py, never as a public configurations symbol. rst line 526 `from numbox.core.work.work import _make_work`; work.py defines `def make_work(...)` (line 147) which calls `ll_make_work`, and `grep -rn '\\b_make_work\\b' numbox/` returns nothing. rst line 542 ':func:`numbox.core.work.work.ol_make_work`'; `grep -rn ol_make_work numbox/` returns nothing -- the registered overload is `overload(Work, ...)` (work.py line 143) plus the `make_work` njit wrapper.",
+      "recommendation": "Update the example to `from numbox.core.configurations import jit_options` / `@njit(**jit_options)`, replace `_make_work` with the actual constructor (`make_work`, or `ll_make_work` from lowlevel_work_utils), and fix the line-542 xref to a symbol that exists (e.g. :func:`numbox.core.work.work.make_work`).",
+      "confidence": "high"
+    },
+    {
+      "id": "TST-tst_docs_build-3",
+      "severity": "medium",
+      "title": "Broken :class: xref to non-existent module path numbox.core.utils.void_type",
+      "file": "docs/numbox.core.work.rst",
+      "lines": "341",
+      "claim": "The Node overview prose contains `:class:`numbox.core.utils.void_type.VoidType``, but the package path numbox/core/utils/ does not exist -- VoidType lives at numbox/utils/void_type.py (path numbox.utils.void_type). The cross-reference therefore never resolves (Sphinx emits a 'py:class reference target not found' warning and renders the link as plain text). The sibling xrefs on the same line (ErasedType, NodeBaseType, lowlevel.cast) all resolve correctly, making this a single-token path typo.",
+      "evidence": "rst line 341: ':class:`numbox.core.any.erased_type.ErasedType`, or :class:`numbox.core.utils.void_type.VoidType`'. `ls numbox/core/utils` => 'NO such dir'. void_type.py is at numbox/utils/void_type.py and defines `VoidType = VoidTypeClass([])` (void_type.py line 10). The companion targets resolve: erased_type.py line 10 `ErasedType = ErasedTypeClass([])`, node_base.py line 35 `NodeBaseType = ...`, lowlevel.py line 43 `def cast(...)`.",
+      "recommendation": "Change the xref to `:class:`numbox.utils.void_type.VoidType`` (drop the erroneous `core.`). For it to actually resolve, VoidType must also be reachable by an automodule -- numbox.utils.void_type currently has no automodule in numbox.utils.rst (see finding 4).",
+      "confidence": "high"
+    },
+    {
+      "id": "TST-tst_docs_build-4",
+      "severity": "low",
+      "title": "Public modules referenced by :func: xrefs have no automodule (undocumented API + dangling xrefs)",
+      "file": "docs/numbox.core.work.rst",
+      "lines": "473, 480, 199, 408-412",
+      "claim": "numbox/core/work/explain.py, numbox/core/work/lowlevel_work_utils.py, numbox/core/variable/node.py, and numbox/utils/void_type.py expose public (non-underscore) API but have no automodule directive in any rst, so their members never appear in the rendered docs. Worse, work.rst actively cross-references some of them with :func: roles (e.g. :func:`numbox.core.work.lowlevel_work_utils.ll_make_work`) which cannot resolve without an autodoc entry, producing Sphinx 'reference target not found' warnings. This is undocumented-public-API plus dangling-xref drift.",
+      "evidence": "work.rst line 473 ':func:`numbox.core.work.lowlevel_work_utils.ll_make_work`' and line 480 imports from that module; lowlevel_work_utils.py defines public `def ll_make_work(...)` (line 107), `class WorkTypeClass(StructRef)` (line 34), `def create_uniform_inputs(...)` (line 64). work.rst line 199 imports `from numbox.core.work.explain import explain`; explain.py defines public `def explain(work)` (line 32) and `def get_func_code(...)` (line 8). Neither module appears in the work.rst automodule list (only builder, builder_utils, combine_utils, loader_utils, node, node_base, print_tree, work, work_utils). variable.rst (automodules: variable, compile_kernel, utils) omits variable/node.py which defines public `class Node` (line 4) and `def make_node(...)` (line 19). numbox.utils.rst omits void_type entirely.",
+      "recommendation": "Add `.. automodule::` sections for numbox.core.work.explain, numbox.core.work.lowlevel_work_utils, numbox.core.variable.node, and numbox.utils.void_type (the last is also needed for finding 3's xref to resolve). If any module is intentionally internal, demote its xrefs from :func:/:class: to inline literals so no dangling reference is emitted.",
+      "confidence": "high"
+    },
+    {
+      "id": "TST-tst_docs_build-5",
+      "severity": "medium",
+      "title": "Sphinx build is not gated on PRs and tolerates all warnings (no PR trigger, no -W)",
+      "file": ".github/workflows/docs.yml",
+      "lines": "3-5, 28-29",
+      "claim": "docs.yml runs `sphinx-build -b html` only `on: push: branches: [main]` and without `-W` / `--keep-going`. Consequently (a) a PR that breaks the doc build or introduces the broken automodule targets / dangling xrefs in findings 1-4 is never checked before merge -- the failure (or warning) first surfaces on the post-merge push to main, after the bad doc has already landed; and (b) because warnings are non-fatal, the dangling :func:/:class: xrefs (findings 2-4) and any stale automodule never fail CI at all. doc-codeblock-flake8.yml (PR-gated) only lints `code-block:: python` blocks, so it does not catch the literal `::` example in finding 2 nor any of the rst-structural drift. This is a CI-parity gap: the entire sphinx-render surface is effectively unguarded on PRs.",
+      "evidence": "docs.yml lines 3-5 `on: push: branches: [ \"main\" ]` (no pull_request); line 29 `run: sphinx-build -b html docs/ docs/_build/html` (no -W). By contrast doc-codeblock-flake8.yml triggers on `pull_request` (line 4) but only scans extracted python code-blocks (line 35 `extract_codeblocks.py`). numbox_ci.yml has `paths-ignore: ['**.md', 'docs/**']` (lines 6-8) so it never runs sphinx either. No workflow runs sphinx on pull_request.",
+      "recommendation": "Add a PR-triggered docs job (or a `pull_request` trigger to docs.yml that builds but skips the gh-pages deploy step) and add `-W --keep-going` to the sphinx-build invocation so broken automodule targets and dangling xrefs (findings 1-4) fail the build instead of silently shipping.",
+      "confidence": "high"
+    }
+  ]
+}

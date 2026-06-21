@@ -1,0 +1,21 @@
+{
+  "target": "libc_fmtio",
+  "dimension": "SEC",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "SEC-libc_fmtio-1",
+      "severity": "medium",
+      "title": "Format conversion specifiers never checked against arg count or per-arg type",
+      "verdict": "confirmed",
+      "reasoning": "Read _fmtio.py lines 210-227 and 316-317 directly. _validate_writer_arg_type (lines 221-227) checks only `isinstance(unliteral(ty), (Float, Integer, Boolean, UnicodeType))` — no specifier parsing whatsoever. The overload at lines 543-553 calls `_reject_percent_n_or_raise` (only blocks %n) and the per-arg type loop, but never parses the format. The format string is demonstrably in hand at typing time (line 545: `fmt_str = extract_literal_str(...)`) yet is only passed to `_reject_percent_n_or_raise`. The `Integer` type passes `_validate_writer_arg_type`, so `printf(\"%s\", np.int64(5))` compiles and libc will treat the integer 5 as a char* — a crash/disclosure. `printf(\"%d %d\", x)` with one arg will cause libc to read an uninitialized variadic slot. Both failure modes follow directly from the code. The docstring's claim at lines 35-37 of 'the same constraint a C compiler operates under when emitting a format-checked printf call' is specifically unmet for count and per-specifier type. Severity medium is appropriate."
+    },
+    {
+      "id": "SEC-libc_fmtio-2",
+      "severity": "low",
+      "title": "sscanf permits unbounded %s / %[ conversions into caller buffers",
+      "verdict": "confirmed",
+      "reasoning": "Read _sscanf_intrinsic (lines 387-415) and _overload_sscanf (lines 667-686). Line 669 extracts the literal format string (`extract_literal_str(...)`) but the only subsequent check is that buf is intp and all args are intp (lines 671-681). The format string is never inspected for width-less %s or %[ specifiers. _reject_percent_n_or_raise is deliberately NOT called for sscanf (consistent with the code's comments at 254-258 that %n is sscanf's legitimate use). There is no minimum-field-width enforcement. An sscanf call with `\"%s\"` and an attacker-controlled input buffer writes unboundedly into the caller's intp-pointed buffer. Low severity confirmed: the format is a compile-time literal authored by the developer, and the caller owns both buffer and format, so the risk requires developer error rather than purely attacker-controlled input. The recommendation to add a docstring warning or reject width-less %s/%[ as defense-in-depth is reasonable."
+    }
+  ]
+}

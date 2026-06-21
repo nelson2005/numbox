@@ -1,0 +1,11 @@
+{
+  "target": "lowlevel",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/utils/lowlevel.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the SEC dimension. numbox/utils/lowlevel.py is a set of low-level numba primitives (raw pointer load/store, struct/payload extraction, C-string read) with no SQL, format-string, path-resolution, or library-loading surface. The one C-string reader (get_str_from_p_as_int) handles NUL correctly (exits on first NUL) and bounds its carray view at MAX_STR_LENGTH = 2**31-1, mitigating runaway over-read; the raw pointer load/store helpers are trusted-by-contract with explicit 'caller is responsible for p pointing at a live region' docstrings. The only marginal item — chr() on a signed int8 mangling bytes >= 0x80 in get_str_from_p_as_int — is an encoding-correctness (COR) issue, not a memory-safety/disclosure/injection one, so it is deferred to the COR reviewer and not reported here. No reportable SEC defects.",
+  "findings": []
+}

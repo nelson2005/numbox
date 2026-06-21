@@ -1,0 +1,7 @@
+{
+  "target": "cstrings",
+  "dimension": "MEM",
+  "verifier_model": "sonnet",
+  "summary": "no findings to verify",
+  "verdicts": []
+}

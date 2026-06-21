@@ -1,0 +1,12 @@
+{
+  "target": "meminfo",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/utils/meminfo.py",
+    "numbox/core/bindings/_sqlite_udf_helpers.py",
+    "numbox/core/bindings/_sqlite_tvf.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. The bridge intrinsics (export_meminfo / borrow_structref / release_meminfo and their primitives _incref_meminfo / _release_meminfo / _deref_structref_raw_ptr) are refcount-balanced and use real NRT APIs (get_meminfos, meminfo_data, incref all verified present on numba 0.65.1's NRTContext). The asymmetry between _incref_meminfo (context.nrt.incref) and _release_meminfo (extern NRT_MemInfo_release) is intentional and documented to defeat numba's removerefctpass symmetric stripping; the void(intp) signatures carry no NRT-tracked types so the pass cannot pair them. Tracing the actual callers in _sqlite_udf_helpers.py (export on first xStep, borrow per xStep/xValue/xInverse with net-zero scope balance, release in xFinal) and _sqlite_tvf.py confirms a balanced own/borrow/release lifecycle with no leak or double-free. _deref_structref_raw_ptr correctly sets only .meminfo (a StructRef value carries only the meminfo pointer; its data pointer is derived via meminfo_data, as structref_meminfo itself demonstrates), so the reconstruction is complete. _require_intp guards against int32->ptr truncation on 64-bit hosts. No findings.",
+  "findings": []
+}

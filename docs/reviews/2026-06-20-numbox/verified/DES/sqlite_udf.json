@@ -1,0 +1,28 @@
+{
+  "target": "sqlite_udf",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-sqlite_udf-1",
+      "severity": "low",
+      "title": "Identical init+finalize branches duplicated in _XFINAL_SRC (and _value in _XVALUE_SRC)",
+      "verdict": "confirmed",
+      "reasoning": "Read _XFINAL_SRC (lines 111-143) in _sqlite_udf_helpers.py. The `if agg == 0:` block (lines 115-125) and the `if slot[0] == 0:` block (lines 127-137) are byte-for-byte identical: each calls `_init()` in a try/except reporting 'error in user init callback', then `_finalize(_state, ctx)` in a try/except reporting 'error in user finalize callback', then returns. The same two-block duplication appears in _XVALUE_SRC (lines 160-191): the `agg==0` path (lines 164-174) and `slot[0]==0` path (lines 176-186) are identical, each calling `_init()` then `_value(_state, ctx)` with the same error strings. The conditions represent two 'empty group' cases that intentionally behave identically, confirming the maintenance-hazard claim. Decisive lines: 115-125 vs 127-137 in _XFINAL_SRC."
+    },
+    {
+      "id": "DES-sqlite_udf-2",
+      "severity": "low",
+      "title": "Codegen scaffolding duplicated between _sqlite_udf_helpers.py and _sqlite_tvf.py",
+      "verdict": "confirmed",
+      "reasoning": "Checked all four claimed duplication points against the live source. (a) Import-time sweep: _sqlite_udf_helpers.py line 84-85 `_ANCHOR_SUBDIR = 'numbox-sqlite-udaf'; _orphan_anchor_sweep(_ANCHOR_SUBDIR)` mirrors _sqlite_tvf.py lines 77-78 `_ANCHOR_SUBDIR = 'numbox-sqlite-tvf'; _orphan_anchor_sweep(_ANCHOR_SUBDIR)`. (b) _stem: _sqlite_udf_helpers.py line 249 `return prefix + ''.join(c if c.isalnum() else '_' for c in name)` vs _sqlite_tvf.py line 425 `return 'tvf_' + ''.join(c if c.isalnum() else '_' for c in name)` -- same sanitizer body. (c) _compile_callbacks (lines 221-235) vs _compile_xfilter (lines 360-372): both run `ns = {**globals(), ...}; anchor = _anchor_path(...); _materialize_anchor(anchor, code_txt); code = compile(code_txt, str(anchor), mode='exec'); exec(code, ns)`. (d) _prepare_callbacks vs _prepare_fn: both check `is_jitted(fn)` and fall back to `njit(fn)`. All four duplications are real."
+    },
+    {
+      "id": "DES-sqlite_udf-3",
+      "severity": "low",
+      "title": "Repeated try/except + sqlite3_result_error error-report idiom across templates",
+      "verdict": "confirmed",
+      "reasoning": "Read all four template strings in _sqlite_udf_helpers.py. The pattern `except Exception: sqlite3_result_error(ctx, get_unicode_data_p('error in user X callback'), -1)` appears at lines 102-103 (init in xStep), 107-108 (step), 118-120 (init in xFinal), 123-124 (finalize), 130-132 (init dup), 135-136 (finalize dup), 140-141 (finalize live), 154-157 (inverse), 166-168/171-173/178-180/184-185/188-190 (value paths). Each instance differs only in the callback-name string. The finding correctly identifies this as a maintenance hazard: any change to error reporting (e.g. appending exception text, changing the -1 code) requires editing every copy. Confidence downgraded from high to medium by the reviewer is appropriate given this is lower priority than DES-1/2 and the risk is maintenance rather than correctness."
+    }
+  ]
+}

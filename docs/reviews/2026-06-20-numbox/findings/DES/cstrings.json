@@ -1,0 +1,13 @@
+{
+  "target": "cstrings",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/utils/cstrings.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/bindings/_sqlite_exec.py",
+    "numbox/core/bindings/signatures.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the DES dimension. cstrings.py is a 71-line single-function module (c_string context manager) that is minimal, non-duplicative, and free of dead code. It deliberately does NOT reuse the JIT pointer/string helpers in lowlevel.py and documents exactly why (get_unicode_data_p returns the Python str's internal UCS-1/2/4 payload, safe only for ASCII), so the apparent non-reuse is a correct, documented design choice rather than reinvention. No over-complexity, consistent public-API naming, and the docstring's sqlite3_exec example matches the real 5-arg signature. No findings.",
+  "findings": []
+}

@@ -1,0 +1,28 @@
+{
+  "target": "sqlite_tvf",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-sqlite_tvf-1",
+      "severity": "medium",
+      "title": "14-branch tag->sqlite3_result ladder duplicated across three cfunc bodies",
+      "verdict": "confirmed",
+      "reasoning": "Verified by reading _sqlite_tvf.py lines 308-343 and _sqlite_vtable.py lines 661-696 side by side. The 11 integer/float branches (TAG_I8 through TAG_F64) are byte-identical between the two _xcolumn bodies; lines 330-339 (_TAG_S/_TAG_BLOB) intentionally differ only in using _SQLITE_TRANSIENT vs SQLITE_STATIC (vtable line 689/692 uses SQLITE_STATIC; tvf lines 336/339 use _SQLITE_TRANSIENT — this is a real behavioral difference with a comment explaining it). A third near-copy of the numeric tags exists in _cell_value_f64 (lines 418-440) and _cell_value_i64 (lines 453+) in _sqlite_vtable.py as acknowledged in the finding. The lockstep-edit hazard is genuine: adding a new tag or fixing a width bug requires edits in three places. _sqlite_typemap.py already owns _nul_trimmed_len and utf32_to_utf8 (lines 25, 34), making it the natural home for a parameterized emitter."
+    },
+    {
+      "id": "DES-sqlite_tvf-2",
+      "severity": "low",
+      "title": "_TVF_DESC_DTYPE.itemsize field written but never read",
+      "verdict": "confirmed",
+      "reasoning": "Verified by grep: `itemsize` in _sqlite_tvf.py appears at line 85 (dtype declaration: `(\"itemsize\", \"i8\")`), line 94 (_TVF_CUR_DTYPE.itemsize — numpy attribute on the dtype object, NOT the struct field), line 382 (s.itemsize on sub-dtype), and line 403 (`c[\"itemsize\"] = int(out_dtype.itemsize)` — the write). No `d[0].itemsize` or `c[0].itemsize` read of the descriptor field exists anywhere. The live per-query row stride comes from `c[0].row_stride = result.strides[0]` (line 131, per xFilter) and is consumed at line 306 `addr = data_p + rowid * c[0].row_stride + offsets[j]`. The descriptor `itemsize` field is genuinely dead."
+    },
+    {
+      "id": "DES-sqlite_tvf-3",
+      "severity": "low",
+      "title": "xConnect / xDisconnect / xRowid / xEof boilerplate re-implemented instead of shared with the vtable module",
+      "verdict": "confirmed",
+      "reasoning": "Verified by direct comparison. _tvf_xconnect (lines 149-168) is line-for-line identical to _xconnect (lines 258-277) modulo `_TVF_DESC_DTYPE` vs `_DESC_DTYPE`; the comment at tvf line 159 ('no zeroing needed: SQLite memsets the sqlite3_vtab base after this callback returns') matches vtable line 268 verbatim, confirming copy-paste origin. _tvf_xdisconnect (lines 212-218) is identical to _xdisconnect (lines 353-359). _tvf_xrowid (lines 283-287) is identical to _xrowid (lines 639-645). The finding correctly notes that the per-registration factory constraint is real (tvf wraps these in factory functions; vtable uses module-level cfuncs), so a literal function-address share is not possible — the finding's recommendation of a factory parameterized on descriptor dtype is the appropriate mitigation. Severity low is accurate given the lower change-frequency of these boilerplate methods vs the column-dispatch ladder."
+    }
+  ]
+}

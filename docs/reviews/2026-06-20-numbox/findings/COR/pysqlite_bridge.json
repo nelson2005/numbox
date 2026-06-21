@@ -1,0 +1,26 @@
+{
+  "target": "pysqlite_bridge",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/utils/pysqlite_bridge.py",
+    "numbox/core/bindings/_sqlite_conn.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/proxy/proxy.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Essentially clean on COR. The PyObject_HEAD layout reconstruction (default / Py_TRACE_REFS / free-threaded) is correct field-by-field, the db pointer is read at a ctypes-computed offset, and extract_connection_ptr layers a type check, coordination guard, null check, and an immediate errmsg validation (decoded before any further API call, respecting the errmsg-lifetime rule). One low-confidence contract-gap is noted: the coordination guard tests version-string equality, which is necessary but not sufficient to prove the two sqlite libraries are the same binary.",
+  "findings": [
+    {
+      "id": "COR-pysqlite_bridge-1",
+      "severity": "low",
+      "title": "Coordination guard tests version-string equality, not library identity",
+      "file": "numbox/utils/pysqlite_bridge.py",
+      "lines": "93-107",
+      "claim": "libraries_coordinated() returns True whenever the two libsqlite3 builds report the same version string, even if numbox's @njit bindings and Python's sqlite3 module are bound to two physically different libsqlite3 binaries of that same version. The module docstring (lines 18-19) and the function docstring (lines 94-100) frame the guard as proving the two resolve to 'the same libsqlite3'; equal version strings do not establish that. In practice the sqlite3* opaque-handle ABI is stable across same-major-version builds, so passing a pointer between two equal-version libraries is normally safe -- this is a contract/heuristic gap, not a demonstrated wrong-result path.",
+      "evidence": "Line 106-107: `numbox_version = ctypes.c_char_p(sqlite3_libversion()).value.decode(); return numbox_version == sqlite3.sqlite_version`. The only thing compared is the SQLITE_VERSION string. Two distinct builds (e.g. a system copy in the dyld shared cache and a Homebrew copy) can share a version string yet be different binaries; the guard cannot distinguish them. The docstring at line 18-19 asserts a mismatch 'can produce wrong results or segfaults', implying equality is the safety condition.",
+      "recommendation": "Treat as a documented heuristic: either soften the docstring to state the guard is a version-string check (a strong proxy for, but not a proof of, library identity), or strengthen it by also comparing sqlite3_libversion_number() / a pointer-identity check on a resolved symbol if a stricter guarantee is wanted. No code change is strictly required given the stable opaque-handle ABI.",
+      "confidence": "low"
+    }
+  ]
+}

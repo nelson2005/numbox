@@ -1,0 +1,36 @@
+{
+  "target": "pysqlite_bridge",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/utils/pysqlite_bridge.py",
+    "numbox/core/bindings/_sqlite_conn.py",
+    "numbox/core/bindings/signatures.py",
+    "test/utils/test_pysqlite_bridge.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Pure-Python ctypes bridge; no @njit/@cfunc/NRT refcount or struct-by-value ABI code, so the catastrophic MEM failure modes (cfunc swallow, NRT leak, sret) do not apply. The errmsg validation reads its returned pointer immediately (lifetime-correct) and sqlite3_libversion returns a static non-null string. The one real MEM hazard is a data-lifetime contract gap: extract_connection_ptr returns a raw sqlite3* int whose owner is the Python Connection, but neither the return-value docs nor any code enforces keeping conn alive, so a caller who drops/closes conn while still using the pointer gets a use-after-free.",
+  "findings": [
+    {
+      "id": "MEM-pysqlite_bridge-1",
+      "severity": "medium",
+      "title": "Returned sqlite3* outlives no keep-alive contract; dangles if conn is closed/GC'd",
+      "file": "numbox/utils/pysqlite_bridge.py",
+      "lines": "110-164",
+      "claim": "extract_connection_ptr returns the raw sqlite3* (db_ptr) as a plain Python int. That pointer is owned by the Python sqlite3.Connection object: it is freed when conn.close() runs or when conn is garbage-collected. The returned int holds no reference to conn, and the docstring's Returns/Raises sections never tell the caller that conn must outlive every use of the pointer. A caller that extracts the pointer, drops its last reference to conn (or calls conn.close()), then passes the int into numbox's @njit bindings gets a use-after-free / segfault on a freed sqlite3* — a silent, hard-to-diagnose crash rather than an exception.",
+      "evidence": "Line 156 `db_ptr = _PysqliteConnection.from_address(id(conn)).db` reads the live handle out of the Connection; line 164 `return db_ptr` hands back only the integer. The docstring Returns block (lines 130-132) says only `int -- sqlite3* as a Python int (intp-compatible)` and the Raises block (lines 134-141) never mentions lifetime. The tests (test/utils/test_pysqlite_bridge.py lines 46-52, 105-113) all keep `conn` alive in a try/finally for the whole pointer-use window, which is exactly the implicit contract that is undocumented — confirming the pointer is only valid while conn lives. CLAUDE.md's own lifetime note (`bind_text/bind_blob ... SQLITE_STATIC ... assumes it outlives the statement`) shows this codebase treats borrowed-pointer ownership as a documented invariant elsewhere.",
+      "recommendation": "Document the keep-alive invariant explicitly in the Returns section: the returned sqlite3* is borrowed from conn and is valid only while conn is alive and open; the caller must retain a reference to conn for the entire lifetime of any @njit use of the pointer, and must not use it after conn.close(). (Cannot bake an actual reference into a bare int, so the contract is the only available mechanism — mirror the SQLITE_STATIC-style ownership note already used for bind_text/bind_blob.)",
+      "confidence": "high"
+    },
+    {
+      "id": "MEM-pysqlite_bridge-2",
+      "severity": "low",
+      "title": "errmsg validation reads through db_ptr by value, so a non-null garbage pointer can segfault instead of raising",
+      "file": "numbox/utils/pysqlite_bridge.py",
+      "lines": "156-163",
+      "claim": "If the _PysqliteConnection field layout is ever wrong for the running interpreter (e.g. an unanticipated build configuration whose PyObject head differs from the cases handled in _pyobject_head_fields), db_ptr is read from the wrong offset. A non-zero-but-garbage db_ptr passes the `db_ptr is None` guard (line 157) and is then dereferenced by sqlite3_errmsg(db_ptr) (line 159) as if it were a real sqlite3*. That dereference of an arbitrary address can segfault rather than be caught by the `errmsg != b\"not an error\"` check, so the validation does not fully contain a layout mismatch.",
+      "evidence": "Line 157 only rejects the exact-zero case `if db_ptr is None`; any other integer flows to line 159 `errmsg = ctypes.c_char_p(sqlite3_errmsg(db_ptr)).value`, which calls into libsqlite3 with db_ptr treated as a sqlite3*. _pyobject_head_fields (lines 41-74) enumerates standard / Py_TRACE_REFS / Py_GIL_DISABLED layouts but any build outside those assumptions yields a wrong db offset; the validation call cannot distinguish a wrong-offset garbage pointer from a valid one before dereferencing it.",
+      "recommendation": "Treat this as a known, accepted limitation of the offset-reading approach (it is inherent and low-likelihood given ctypes computes the offset from the declared layout). Optionally note in the module docstring that extract_connection_ptr assumes a CPython build whose pysqlite_Connection head matches one of the handled layouts; no code change is warranted unless an unsupported build is encountered.",
+      "confidence": "low"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "target": "work_builder",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-work_builder-1",
+      "severity": "medium",
+      "title": "Explicit End/Derived `ty` not included in the kernel fingerprint",
+      "verdict": "confirmed",
+      "reasoning": "Verified against builder.py. Line 170: `hash_str = f\"code_block = {code_txt.getvalue()} derive_hashes = {derive_hashes}\"` hashes only the generated body text and derive hashes. When an explicit `ty` is provided for an End node, line 75 stores it as `ns[type_name] = ty_` and line 76 generates `ll_make_work(\"x\", x_init, (), None, x_ty)` — the identifier `x_ty` appears literally in the body text, not the type value. Line 177 `make_params = \", \".join(chain(_make_args, initializers.keys()))` shows `type_name` variables are NOT included in the function parameters — they are globals only. Therefore, two graphs with identical node names and init values but different explicit `ty` produce the same `hash_str`, the same `make_name`, and identical function parameter types (only init values are parameters). With `cache: True` from configurations.py line 11, numba caches by `(function_qualname, arg_type_signature)`. Since `x_ty` is a global (not a parameter), it is absent from the arg_type_signature, and two processes could collide on the same cache entry producing a kernel with the wrong `data` field type. Severity medium is appropriate: the trigger is narrow (explicit `ty` differing from `typeof(init_value)`, same names, cross-process cache) but the silent wrong-type result is a real correctness hazard when it fires.",
+      "adjusted_severity": null
+    },
+    {
+      "id": "COR-work_builder-2",
+      "severity": "low",
+      "title": "Derive fingerprint hashes only `getsource`, missing referenced globals/closures",
+      "verdict": "confirmed",
+      "reasoning": "Verified against builder.py line 108: `derive_hashes.append(sha256(getsource(derive_func).encode(\"utf-8\")).hexdigest())` — only source text is hashed. The `_fingerprint_function` utility in numbox/utils/fingerprint.py lines 91-112 already captures code-object bytecode, co_consts, closure cells, and referenced module-level globals (lines 103-106: `for name in sorted(_referenced_global_names(code)): ... hashed_globals.append(...)`). Builder.py does not import or use this utility; it uses bare `getsource` instead. Since `derive_func` is a plain Python function at line 107 (before being compiled by `_derived_cres`), it is directly fingerprintable by `_fingerprint_function`. A derive whose source text is unchanged but whose referenced global changes (e.g. a coefficient read from a module-level constant) will produce the same `hash_str` and the same `make_name`, while the compiled derive itself would produce a different result. The finding correctly identifies the residual risk is bounded because the derive is passed as a runtime arg (lines 112-113), meaning the outer kernel re-specializes on the new `FunctionType` — but only if the outer kernel's own cache is also invalidated, which it will not be since the outer kernel's arg types are unchanged. The severity low is appropriate given the layered caches and narrow trigger."
+    }
+  ]
+}

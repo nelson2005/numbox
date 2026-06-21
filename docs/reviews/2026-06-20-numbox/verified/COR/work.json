@@ -1,0 +1,14 @@
+{
+  "target": "work",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-work-1",
+      "severity": "low",
+      "title": "get_input bounds check omits negative index",
+      "verdict": "confirmed",
+      "reasoning": "Independently confirmed both cited locations. work.py line 360: `if i >= num_inputs:` — no lower-bound check. node.py line 85: identical one-sided guard. The inputs_vector is built from `List.empty_list(NodeBaseType)` (work.py line 384, _make_inputs_vector_code), and node.py line 87 indexes `self.inputs` which is also a `List.empty_list(NodeBaseType)` (node.py line 71). Numba typed Lists honor Python-style negative indexing, so `inputs_vector[-1]` silently returns the last element rather than raising. All internal callers (node.py lines 104, 116, 129, 141) use `for i in range(len(...))` which never produces negative i, so the gap is only reachable via direct public API calls with user-supplied negative i. Severity 'low' is accurate: requires deliberate or mistaken negative-index from the caller."
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "target": "pysqlite_bridge",
+  "dimension": "MEM",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "MEM-pysqlite_bridge-1",
+      "severity": "medium",
+      "title": "Returned sqlite3* outlives no keep-alive contract; dangles if conn is closed/GC'd",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed by direct reading. Line 164 `return db_ptr` hands back a plain Python int with no reference to `conn`. The docstring Returns block (lines 129-132) says only `int -- sqlite3* as a Python int (intp-compatible)` — no lifetime caveat. The Raises block (lines 134-141) covers TypeError and RuntimeError for invalid conn or failed validation, but says nothing about the pointer becoming invalid when conn is closed or GC'd. The tests (lines 46-52, 105-113) keep `conn` alive in try/finally for the entire pointer-use window, which is exactly the implicit contract that is missing from the docs. The CLAUDE.md itself documents lifetime invariants for `bind_text`/`bind_blob` (`SQLITE_STATIC ... assumes it outlives the statement`), confirming the project treats borrowed-pointer ownership as a documented invariant elsewhere. The gap is real."
+    },
+    {
+      "id": "MEM-pysqlite_bridge-2",
+      "severity": "low",
+      "title": "errmsg validation reads through db_ptr by value, so a non-null garbage pointer can segfault instead of raising",
+      "verdict": "refuted",
+      "reasoning": "The finding's premise requires a CPython build whose `PyObject_HEAD` layout falls outside the three cases handled by `_pyobject_head_fields()`. The function (lines 41-74) detects: (1) debug builds via `hasattr(sys, 'gettotalrefcount')` which is the canonical CPython check for `Py_TRACE_REFS` builds, adding `_ob_next`/`_ob_prev`; (2) free-threaded builds via `sysconfig.get_config_var('Py_GIL_DISABLED')`, adding the full GIL-disabled refcount fields; (3) standard release builds (the else branch). These three branches cover every CPython build variant in the project's support matrix (3.10-3.14). No known CPython release on any of Linux/macOS/Windows uses a PyObject_HEAD layout outside these three cases. The finding's own confidence is 'low' and its recommendation explicitly states 'no code change is warranted unless an unsupported build is encountered' — the reviewer themselves treat it as an accepted limitation, not a real defect. The triggering condition (an unhandled build configuration) cannot occur on any platform in the CI matrix."
+    }
+  ]
+}

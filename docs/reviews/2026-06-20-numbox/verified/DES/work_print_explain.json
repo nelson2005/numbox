@@ -1,0 +1,21 @@
+{
+  "target": "work_print_explain",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-work_print_explain-1",
+      "severity": "low",
+      "title": "Internal print_tree helpers (make_graph, calculate_col_widths) lack leading underscore and the name shadows public builder.make_graph",
+      "verdict": "confirmed",
+      "reasoning": "Reading print_tree.py directly: L15 `def calculate_col_widths(graph):` and L41 `def make_graph(node):` both lack underscore prefix. L44 and L59 show these are called only within the file (calculate_col_widths called at L44 inside make_graph; make_graph called at L59 inside make_image). Meanwhile L22 `def _build_graph(...)` already carries an underscore, making the inconsistency plain. builder.py L145 defines a completely different `def make_graph(*access_nodes, registry=None, jit_options=None):` that constructs a JIT graph — a distinct public function with the same unqualified name. The finding's factual claims are all verifiable from the source text and the naming inconsistency is real."
+    },
+    {
+      "id": "DES-work_print_explain-2",
+      "severity": "low",
+      "title": "explain.py indexes work.derive with a bare magic [1] to recover the _derive_funcs lookup key",
+      "verdict": "confirmed",
+      "reasoning": "explain.py L24-25: `derive_func_ptrs = work.derive` then `get_func_code(derive_func_ptrs[1])`. work.py L78-79: the `derive` property returns `_get_func_tuple(self.derive)`. lowlevel.py L222-233: `_get_func_tuple` builds UniTuple(intp, function_struct_size) by ptrtoint of each struct field in order; L25 comment names the layout `c_addr, py_addr[, jit_addr]`, so slot [1] = py_addr = Python object address = `id(derive_cres)`. builder.py L95: `_derive_funcs[id(derive_cres)] = derive`. The literal `1` matches the py_addr slot, but this coupling is entirely implicit — no named constant, no comment at the call site in explain.py ties [1] to 'py_addr' or to the _derive_funcs key scheme. Additionally, get_func_code (explain.py L8-10) calls `_derive_funcs.get(derive_func_p_)` which returns None on a miss, and `None.__name__` raises AttributeError — confirming the opaque error on key miss. The finding holds on all counts."
+    }
+  ]
+}

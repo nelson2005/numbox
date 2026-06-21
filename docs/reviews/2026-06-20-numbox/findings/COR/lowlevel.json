@@ -1,0 +1,25 @@
+{
+  "target": "lowlevel",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/utils/lowlevel.py",
+    "numbox/core/configurations.py",
+    "numbox/utils/highlevel.py",
+    "numbox/utils/void_type.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "One real correctness defect: get_str_from_p_as_int decodes C-string bytes as signed int8 and feeds them to chr(), which raises ValueError on any byte >= 0x80 (reproduced this session with UTF-8 'e-acute'). This is the canonical C-string reader (CLAUDE.md points sqlite3_errmsg/column-text callers at it), so any non-ASCII C string crashes instead of returning a string. The pointer/load/store/cast primitives are otherwise correct on this dimension; their raw-memory contracts are documented and the align-1 vs aligned split is intentional.",
+  "findings": [
+    {
+      "id": "COR-lowlevel-1",
+      "severity": "high",
+      "title": "get_str_from_p_as_int crashes on non-ASCII C strings (signed char -> chr() out of range)",
+      "file": "numbox/utils/lowlevel.py",
+      "lines": "249-260",
+      "claim": "get_str_from_p_as_int reads the C string with dtype=char, which numba defines as signed int8. Any byte >= 0x80 (every continuation/lead byte of a multi-byte UTF-8 sequence) reads back as a negative value (e.g. 0xC3 -> -61). The loop then calls chr(char_as_code_p) on that negative value, which raises ValueError: chr() arg not in range(0x10ffff). So instead of returning the string, the function raises on any C string containing a non-ASCII byte. This is the documented canonical reader for NUL-terminated C strings, and CLAUDE.md directs callers to decode sqlite3_errmsg (UTF-8, may contain non-ASCII from table/column names) via this exact function; such an error message read would crash the caller.",
+      "evidence": "Lines 255-259: `mem_view = carray(void_p, shape=(MAX_STR_LENGTH,), dtype=char)` then `for char_as_code_p in mem_view: if char_as_code_p == 0: return s; s += chr(char_as_code_p)`. `char` is imported from numba.core.types (line 11) and is int8/signed (verified this session: `numba.core.types.char` repr is `int8`, `.signed` is True). Reproduced this session: calling get_str_from_p_as_int on a buffer holding the UTF-8 bytes 0xC3 0xA9 0x41 0x00 ('eA') raised `ValueError: chr() arg not in range(0x10ffff)`. The NUL check (`== 0`) is unaffected because only 0x00 is zero, but every byte in 0x80..0xFF is negative under int8 and triggers the chr() failure.",
+      "recommendation": "Read bytes as unsigned (use an unsigned 8-bit dtype, e.g. numba.core.types.uint8, for the carray view) so byte values land in 0..255 before chr(). Note that even unsigned, byte-wise chr() still mis-decodes multi-byte UTF-8 (each byte becomes its own codepoint); for correct text the bytes should be collected and UTF-8-decoded. At minimum switch to the unsigned dtype to stop the crash; preferably accumulate raw bytes and decode as UTF-8 to match the 'copying the original string's data' contract on the line-251 docstring.",
+      "confidence": "high"
+    }
+  ]
+}

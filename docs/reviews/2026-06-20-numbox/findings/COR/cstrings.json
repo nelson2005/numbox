@@ -1,0 +1,11 @@
+{
+  "target": "cstrings",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/utils/cstrings.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on COR. The single public helper c_string correctly UTF-8-encodes the input, rejects embedded NULs before buffer creation, appends a proper terminating NUL via create_string_buffer, and keeps the buffer alive for the with-block via the suspended generator frame. NUL handling (the salient concern in this target's notes) is correct in both directions, and the docstring's rationale about get_unicode_data_p being ASCII-only matches the actual lowlevel.py implementation. No correctness defects found.",
+  "findings": []
+}

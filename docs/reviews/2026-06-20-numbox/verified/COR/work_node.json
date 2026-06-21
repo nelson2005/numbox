@@ -1,0 +1,21 @@
+{
+  "target": "work_node",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-work_node-1",
+      "severity": "medium",
+      "title": "get_input bounds check ignores negative indices",
+      "verdict": "confirmed",
+      "reasoning": "Verified against node.py lines 83-87. The guard reads `if i >= num_inputs:` (line 85), which is strictly a one-sided upper-bound check. A negative `i` satisfies `i >= num_inputs` as False (e.g. -1 >= 5 is False), so execution proceeds to `return self.inputs[i]` at line 87. numba's typed List mirrors Python list semantics for negative indices, so `self.inputs[-1]` silently returns the last element. The intended error message at line 86 ('Requested input {i} while the node has {num_inputs} inputs') implies a full range contract, making the omission a real behavioral gap. The finding's reasoning holds exactly as stated."
+    },
+    {
+      "id": "COR-work_node-2",
+      "severity": "low",
+      "title": "name-based dedup collapses distinct same-named nodes and recursion has no cycle guard",
+      "verdict": "confirmed",
+      "reasoning": "Verified against node.py lines 101-148. The `_all_input_names` helper at lines 102-109 appends a name only when `name_ not in names_` (line 107), but the recursive descent at line 109 (`_all_input_names(input_, names_)`) is unconditional — it runs regardless of whether the name was already seen. This means: (a) two structurally distinct nodes that share a name produce only one entry in the result, losing the second node's contribution; (b) a cycle would cause unbounded recursion because no visited-set on node identity prevents re-entering a node. The same pattern appears in `_all_end_nodes` at lines 127-134. No docstring documents the unique-name + acyclic precondition. The finding's two sub-claims are both accurate. Severity 'low' is appropriate given the graph is built under a unique-name contract in practice, but the absence of documentation or a guard is a real gap."
+    }
+  ]
+}

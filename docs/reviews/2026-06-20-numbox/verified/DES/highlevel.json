@@ -1,0 +1,28 @@
+{
+  "target": "highlevel",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-highlevel-1",
+      "severity": "low",
+      "title": "hash_type and prune_type are unused public surface",
+      "verdict": "confirmed",
+      "reasoning": "git grep across all .py, .rst, and .md files returns only the two def lines in numbox/utils/highlevel.py (lines 68-70 and 242-247) — no callers anywhere in numbox/, test/, or docs/. Both functions lack docstrings. docs/numbox.utils.rst lines 55-58 confirm '.. automodule:: numbox.utils.highlevel / :members: / :undoc-members:', so both are rendered as public API without documentation. By contrast determine_field_index (line 61) has callers. The finding holds."
+    },
+    {
+      "id": "DES-highlevel-2",
+      "severity": "low",
+      "title": "Six redundant namespace entries in make_structref exec ns",
+      "verdict": "confirmed",
+      "reasoning": "Lines 5, 12, 13 of highlevel.py import njit, define_boxing, new, StructRefProxy, overload, overload_method at module level. Line 221 spreads getmodule(_file_anchor).__dict__ — _file_anchor is defined in this same module (line 22), so getmodule returns highlevel itself. The explicit dict (lines 225, 227-231) then re-sets those six names to the identical objects. The only non-redundant explicit entries are: 'fields' (struct_fields, not in module globals), 'fields_types' (local, not in globals), 'jit_options' (local param under key 'jit_options' — the module global is 'jit_options_' with underscore, so the generated code's references to 'jit_options' would be unresolved without this entry), and struct_type_class.__name__ (caller-supplied class). The six keys listed by the finding are genuinely redundant."
+    },
+    {
+      "id": "DES-highlevel-3",
+      "severity": "low",
+      "title": "Identity list-comprehension in struct_fields_str join",
+      "verdict": "confirmed",
+      "reasoning": "Line 84: 'struct_fields_str = \", \".join([field for field in struct_fields])' — the comprehension [field for field in struct_fields] is identical to struct_fields itself (after normalisation on lines 79-83, struct_fields is always a list or tuple). Compare line 87 and line 138 which apply f-string transformations. ', '.join(struct_fields) is equivalent with no behavior change. Finding is accurate and the recommendation is correct."
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "target": "libc_fmtio",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-libc_fmtio-1",
+      "severity": "low",
+      "title": "_python_fmt_compat strips length modifier from a literal %%-escaped sequence (cross-mode output divergence)",
+      "verdict": "confirmed",
+      "reasoning": "Verified against the live source. `_LENGTH_MODIFIER_RE` at lines 154-156 is `%([-+0# ]*[0-9*]*\\.?[0-9*]*)(hh|ll|h|l|L|j|z|t|q|I32|I64)([diouxXfFeEgGaAcsp])`. For input `\"%%ld\"`, the regex matches starting at position 1 (the second `%`): the sequence `%ld` satisfies the pattern (empty flags/width, `l` as length modifier, `d` as conversion). The `.sub(r'%\\1\\3', fmt)` call replaces `%ld` with `%d`, yielding `\"%%d\"`. Python's `\"%%d\" % ()` then produces `\"%d\"`, while libc's printf with the original `\"%%ld\"` emits `\"%ld\"`. The divergence is real. The fix pattern already exists in the same file: `_reject_percent_n_or_raise` at line 252 uses `stripped = fmt_str.replace('%%', '\\x00\\x00')` before applying its regex, specifically to prevent matching inside `%%`-escaped pairs. `_python_fmt_compat` omits that same step."
+    },
+    {
+      "id": "COR-libc_fmtio-2",
+      "severity": "medium",
+      "title": "No format-spec / argument cross-validation in @njit path: spec-vs-type or spec-vs-count mismatch silently miscompiles where pure-Python raises",
+      "verdict": "confirmed",
+      "reasoning": "Verified against the live source. `_validate_writer_arg_type` at lines 210-227 only checks `isinstance(unliteral(ty), (Float, Integer, Boolean, UnicodeType))` per arg — no specifier parsing. `_emit_variadic_call` at lines 271-301 promotes args via `_promote_for_varargs` and emits `builder.call(fn, ..., var_arg=True)` at line 299 with no specifier-driven cross-check. The literal format string IS available at typing time (`extract_literal_str` at line 312); it is simply never parsed for specifier count or class matching. A float64 passed for `%d` goes into an SSE register while libc reads a GP register — silent wrong result. An under-supplied args tuple leaves a varargs slot uninitialized — silent garbage or crash. By contrast, the pure-Python path at line 537 (`_python_fmt_compat(fmt) % args`) lets Python's `%` operator enforce both type and count, raising `TypeError` on mismatch. The `%n` checker in the same file already walks the format string for rejection, confirming a specifier walk is feasible. The two-mode divergence (one raises, one silently miscompiles) is real."
+    }
+  ]
+}

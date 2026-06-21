@@ -1,0 +1,42 @@
+{
+  "target": "tst_docs_build",
+  "dimension": "TST",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "TST-tst_docs_build-1",
+      "severity": "medium",
+      "title": "_sqlite_typemap bindings module entirely missing from sphinx docs",
+      "verdict": "confirmed",
+      "reasoning": "Verified directly: (1) numbox/core/bindings/_sqlite_typemap.py exists and defines public symbols `utf32_to_utf8` (line 34), `utf8_to_utf32` (line 67), and `tags_buf_t = np.int32` (line 21). (2) `grep -n typemap docs/numbox.core.bindings.rst` returns nothing. (3) The 'Bindings module conventions' family list (rst lines 22-26) enumerates _sqlite_conn/_stmt/_bind/_column/_exec/_blob/_hooks/_constants/_sqlite_value/_sqlite_result/_sqlite_udf/_sqlite_query/_sqlite_tvf and others, but _sqlite_typemap is absent. (4) The Modules section (lines 451-651) lists automodule directives for all sibling modules including _sqlite_udf_helpers, but _sqlite_typemap has none. The omission is real and matches CLAUDE.md's documented convention."
+    },
+    {
+      "id": "TST-tst_docs_build-2",
+      "severity": "medium",
+      "title": "work.rst graph-manager example imports three non-existent symbols",
+      "verdict": "confirmed",
+      "reasoning": "Verified all three claims: (1) `from numbox.core.configurations import default_jit_options` — configurations.py exports only `get_jit_options()` (line 5), `jit_options` (line 19), and `MAX_STR_LENGTH` (line 22); `default_jit_options` does not exist as a public export (it only appears as a local alias `_default_jit_options` in compile_kernel.py line 55). (2) `from numbox.core.work.work import _make_work` — grep across all of numbox/ returns nothing for `_make_work`. (3) rst line 542 `:func:\\`numbox.core.work.work.ol_make_work\\`` — grep across all of numbox/ returns nothing for `ol_make_work`. A user copy-pasting this example gets ImportError on line 1 (`default_jit_options`) and line 2 (`_make_work`)."
+    },
+    {
+      "id": "TST-tst_docs_build-3",
+      "severity": "medium",
+      "title": "Broken :class: xref to non-existent module path numbox.core.utils.void_type",
+      "verdict": "confirmed",
+      "reasoning": "Verified: rst line 341 contains `:class:\\`numbox.core.utils.void_type.VoidType\\``. The directory `numbox/core/utils/` does not exist — `ls numbox/core/` shows: __init__.py, __pycache__, any, bindings, configurations.py, proxy, variable, vector, work. VoidType is defined at `numbox/utils/void_type.py` line 10 (`VoidType = VoidTypeClass([])`), so the correct path is `numbox.utils.void_type.VoidType`. The xref has a spurious `core.` component and will emit a Sphinx 'py:class reference target not found' warning."
+    },
+    {
+      "id": "TST-tst_docs_build-4",
+      "severity": "low",
+      "title": "Public modules referenced by :func: xrefs have no automodule (undocumented API + dangling xrefs)",
+      "verdict": "confirmed",
+      "reasoning": "Verified each module: (1) `numbox.core.work.explain` — explain.py defines public `explain(work)` (line 32) and `get_func_code(...)` (line 8); no automodule in work.rst (confirmed by grep: automodules listed are builder, builder_utils, combine_utils, loader_utils, node, node_base, print_tree, work, work_utils). (2) `numbox.core.work.lowlevel_work_utils` — defines public `WorkTypeClass` (line 34), `ll_make_work` (line 107+), `create_uniform_inputs` (line 64+); work.rst line 473 actively xrefs `:func:\\`numbox.core.work.lowlevel_work_utils.ll_make_work\\`` but no automodule exists for it. (3) `numbox.core.variable.node` — defines public `Node` (line 4) and `make_node(...)` (line 19); variable.rst automodules are only variable, compile_kernel, utils. (4) `numbox.utils.void_type` — defines `VoidType` (line 10); numbox.utils.rst has no automodule for void_type (confirmed by reading the full file)."
+    },
+    {
+      "id": "TST-tst_docs_build-5",
+      "severity": "medium",
+      "title": "Sphinx build is not gated on PRs and tolerates all warnings (no PR trigger, no -W)",
+      "verdict": "confirmed",
+      "reasoning": "Verified directly from docs.yml: line 3-5 shows `on: push: branches: [\"main\"]` with no `pull_request` trigger. Line 29 shows `run: sphinx-build -b html docs/ docs/_build/html` with no `-W` or `--keep-going` flags. numbox_ci.yml lines 6-8 confirm `paths-ignore: ['docs/**']` so it never invokes sphinx. doc-codeblock-flake8.yml only extracts and lints Python code-blocks; it does not run sphinx. The result is that broken automodule targets, dangling :func:/:class: xrefs (findings 1-4), and sphinx-render failures are never caught on PRs."
+    }
+  ]
+}

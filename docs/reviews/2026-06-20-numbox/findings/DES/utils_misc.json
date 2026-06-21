@@ -1,0 +1,40 @@
+{
+  "target": "utils_misc",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/utils/clock.py",
+    "numbox/utils/preprocessing.py",
+    "numbox/utils/standard.py",
+    "numbox/utils/timer.py",
+    "numbox/utils/void_type.py",
+    "numbox/core/proxy/proxy.py",
+    "numbox/utils/highlevel.py",
+    "docs/numbox.utils.rst"
+  ],
+  "reviewer_model": "opus",
+  "summary": "This group is largely clean and well-factored on the DES dimension: the anchor helpers in preprocessing.py are reused (not duplicated) across all four anchor-writing call sites, clock.py's Windows/POSIX split is genuine platform necessity rather than gratuitous branching, and standard.py / void_type.py are minimal single-purpose modules. Two real but low/medium design issues found: timer.py performs a global-logging side effect at import and logs routine timing at WARNING level; and three of the five modules (clock, standard, void_type) are absent from the utils automodule doc grouping.",
+  "findings": [
+    {
+      "id": "DES-utils_misc-1",
+      "severity": "medium",
+      "title": "timer.py mutates the root logger at import and emits routine timing at WARNING level",
+      "file": "numbox/utils/timer.py",
+      "lines": "5-21",
+      "claim": "Importing numbox.utils.timer calls logging.basicConfig(level=logging.WARNING) at module top level, which permanently reconfigures the process-wide root logger as a side effect of import. A library should not configure root logging on behalf of the application. Additionally, normal per-call timing output is emitted via logger.warning(...), misusing the WARNING level for routine informational output, so every decorated call surfaces as a warning in the host application's logs.",
+      "evidence": "Lines 5-6: `logger = logging.getLogger(__name__)` then `logging.basicConfig(level=logging.WARNING)` runs unconditionally at import. Line 21: `logger.warning(f\"Execution of {func.__name__} took {duration:.{self.precision}f}s\")` logs ordinary timing data at WARNING. basicConfig on a library import mutates global state any consumer of numbox inherits (handlers/level on the root logger), and WARNING is the wrong severity for a timing report.",
+      "recommendation": "Drop the module-level logging.basicConfig call entirely (let the application own root-logger config) and emit timing via logger.info(...) instead of logger.warning(...). This is a local, low-risk change; the only in-repo callers are test/stress_work_runner.py and test/benchmark_work.py, which read timer.times rather than relying on the log level.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-utils_misc-2",
+      "severity": "low",
+      "title": "clock, standard, and void_type modules are absent from the utils automodule doc grouping",
+      "file": "docs/numbox.utils.rst",
+      "lines": "1-231",
+      "claim": "The numbox.utils doc page carries automodule sections for highlevel, preprocessing, digest, fingerprint, lowlevel, cstrings, pysqlite_bridge, and timer, but omits clock.py (whose monotonic_ns is a public, tested intrinsic), standard.py (make_params_strings, used by proxy and highlevel), and void_type.py (VoidType, used by lowlevel.uniformize_tuple_of_structs). The grouping is inconsistent: sibling utils modules of comparable public surface are documented while these three are not.",
+      "evidence": "grep of docs/numbox.utils.rst shows `.. automodule:: numbox.utils.{highlevel,preprocessing,digest,fingerprint,lowlevel,cstrings,pysqlite_bridge,timer}` present, but no automodule for numbox.utils.clock, numbox.utils.standard, or numbox.utils.void_type. monotonic_ns is exercised by test/utils/test_clock.py and clock.py is non-underscore public surface; the omission leaves public API undocumented.",
+      "recommendation": "Add automodule sections for numbox.utils.clock, numbox.utils.standard, and numbox.utils.void_type alongside the existing ones in docs/numbox.utils.rst. Local, low-risk doc addition. (Overlaps the TST dimension's doc-drift lens.)",
+      "confidence": "high"
+    }
+  ]
+}

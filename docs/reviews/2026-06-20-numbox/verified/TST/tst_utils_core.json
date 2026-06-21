@@ -1,0 +1,57 @@
+{
+  "target": "tst_utils_core",
+  "dimension": "TST",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "TST-tst_utils_core-1",
+      "severity": "medium",
+      "title": "pysqlite_bridge docs claim a non-existent RTLD_GLOBAL import-preload side effect",
+      "verdict": "confirmed",
+      "reasoning": "Read docs/numbox.utils.rst lines 210-217 and numbox/utils/pysqlite_bridge.py in full. The RST states 'Importing numbox.utils.pysqlite_bridge preloads Python's libsqlite3 with RTLD_GLOBAL so subsequent numba JIT compiles resolve sqlite3 symbols to the same library.' The module imports only `ctypes`, `sqlite3`, and `_sqlite_conn` bindings (lines 35-38); there is no CDLL call with RTLD_GLOBAL anywhere. The module's own docstring (lines 7-33) describes a completely different macOS fix: use DYLD_INSERT_LIBRARIES to force-load the right sqlite before Python starts. The RST doc contradicts both the code and the module's own docstring."
+    },
+    {
+      "id": "TST-tst_utils_core-2",
+      "severity": "medium",
+      "title": "Doc says Py_DEBUG builds are unsupported, but pysqlite_bridge code explicitly supports them",
+      "verdict": "confirmed",
+      "reasoning": "Read docs/numbox.utils.rst lines 219-221 and pysqlite_bridge.py lines 41-74. The RST states 'Assumes a release Python build; Py_DEBUG builds shift the sqlite3 *db field by 16 bytes for refcount tracing and are not supported.' The code at lines 52-56 does exactly the opposite: `if hasattr(sys, 'gettotalrefcount'): fields += [('_ob_next', ctypes.c_void_p), ('_ob_prev', ctypes.c_void_p)]` — this is the two-pointer (16-byte) debug adjustment the doc claims is unsupported. The _PysqliteConnection docstring at lines 80-88 explicitly states 'the layout is correct across 32/64-bit, debug, and free-threaded builds.' Doc directly contradicts working code."
+    },
+    {
+      "id": "TST-tst_utils_core-3",
+      "severity": "low",
+      "title": "utils.rst omits automodule for four public modules (clock, meminfo, standard, void_type)",
+      "verdict": "confirmed",
+      "reasoning": "Ran grep on docs/numbox.utils.rst and found 8 automodule directives: highlevel, preprocessing, digest, fingerprint, lowlevel, cstrings, pysqlite_bridge, timer. Listed numbox/utils/*.py and confirmed clock.py, meminfo.py, standard.py, and void_type.py exist on disk as non-underscore (public) modules with no corresponding automodule entries. The CLAUDE.md confirms these as public modules (e.g. 'clock.py — JIT-callable monotonic_ns() -> int64 intrinsic', 'meminfo.py — memory info utilities'). These four modules are absent from the rendered docs."
+    },
+    {
+      "id": "TST-tst_utils_core-4",
+      "severity": "medium",
+      "title": "Any.reset old-payload release is not refcount-asserted (a leak/double-free on overwrite would pass)",
+      "verdict": "confirmed",
+      "reasoning": "Read test_any_type.py test_10 (lines 147-158) and any_type.py ol_reset (lines 59-66). test_10 calls `any.reset(s1)` and asserts `get_nrt_refcount(s1) == 2` (the new content's refcount), then calls `any.reset(11)` with no subsequent refcount assertion on s1. The ol_reset overload at line 64 does `self.p = _cast(_Content(x), ErasedType)` which replaces the old field value; correctness of the old-payload decref depends on numba structref setattr semantics. A regression that leaked or double-freed the old content would not be caught because the test only monitors the new payload's refcount, not the released payload's."
+    },
+    {
+      "id": "TST-tst_utils_core-5",
+      "severity": "low",
+      "title": "get_str_from_p_as_int only tested on one non-empty ASCII string; empty-string and multibyte edges untested",
+      "verdict": "confirmed",
+      "reasoning": "Read test_lowlevel.py test_get_str_from_p_as_int (lines 165-171) and lowlevel.py get_str_from_p_as_int (lines 249-260). The test passes only the ASCII string 's1_ = \"a random string\"'. The implementation at line 259 uses `s += chr(char_as_code_p)` per byte, which decodes byte-by-byte (Latin-1-like). An empty C string (first byte NUL) is not tested; a multibyte UTF-8 string would be decoded incorrectly without any pinning test. Both gaps are exactly as described."
+    },
+    {
+      "id": "TST-tst_utils_core-6",
+      "severity": "low",
+      "title": "timer.py (Timer decorator) has no unit test",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed no test/utils/test_timer.py exists (listed test/utils/ directory). Grep for timer usage in test/ reveals only test/stress_work.py, test/stress_work_runner.py, test/benchmark_work.py — none are pytest-collected unit tests. timer.py line 10 shows `times = {}` is a class-level dict shared across all Timer instances. The module has zero unit-test coverage."
+    },
+    {
+      "id": "TST-tst_utils_core-7",
+      "severity": "low",
+      "title": "digest's _Unfingerprintable fallback for a real (non-codeless) FunctionType is untested",
+      "verdict": "confirmed",
+      "reasoning": "Read digest.py lines 44-52 and the full test_digest.py. The except branch at line 48 (`except (_Unfingerprintable, RecursionError): pass`) followed by the cloudpickle fallback is not exercised by any test in test_digest.py. All digest tests pass either clean functions (fingerprint succeeds) or `functools.partial` (codeless, takes a different code path). The compile_kernel tests exercise `_formula_fingerprint` directly but not via `digest()`. The fallback branch in digest() itself is dead from the test suite's perspective.",
+      "adjusted_severity": "low"
+    }
+  ]
+}

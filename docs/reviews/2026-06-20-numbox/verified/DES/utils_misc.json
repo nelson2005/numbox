@@ -1,0 +1,21 @@
+{
+  "target": "utils_misc",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-utils_misc-1",
+      "severity": "medium",
+      "title": "timer.py mutates the root logger at import and emits routine timing at WARNING level",
+      "verdict": "confirmed",
+      "reasoning": "Independently verified against numbox/utils/timer.py. Line 6 reads `logging.basicConfig(level=logging.WARNING)` — this runs unconditionally at module import, before any user code can configure the root logger. Per Python docs, basicConfig is a no-op if the root logger already has handlers, but it installs a StreamHandler+formatter if not — which is the common scenario the first time a library is imported. Line 21 reads `logger.warning(f\"Execution of {func.__name__} took {duration:.{self.precision}f}s\")` — routine timing data emitted at WARNING. Both claims are literally present in the cited lines. The severity (medium) is appropriate: the basicConfig call is a library anti-pattern with real consequences (installs a root handler that silences subsequent basicConfig calls from the application), and WARNING-for-timing is a semantic misuse that pollutes host application logs."
+    },
+    {
+      "id": "DES-utils_misc-2",
+      "severity": "low",
+      "title": "clock, standard, and void_type modules are absent from the utils automodule doc grouping",
+      "verdict": "confirmed",
+      "reasoning": "Independently verified against docs/numbox.utils.rst (lines 1-235). The file contains `.. automodule::` sections for numbox.utils.highlevel (line 55), numbox.utils.preprocessing (line 110), numbox.utils.digest (line 118), numbox.utils.fingerprint (line 124), numbox.utils.lowlevel (line 133), numbox.utils.cstrings (line 180), numbox.utils.pysqlite_bridge (line 223), and numbox.utils.timer (line 233). No automodule entries for numbox.utils.clock, numbox.utils.standard, or numbox.utils.void_type. Confirmed all three files exist at numbox/utils/clock.py, standard.py, void_type.py and expose public symbols (monotonic_ns, make_params_strings, VoidType). The omission is real. Severity (low) is appropriate — docs gap only, no runtime impact."
+    }
+  ]
+}

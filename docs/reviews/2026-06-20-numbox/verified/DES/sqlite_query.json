@@ -1,0 +1,28 @@
+{
+  "target": "sqlite_query",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-sqlite_query-1",
+      "severity": "medium",
+      "title": "UTF-8 decode state machine duplicated between _put_unicode and utf8_to_utf32",
+      "verdict": "confirmed",
+      "reasoning": "Direct line-by-line comparison of _sqlite_query.py:49-68 and _sqlite_typemap.py:83-102 confirms the decode branches are byte-for-byte identical: same 1/2/3/4-byte leading-byte conditions (`b0 < 0x80`, `b0 >> 5 == 0x6`, `b0 >> 4 == 0xE`, `b0 >> 3 == 0x1E`), same continuation-byte guards (`>> 6 == 0x2`), same overlong checks (`< 0x80`, `< 0x800`, `< 0x10000`), same surrogate rejection (`0xD800 <= cp <= 0xDFFF`), same range cap (`> 0x10FFFF`), same U+FFFD fallback. The only difference is the emit: _put_unicode writes `cps[0] = cp; _copy_bytes(buf, off + 4 * k, scratch8, 4)` (tracked-array path), while utf8_to_utf32 calls `store_unaligned(dst + 4 * k, uint32(cp))` (raw pointer path). The docstring at _sqlite_query.py:36-38 explicitly acknowledges the duplication: 'Mirrors `_sqlite_typemap.utf8_to_utf32` but writes natively into `buf`'. The finding is real and the duplication is confirmed."
+    },
+    {
+      "id": "DES-sqlite_query-2",
+      "severity": "low",
+      "title": "_TAG_S and _TAG_BLOB branches are near-identical, differing only in the accessor",
+      "verdict": "confirmed",
+      "reasoning": "_sqlite_query.py:113-119 (_TAG_S) and lines 120-126 (_TAG_BLOB) are structurally identical: both call `sqlite3_column_bytes(stmt, j)` for the byte count, both wrap via `carray(_cast_int_to_void_p(src_p), (nbytes,), dtype=np.uint8)`, both compute `nn = nbytes if nbytes < width else width`, and both run `for b in range(nn): buf[off + b] = src[b]`. The sole difference is `sqlite3_column_text` vs `sqlite3_column_blob` to obtain `src_p`. The duplication is real and a trivial local refactor would collapse it. Severity low is appropriate since this is a maintenance/readability issue with no correctness impact."
+    },
+    {
+      "id": "DES-sqlite_query-3",
+      "severity": "low",
+      "title": "_copy_bytes hand-rolls a byte loop where a tracked slice assignment would do",
+      "verdict": "uncertain",
+      "reasoning": "The loop at _sqlite_query.py:28-29 (`for k in range(nbytes): dst[off + k] = src[k]`) is indeed explicit, but its existence is tied to the macOS-arm64 DCE-avoidance design. The _store_cell docstring (lines 77-81) explains: 'all numba-tracked array writes, so the optimizer cannot drop them on macOS-arm64'. The _copy_bytes function is also used inside _put_unicode (line 70) which is the primary DCE-sensitive path. The finding claims a slice assignment `dst[off:off+nbytes] = src[:nbytes]` is 'also a tracked array write' and would preserve the DCE-avoidance property — but this is an assertion about numba's internal handling of slice assignments vs element-by-element writes under the macOS-arm64 LLVM optimizer, which cannot be verified by reading source code alone. The finding's own recommendation acknowledges this: 'verify the slice-assign survives the macOS-arm64 optimizer before relying on it'. Since the correctness of the simplification depends on a runtime property that cannot be determined from reading, and the current loop is explicitly defensive for a documented reason, this is uncertain."
+    }
+  ]
+}

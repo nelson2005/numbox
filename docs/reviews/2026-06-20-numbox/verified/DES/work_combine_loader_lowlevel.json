@@ -1,0 +1,21 @@
+{
+  "target": "work_combine_loader_lowlevel",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-work_combine_loader_lowlevel-1",
+      "severity": "low",
+      "title": "Overload function name in combine_utils contradicts what it does (copy-paste from loader_utils)",
+      "verdict": "confirmed",
+      "reasoning": "Verified directly: combine_utils.py line 57-58 shows `@overload(_load_dict_into_array, strict=False, jit_options=jit_options)` followed by `def ol_load_array_row_into_dict(array_ty, sheaf_ty):`. The stub it registers (`_load_dict_into_array`, defined at line 36) clearly names the dict->array direction; the generated body (lines 49-51) confirms it: `array_[0].{field_name} = sheaf_[\"{field_name}\"].get_as(...)`. Meanwhile loader_utils.py line 32-33 has `@overload(load_array_row_into_dict, ...)` / `def ol_load_array_row_into_dict(array_ty, row_ind_ty, loader_dict_ty):` where the body (lines 24-25) does `val = row.{field_name}` / `loader_dict_[\"{field_name}\"] = _make_any(val)` — genuinely array->dict. The name `ol_load_array_row_into_dict` is thus shared across two overloads with opposite semantics. The finding is correct and the copy-paste origin is evident."
+    },
+    {
+      "id": "DES-work_combine_loader_lowlevel-2",
+      "severity": "low",
+      "title": "Unused `field_ind` enumerate index in both codegen builders",
+      "verdict": "confirmed",
+      "reasoning": "Verified directly: combine_utils.py line 43 `for field_ind, field_name in enumerate(fields_names):` — the body (lines 44-46) uses only the f-string `{field_name}`; `field_ind` appears nowhere. combine_utils.py line 49 same: the body (line 51) uses only `{field_name}`. loader_utils.py line 22 `for field_ind, field_name in enumerate(fields_names):` — body (lines 24-25) uses only `field_name`. In all three loops `enumerate` adds no value; plain `for field_name in fields_names:` is sufficient. The finding is factually correct."
+    }
+  ]
+}

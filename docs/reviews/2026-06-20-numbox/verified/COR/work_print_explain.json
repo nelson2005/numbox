@@ -1,0 +1,21 @@
+{
+  "target": "work_print_explain",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-work_print_explain-1",
+      "severity": "medium",
+      "title": "explain() raises AttributeError on derive nodes not built via builder.make_graph",
+      "verdict": "confirmed",
+      "reasoning": "Verified in explain.py:9-10: `derive_func_ = _derive_funcs.get(derive_func_p_)` uses `.get()` which returns `None` if the key is absent, then line 10 calls `derive_func_.__name__` — `None.__name__` raises `AttributeError`. The only writer to `_derive_funcs` is builder.py:95: `_derive_funcs[id(derive_cres)] = derive`, inside `_derived_cres()`, which is only called by `_derived_line()` during `make_graph()`. work.py:147-148 confirms `make_work` calls `ll_make_work` directly and never touches `_derive_funcs`. An end node (no sources) exits early at explain.py:16 (`if len(work.sources) == 0: return`), but a derive node built via `make_work(..., derive=some_cres)` reaches line 25 (`derive_func_ptrs[1]`) and the unguarded `.get()` returns `None`. The crash path is real. test_builder.py:167 exercises `explain()` only on `make_graph`-built graphs, so this path remains untested."
+    },
+    {
+      "id": "COR-work_print_explain-2",
+      "severity": "low",
+      "title": "_build_graph has no visited set: reconverging (diamond) graphs are re-rendered and can collide in ImmutableItemDict",
+      "verdict": "refuted",
+      "reasoning": "test_builder.py:101-140 (test_3 and test_6) directly exercise diamond/DAG graphs with `make_image` and assert the output exactly. `w9` shares `w3` (which itself shares `w1`/`w2`) as a subgraph of `w7`, and `w10` shares `w3`, `w4`, `w7` across multiple paths — yet the tests pass and the expected output shows shared subtrees expanded multiple times without collision. The `ImmutableItemDict` collision requires two distinct recursive calls to write to the **same (row, col)** coordinate. Because `_build_graph` increments `row` by `subtree_height` before recursing into each branch (line 37: `_build_graph(..., row + subtree_height, col + 2)`), sibling subtrees occupy disjoint row ranges and shared nodes appear at different coordinates. The test coverage (test_3 expected output lines 101-112 and 113-140) demonstrates that the expanded-tree rendering is intentional design, and the ImmutableItemDict crash path is not reachable in practice. The 'duplicate rendering' is a feature, not a bug. Severity is overstated."
+    }
+  ]
+}

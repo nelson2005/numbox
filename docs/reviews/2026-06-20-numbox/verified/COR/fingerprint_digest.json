@@ -1,0 +1,22 @@
+{
+  "target": "fingerprint_digest",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-fingerprint_digest-1",
+      "severity": "low",
+      "title": "_canon_value lacks a cycle key for self-referential plain containers (degrades, never wrong)",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed by reading fingerprint.py lines 55-61 and 91-94. The `seen` set is only updated in `_fingerprint_function` (line 94: `seen = seen | {id(func)}`). For containers, `_canon_value` recurses into tuple/list (line 56), set/frozenset (line 58), and dict (line 60) passing `seen` through unchanged and never inserting the container's own id. A self-referential container (e.g., `lst = []; lst.append(lst)`) would recurse indefinitely. The degradation path is correctly described: compile_kernel.py:116 catches `RecursionError` and digest.py:48 also catches it, so behavior remains correct but uncached. Finding is accurate on both the gap and the safe-degradation characterization."
+    },
+    {
+      "id": "COR-fingerprint_digest-2",
+      "severity": "low",
+      "title": "digest() concatenates per-function fingerprints with no delimiter between them",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed by reading digest.py lines 42-52. The loop at line 42 iterates over `fns` and calls `h.update(_fingerprint_function(py, set()).encode('utf-8'))` (line 46) or `h.update(cloudpickle.dumps(...))` (line 52) with no separator between iterations. The only separators outside the loop are subject repr (line 33), versions (lines 34-38), and jit_options (line 41). The finding's low-confidence assessment is appropriate: each fingerprint begins with `func(<module>:<qualname>;...` (fingerprint.py lines 107-111), making boundary-shifting collisions implausible in practice. The technical absence of a delimiter is accurate.",
+      "adjusted_severity": "low"
+    }
+  ]
+}

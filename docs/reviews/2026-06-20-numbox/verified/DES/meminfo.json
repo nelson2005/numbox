@@ -1,0 +1,14 @@
+{
+  "target": "meminfo",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-meminfo-1",
+      "severity": "medium",
+      "title": "Asymmetric, partially-undocumented defense against removerefctpass between _incref_meminfo and _release_meminfo",
+      "verdict": "confirmed",
+      "reasoning": "The code at lines 77-111 of numbox/utils/meminfo.py confirms the asymmetry. Line 79 gives _incref_meminfo a single-line docstring: \"Incref a MemInfo at ``intp`` via NRT.\" with no mention of removerefctpass. Lines 92-100 give _release_meminfo a detailed multi-paragraph docstring explicitly explaining that it uses NRT_MemInfo_release rather than context.nrt.decref to avoid being stripped by removerefctpass (the pass's _legalize() check only strips calls in its accepted-nrtfns allowlist, and NRT_MemInfo_release is not in that list). Both share identical sig = types.void(p_ty) at lines 81 and 102 respectively, and both call _require_intp. The downstream reliance is real: _sqlite_tvf.py line 12 module docstring states the inlined _incref_meminfo means \"numba's refcount pass cannot strip it\" while line 127 calls _incref_meminfo(mi_p). This confirms the finding: the incref side's safety property is relied upon by a downstream module but is nowhere explained at the definition site, creating a maintenance hazard. A reader of meminfo.py cannot tell whether context.nrt.incref (line 86) is safe because removerefctpass only targets decref-side NRT calls, or whether there is a latent strip vulnerability requiring the same NRT_MemInfo_incref direct-call workaround. The severity medium is appropriate — this is a documentation/maintenance hazard, not an active correctness bug."
+    }
+  ]
+}

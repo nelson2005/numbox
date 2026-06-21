@@ -1,0 +1,12 @@
+{
+  "target": "highlevel",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/utils/highlevel.py",
+    "numbox/utils/preprocessing.py",
+    "numbox/utils/standard.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. highlevel.py is pure Python-level metaprogramming (cres wraps a numba compile result in CompileResultWAP; make_structref generates and exec's structref boilerplate source). It performs no raw-pointer manipulation, no manual incref/decref, no @cfunc-to-C boundary, and no struct-by-value ABI classification; all refcount/meminfo management for the generated structrefs is deferred to numba's own lowering. The only lifetime question (the local func_jit Dispatcher dropped after cres returns, leaving only cres_wap) is the documented known-correct 'no keep-alive needed' pattern: numba JIT code and dispatchers are process-pinned and not GC-reclaimed. No memory, ABI, or refcount defect found.",
+  "findings": []
+}

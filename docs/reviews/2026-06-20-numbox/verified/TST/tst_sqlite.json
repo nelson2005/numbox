@@ -1,0 +1,42 @@
+{
+  "target": "tst_sqlite",
+  "dimension": "TST",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "TST-tst_sqlite-1",
+      "severity": "medium",
+      "title": "register_tvf string/unicode/blob output columns are never tested",
+      "verdict": "confirmed",
+      "reasoning": "Independently verified: test/core/test_sqlite_tvf.py defines _OUT = np.dtype([('n', 'i8')]) and _OUT2 = np.dtype([('n', 'i8'), ('v', 'f8')]) — every test uses these int/float-only out dtypes. The _tvf_xcolumn function (lines 330-343 of _sqlite_tvf.py) has live _TAG_S (line 330-336), _TAG_BLOB (337-339), and _TAG_U (340-343) branches. The _build_tvf_descriptor function (line 394) computes scratch = max([w + 1 for w, t in zip(vis_widths, vis_tags) if t == _TAG_U], default=0) — this scratch path is never exercised. The code is real, the gap is real."
+    },
+    {
+      "id": "TST-tst_sqlite-2",
+      "severity": "low",
+      "title": "_sqlite_typemap module absent from sphinx docs (no automodule, not in conventions list)",
+      "verdict": "confirmed",
+      "reasoning": "grep of docs/numbox.core.bindings.rst returned no match for 'typemap'. The conventions family list (lines 22-26) enumerates _sqlite_conn/_stmt/_bind/_column/_exec/_blob/_hooks/_constants/_sqlite_value/_sqlite_result/_sqlite_udf/_sqlite_query/_sqlite_tvf but omits _sqlite_typemap. The Modules section (lines 507-626) has automodule directives for all sibling modules but none for _sqlite_typemap. The finding's subsidiary note that _sqlite_udf_helpers and _sqlite_vtable are also absent from the family list (though they do have automodule sections at lines 595/603) is also accurate. The core omission of _sqlite_typemap is confirmed."
+    },
+    {
+      "id": "TST-tst_sqlite-3",
+      "severity": "low",
+      "title": "query_to_array oversized-cell truncation (nbytes >= field width) for TEXT/BLOB/U is untested",
+      "verdict": "confirmed",
+      "reasoning": "Verified the truncation code at _sqlite_query.py lines 117 and 124: `nn = nbytes if nbytes < width else width`. In test_sqlite_query.py: test_query_text_roundtrip inserts 'hi' and 'héllo' into U8 (both fit); test_query_blob_into_S_field inserts x'00ff10' (3 bytes) into S3 (exactly fits); test_query_empty_text_and_blob uses empty strings. No test sends a TEXT/BLOB value longer than the dtype field width, so the truncation branch (and adjacent-field non-overrun) is unverified."
+    },
+    {
+      "id": "TST-tst_sqlite-4",
+      "severity": "low",
+      "title": "utf8_to_utf32 truncated multi-byte sequence at end-of-buffer is untested",
+      "verdict": "confirmed",
+      "reasoning": "Verified utf8_to_utf32 at _sqlite_typemap.py lines 83, 88, 93: the 2-byte branch checks `i + 1 < nbytes`, the 3-byte branch checks `i + 2 < nbytes`, the 4-byte branch checks `i + 3 < nbytes`; when the condition fails the else branch (lines 100-102) fires: cp = 0xFFFD, i += 1. The existing tests cover bad-continuation (0xE0 0x20 0x41 — full-length, continuation byte is present but wrong), surrogate (0xED 0xA0 0x80 — full), and overlong (0xC0 0xAF — full). None feed a lead byte with missing continuation bytes at the buffer tail (e.g., b'\\xc2' or b'A\\xe2\\x82'). That boundary — the difference between `<` and `<=` in the guards — is unverified, confirming the finding. Confidence adjusted to medium (matches reviewer): the else path does handle it, but correctness under the exact truncation boundary is unverified."
+    },
+    {
+      "id": "TST-tst_sqlite-5",
+      "severity": "low",
+      "title": "test_sqlite_constants asserts only the 8 index-constraint ops; result/type/flag/destructor values unguarded",
+      "verdict": "confirmed",
+      "reasoning": "test_sqlite_constants.py contains exactly one test (test_index_constraint_ops) asserting `(...) == (2, 4, 8, 16, 32, 68, 71, 72)`. _sqlite_constants.py defines ~60 SQLITE_* values across result codes (lines 40-70), type codes (73-77), open flags (80-88), blob flags (91-92), trace bits (95-98), destructor sentinels SQLITE_STATIC=0/SQLITE_TRANSIENT=-1 (101-102), and UDF flags (105-115). None of these are value-asserted in the test file. A typo in e.g. SQLITE_TRANSIENT would only be caught indirectly."
+    }
+  ]
+}

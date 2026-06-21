@@ -1,0 +1,7 @@
+{
+  "target": "libc_stdio_strerror_errno",
+  "dimension": "SEC",
+  "verifier_model": "sonnet",
+  "summary": "no findings to verify",
+  "verdicts": []
+}

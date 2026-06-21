@@ -1,0 +1,14 @@
+{
+  "target": "variable_node_utils",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-variable_node_utils-1",
+      "severity": "low",
+      "title": "utils.py module docstring enumerates only 3 of the helper concerns; omits declared-return validation",
+      "verdict": "confirmed",
+      "reasoning": "Read utils.py lines 1-7: the docstring says 'identifier assignment for generated kernel source, formula njit-wrapping, and formula arity validation'. The file defines five functions: _assign_identifiers (covered), _wrap_formula (covered), _check_formula_arity (covered), plus _strip_cache (line 76) and _validate_declared_return (line 84) which are not mentioned. Confirmed that _validate_declared_return is live: compile_kernel.py line 61 imports it and line 863 calls it. The omission is a real doc/code drift. Severity low is appropriate — no runtime effect."
+    }
+  ]
+}

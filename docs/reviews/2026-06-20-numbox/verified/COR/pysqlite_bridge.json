@@ -1,0 +1,14 @@
+{
+  "target": "pysqlite_bridge",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-pysqlite_bridge-1",
+      "severity": "low",
+      "title": "Coordination guard tests version-string equality, not library identity",
+      "verdict": "confirmed",
+      "reasoning": "Line 106-107 shows exactly what the finding claims: `numbox_version = ctypes.c_char_p(sqlite3_libversion()).value.decode(); return numbox_version == sqlite3.sqlite_version`. The function docstring at line 94 states 'True if numbox's @njit bindings and Python's sqlite3 resolve to the **same** libsqlite3', which overstates what version-string equality proves — two distinct binaries of the same version (e.g. system vs. Homebrew on macOS) would pass this check. The module docstring (lines 18-19) also says 'passing the pointer ... can produce wrong results or segfaults' under mismatch, implying equality is the safety proof. The gap is real: version equality is a strong proxy but not proof of binary identity. Severity 'low' is appropriate because (a) same-version SQLite binaries have a stable opaque-handle ABI so interoperability is practically safe, and (b) the finding's own recommendation is only a docstring softening with no code change required."
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "target": "sqlite_vtable",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-sqlite_vtable-1",
+      "severity": "low",
+      "title": "_VTableHandle is a redundant single-use wrapper around _BuiltDescriptor (which is already the keep-alive)",
+      "verdict": "confirmed",
+      "reasoning": "Independently verified from the source. Line 153-157: _BuiltDescriptor holds c, bases, strides, tags, widths, schema, and arrays — every object that must outlive the registration. Lines 806-807: `handle = _VTableHandle(built); _register_with_destroy(db, name, _THE_MODULE_P, built.c.ctypes.data, handle)`. Line 140: `_DATA_ANCHOR[client_ptr] = handle` anchors the wrapper. Since client_ptr is `built.c.ctypes.data` (derived from built.c, which is inside built), anchoring `built` directly would keep exactly the same reachability graph. _VTableHandle is defined once (line 730) and constructed once (line 806); its `_keep = objs` stores only (built,). Removing _VTableHandle and writing `_DATA_ANCHOR[client_ptr] = built` is behaviorally identical. The targets.json note ('genuinely load-bearing, NOT a removable cfunc keep-alive') refers to the _DATA_ANCHOR pattern being needed — not to _VTableHandle as a wrapper class being necessary."
+    },
+    {
+      "id": "DES-sqlite_vtable-2",
+      "severity": "low",
+      "title": "_VTableHandle.__init__ uses variadic *objs but is only ever called with one object",
+      "verdict": "confirmed",
+      "reasoning": "Line 737: `def __init__(self, *objs): self._keep = objs`. Line 806 is the only call site (grep confirmed) and passes exactly one argument: `_VTableHandle(built)`. The variadic signature is unused flexibility with no second caller anywhere in the codebase. Finding is accurate, though moot if DES-sqlite_vtable-1 is taken (class would be removed)."
+    },
+    {
+      "id": "DES-sqlite_vtable-3",
+      "severity": "low",
+      "title": "Stale numeric literal in _int_float_cmp comment: 'r >= 2**63' annotates the boundary 9.223372036854775808e18",
+      "verdict": "refuted",
+      "reasoning": "Line 498: `if r < -9.223372036854775808e18:   # r < INT64_MIN -> i > r`. The comment 'r < INT64_MIN' precisely mirrors the condition (strict <), which means r == INT64_MIN does NOT take this branch — exactly as intended. The comment does not say 'r <= INT64_MIN'. Line 499: `if r >= 9.223372036854775808e18:   # r >= 2**63 > INT64_MAX -> i < r` is also accurate. Line 502: `# truncates toward zero; r is in [INT64_MIN, 2**63)` then correctly documents that INT64_MIN is reachable via the truncation path. The finding claims the comment 'could read as if -2**63 takes the early branch', but 'r < INT64_MIN' (not 'r <= INT64_MIN') unambiguously excludes the boundary. No comment/code drift exists; the finding rests on a hypothetical reader misconstruing a precise inequality, which is not a real defect."
+    }
+  ]
+}

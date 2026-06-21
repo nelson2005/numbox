@@ -1,0 +1,24 @@
+{
+  "target": "meminfo",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/utils/meminfo.py",
+    "numbox/core/bindings/_sqlite_tvf.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Small, well-factored bridge module: no duplication, no dead code (every private intrinsic is consumed internally or by _sqlite_tvf), consistent naming, accurate docstrings. One medium maintenance-hazard finding: the mirror-image incref/release intrinsics defend against numba's removerefctpass asymmetrically, and only the release side documents why its mechanism is required.",
+  "findings": [
+    {
+      "id": "DES-meminfo-1",
+      "severity": "medium",
+      "title": "Asymmetric, partially-undocumented defense against removerefctpass between _incref_meminfo and _release_meminfo",
+      "file": "numbox/utils/meminfo.py",
+      "lines": "77-111",
+      "claim": "The two mirror-image intrinsics that this module exists to provide use different lowering mechanisms with no stated reason on the incref side. _release_meminfo (lines 90-111) deliberately calls NRT_MemInfo_release directly with a multi-line docstring (lines 92-100) explaining that its void(intp) signature contains no NRT-tracked types, so numba's removerefctpass would strip a plain NRT_decref; using NRT_MemInfo_release (not in the pass's accepted-nrtfns allowlist) keeps _legalize() from enabling the rewrite. _incref_meminfo (lines 77-87) has the IDENTICAL void(intp) signature shape yet uses context.nrt.incref (line 86) and carries NO note about why that NRT_incref survives the same pass. A maintainer reading only this file cannot tell whether the incref is safe-by-design or a latent strip-vulnerability, and a future refactor that 'makes them consistent' in either direction could silently break refcount balance. The _sqlite_tvf.py module-level docstring (line 12) asserts the inlined _incref_meminfo means 'numba's refcount pass cannot strip it', so a downstream module is already relying on this property without it being explained at the definition site.",
+      "evidence": "Line 86: `context.nrt.incref(builder, _MI_TY, meminfo)` (no rationale comment/docstring). Contrast lines 92-100 docstring of _release_meminfo: \"Uses NRT_MemInfo_release directly rather than context.nrt.decref because this intrinsic's signature (void(intp)) contains no NRT-tracked types, which lets numba's removerefctpass rewrite strip a plain NRT_decref as dead code. Calling NRT_MemInfo_release (not in the pass's accepted-nrtfns allowlist) keeps _legalize() from enabling the rewrite at all.\" Both intrinsics share `sig = types.void(p_ty)` (lines 81 and 102) and both call `_require_intp` (lines 80, 101). Reliance is real: numbox/core/bindings/_sqlite_tvf.py:12 states the inlined _incref_meminfo means the refcount pass 'cannot strip it', and _sqlite_tvf.py:127 calls `_incref_meminfo(mi_p)`.",
+      "recommendation": "Add a one-paragraph docstring to _incref_meminfo (mirroring _release_meminfo's lines 92-100) that states explicitly why context.nrt.incref is NOT stripped here despite the NRT-free void(intp) signature (e.g. removerefctpass only rewrites/strips decref-side NRT calls, leaving incref intact), OR if it IS vulnerable, switch it to a direct NRT_incref call via cgutils.get_or_insert_function in the same style as _release_meminfo (lines 104-111) for symmetry. Documenting the invariant at the definition site is the low-risk local fix and removes the maintenance hazard for both this module and the _sqlite_tvf caller that depends on the property.",
+      "confidence": "medium"
+    }
+  ]
+}

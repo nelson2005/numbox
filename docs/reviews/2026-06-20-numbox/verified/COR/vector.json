@@ -1,0 +1,14 @@
+{
+  "target": "vector",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-vector-1",
+      "severity": "low",
+      "title": "getitem/setitem index capacity-sized buf, not logical size",
+      "verdict": "confirmed",
+      "reasoning": "Verified directly from source. Line 108: `return v.buf[i]` and line 116: `v.buf[i] = val` — neither references `v.size`. Line 100: `return v.size` for `len`. Line 87-88: `v.buf = numpy.empty(capacity, dtype=np_dtype); v.size = 0` confirms buf is capacity-sized while size starts at 0. The test at test_vector.py:33-39 explicitly sets `v.buf[0]=10.0; v.buf[1]=20.0; v.size = 2` then reads via `v[0], v[1]` — confirming the raw-buffer access pattern is intentional design. The finding is factually correct: a caller can read `v[i]` for `size <= i < capacity` and get uninitialized numpy.empty noise with no error. The finding's own confidence is 'low' and it acknowledges intentional raw-buffer idiom, landing the recommendation at 'add a docstring note' rather than a code fix. The severity 'low' is appropriate — this is a contract documentation gap, not a logic error. Confirmed at the stated severity."
+    }
+  ]
+}

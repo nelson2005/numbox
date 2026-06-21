@@ -1,0 +1,47 @@
+{
+  "target": "highlevel",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/utils/highlevel.py",
+    "numbox/utils/standard.py",
+    "numbox/utils/preprocessing.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "highlevel.py is largely correct and notably well-guarded: nearly every would-be-silent codegen mismatch in make_structref_code_txt is converted into a visible assertion (single-def, params-match, single-signature). No silent-wrong-result path was found. The residual COR issues are false-rejections of legitimate struct_methods inputs caused by comparing repr()-rendered parameter strings against raw source text, plus a sentinel-comparison nit; all surface as crashes/assertions, none as wrong answers.",
+  "findings": [
+    {
+      "id": "COR-highlevel-1",
+      "severity": "medium",
+      "title": "Method param assertion rejects legitimate defaults whose repr() differs from source spelling",
+      "file": "numbox/utils/highlevel.py",
+      "lines": "123-126",
+      "claim": "make_structref(..., struct_methods=...) raises AssertionError for an otherwise-valid method whenever a parameter default's source spelling differs from repr(default). Examples that fail: `def m(self, n=1_000)` (source `1_000` vs repr `1000`), `def m(self, n=0x10)` (source `0x10` vs repr `16`), `def m(self, s=\"a, b\")` (double-quoted source vs single-quoted repr). The user wrote a correct method but codegen rejects it.",
+      "evidence": "params_str comes from make_params_strings(method), which formats defaults via repr: `f'{k}={v.default!r}'` (numbox/utils/standard.py:46). params_str_ is the RAW source text captured by the header regex at highlevel.py:123 (`r\"^\\s*def\\s+[a-zA-Z_]\\w*\\s*\\(([^)]*)\\)\\s*:[^\\n]*\"`). Line 126 asserts `params_str == params_str_`. For any default whose repr() is not byte-identical to its source token (underscored/hex/octal int literals, strings whose chosen quote differs from repr's single-quote, etc.) the two strings differ and the assert fires.",
+      "recommendation": "Don't assert source-text equality against a repr()-rendered string. Either (a) build the generated `def {method_name}_{hash}` header from make_params_strings output for BOTH the wrapper and the renamed body (so a single canonical rendering is used everywhere and the cross-check is unnecessary), or (b) compare on a normalized form (parse both with ast and compare parameter names + default AST nodes) rather than raw text.",
+      "confidence": "high"
+    },
+    {
+      "id": "COR-highlevel-2",
+      "severity": "medium",
+      "title": "Header regex [^)]* cannot match a method signature containing ')' in a default or annotation",
+      "file": "numbox/utils/highlevel.py",
+      "lines": "123-124",
+      "claim": "The header-extraction regex captures the parameter list with `([^)]*)`, which stops at the FIRST ')'. A legitimate method whose signature contains a nested ')' — e.g. `def m(self, x=factory())` or `def m(self, f: Callable[[int], int])` — is mis-captured (truncated at the inner ')'), so the subsequent `assert params_str == params_str_` fails (or, combined with the count check, `assert len(method_header) == 1` can mis-count). Valid input is rejected with an opaque AssertionError.",
+      "evidence": "Line 123: `method_header = re.findall(r\"^\\s*def\\s+[a-zA-Z_]\\w*\\s*\\(([^)]*)\\)\\s*:[^\\n]*\", method_source, re.MULTILINE)`. `[^)]*` is greedy-but-bounded by the next literal ')'; for `def m(self, x=g())` it captures `self, x=g(` then the regex `\\)` matches the inner ')', leaving the real header malformed. Line 124 then asserts exactly one match and line 126 asserts text equality, both of which break.",
+      "recommendation": "Stop re-deriving the parameter list from source via regex. Use inspect.signature / ast on the method object (already available — make_params_strings calls inspect.signature) as the single source of truth, and drop the regex cross-check entirely, or balance parentheses when scanning the header.",
+      "confidence": "high"
+    },
+    {
+      "id": "COR-highlevel-3",
+      "severity": "low",
+      "title": "Default-emptiness test uses == against inspect._empty sentinel",
+      "file": "numbox/utils/standard.py",
+      "lines": "46",
+      "claim": "make_params_strings (relied on by make_structref's struct_methods path) detects 'no default' with `v.default == inspect._empty` rather than identity. For a parameter whose default value overrides __eq__ to return a non-bool (e.g. a numpy array or pandas object), `np.array(...) == inspect._empty` returns an array and the surrounding truth-test raises 'truth value of an array is ambiguous' instead of cleanly treating the param as having a default. The failure is a crash rather than a wrong result, and such a default is not repr-roundtrippable anyway, so impact is marginal.",
+      "evidence": "Line 46: `[k if v.default == inspect._empty else f'{k}={v.default!r}' for k, v in func_params.items()]`. `inspect._empty` is the sentinel returned for parameters with no default; the canonical test is `v.default is inspect._empty`. `==` defers to the default value's __eq__, which for array-like defaults yields a non-scalar.",
+      "recommendation": "Change `v.default == inspect._empty` to `v.default is inspect._empty` (identity comparison against the sentinel) to match the standard inspect idiom and avoid the array-truthiness crash.",
+      "confidence": "medium"
+    }
+  ]
+}

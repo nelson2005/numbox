@@ -1,0 +1,14 @@
+{
+  "target": "lowlevel",
+  "dimension": "MEM",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "MEM-lowlevel-1",
+      "severity": "high",
+      "title": "get_str_from_p_as_int reads bytes as signed char; non-ASCII C strings raise ValueError instead of decoding",
+      "verdict": "confirmed",
+      "reasoning": "Read lowlevel.py lines 249-260 directly. Line 10 imports `char` from `numba.core.types`; verified via venv python that `numba.core.types.char` is `int8`, signed=True, bitwidth=8. Line 255: `mem_view = carray(void_p, shape=(MAX_STR_LENGTH,), dtype=char)` builds the view with signed int8 elements. Line 259: `s += chr(char_as_code_p)` — verified that `chr(-1)` and `chr(-128)` raise `ValueError: chr() arg not in range(0x110000)` in CPython. For any byte 0x80-0xFF the int8 element is -128..-1, so `chr` will raise inside the `@njit` body. The NUL exit at line 257 is unaffected (0 is representable as int8). The only test for this function (test/utils/test_lowlevel.py:165-171) uses `'a random string'` — pure ASCII — so the defective path is untested. The finding's reasoning, evidence, and severity are all correct."
+    }
+  ]
+}

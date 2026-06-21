@@ -1,0 +1,7 @@
+{
+  "target": "libc_math",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "summary": "no findings to verify",
+  "verdicts": []
+}

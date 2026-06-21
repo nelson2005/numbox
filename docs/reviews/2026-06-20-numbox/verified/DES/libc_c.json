@@ -1,0 +1,14 @@
+{
+  "target": "libc_c",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-libc_c-1",
+      "severity": "low",
+      "title": "Orphan 'lldiv' signature with no wrapper or any consumer",
+      "verdict": "refuted",
+      "reasoning": "The finding's central evidence claim is false. It states 'a repo-wide grep finds no other reference' to lldiv beyond the two signatures.py lines, but test/core/test_abi.py contains an explicit test at lines 243-258: `def test_call_lib_func_lldiv_via_unified()` which calls `_call_lib_func(\"lldiv\", (10, 3))` directly and asserts `quot == 3` and `rem == 1`. The lldiv entry is intentionally kept in signatures_c as a low-level ABI test vehicle exercising the struct-return path across SysV x86-64, AAPCS64, and Win64 ABIs — the test docstring makes this purpose explicit: 'Exercises the return-side ABI path on whatever platform the test runs on'. There is no orphan; the signature has a well-documented consumer in the test suite. The claim that it is 'dead surface' with 'no wrapper, no test, no _call_lib_func(\"lldiv\", ...)' is directly contradicted by test_abi.py line 258."
+    }
+  ]
+}

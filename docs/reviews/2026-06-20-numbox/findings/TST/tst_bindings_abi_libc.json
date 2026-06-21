@@ -1,0 +1,93 @@
+{
+  "target": "tst_bindings_abi_libc",
+  "dimension": "TST",
+  "files_reviewed": [
+    "test/core/test_abi.py",
+    "test/core/test_bindings.py",
+    "test/core/test_math.py",
+    "test/core/test_fmtio.py",
+    "test/core/test_errno.py",
+    "test/core/test_stdio_handles.py",
+    "test/core/test_strerror_safe.py",
+    "numbox/core/bindings/_c.py",
+    "numbox/core/bindings/_math.py",
+    "numbox/core/bindings/_fmtio.py",
+    "numbox/core/bindings/_stdio.py",
+    "numbox/core/bindings/_errno.py",
+    "numbox/core/bindings/_strerror.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/utils.py",
+    "docs/numbox.core.bindings.rst",
+    ".github/workflows/numbox_ci.yml"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Coverage of abi/call (the ABI dispatch surface) and libc math/errno/strerror/stdio is exceptionally thorough — ABI tests pin SysV/Win64/AAPCS64 by-value/sret/repack paths via both round-trips and IR inspection, %n rejection and varargs promotion are well-tested, and errno TLS isolation has a real (non-trivial) probe. The genuine gaps are at the edges: a doc that overclaims a CI canary that does not exist, a security-relevant Windows DLL-search-order path with no test, several public _c.py wrappers (puts/fputc/putchar/feof/ferror/clearerr) untested, and no musl runner so strerror_safe's musl runtime invariant is only covered by a glibc IR probe.",
+  "findings": [
+    {
+      "id": "TST-tst_bindings_abi_libc-1",
+      "severity": "medium",
+      "title": "_strerror docstring asserts a CI canary (musl_symbol_check) that does not exist",
+      "file": "numbox/core/bindings/_strerror.py",
+      "lines": "24-26",
+      "claim": "The module docstring states the strerror_r fallback is 'unreachable on every libc currently supported (verified by the Alpine musl_symbol_check CI canary)'. No such canary exists: grep over .github/ for musl|alpine|xpg|symbol_check returns nothing, and the numbox_ci.yml matrix arch is only ubuntu-latest / ubuntu-24.04-arm / windows-latest / macos-latest (all glibc on Linux). The doc asserts a verification that is not actually performed, so a reader trusting it would believe the musl symbol-layout invariant is CI-guarded when it is not — the invariant could silently regress.",
+      "evidence": "_strerror.py:24-26: '... but the fallback is unreachable on every libc currently supported (verified by the Alpine ``musl_symbol_check`` CI canary).' numbox_ci.yml:25 `arch: [ \"ubuntu-latest\", \"ubuntu-24.04-arm\", \"windows-latest\" ]` plus include entries adding only macos-latest — no container/alpine/musl entry. `grep -rilE 'musl|alpine|xpg|symbol_check' .github/` -> NO MATCH. (The rst at docs/numbox.core.bindings.rst:148-150 is more careful — it says such a canary 'is a straightforward way to verify it', i.e. proposed, not present — so the source docstring and the rst disagree.)",
+      "recommendation": "Either add the Alpine/musl CI canary the docstring claims (an `nm -D` check that both `strerror_r` and `__xpg_strerror_r` resolve in a musl container) or soften the _strerror.py docstring to match the rst wording (a proposed, not-yet-implemented check). Make source docstring and rst consistent.",
+      "confidence": "high"
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-2",
+      "severity": "medium",
+      "title": "Windows DLL search-order resolution (_resolve_lib_path / _windows_bundled_dll_path) has no test",
+      "file": "numbox/core/bindings/utils.py",
+      "lines": "49-112",
+      "claim": "_resolve_lib_path implements the security-relevant Windows search order: for sqlite3 it MUST return the CPython-bundled DLL and NEVER fall back to find_library, because a PATH-resident third-party sqlite3.dll (the AWS CLI v2 copy is the documented example) writes to NULL inside sqlite3_open when called from a foreign process. There is no test that _windows_bundled_dll_path is preferred over find_library, nor that name=='sqlite3' refuses the find_library fallback. test_bindings.py only covers load_lib_path (test_load_lib_path_returns_handle_with_known_symbol) and load_lib (test_load_lib_returns_queryable_handle) on the happy path; the per-platform resolution/search-order branch is never asserted. A regression that re-enabled the find_library fallback for sqlite3 on Windows would pass CI and only surface as a hang/crash on a runner that happens to have AWS CLI on PATH.",
+      "evidence": "utils.py:97-111 `if platform_ == \"Windows\": ... if name == \"sqlite3\": ... return bundled` with the comment 'Never fall back to find_library'. The branch is pure path logic (mockable without Windows) yet no test in test/core exercises _resolve_lib_path or _windows_bundled_dll_path by name (confirmed by reading test_bindings.py end-to-end — it imports only load_lib_path and load_lib).",
+      "recommendation": "Add a unit test that monkeypatches utils.platform_ = 'Windows' and the candidate-existence check, asserting (a) _resolve_lib_path('sqlite3') returns the bundled path and returns None rather than find_library when the bundled DLL is absent, and (b) for a non-sqlite3 name the bundled path is preferred over find_library when both exist. Pure-logic test, runnable on any host.",
+      "confidence": "high"
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-3",
+      "severity": "low",
+      "title": "Public _c.py wrappers puts/fputc/putchar/feof/ferror/clearerr have no test",
+      "file": "numbox/core/bindings/_c.py",
+      "lines": "50-144",
+      "claim": "Six public (non-underscore, star-imported) wrappers in _c.__all__ — puts, fputc, putchar, feof, ferror, clearerr — are never called by any test. test_bindings.py exercises rand/srand/strlen, the str* and mem* families, getenv, fopen/fwrite/fread/fclose (via _write_and_read), and strerror; the fan-out probe in test_fmtio.py covers errno/stdio/strerror_safe/strcmp/strchr/mem*/getenv/snprintf/printf. None invoke puts/fputc/putchar/feof/ferror/clearerr. A wrong signature (e.g. fputc arg order) or a typo'd C symbol name in one of these would not be caught — including a cache-survival regression, since these aren't in the all-families subprocess probe either.",
+      "evidence": "_c.py:14-23 __all__ lists 'puts', 'fputc', 'putchar', ... 'feof', 'ferror', 'clearerr'. Searching the test files read this session: test_bindings.py never references these names; test_fmtio.py's exercise() probe (lines ~844-895) lists errno/stdio/strerror_safe/strcmp/strchr/mem/getenv/snprintf/printf only. fputc/feof/ferror/clearerr signatures (signatures.py:21-26) are untested.",
+      "recommendation": "Add a small @njit test that writes a byte via fputc/putchar to a tmp file FILE* (or stdout under capfd), reads it back, and exercises feof/ferror/clearerr on an EOF-hit FILE* (read past end, assert feof != 0, clearerr, assert feof == 0). Optionally add puts to the capfd stdout group already present in test_fmtio.py.",
+      "confidence": "high"
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-4",
+      "severity": "medium",
+      "title": "No musl runner — strerror_safe musl runtime path covered only by a glibc IR probe",
+      "file": ".github/workflows/numbox_ci.yml",
+      "lines": "25, 33-86",
+      "claim": "_strerror.py depends on a musl-specific runtime invariant: on musl, __xpg_strerror_r is a weak alias to musl's POSIX-form strerror_r and resolves to the same implementation. The only test of the fallback selection (test_strerror_safe.py::test_strerror_safe_ir_uses_strerror_r_when_xpg_absent) is skipif platform != 'Linux' AND is an IR-text inspection that monkeypatches address_of_symbol — it never executes strerror_safe through musl's actual strerror_r at runtime. The CI matrix has no musl/Alpine container, so the binding's musl behavior (the documented reason the Linux selector is safe) is never run end-to-end. A musl-specific ABI/return-semantics regression would ship undetected.",
+      "evidence": "numbox_ci.yml:25 arch list is glibc-Linux + windows + (include) macos only; no `container: alpine`/musl entry anywhere (grep confirmed). test_strerror_safe.py:151-166 test_strerror_safe_ir_uses_strerror_r_when_xpg_absent is @skipif platform_ != 'Linux' and asserts on _render_ir_for_probe() text, not on a live strerror_safe call. The runtime strerror_safe tests (lines 33-129) run on glibc, exercising __xpg_strerror_r, never the musl strerror_r alias.",
+      "recommendation": "Add a single Alpine (musl) CI job — even just one Python version — that runs the test/core/test_strerror_safe.py runtime tests plus the all-families subprocess probe. This both exercises the musl strerror_r path end-to-end and gives the 'musl_symbol_check canary' the _strerror docstring already advertises (see finding -1).",
+      "confidence": "high"
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-5",
+      "severity": "low",
+      "title": "Documented %ld Win64 truncation footgun has no asserting test",
+      "file": "numbox/core/bindings/_fmtio.py",
+      "lines": "81-85",
+      "claim": "The module docstring (caveat 4) and the rst warning both flag that `%ld` against an int64 truncates the high 32 bits in @njit on Win64 (LLP64 long is 4 bytes), while pure-Python hides it. This cross-platform divergence is documented as load-bearing user guidance but no test pins the behavior on Windows, so a future change to the varargs promotion (e.g. someone 'fixing' %ld to widen long) could silently alter the documented contract without any test failing. The int64-widening promotion path itself IS tested (test_dual_mode_int32_promotes_to_int64_for_lld) but only for %lld, never for the %ld Win64 footgun.",
+      "evidence": "_fmtio.py:81-85 caveat (4) '`%ld` on Win64 (LLP64) ... truncates the high 32 bits on Win64 in @njit'. rst docs/numbox.core.bindings.rst:285-291 repeats it as a .. warning::. test_fmtio.py has no `%ld` test; the closest (test_dual_mode_int32_promotes_to_int64_for_lld, lines 663-673) uses `%lld`.",
+      "recommendation": "Add a Windows-gated test asserting `printf('%ld', np.int64(BIG))` truncates as documented (or, if the team prefers, that the documented portable form `%lld` is correct on Windows). At minimum a non-Windows test pinning that `%ld` + int64 is full-width on LP64 so the divergence is anchored on the side CI actually runs.",
+      "confidence": "medium"
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-6",
+      "severity": "low",
+      "title": "intp_ll_type / extract_literal_str helper edge cases untested directly",
+      "file": "numbox/core/bindings/utils.py",
+      "lines": "13-46",
+      "claim": "extract_literal_str raises two distinct TypingErrors (non-Literal -> 'must be a literal str'; Literal but non-str value -> 'must be a Python str'). intp_ll_type has a context vs context=None branch whose correctness claim is 'both paths produce identical LLVM types'. The literal-str error paths are exercised indirectly through the fmtio/_stdio non-literal-format tests, but the non-str-literal branch (utils.py:27-29) and the intp_ll_type context/None equivalence (the documented invariant _render_ir_for_probe relies on) have no direct assertion. Low impact because the indirect coverage catches the common case, but the contextless intp_ll_type fallback is exactly the path used by the IR-probe test and a width mismatch there would make that probe assert against the wrong type.",
+      "evidence": "utils.py:21-30 two-branch extract_literal_str; only the isinstance(ty, Literal) failure is reachable via existing non-literal-format tests (e.g. test_fmtio.py:353 test_printf_non_literal_format_raises). utils.py:44-46 intp_ll_type contextless fallback `return llir.IntType(intp.bitwidth)` — used by _strerror._render_ir_for_probe (line 112) but never asserted equal to the context'd form.",
+      "recommendation": "Add a direct unit test for extract_literal_str's non-str-literal branch (pass a Literal[int] type, assert the 'must be a Python str' message) and a test asserting intp_ll_type(None) width equals intp.bitwidth (8 bytes on the 64-bit CI platforms). Cheap, host-agnostic.",
+      "confidence": "medium"
+    }
+  ]
+}
