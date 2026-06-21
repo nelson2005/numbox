@@ -24,18 +24,45 @@ clusters in severity tallies.
 ## REPORT.md
 
 Markdown, reader-optimized, in this order:
-1. **Header** — date, branch, commit SHA under review, unit counts (targets, review units, verify
-   units), and a tally: confirmed by severity, uncertain, refuted.
+1. **Header** — date, branch, commit under review (capture the FULL SHA — the line links below pin to
+   it), unit counts (targets, review units, verify units), and a tally: confirmed by severity,
+   uncertain, refuted.
 2. **Memory / ABI / refcount (MEM)** FIRST — this is the highest-value dimension. Then Correctness,
    Security, Design, Tests & docs. Within each dimension, order by severity (critical → low).
-3. Each entry: a stable heading, `file:line`, the concrete defect + when it triggers, the evidence,
-   the recommended fix, confidence, and the contributing finding id(s). Link file references as
-   `file:line`. Be precise and terse — no filler, no "worth reviewer attention" editorializing.
+3. Each entry: a stable heading, the file:line reference, the concrete defect + when it triggers, the
+   evidence, the recommended fix, confidence, and the contributing finding id(s). Every file:line MUST
+   be a clickable GitHub blob link (see "Hyperlinking file references" below) — plain `file:line` in
+   backticks is NOT clickable on GitHub. Be precise and terse — no filler, no "worth reviewer
+   attention" editorializing.
 4. **Human triage** — the `uncertain` findings, each with why the verifier couldn't decide and what a
    human should check.
 5. **Coverage note** — confirm all 119 review units + their verifies are present on disk; if any unit
    is missing its file, list it (so the reader knows coverage was complete or where it wasn't). Never
    imply full coverage if a unit is absent.
+
+### Hyperlinking file references
+
+Every file:line in REPORT.md must be a clickable link to the exact source on GitHub, **pinned to the
+commit under review** (an immutable FULL SHA, so the line numbers stay valid even after the branch
+moves). The reviewed source equals the tree at that commit (the review adds only `docs/`, no source
+changes).
+
+- **Blob base** — derive it, don't hardcode: `git -C <repo> remote get-url origin` (normalize
+  `git@github.com:OWNER/REPO.git` or `https://github.com/OWNER/REPO.git` → `https://github.com/OWNER/REPO`)
+  and `git -C <repo> rev-parse HEAD` for the full SHA. Base = `https://github.com/OWNER/REPO/blob/<full-sha>/`.
+- **Format** — link text is the reference inside a code span: `` [`<path>:<lines>`](<base><path>#L<start>[-L<end>]) ``.
+  Example: `` [`numbox/utils/lowlevel.py:249-260`](https://github.com/OWNER/REPO/blob/<sha>/numbox/utils/lowlevel.py#L249-L260) ``.
+- **Resolve bare/partial paths** (`abi.py`, `bindings/utils.py`) to the full repo path before building
+  the URL (unique-basename or unique-suffix match against the tree); keep the visible link text as written.
+- **Compound ranges** (`abi.py:95-96, 120-126`) — anchor the FIRST range (`#L95-L96`); keep the full
+  text visible.
+
+**Reliable method (recommended over hand-writing URLs):** writing dozens of correct links by hand is
+error-prone. Write REPORT.md first with plain backtick'd `` `path:line` `` refs, then run a small
+deterministic post-pass that regex-replaces each `` `path:line` `` token with its blob link, and
+**assert an integrity check**: stripping the just-added links must reproduce the pre-link file
+byte-for-byte (proves only links were added, no finding text altered). Overwrite REPORT.md with the
+linked version and spot-check a few URLs return HTTP 200 at the pinned SHA.
 
 ## numbox-review.tasks.json
 
