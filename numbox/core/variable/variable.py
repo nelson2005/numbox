@@ -250,6 +250,7 @@ class Values:
     will be held here. """
     def __init__(self):
         self._values: dict[Variable, Value] = {}
+        self._storage_cleaned: bool = False
 
     def get(self, variable: Variable) -> Value:
         if variable not in self._values:
@@ -413,10 +414,7 @@ class CompiledGraph:
             for variable in to_free:
                 values.pop(variable)
             if to_free:
-                try:
-                    values._storage_cleaned = True
-                except AttributeError:
-                    pass
+                values._storage_cleaned = True
             if self.debug:
                 print(f"Calculating {node}\nwith metadata\n{node_variable.metadata}", file=sys.stderr)
             result = node_variable.formula(*args)

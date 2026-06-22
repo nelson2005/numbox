@@ -317,5 +317,9 @@ def test_clean_storage_terminal_is_scoped_to_storage():
     assert values2.get(n_var).value == 312
 
 
+def test_values_initializes_not_cleaned():
+    assert Values()._storage_cleaned is False
+
+
 if __name__ == "__main__":
     collect_and_run_tests(__name__)
