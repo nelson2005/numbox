@@ -301,5 +301,21 @@ def test_values_pop_is_strict_on_missing_key():
         values.pop(absent)
 
 
+def test_clean_storage_terminal_is_scoped_to_storage():
+    graph, compiled = _uaf_graph()
+    values1 = Values()
+    compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values1)
+    compiled.recompute({"ext": {"a": 10}}, values1, clean_storage=True)
+    with pytest.raises(RuntimeError, match="terminal"):
+        compiled.recompute({"ext": {"b": 20}}, values1)
+
+    # a fresh storage on the SAME cached compiled graph must NOT be terminal
+    values2 = Values()
+    compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values2)
+    compiled.recompute({"ext": {"a": 10}}, values2)
+    n_var = graph.registry["vars"]["N"]
+    assert values2.get(n_var).value == 312
+
+
 if __name__ == "__main__":
     collect_and_run_tests(__name__)

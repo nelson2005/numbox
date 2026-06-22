@@ -293,7 +293,6 @@ class CompiledGraph:
     last_used: dict[Variable, int] = field(default_factory=dict)
 
     def __post_init__(self):
-        object.__setattr__(self, "_storage_cleaned", False)
         for node in self.ordered_nodes:
             for inp in node.inputs:
                 self.dependents.setdefault(inp, []).append(node)
@@ -393,8 +392,8 @@ class CompiledGraph:
 
         :param clean_storage: when True, evict each non-requested affected input from
         `values` after its last affected consumer runs (see `recompute`).
-        :param affected: the frozenset of affected `Variable`s from `_collect_affected`;
-        required (non-empty contract) when `clean_storage` is True.
+        :param affected: the frozenset of affected `Variable`s from `_collect_affected`
+        (may be empty); consulted only when `clean_storage` is True.
         """
         for node in nodes:
             node_variable = node.variable
@@ -414,7 +413,10 @@ class CompiledGraph:
             for variable in to_free:
                 values.pop(variable)
             if to_free:
-                object.__setattr__(self, "_storage_cleaned", True)
+                try:
+                    values._storage_cleaned = True
+                except AttributeError:
+                    pass
             if self.debug:
                 print(f"Calculating {node}\nwith metadata\n{node_variable.metadata}", file=sys.stderr)
             result = node_variable.formula(*args)
@@ -430,17 +432,18 @@ class CompiledGraph:
         :param changed: dict of sources to names to new values of changed
         `Variable`s coming from either `External` or `Variables` source.
         :param values: storage of all `Variable` values.
-        :param clean_storage: pop any intermediate (non-requested) values from the
-        storage once they are no longer needed. This makes the graph TERMINAL:
-        evicted intermediates are not restored, so a later `recompute` is rejected —
-        build a fresh graph to recompute again. Applies only to this interpreted
+        :param clean_storage: pop each non-requested intermediate from `values` once its
+        last affected consumer has run, to release memory sooner. Once a pass actually
+        evicts something, that storage becomes terminal: its evicted intermediates are
+        not restored, so a later `recompute` with the same storage is rejected — recompute
+        with a fresh storage instead. Applies only to this interpreted
         `CompiledGraph.recompute` path, not to `execute()` or the fused
         `CompiledKernel.recompute` fast path.
         """
-        if self._storage_cleaned:
+        if getattr(values, "_storage_cleaned", False):
             raise RuntimeError(
-                "storage was cleaned by a previous clean_storage=True recompute; "
-                "this CompiledGraph is terminal — build a fresh graph to recompute"
+                "this storage was cleaned by a previous clean_storage=True recompute "
+                "and is terminal — recompute with a fresh storage"
             )
         changed_vars = set()
         for src, vals in changed.items():
