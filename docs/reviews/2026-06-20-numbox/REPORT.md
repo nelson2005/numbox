@@ -157,6 +157,7 @@ a wrong result.
 - **Evidence:** line 397 assigns each changed var's value and adds it to `changed_vars`. `_collect_affected` is seeded with **all** changed_vars; popping A reaches B's CompiledNode via `dependents.get(A)`, so B lands in `affected`. Lines 400-401 then null every affected node (nulling B's just-assigned override) and `_calculate` recomputes B from A's new value. No guard excludes directly-changed nodes.
 - **Fix:** after collecting `affected_nodes`, exclude any node whose variable is in `changed_vars` from the null+recompute pass (`[n for n in affected_nodes if n.variable not in changed_vars]`), preserving the explicit override; document the precedence rule.
 - **Confidence:** high. **Findings:** COR-variable-1.
+- **Repro:** [`repro/cor2_recompute_override_repro.py`](repro/cor2_recompute_override_repro.py) — `test_recompute_honors_variables_override` is red against the reviewed code (`b=20`, expected `999`); lift into `test/core/test_variable.py` for the fix.
 
 ### COR-3 (medium) — Qualified-name `rsplit('.', 1)` mis-parses any name containing a dot
 

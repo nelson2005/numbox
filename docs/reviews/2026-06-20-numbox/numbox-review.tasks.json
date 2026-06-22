@@ -121,11 +121,12 @@
       ],
       "description": "When one recompute() supplies explicit values for A and B where B (a formula node) transitively depends on A, _collect_affected (seeded with all changed_vars) pulls B into the affected set, then the null+recompute pass overwrites B's just-assigned override by recomputing it from A. Fix: after collecting affected_nodes, exclude any node whose variable is in changed_vars from the null+recompute pass (treat an explicit override as an injected value), and document the precedence rule in the recompute docstring.",
       "acceptanceCriteria": [
-        "Add a regression test: a graph where B=f(A); call recompute supplying explicit new A and explicit new B; assert B retains the user-supplied value (not the recomputed-from-A value). Fails before, passes after.",
+        "Add a regression test: a graph where B=f(A); call recompute supplying explicit new A and explicit new B; assert B retains the user-supplied value (not the recomputed-from-A value). Fails before, passes after. A ready-to-use reproduction already exists at docs/reviews/2026-06-20-numbox/repro/cor2_recompute_override_repro.py (its test_recompute_honors_variables_override is red against current code: b=20, expected 999); lift it into test/core/test_variable.py.",
         "Existing variable/recompute tests still pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "reproTest": "docs/reviews/2026-06-20-numbox/repro/cor2_recompute_override_repro.py"
     },
     {
       "id": 7,
