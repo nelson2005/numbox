@@ -158,6 +158,17 @@ When one `recompute()` call supplies explicit new values for A and B where B (a 
 - **Confidence:** high that the behavior occurs; its *wrongness* is the undocumented API decision above (not a fact). **Findings:** COR-variable-1 (the verifier confirmed the mechanism, not the original "wrong result" framing).
 - **Repro:** [`repro/cor2_recompute_override_repro.py`](repro/cor2_recompute_override_repro.py) — `test_recompute_honors_variables_override` is red against the reviewed code (`b=20`). Its expected `999` encodes the **assumed** override-wins semantics, not a documented guarantee, so it is a characterization test of the chosen behavior; lift/adjust into `test/core/test_variable.py` once precedence is decided.
 
+### COR-2b (low, post-review) — `CompiledKernel.recompute` shares COR-2's silent interior-override drop; its docstring is also inaccurate
+
+[`numbox/core/variable/compile_kernel.py:705-730`](https://github.com/nelson2005/numbox/blob/ece98cec16f27c6d0e8ea5d985e591252e2d7c89/numbox/core/variable/compile_kernel.py#L705-L730)
+
+Found during post-review validation (NOT part of the automated 124). `CompiledKernel.recompute` reuses [`_collect_affected(changed_vars)`](https://github.com/nelson2005/numbox/blob/ece98cec16f27c6d0e8ea5d985e591252e2d7c89/numbox/core/variable/compile_kernel.py#L711) — the same helper behind COR-2 — so it has the **same behavior**: an explicit interior override (`{"vars_": {"b": 999}}`) is **honored in isolation but silently discarded when the overridden node is downstream of another co-changed input** (`{"ext": {"a": 2}, "vars_": {"b": 999}}` -> `b=20, c=21`, the `999` dropped). Verified empirically (repro below).
+
+- **Not a computation bug:** deterministic, internally consistent (`b=10*a`), no corruption/UB. The defect is the *silent* drop of an explicit caller instruction, dependent on what else is in the batch — the same under-specified semantics as COR-2. The code even *warns* when an update has no effect ([`compile_kernel.py:539`](https://github.com/nelson2005/numbox/blob/ece98cec16f27c6d0e8ea5d985e591252e2d7c89/numbox/core/variable/compile_kernel.py#L539)), so silently allowing this no-op override is inconsistent with its own behavior.
+- **Separate doc-accuracy bug (compile_kernel only):** the docstring ([lines 673-676](https://github.com/nelson2005/numbox/blob/ece98cec16f27c6d0e8ea5d985e591252e2d7c89/numbox/core/variable/compile_kernel.py#L673-L676)) states unconditionally that an overridden node's "own formula is *not* re-run" — **false** in the co-change case. Fix the docstring (or the behavior) so they agree.
+- **Shared root cause with COR-2:** both flow through `_collect_affected(changed_vars)`; decide precedence once (honor / recompute-wins / error — but do not silently drop) and apply it in both `recompute`s.
+- **Repro:** [`repro/cor2b_compile_kernel_recompute_override_repro.py`](repro/cor2b_compile_kernel_recompute_override_repro.py).
+
 ### COR-3 (medium) — Qualified-name `rsplit('.', 1)` mis-parses any name containing a dot
 
 [`numbox/core/variable/variable.py:94-105, 494, 579`](https://github.com/nelson2005/numbox/blob/ece98cec16f27c6d0e8ea5d985e591252e2d7c89/numbox/core/variable/variable.py#L94-L105)

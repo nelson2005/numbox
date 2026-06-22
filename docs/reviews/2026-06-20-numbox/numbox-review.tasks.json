@@ -1061,6 +1061,30 @@
       ],
       "model": "opus",
       "reasoning": "max"
+    },
+    {
+      "id": 50,
+      "subject": "Fix CompiledKernel.recompute silent interior-override drop + inaccurate docstring (sibling of task 6)",
+      "severity": "low",
+      "dimension": "COR",
+      "files": [
+        "numbox/core/variable/compile_kernel.py",
+        "numbox/core/variable/variable.py"
+      ],
+      "findingIds": [
+        "POST-compile_kernel-recompute-1"
+      ],
+      "description": "Found post-review. CompiledKernel.recompute reuses _collect_affected(changed_vars) (variable.py) exactly like CompiledGraph.recompute, so an explicit interior override is silently discarded when the overridden node is downstream of another co-changed input (honored in isolation). Not a computation bug (deterministic, self-consistent) but a silent drop of an explicit instruction. Additionally, the recompute docstring claims unconditionally that the overridden node's formula is 'not re-run', which is false in this case. Decide precedence once (shared with task 6: honor / recompute-wins / error, but do NOT silently drop), apply in both recompute methods, and correct the compile_kernel docstring.",
+      "acceptanceCriteria": [
+        "Decide the same override-vs-dependency precedence as task 6 and apply it consistently in both CompiledGraph.recompute and CompiledKernel.recompute (shared root cause: _collect_affected). At minimum, do not silently drop an explicit override -- warn or error if it cannot be honored.",
+        "Correct CompiledKernel.recompute's docstring so its 'formula is not re-run' claim matches actual behavior.",
+        "Add a regression test for the combined override+upstream-change case; the repro at docs/reviews/2026-06-20-numbox/repro/cor2b_compile_kernel_recompute_override_repro.py is red now and shows both the honored (isolated) and dropped (combined) cases.",
+        "Full pytest suite passes after cache clean."
+      ],
+      "model": "opus",
+      "reasoning": "max",
+      "reproTest": "docs/reviews/2026-06-20-numbox/repro/cor2b_compile_kernel_recompute_override_repro.py",
+      "note": "Added 2026-06-22 from post-review validation; not part of the automated 124-finding run. Shares root cause with task 6."
     }
   ]
 }
