@@ -12,8 +12,8 @@
 |----------|-------|
 | critical | 0 |
 | high | 4 |
-| medium | 30 |
-| low | 84 |
+| medium | 29 |
+| low | 85 |
 
 | Dimension | Confirmed |
 |-----------|-----------|
@@ -145,19 +145,18 @@ statically detectable. (See SEC-1 for the information-disclosure framing.)
 - **Fix:** at typing time, scan the literal format's conversion specifiers and require (a) specifier count == `len(args_ty)` and (b) each specifier class matches the corresponding arg type (`%d/%i/%x/%u`→Integer/Boolean; `%f/%e/%g`→Float; `%s`→UnicodeType or intp; `%p`→intp), raising `TypingError` on mismatch. At minimum enforce the count check.
 - **Confidence:** high. **Findings:** COR-libc_fmtio-2, SEC-libc_fmtio-1.
 
-### COR-2 (medium) — `recompute` discards an explicit override for a computed variable downstream of another override
+### COR-2 (low) — `recompute` silently discards a supplied Variables-source override downstream of another change (precedence undocumented)
 
 [`numbox/core/variable/variable.py:386-402`](https://github.com/nelson2005/numbox/blob/ece98cec16f27c6d0e8ea5d985e591252e2d7c89/numbox/core/variable/variable.py#L386-L402)
 
-When one `recompute()` call supplies explicit new values for A and B where B (a Variables/formula node)
-transitively depends on A, B's user value is silently overwritten by recomputation from A. The docstring
-promises to honor new values "coming from either External or Variables source", so the dropped B value is
-a wrong result.
+When one `recompute()` call supplies explicit new values for A and B where B (a Variables/formula node) transitively depends on A, B's supplied value is silently overwritten by recomputation from A (proven by the repro below).
+
+**Spec gap, not a contract violation.** The `recompute` docstring (lines 382-383) says only that `changed` *may carry* new values for variables "coming from either `External` or `Variables` source" — it specifies no precedence (no "honor"/"preserve"/"override" wording). So whether silently discarding the supplied value is *wrong* is an undocumented API decision, not a broken promise. It is at least surprising, and it makes the `Variables`-source half of `changed` inert for any node downstream of another change. **Downgraded medium -> low** after re-reading the docstring.
 
 - **Evidence:** line 397 assigns each changed var's value and adds it to `changed_vars`. `_collect_affected` is seeded with **all** changed_vars; popping A reaches B's CompiledNode via `dependents.get(A)`, so B lands in `affected`. Lines 400-401 then null every affected node (nulling B's just-assigned override) and `_calculate` recomputes B from A's new value. No guard excludes directly-changed nodes.
-- **Fix:** after collecting `affected_nodes`, exclude any node whose variable is in `changed_vars` from the null+recompute pass (`[n for n in affected_nodes if n.variable not in changed_vars]`), preserving the explicit override; document the precedence rule.
-- **Confidence:** high. **Findings:** COR-variable-1.
-- **Repro:** [`repro/cor2_recompute_override_repro.py`](repro/cor2_recompute_override_repro.py) — `test_recompute_honors_variables_override` is red against the reviewed code (`b=20`, expected `999`); lift into `test/core/test_variable.py` for the fix.
+- **Fix (a decision + doc, plus an optional guard):** define `recompute`'s precedence for a supplied `Variables`-source value and **document it in the docstring** (override-wins is the natural choice). If override-wins, also exclude directly-changed nodes from the null+recompute pass (`[n for n in affected_nodes if n.variable not in changed_vars]`) so the supplied value survives.
+- **Confidence:** high that the behavior occurs; its *wrongness* is the undocumented API decision above (not a fact). **Findings:** COR-variable-1 (the verifier confirmed the mechanism, not the original "wrong result" framing).
+- **Repro:** [`repro/cor2_recompute_override_repro.py`](repro/cor2_recompute_override_repro.py) — `test_recompute_honors_variables_override` is red against the reviewed code (`b=20`). Its expected `999` encodes the **assumed** override-wins semantics, not a documented guarantee, so it is a characterization test of the chosen behavior; lift/adjust into `test/core/test_variable.py` once precedence is decided.
 
 ### COR-3 (medium) — Qualified-name `rsplit('.', 1)` mis-parses any name containing a dot
 

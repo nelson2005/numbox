@@ -110,8 +110,8 @@
     },
     {
       "id": 6,
-      "subject": "Preserve explicit recompute overrides for variables downstream of another override",
-      "severity": "medium",
+      "subject": "Decide and document recompute precedence for a supplied Variables-source value (currently silently discarded downstream of another change)",
+      "severity": "low",
       "dimension": "COR",
       "files": [
         "numbox/core/variable/variable.py"
@@ -119,14 +119,16 @@
       "findingIds": [
         "COR-variable-1"
       ],
-      "description": "When one recompute() supplies explicit values for A and B where B (a formula node) transitively depends on A, _collect_affected (seeded with all changed_vars) pulls B into the affected set, then the null+recompute pass overwrites B's just-assigned override by recomputing it from A. Fix: after collecting affected_nodes, exclude any node whose variable is in changed_vars from the null+recompute pass (treat an explicit override as an injected value), and document the precedence rule in the recompute docstring.",
+      "description": "recompute()'s docstring documents only that `changed` may carry new values for variables coming from either External or Variables source; it specifies NO precedence (no honor/preserve/override wording). When B (a formula node) transitively depends on a co-changed A, _collect_affected pulls B into the affected set and the null+recompute pass overwrites B's supplied value by recomputing it from A (verified by the repro). This is a spec gap / surprising behavior, NOT a documented-contract violation -- downgraded medium->low. Decision needed: define recompute's precedence for a supplied Variables-source value (override-wins is natural). If override-wins, after collecting affected_nodes exclude any node whose variable is in changed_vars from the null+recompute pass; then document the rule in the recompute docstring.",
       "acceptanceCriteria": [
-        "Add a regression test: a graph where B=f(A); call recompute supplying explicit new A and explicit new B; assert B retains the user-supplied value (not the recomputed-from-A value). Fails before, passes after. A ready-to-use reproduction already exists at docs/reviews/2026-06-20-numbox/repro/cor2_recompute_override_repro.py (its test_recompute_honors_variables_override is red against current code: b=20, expected 999); lift it into test/core/test_variable.py.",
+        "Decide recompute's precedence for a supplied Variables-source value (override-wins recommended) and document it in the recompute docstring, which is currently silent on precedence.",
+        "Add a regression test asserting the CHOSEN semantics: a graph where B=f(A); recompute supplying explicit new A and explicit new B; assert B matches the decided precedence. The repro at docs/reviews/2026-06-20-numbox/repro/cor2_recompute_override_repro.py encodes assumed override-wins (its 999 expectation) and is red now; lift/adjust it into test/core/test_variable.py. Fails before, passes after.",
         "Existing variable/recompute tests still pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
       "reasoning": "max",
-      "reproTest": "docs/reviews/2026-06-20-numbox/repro/cor2_recompute_override_repro.py"
+      "reproTest": "docs/reviews/2026-06-20-numbox/repro/cor2_recompute_override_repro.py",
+      "reframeNote": "Reframed 2026-06-22 from 'wrong result vs docstring promise' to a spec-gap/API-decision item; severity medium->low. The docstring documents the input shape, not precedence."
     },
     {
       "id": 7,
