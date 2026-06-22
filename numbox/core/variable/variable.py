@@ -412,7 +412,7 @@ class CompiledGraph:
                 args[i] = arg
                 if clean_storage and input_variable in affected and input_variable not in self.requested_variables:
                     last_used_inp = self.last_used[input_variable]
-                    if last_used_inp == node.id:
+                    if node.id is not None and last_used_inp == node.id:
                         to_free.add(input_variable)
             for variable in to_free:
                 values.pop(variable)
