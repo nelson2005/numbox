@@ -294,11 +294,10 @@ class CompiledGraph:
 
     def __post_init__(self):
         object.__setattr__(self, "_storage_cleaned", False)
-        for node_idx, node in enumerate(self.ordered_nodes):
-            node_idx = node.id
+        for node in self.ordered_nodes:
             for inp in node.inputs:
                 self.dependents.setdefault(inp, []).append(node)
-                self.last_used[inp] = node_idx
+                self.last_used[inp] = node.id
 
     def execute(
         self,
