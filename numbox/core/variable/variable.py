@@ -378,7 +378,7 @@ class CompiledGraph:
         nodes: list[CompiledNode],
         values: Storage,
         clean_storage: bool = False,
-        affected: frozenset[Variable] = None
+        affected: frozenset[Variable] = frozenset()
     ):
         """
         Calculate values of the `Variable`s using their own `formula`
@@ -396,8 +396,6 @@ class CompiledGraph:
         :param affected: the frozenset of affected `Variable`s from `_collect_affected`;
         required (non-empty contract) when `clean_storage` is True.
         """
-        if clean_storage and not isinstance(affected, frozenset):
-            raise ValueError(f"affected should be a set of Variable instances, got {affected}")
         for node in nodes:
             node_variable = node.variable
             if node_variable.formula is None:
