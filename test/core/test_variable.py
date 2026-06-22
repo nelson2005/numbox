@@ -2,6 +2,8 @@ from inspect import getsource
 from textwrap import dedent
 from typing import Any
 
+import pytest
+
 from numbox.core.variable.variable import CompiledGraph, Graph, Values, Variables, Variable
 from numbox.core.variable.node import make_node
 from numbox.core.work.print_tree import make_image
@@ -241,6 +243,55 @@ vars_.output--vars_.quantity--configs.s
                                              configs.init_quantity
                                              |
                                              buffer.storage"""
+
+
+def _uaf_graph():
+    # N = f(X, M); X = g(a); M = h(b); only N requested.
+    def derive_X(a_):
+        return a_ + 100
+
+    def derive_M(b_):
+        return b_ + 200
+
+    def derive_N(X_, M_):
+        return X_ + M_
+
+    all_vars = {
+        "X": {"name": "X", "inputs": {"a": "ext"}, "formula": derive_X},
+        "M": {"name": "M", "inputs": {"b": "ext"}, "formula": derive_M},
+        "N": {"name": "N", "inputs": {"X": "vars", "M": "vars"}, "formula": derive_N},
+    }
+    graph = Graph(
+        variables_lists={"vars": [all_vars["X"], all_vars["M"], all_vars["N"]]},
+        external_source_names=["ext"],
+    )
+    compiled = graph.compile(["vars.N"])
+    return graph, compiled
+
+
+def test_clean_storage_single_pass_frees_non_requested_intermediate():
+    graph, compiled = _uaf_graph()
+    values = Values()
+    compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values)
+    n_var = graph.registry["vars"]["N"]
+    x_var = graph.registry["vars"]["X"]
+    assert values.get(n_var).value == 303
+
+    compiled.recompute({"ext": {"a": 10}}, values, clean_storage=True)
+    assert values.get(n_var).value == 312
+    assert n_var in values._values
+    assert x_var not in values._values
+
+
+def test_clean_storage_makes_graph_terminal():
+    graph, compiled = _uaf_graph()
+    values = Values()
+    compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values)
+    compiled.recompute({"ext": {"a": 10}}, values, clean_storage=True)
+
+    with pytest.raises(RuntimeError, match="terminal") as exc:
+        compiled.recompute({"ext": {"b": 20}}, values)
+    assert "Uninitialized input" not in str(exc.value)
 
 
 if __name__ == "__main__":
