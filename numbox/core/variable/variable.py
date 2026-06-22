@@ -257,7 +257,7 @@ class Values:
         return self._values[variable]
 
     def pop(self, variable: Variable) -> None:
-        self._values.pop(variable, None)
+        self._values.pop(variable)
 
     def __iter__(self) -> Iterator[Variable]:
         return iter(self._values.keys())

@@ -294,5 +294,12 @@ def test_clean_storage_makes_graph_terminal():
     assert "Uninitialized input" not in str(exc.value)
 
 
+def test_values_pop_is_strict_on_missing_key():
+    values = Values()
+    absent = Variable(name="absent", source="vars")
+    with pytest.raises(KeyError):
+        values.pop(absent)
+
+
 if __name__ == "__main__":
     collect_and_run_tests(__name__)
