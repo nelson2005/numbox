@@ -291,7 +291,7 @@ class CompiledGraph:
     affected_cache: dict[frozenset[Variable], tuple[list[CompiledNode], frozenset[Variable]]] = field(
         default_factory=dict
     )
-    last_used: dict[Variable, int] = field(default_factory=dict)
+    last_used: dict[Variable, int | None] = field(default_factory=dict)
 
     def __post_init__(self):
         for node in self.ordered_nodes:
@@ -414,7 +414,7 @@ class CompiledGraph:
             for variable in to_free:
                 values.pop(variable)
             if to_free:
-                values._storage_cleaned = True
+                setattr(values, "_storage_cleaned", True)
             if self.debug:
                 print(f"Calculating {node}\nwith metadata\n{node_variable.metadata}", file=sys.stderr)
             result = node_variable.formula(*args)
