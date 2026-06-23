@@ -283,13 +283,13 @@ def test_clean_storage_single_pass_frees_non_requested_intermediate():
     assert x_var not in values._values
 
 
-def test_clean_storage_makes_graph_terminal():
+def test_recompute_reading_an_evicted_intermediate_raises():
     graph, compiled = _uaf_graph()
     values = Values()
     compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values)
-    compiled.recompute({"ext": {"a": 10}}, values, clean_storage=True)
-
-    with pytest.raises(RuntimeError, match="terminal") as exc:
+    compiled.recompute({"ext": {"a": 10}}, values, clean_storage=True)  # evicts X
+    # a recompute on {b} reads evicted X (X not in cone({b})) -> clear error, not a stale read
+    with pytest.raises(RuntimeError, match="evicted") as exc:
         compiled.recompute({"ext": {"b": 20}}, values)
     assert "Uninitialized input" not in str(exc.value)
 
@@ -301,24 +301,56 @@ def test_values_pop_is_strict_on_missing_key():
         values.pop(absent)
 
 
-def test_clean_storage_terminal_is_scoped_to_storage():
+def test_voided_state_is_scoped_to_storage():
     graph, compiled = _uaf_graph()
+    n_var = graph.registry["vars"]["N"]
     values1 = Values()
     compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values1)
     compiled.recompute({"ext": {"a": 10}}, values1, clean_storage=True)
-    with pytest.raises(RuntimeError, match="terminal"):
+    with pytest.raises(RuntimeError, match="evicted"):
         compiled.recompute({"ext": {"b": 20}}, values1)
-
-    # a fresh storage on the SAME cached compiled graph must NOT be terminal
+    # a fresh storage on the SAME cached compiled graph is unaffected
     values2 = Values()
     compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values2)
     compiled.recompute({"ext": {"a": 10}}, values2)
-    n_var = graph.registry["vars"]["N"]
     assert values2.get(n_var).value == 312
 
 
-def test_values_initializes_not_cleaned():
-    assert Values()._storage_cleaned is False
+def test_values_initializes_with_empty_voided():
+    assert Values()._voided == set()
+
+
+def test_clean_storage_allows_same_changed_set_repeat():
+    graph, compiled = _uaf_graph()
+    n_var = graph.registry["vars"]["N"]
+    values = Values()
+    compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values)
+    compiled.recompute({"ext": {"a": 10}}, values, clean_storage=True)   # X=110, N=312, X voided
+    compiled.recompute({"ext": {"a": 20}}, values, clean_storage=True)   # same cone re-derives X
+    assert values.get(n_var).value == 322                                # X=120, M=202
+
+
+def test_clean_storage_allows_superset_changed_set():
+    graph, compiled = _uaf_graph()
+    n_var = graph.registry["vars"]["N"]
+    values = Values()
+    compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values)
+    compiled.recompute({"ext": {"a": 10}}, values, clean_storage=True)   # voids X
+    compiled.recompute({"ext": {"a": 5, "b": 7}}, values)                # {a,b} re-derives X in cone
+    assert values.get(n_var).value == 312                               # X=105, M=207
+
+
+def test_execute_clears_voided_so_storage_heals():
+    graph, compiled = _uaf_graph()
+    n_var = graph.registry["vars"]["N"]
+    values = Values()
+    compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values)
+    compiled.recompute({"ext": {"a": 10}}, values, clean_storage=True)   # voids X
+    assert values._voided                                                # X is voided
+    compiled.execute(external_values={"ext": {"a": 1, "b": 2}}, values=values)  # repopulate + clear
+    assert values._voided == set()
+    compiled.recompute({"ext": {"b": 20}}, values)                       # now safe; X present
+    assert values.get(n_var).value == 321                               # X=101, M=220
 
 
 if __name__ == "__main__":
