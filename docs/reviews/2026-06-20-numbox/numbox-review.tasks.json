@@ -1,7 +1,7 @@
 {
   "planFor": "numbox deep review 2026-06-20",
   "sourceReport": "docs/reviews/2026-06-20-numbox/REPORT.md",
-  "lastUpdated": "2026-06-20-numbox-review",
+  "lastUpdated": "2026-06-25",
   "tasks": [
     {
       "id": 1,
@@ -23,7 +23,8 @@
         "Full pytest suite passes after cleaning __pycache__ and the numba cache."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 2,
@@ -45,7 +46,8 @@
         "Existing abi/call tests still pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 3,
@@ -66,7 +68,8 @@
         "The cfunc uses try/except (not try/finally); existing tvf tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 4,
@@ -85,7 +88,8 @@
         "Docs build (sphinx) still succeeds; no behavioral code change required."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 5,
@@ -106,7 +110,8 @@
         "The module docstring's C-compiler-grade-checking claim now matches behavior; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 6,
@@ -128,7 +133,8 @@
       "model": "opus",
       "reasoning": "max",
       "reproTest": "docs/reviews/2026-06-20-numbox/repro/cor2_recompute_override_repro.py",
-      "reframeNote": "Reframed 2026-06-22 from 'wrong result vs docstring promise' to a spec-gap/API-decision item; severity medium->low. The docstring documents the input shape, not precedence."
+      "reframeNote": "Reframed 2026-06-22 from 'wrong result vs docstring promise' to a spec-gap/API-decision item; severity medium->low. The docstring documents the input shape, not precedence.",
+      "status": "completed"
     },
     {
       "id": 7,
@@ -147,7 +153,8 @@
         "Existing variable tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 8,
@@ -168,7 +175,8 @@
         "Existing make_structref tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 9,
@@ -187,7 +195,8 @@
         "Existing proxy tests and the in-repo bindings still compile; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 10,
@@ -206,7 +215,8 @@
         "Existing builder/work tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 11,
@@ -225,7 +235,8 @@
         "Existing explain tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 12,
@@ -246,7 +257,8 @@
         "Existing node/work tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 13,
@@ -266,7 +278,8 @@
         "Existing query_to_array / vtable / typemap tests pass unchanged, including the multibyte/emoji and overlong/surrogate cases; full pytest suite passes after cache clean (verify on macOS-arm64 if available that the query path still writes non-zero results)."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 14,
@@ -287,7 +300,8 @@
         "Existing register_tvf and register_table/vtable tests pass unchanged; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 15,
@@ -307,7 +321,8 @@
         "Existing variable/compile-kernel tests (eager and discovered plans) pass unchanged; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 16,
@@ -326,7 +341,8 @@
         "Existing work tests (calculate/load/combine/inputs-vector) pass unchanged; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 17,
@@ -345,7 +361,8 @@
         "Refcount-sensitive tests (Any/Work/tvf meminfo) still pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 18,
@@ -367,7 +384,8 @@
         "Full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 19,
@@ -386,7 +404,8 @@
         "The test executes the _TAG_S/_TAG_U/_TAG_BLOB branches and a non-zero per-cursor scratch; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 20,
@@ -405,7 +424,8 @@
         "The assertion would fail under a simulated missing/extra decref; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 21,
@@ -424,7 +444,8 @@
         "The test fails if the sqlite3 find_library fallback is re-enabled; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 22,
@@ -446,7 +467,8 @@
         "The new job passes in CI; pytest --durations=20 is included per CI convention."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 23,
@@ -465,7 +487,8 @@
         "After the doc-content fixes (other tasks) land, the gated build passes; before them it would fail \u2014 confirm by running sphinx-build -W locally."
       ],
       "model": "sonnet",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 24,
@@ -487,7 +510,8 @@
         "A test pins _pyobject_head_fields() debug-build behavior; sphinx build succeeds; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 25,
@@ -507,7 +531,8 @@
         "sphinx-build succeeds (run cd docs && sphinx-build -b html . _build/html, exit 0, warnings not increased)."
       ],
       "model": "sonnet",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 26,
@@ -527,7 +552,8 @@
         "sphinx-build -W succeeds (no dangling-xref / import-target warnings from work.rst)."
       ],
       "model": "sonnet",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "completed"
     },
     {
       "id": 27,
@@ -546,7 +572,8 @@
         "Full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 28,
@@ -566,7 +593,8 @@
         "A valid JSON object still parses; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 29,
@@ -585,7 +613,8 @@
         "Full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 30,
@@ -604,7 +633,8 @@
         "Existing make_node/DAG tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 31,
@@ -623,7 +653,8 @@
         "Existing vector tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 32,
@@ -642,7 +673,8 @@
         "Full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 33,
@@ -661,7 +693,8 @@
         "Full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 34,
@@ -680,7 +713,8 @@
         "Existing clock tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 35,
@@ -700,7 +734,8 @@
         "Existing tvf tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 36,
@@ -719,7 +754,8 @@
         "Existing abi tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 37,
@@ -738,7 +774,8 @@
         "Existing sscanf tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 38,
@@ -757,7 +794,8 @@
         "Existing bindings load correctly on all platforms in CI; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 39,
@@ -776,7 +814,8 @@
         "Full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 40,
@@ -795,7 +834,8 @@
         "Existing pysqlite_bridge tests pass; sphinx build succeeds; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 41,
@@ -815,7 +855,8 @@
         "Existing standard/highlevel tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 42,
@@ -834,7 +875,8 @@
         "Existing work-node tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 43,
@@ -853,7 +895,8 @@
         "Existing builder tests pass; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 44,
@@ -881,7 +924,8 @@
         "flake8 --max-line-length=127 clean; full pytest suite passes after cache clean."
       ],
       "model": "sonnet",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 45,
@@ -933,7 +977,8 @@
         "flake8 --max-line-length=127 clean; full pytest suite passes after cache clean (confirm DCE-sensitive query/tvf paths still write non-zero results, ideally on macOS-arm64)."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 46,
@@ -986,7 +1031,8 @@
         "No public API is removed without confirming no downstream consumer; flake8 --max-line-length=127 clean; full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 47,
@@ -1010,7 +1056,8 @@
         "sphinx-build -W succeeds (no missing-automodule / dangling-xref warnings from these files)."
       ],
       "model": "sonnet",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 48,
@@ -1037,7 +1084,8 @@
         "The get_str_from_p_as_int multibyte test aligns with the MEM-1 fix (passes after that fix); full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 49,
@@ -1060,7 +1108,8 @@
         "Full pytest suite passes after cache clean."
       ],
       "model": "opus",
-      "reasoning": "max"
+      "reasoning": "max",
+      "status": "pending"
     },
     {
       "id": 50,
@@ -1084,7 +1133,8 @@
       "model": "opus",
       "reasoning": "max",
       "reproTest": "docs/reviews/2026-06-20-numbox/repro/cor2b_compile_kernel_recompute_override_repro.py",
-      "note": "Added 2026-06-22 from post-review validation; not part of the automated 124-finding run. Shares root cause with task 6."
+      "note": "Added 2026-06-22 from post-review validation; not part of the automated 124-finding run. Shares root cause with task 6.",
+      "status": "completed"
     }
   ]
 }
