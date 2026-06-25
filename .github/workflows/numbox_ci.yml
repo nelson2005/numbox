@@ -162,3 +162,32 @@ jobs:
       run: |
         git clean -Xfd
         python -m build --wheel
+
+  musl_symbol_check:
+    # Shell-only canary for the musl strerror_r symbol layout that
+    # numbox/core/bindings/_strerror.py depends on. Running the full numba/
+    # llvmlite runtime on musl is not reliable (no dependable musllinux
+    # llvmlite wheels), so this asserts the symbol invariant directly with
+    # nm -D. Fork-only: drop when cherry-picking to an upstream PR branch.
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.20
+    permissions:
+      contents: read
+    steps:
+    - name: musl strerror_r symbol-layout canary
+      shell: sh
+      run: |
+        set -eu
+        apk add --no-cache binutils
+        LIBC=/lib/ld-musl-x86_64.so.1
+        test -e "$LIBC" || { echo "no musl libc at $LIBC"; exit 1; }
+        # _strerror picks __xpg_strerror_r on Linux (glibc AND musl). musl
+        # defines __xpg_strerror_r and weak-aliases strerror_r to it, so BOTH
+        # symbols must resolve; if either disappears the binding's invariant
+        # (and the "strerror_r fallback is unreachable" claim) is broken.
+        nm -D "$LIBC" | grep -qE ' [TWtw] strerror_r$' \
+          || { echo "musl strerror_r missing"; exit 1; }
+        nm -D "$LIBC" | grep -qE ' [TWtw] __xpg_strerror_r$' \
+          || { echo "musl __xpg_strerror_r missing -- _strerror weak-alias invariant broken"; exit 1; }
+        echo "musl libc exports both strerror_r and __xpg_strerror_r"
