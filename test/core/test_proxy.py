@@ -153,7 +153,7 @@ def test_proxy_referenced_symbol_is_process_stable(tmp_path):
         def d4(x): return x
 
         for _f in (d0, d1, d2, d3, d4)[:int(sys.argv[1])]:
-            njit(types.int64(types.int64))(_f)
+            njit(types.int64(types.int64))(_f)(0)
 
         @proxy(types.int64(types.int64))
         def binding(x):
@@ -167,7 +167,7 @@ def test_proxy_referenced_symbol_is_process_stable(tmp_path):
         ir = "\\n".join(caller.inspect_llvm().values())
         toks = set()
         for tok in ir.replace("(", " ").replace(")", " ").replace("*", " ").split():
-            if tok.startswith("@") and "binding" in tok:
+            if tok.startswith("@") and "numbox_pxy_" in tok:
                 toks.add(tok.strip('@"'))
         print("|".join(sorted(toks)))
     '''), encoding="utf-8")

@@ -32,8 +32,9 @@ def _stable_cfunc_alias(func, main_sig):
     the same mechanism ``pysqlite_bridge`` uses) keeps cached references valid
     across processes.
     """
-    raw = f"{func.__module__}.{func.__qualname__}.{main_sig}".encode("utf-8")
-    return f"numbox_pxy_{func.__name__}_{hashlib.blake2b(raw, digest_size=8).hexdigest()}"
+    raw = f"{func.__module__ or ''}.{func.__qualname__}.{main_sig}".encode("utf-8")
+    safe_name = "".join(c if c.isascii() and c.isalnum() else "_" for c in func.__name__)
+    return f"numbox_pxy_{safe_name}_{hashlib.sha256(raw).hexdigest()[:16]}"
 
 
 def proxy(sig, jit_options: Optional[dict] = None):
