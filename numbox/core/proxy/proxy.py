@@ -1,4 +1,6 @@
+import hashlib
 import inspect
+from llvmlite import binding as ll
 from llvmlite import ir  # noqa: F401
 from numba import njit
 from numba.core import cgutils  # noqa: F401
@@ -13,6 +15,25 @@ from numbox.utils.standard import make_params_strings
 
 def make_proxy_name(name):
     return f'__{name}'
+
+
+def _stable_cfunc_alias(func, main_sig):
+    """Deterministic, process-stable LLVM symbol name for ``func``'s cfunc wrapper.
+
+    numba mangles the wrapper name (``fndesc.llvm_cfunc_wrapper_name``) with a
+    process-local unique-id abi-tag (``v<N>`` from ``FunctionIdentity.unique_id``,
+    an ``itertools.count``). That tag is not part of the numba cache key, so two
+    processes give the same function different wrapper names. Persisting a
+    reference to that name — in this proxy, or in any ``cache=True`` caller that
+    inlines the ``inline='always'`` proxy — lets concurrently-built caches pair a
+    body object defining ``v<Na>`` with a caller referencing ``v<Nb>``, which
+    aborts on load with ``LLVM ERROR: Symbol not found: cfunc...``. Referencing
+    this deterministic alias instead (resolved per-process via ``add_symbol``,
+    the same mechanism ``pysqlite_bridge`` uses) keeps cached references valid
+    across processes.
+    """
+    raw = f"{func.__module__}.{func.__qualname__}.{main_sig}".encode("utf-8")
+    return f"numbox_pxy_{func.__name__}_{hashlib.blake2b(raw, digest_size=8).hexdigest()}"
 
 
 def proxy(sig, jit_options: Optional[dict] = None):
@@ -51,7 +72,11 @@ def proxy(sig, jit_options: Optional[dict] = None):
     def wrap(func):
         assert isinstance(func, PyFunctionType)
         func_jit = njit(sig, **jit_options)(func)
-        llvm_cfunc_wrapper_name = func_jit.get_compile_result(main_sig).fndesc.llvm_cfunc_wrapper_name
+        cres = func_jit.get_compile_result(main_sig)
+        # Register a process-stable alias for the body's cfunc wrapper and reference
+        # that instead of numba's process-local ``v<uid>`` name (see _stable_cfunc_alias).
+        cfunc_alias = _stable_cfunc_alias(func, main_sig)
+        ll.add_symbol(cfunc_alias, cres.library.get_pointer_to_function(cres.fndesc.llvm_cfunc_wrapper_name))
         func_args_str, func_names_args_str = make_params_strings(func)
         func_proxy_name = make_proxy_name(func.__name__)
         code_txt = f"""
@@ -62,7 +87,7 @@ def _{func_proxy_name}(typingctx, {func_names_args_str}):
             context.get_data_type(main_sig.return_type),
             [context.get_data_type(arg) for arg in main_sig.args]
         )
-        f = cgutils.get_or_insert_function(builder.module, func_ty_ll, "{llvm_cfunc_wrapper_name}")
+        f = cgutils.get_or_insert_function(builder.module, func_ty_ll, "{cfunc_alias}")
         return builder.call(f, args)
     return main_sig, codegen
 
@@ -93,7 +118,7 @@ def {func_proxy_name}({func_args_str}):
         code = compile(prefixed, inspect.getfile(func), mode='exec')
         exec(code, ns)  # nosec B102 - JIT codegen of internal source
         dispatcher = ns[func_proxy_name]
-        dispatcher.as_func = CompileResultWAP(func_jit.get_compile_result(main_sig))
+        dispatcher.as_func = CompileResultWAP(cres)
         return dispatcher
     return wrap
 
