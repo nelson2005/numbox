@@ -48,9 +48,9 @@ On **Linux**, `RTLD_GLOBAL` via `ctypes.CDLL` is sufficient: there is typically 
 
 On **macOS**, the system sqlite is in the [dyld shared cache](https://keith.github.io/xcode-man-pages/dyld.1.html), mapped into every process at launch — before any user `dlopen`. `dlsym(RTLD_DEFAULT, "sqlite3_open")` returns the shared-cache address (system sqlite), not the Homebrew or framework-bundled version that Python's `_sqlite3.so` actually uses. `RTLD_GLOBAL` and `load_library_permanently` cannot change this — the shared cache is always first in load order.
 
-The fix: [`numbox/utils/pysqlite_bridge.py`](numbox/utils/pysqlite_bridge.py) reads the correct addresses from `_sqlite3.so` via `ctypes.CDLL(handle).symbol` (which uses `dlsym(handle, name)` — searches the library + its dependencies, respecting two-level namespace) and registers them with `add_symbol`. LLVM checks `ExplicitSymbols` before any `dlsym` fallback, so the correct addresses win.
+How [`numbox/utils/pysqlite_bridge.py`](numbox/utils/pysqlite_bridge.py) handles it: it does **not** override symbol resolution. It *detects* the mismatch — `libraries_coordinated()` compares numbox's linked sqlite version (`sqlite3_libversion`) against Python's `sqlite3.sqlite_version` — and `extract_connection_ptr` raises rather than hand a `sqlite3*` from one sqlite to bindings linked against another. The supported fix is to force-load the right copy first: `DYLD_INSERT_LIBRARIES=/path/to/your/libsqlite3.dylib`.
 
-This applies to **any** library where macOS ships a system copy in the shared cache (sqlite, libz, libxml2, etc.). If a future binding wraps a library that has both a system and a user-installed version on macOS, the same `add_symbol` pattern from `pysqlite_bridge.py` is needed.
+This detect-and-refuse (plus `DYLD_INSERT_LIBRARIES`) guard applies to **any** library macOS ships in the shared cache (sqlite, libz, libxml2, etc.). Note: the `add_symbol`/`ExplicitSymbols` path in the resolution order above *is* used in numbox — [`numbox/core/proxy/proxy.py`](numbox/core/proxy/proxy.py) registers a process-stable alias for each proxied body's cfunc wrapper — but for JIT symbol aliasing, not macOS library coordination.
 
 ### Bindings: implementation notes
 
