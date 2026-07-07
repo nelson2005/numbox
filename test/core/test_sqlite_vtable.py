@@ -544,7 +544,7 @@ def _run_vtable_driver(tmp_path, cache_dir):
 def _count_vtable_nbc(cache_dir):
     # Scope to the vtable cfunc/njit caches only, so the no-growth assertion is
     # immune to unrelated bindings whose compile timing differs across runs.
-    return sum(1 for _ in cache_dir.rglob("*vtable*.nbc"))
+    return sum(1 for _ in cache_dir.rglob("*vtable.*.nbc"))
 
 
 def test_xprocess_cache_no_growth(tmp_path):

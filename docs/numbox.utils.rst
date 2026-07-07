@@ -142,7 +142,7 @@ numbox.utils.cstrings
 Allocating C strings for the bindings layer
 '''''''''''''''''''''''''''''''''''''''''''
 
-The bindings family (``numbox.core.bindings.libc``, ``sqlite_*``, etc.)
+The bindings family (``numbox.core.bindings.libc``, ``numbox.core.bindings.sqlite.*``, etc.)
 takes ``intp`` pointers for every text argument. Producing a valid
 NUL-terminated UTF-8 C string from a Python ``str`` is non-trivial:
 :func:`~numbox.utils.lowlevel.get_unicode_data_p` returns a pointer to

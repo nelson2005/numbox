@@ -132,8 +132,7 @@ def test_strerror_safe_two_threads_no_contamination():
 def test_strerror_safe_rejects_int64_errnum():
     """The private _strerror_safe intrinsic requires int32 errnum at typing
     time. The user-facing strerror_safe wrapper casts to int32 first, so
-    this guard only fires on direct misuse — defensive parallel to the
-    _store_int32_at guard in errno.py.
+    this guard only fires on direct misuse.
     """
     from numba.core.errors import TypingError
     from numbox.core.bindings.strerror import _strerror_safe
