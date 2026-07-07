@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
-        numba-version: [ "0.65.1" ]
+        numba-version: [ "0.66.0" ]
         arch: [ "ubuntu-latest", "ubuntu-24.04-arm", "windows-latest" ]
         exclude:
           - arch: "windows-latest"
@@ -72,17 +72,17 @@ jobs:
             arch: "windows-latest"
           # macOS — python.org framework build (static sqlite)
           - python-version: "3.14"
-            numba-version: "0.65.1"
+            numba-version: "0.66.0"
             arch: "macos-latest"
             python-source: "framework"
           # macOS — Homebrew build (dynamic sqlite)
           - python-version: "3.14"
-            numba-version: "0.65.1"
+            numba-version: "0.66.0"
             arch: "macos-latest"
             python-source: "homebrew"
           # macOS — conda-forge build (shared sqlite at $CONDA_PREFIX/lib/)
           - python-version: "3.12"
-            numba-version: "0.65.1"
+            numba-version: "0.66.0"
             arch: "macos-latest"
             python-source: "conda"
     runs-on: "${{ matrix.arch }}"
