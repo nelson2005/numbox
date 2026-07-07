@@ -11,10 +11,10 @@ numbox — a toolbox of low-level utilities for working with numba. Provides typ
 - Venv: `python3.12 -m venv venv && venv/bin/pip install -e . flake8 pytest`
 - Install: `pip install -e .`
 - Test: `pytest`
-- Lint: `flake8` (config in `.flake8`: max-line-length=127, default rules, per-file F403/F405 ignore for `test/core/test_bindings.py`)
+- Lint: `flake8` (config in `.flake8`: max-line-length=127, default rules)
 - Docs: `cd docs && make html` (Sphinx)
 - Python: >=3.10 (CI tests 3.10–3.14; local venv pinned to 3.12)
-- Key dependency: `numba>=0.60.0,<0.66.0` (matches `pyproject.toml`; local venv has `numba==0.65.1`)
+- Key dependency: `numba>=0.60.0,<0.67.0` (matches `pyproject.toml`; local venv has `numba==0.65.1`)
 
 ## Architecture
 
@@ -25,12 +25,12 @@ The bindings subsystem wraps C library functions for use inside numba `@njit` co
 1. **`utils.py`** — loads shared libraries via `ctypes.CDLL` with `RTLD_GLOBAL` so symbols are visible to LLVM
 2. **`signatures.py`** — flat dict mapping C function names to numba type signatures (e.g., `"cos": float64(float64)`). Organized by library: `signatures_c`, `signatures_m`, `signatures_sqlite`
 3. **`call.py`** — `@numba.extending.intrinsic` that generates LLVM IR to call native functions directly via `llvmlite`
-4. **`_math.py`, `_c.py`, `_sqlite_*.py`** — thin Python wrappers using `@proxy(signatures.get("func"), jit_options={"cache": True})`
+4. **`libm.py`, `libc.py`, `sqlite/*.py`** — thin Python wrappers using `@proxy(signatures.get("func"), jit_options={"cache": True})`
 
 ### Adding a New Binding
 
 1. Add signature to `signatures.py` in the appropriate sub-dict
-2. Add wrapper to the corresponding `_*.py` file following this pattern:
+2. Add the wrapper to the corresponding module (e.g. `libm.py`, `libc.py`, `sqlite/conn.py`) and add its public name to that module's `__all__`, following this pattern:
 ```python
 @proxy(signatures.get("func_name"), jit_options={"cache": True})
 def func_name(x):
@@ -38,7 +38,7 @@ def func_name(x):
 ```
 3. Function names must match the C library names exactly
 4. Args passed as tuple literal to `_call_lib_func`
-5. **Docs:** for a wrapper added to an existing `_*.py` module, the `automodule` directive in `docs/numbox.core.bindings.rst` picks it up automatically — nothing to edit. For a **new** `_*.py` module, OR if you rename / delete an existing module, also update `docs/numbox.core.bindings.rst`: the "Bindings module conventions" family list AND add / remove / rename the per-module `automodule` section under "Modules". Then run `cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html` and confirm exit 0 (warning count stable is OK).
+5. **Docs:** for a wrapper added to an existing binding module, the `automodule` directive in `docs/numbox.core.bindings.rst` picks it up automatically — nothing to edit. For a **new** binding module, OR if you rename / delete an existing module, also update `docs/numbox.core.bindings.rst`: the "Bindings module conventions" family list AND add / remove / rename the per-module `automodule` section under "Modules". Then run `cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html` and confirm exit 0 (warning count stable is OK).
 
 ### LLVM symbol resolution and macOS
 
@@ -64,7 +64,7 @@ This detect-and-refuse (plus `DYLD_INSERT_LIBRARIES`) guard applies to **any** l
 
 These are the canonical primitives for C-string interop. New bindings should compose them, not reimplement byte loops or pointer casts. **Before designing anything that touches strings, pointers, or buffer ownership, read [`numbox/utils/lowlevel.py`](numbox/utils/lowlevel.py) end-to-end first.**
 
-**Public surface is star-imported.** [`numbox/core/bindings/__init__.py`](numbox/core/bindings/__init__.py) does `from numbox.core.bindings._c import *` (and same for `_math`, `_sqlite_*`). Anything at top level without a leading underscore is part of the public API. Keep new intrinsics private (`_`-prefixed); keep user-facing wrappers public.
+**Public surface is per-module — no star-import.** [`numbox/core/bindings/__init__.py`](numbox/core/bindings/__init__.py) is intentionally empty so that importing one binding does not eagerly compile the whole subsystem (a `cos` import used to drag in all of sqlite — ~12.8 s cold). Import from the specific module: `from numbox.core.bindings.libm import cos`, `from numbox.core.bindings.sqlite.conn import sqlite3_open`. Each module's `__all__` is its public API; keep intrinsics private (`_`-prefixed). Do NOT re-add re-exports to `__init__.py`.
 
 **Platform-variable C types — `long`, `time_t`, `size_t`.** `long` is 64-bit on POSIX (LP64) but 32-bit on Windows x64 (LLP64); `time_t` size varies historically; `size_t` is 64-bit on all current 64-bit CI platforms. A `signatures` entry that uses `int64` for `long` will silently corrupt registers on Windows. Functions affected: `fseek`/`ftell`/`fsetpos`/`fgetpos`, `time`/`clock`, `strtol`/`strtoul`. Either dispatch per platform (option-(ii) style: different symbol or signature per platform) or omit the function from the batch and document as a follow-up. Don't ship a uniform-`int64` signature that's correct on POSIX and wrong on Windows.
 
@@ -89,16 +89,17 @@ These are the canonical primitives for C-string interop. New bindings should com
 ## Key Paths
 
 - `numbox/core/bindings/signatures.py` — all native function type signatures
-- `numbox/core/bindings/_math.py` — libm wrappers (33 single-arg + 9 two-arg float64 functions)
-- `numbox/core/bindings/_c.py` — libc wrappers
-- `numbox/core/bindings/_sqlite_conn.py` — connection + metadata wrappers; initializes module-level `sqlite3_lib`
-- `numbox/core/bindings/_sqlite_stmt.py` — statement lifecycle
-- `numbox/core/bindings/_sqlite_bind.py` — parameter binding
-- `numbox/core/bindings/_sqlite_column.py` — column accessors
-- `numbox/core/bindings/_sqlite_exec.py` — exec + free
-- `numbox/core/bindings/_sqlite_blob.py` — BLOB incremental I/O
-- `numbox/core/bindings/_sqlite_hooks.py` — callback hooks
-- `numbox/core/bindings/_sqlite_constants.py` — SQLite result codes, type codes, flags, destructor sentinels
+- `numbox/core/bindings/libm.py` — libm wrappers (33 single-arg + 9 two-arg float64 functions)
+- `numbox/core/bindings/libc.py` — libc wrappers
+- `numbox/core/bindings/sqlite/conn.py` — connection + metadata wrappers; initializes module-level `sqlite3_lib`
+- `numbox/core/bindings/sqlite/stmt.py` — statement lifecycle
+- `numbox/core/bindings/sqlite/bind.py` — parameter binding
+- `numbox/core/bindings/sqlite/column.py` — column accessors
+- `numbox/core/bindings/sqlite/exec.py` — exec + free
+- `numbox/core/bindings/sqlite/blob.py` — BLOB incremental I/O
+- `numbox/core/bindings/sqlite/hooks.py` — callback hooks
+- `numbox/core/bindings/sqlite/constants.py` — SQLite result codes, type codes, flags, destructor sentinels
+- `numbox/core/bindings/sqlite/_typemap.py` — private column-tag/typemap helpers (not part of the public surface)
 - `numbox/utils/clock.py` — cross-platform monotonic nanosecond clock intrinsic
 - `test/core/` — tests for all core modules
 
