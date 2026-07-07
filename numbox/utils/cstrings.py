@@ -32,7 +32,7 @@ def c_string(s):
     Usage::
 
         from numbox.utils.cstrings import c_string
-        from numbox.core.bindings import sqlite3_exec
+        from numbox.core.bindings.sqlite.exec import sqlite3_exec
 
         with c_string("CREATE TABLE t(x INTEGER)") as sql_p:
             sqlite3_exec(db_p, sql_p, 0, 0, 0)
