@@ -1,0 +1,81 @@
+{
+  "planPath": "docs/plans/2026-07-09-cache-hash-fix-plan.md",
+  "issue": "https://github.com/nelson2005/numbox/issues/73",
+  "reviewSubject": "811ce30899f312c4c212af650cb1be0f81756758",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "T0: Pre-flight \u2014 baseline green",
+      "status": "completed",
+      "description": "**Goal:** Confirm the campaign starts from a green baseline on `fix/cache-hash-2026-07-09` (off fresh `origin/main`, 0 behind upstream).\n\n**Files:** read-only.\n\n**Verify:** cache-cleared full suite green; `flake8 .` clean; numba 0.65.1.\n\n**Result:** 919 passed / 2 skipped. Ten cross-process/subprocess tests first failed from a broken dev env, not the code: site-packages held a stale *non-editable* numbox copy (pre-granular-bindings layout: `_math.py`/`_c.py`, no `libm.py`/`sqlite/`) that shadowed subprocess imports while the parent resolved the live tree via cwd. Fixed by installing setuptools~=75.3.0 + wheel~=0.45.0 and `pip install -e . --no-build-isolation --no-deps` (PEP 660 finder now maps the current layout). All ten then passed.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]\\\" && /home/erik/projects/numbox/venv/bin/pytest  --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"full pytest green\", \"flake8 . clean\", \"numba==0.65.1\"], \"model\": \"sonnet\", \"effort\": \"low\", \"issue73\": []}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "T1: Proxy alias \u2014 body fingerprint + loud unresolvable-alias failure",
+      "status": "pending",
+      "blockedBy": [
+        0
+      ],
+      "description": "**Goal:** Fold `_fingerprint_function(func)` into `_stable_cfunc_alias`'s raw key so same-identity different-body proxies (factory same-qualname closures, module re-exec, fork twins on a shared cache) get distinct aliases instead of silently reaching the wrong body via last-writer-wins `add_symbol` (H2, M9). Make a cached caller that references an alias this process never registered (availability flip, signature-change rename) fail loudly \u2014 validate alias resolution at decoration/load or register a trapping stub \u2014 instead of a bare SIGSEGV (H1, M10).\n\n**Files:** `numbox/core/proxy/proxy.py`, `test/core/test_proxy.py`.\n\n**Approach & risks:** folding the body fingerprint means a body/signature change yields a new alias name, so a surviving stale caller cache still references the old alias \u2014 the loud-failure path is what converts that into a clear error. Adversarial verify (Sonnet floor) after.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\", \"test/core/test_proxy.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"alias raw key includes _fingerprint_function(func)\", \"same-qualname/fork-twin different-body proxies get distinct aliases (repro: correct body, no wrong-body dispatch)\", \"cached caller of an unregistered alias raises a clear named error, not SIGSEGV (availability flip + signature change repros)\", \"existing proxy happy-path + Omitted multi-sig tests still pass\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"H1\", \"H2\", \"M9\", \"M10\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "T2: Route shallow keys through the deep walker + enrich _canon_value",
+      "status": "pending",
+      "blockedBy": [
+        0
+      ],
+      "description": "**Goal:** Make the source-text-only / bare-code keys use the closure/global-aware walker, degrading to uncached on `_Unfingerprintable` like `compile_kernel`.\n\n- `builder.py` derive hashing: `_fingerprint_function(derive)` instead of `sha256(getsource)`; catch `OSError` from `getsource` (exec/REPL derives) and `_Unfingerprintable` -> uncached, never crash (H3, L19).\n- `make_structref` (`highlevel.py`): walk the method functions so `ns`-threaded values enter the key (H4).\n- `digest()` fallback (`digest.py`): cloudpickle the function *object* (captures closure/defaults), sort where iteration order leaks (H7, M11, L23).\n- sqlite UDAF/TVF (`udf_helpers.py`, `tvf.py`): teach the walker the proxy-wrapper shape so realistic `sqlite3_value_*`/`sqlite3_result_*` callbacks fingerprint cleanly instead of degrading (H8).\n- `_canon_value` (`fingerprint.py`): structured-dtype ndarrays by full layout not `dtype.str` (L21); StructRef identity includes module + `@overload_method` behavior (L22).\n\n**Files:** `numbox/core/work/builder.py`, `numbox/utils/highlevel.py`, `numbox/utils/digest.py`, `numbox/utils/fingerprint.py`, `numbox/core/bindings/sqlite/udf_helpers.py`, `numbox/core/bindings/sqlite/tvf.py`, `numbox/utils/preprocessing.py`, tests.\n\n**Note:** the largest task \u2014 commit in two parts if cleaner (walker enrichments + degrade helper, then the four consumers). Adversarial verify.\n\n```json:metadata\n{\"files\": [\"numbox/core/work/builder.py\", \"numbox/utils/highlevel.py\", \"numbox/utils/digest.py\", \"numbox/utils/fingerprint.py\", \"numbox/core/bindings/sqlite/udf_helpers.py\", \"numbox/core/bindings/sqlite/tvf.py\", \"numbox/utils/preprocessing.py\", \"test/utils/test_digest.py\", \"test/utils/test_highlevel.py\", \"test/core/test_builder.py\", \"test/core/test_sqlite_udf.py\", \"test/core/test_sqlite_udf_helpers.py\", \"test/core/test_sqlite_tvf.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_builder.py test/core/test_caching_work.py test/utils/test_digest.py test/utils/test_highlevel.py test/core/test_sqlite_udf.py test/core/test_sqlite_udf_helpers.py test/core/test_sqlite_tvf.py test/core/test_compile_kernel.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"derive keyed by _fingerprint_function; changed referenced-global value re-keys (G=2.0 vs G=3.0 repro no longer collides)\", \"exec/REPL derive degrades to uncached, no OSError crash\", \"make_structref ns-value change re-keys the method binary\", \"digest fallback cloudpickles the function object; closure/default change re-keys; str-set fallback PYTHONHASHSEED-stable\", \"realistic sqlite callback fingerprints without degrading; changed callback re-keys\", \"structured-dtype layout + StructRef module/behavior distinguish otherwise-colliding subjects\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"H3\", \"H4\", \"H7\", \"H8\", \"L19\", \"L21\", \"L22\", \"L23\", \"M11\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "T3: Fold resolved jit_options + real __version__",
+      "status": "pending",
+      "blockedBy": [
+        2
+      ],
+      "description": "**Goal:** `_kernel_fingerprint` folds `repr(sorted(resolved_jit_options.items()))` so a kernel built under one `error_model`/`fastmath` is not reused under another (H5). Make the digest version fold real (M14): derive `__version__` from installed package metadata with a fallback (coordinating with the CI/release `__init__.py` overwrite documented in the plan), and fold numbox-source-dependent generated-code content so a numbox upgrade invalidates stale registrations.\n\n**Files:** `numbox/core/work/builder.py`, `numbox/utils/digest.py`, `numbox/__init__.py`, tests.\n\n**Risk:** `__init__.py` is overwritten by CI/release before install \u2014 the fix must survive that (metadata-derived, not the checked-in literal). Adversarial verify.\n\n```json:metadata\n{\"files\": [\"numbox/core/work/builder.py\", \"numbox/utils/digest.py\", \"numbox/__init__.py\", \"test/core/test_builder.py\", \"test/utils/test_digest.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_builder.py test/utils/test_digest.py test/core/test_compile_kernel.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"kernel fingerprint changes when error_model/fastmath change (repro: error_model reuse no longer collides)\", \"digest re-keys when numbox version changes; version fold non-empty for an installed package\", \"fix survives the CI __init__.py overwrite (no reliance on the checked-in \\\"\\\")\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"H5\", \"M14\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "T4: Walk module-attribute reads in _canon_value",
+      "status": "pending",
+      "blockedBy": [
+        2
+      ],
+      "description": "**Goal:** A formula reading `cfg.SCALE` keeps its fingerprint when `SCALE` changes because a referenced module canonicalizes as `module(<name>)` without descending (H6). Pair `co_names` attribute reads against module globals in the walker, or conservatively mark module-attribute-reading formulas unfingerprintable so they degrade to uncached.\n\n**Files:** `numbox/utils/fingerprint.py`, tests (new `test/utils/test_fingerprint.py` if warranted).\n\nAdversarial verify.\n\n```json:metadata\n{\"files\": [\"numbox/utils/fingerprint.py\", \"test/utils/test_digest.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]\\\" && /home/erik/projects/numbox/venv/bin/pytest test/utils/test_digest.py test/core/test_compile_kernel.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"cfg.SCALE change either re-keys the fingerprint or degrades the formula to uncached (repro no longer serves stale)\", \"module-attr repro from the review fails on pre-fix, passes after\", \"no regression to existing global-by-value fingerprinting\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"H6\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "T5: Dispatcher / TVF cache leaks",
+      "status": "pending",
+      "blockedBy": [
+        3,
+        4
+      ],
+      "description": "**Goal:** `hash_type` for Dispatcher types embeds an ASLR address so `_make_<hash>` never cache-hits and accretes an orphan pair per run (M13, L18) -> fingerprint via `prune_type`/`py_func` not the type string. `_tvf_xfilter` `@cfunc(cache=True)` never hits (per-process dispatcher uuid) -> `cache=False` (M15). `digest()`'s `py_func` shortcut drops a top-level Dispatcher's `targetoptions` -> route Dispatchers through the `_canon_value` branch that folds them (M12).\n\n**Files:** `numbox/utils/highlevel.py`, `numbox/core/work/builder.py`, `numbox/core/bindings/sqlite/tvf.py`, `numbox/utils/digest.py`, tests.\n\nAdversarial verify.\n\n```json:metadata\n{\"files\": [\"numbox/utils/highlevel.py\", \"numbox/core/work/builder.py\", \"numbox/core/bindings/sqlite/tvf.py\", \"numbox/utils/digest.py\", \"test/core/test_builder.py\", \"test/utils/test_highlevel.py\", \"test/core/test_sqlite_tvf.py\", \"test/utils/test_digest.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_builder.py test/utils/test_highlevel.py test/core/test_sqlite_tvf.py test/utils/test_digest.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"Dispatcher-typed node fingerprint is process-stable (two runs -> same _make_<hash>, cache hits)\", \"_tvf_xfilter is cache=False (no per-registration cache growth)\", \"digest folds Dispatcher targetoptions; different targetoptions re-key\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"M12\", \"M13\", \"M15\", \"L18\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "T6: Cross-process / fork regression net",
+      "status": "pending",
+      "blockedBy": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "description": "**Goal:** Adapt the review's repro scripts into portable pytest tests locking in T1-T5: the proxy hazard set (body edit, availability flip, signature change, same-identity redefinition, multi-sig cached callers \u2014 L16) and the digest fallback path (L17), plus a `fork()` + shared-`NUMBA_CACHE_DIR` test mirroring #10486. Written to fail on pre-fix code, pass after.\n\n**Files:** new `test/core/test_cache_crossprocess.py` (or split), `test/core/test_proxy.py`, `test/utils/test_digest.py`.\n\n**Portability:** skip `fork`-specific cases on Windows; use `subprocess` + a fresh shared cache dir where a second interpreter suffices. Seed material: the 207 repro scripts in the review workspace.\n\n```json:metadata\n{\"files\": [\"test/core/test_cache_crossprocess.py\", \"test/core/test_proxy.py\", \"test/utils/test_digest.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_cache_crossprocess.py test/core/test_proxy.py test/utils/test_digest.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"each new test fails on pre-fix HEAD and passes after T1-T5 (documented)\", \"fork cases skipped on Windows; subprocess cases portable\", \"shared-cache tests use an isolated NUMBA_CACHE_DIR, never the repo cache\"], \"model\": \"opus\", \"effort\": \"high\", \"issue73\": [\"L16\", \"L17\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "T7: Full CI-equivalent gate + fork PR",
+      "status": "pending",
+      "blockedBy": [
+        6
+      ],
+      "description": "**Goal:** Run every fork-CI check locally (cache-cleared full pytest with `--cov`, `flake8 .`, Sphinx docs build, doc-codeblock-flake8, lychee link-check), then open one fork PR (review vehicle) whose body references the #73 item numbers and closes #73. Upstream contributions staged later with per-PR approval.\n\n**Verify:** all local gates green; PR opened; fork CI matrix green.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]\\\" && /home/erik/projects/numbox/venv/bin/pytest  --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 . && cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html\", \"acceptanceCriteria\": [\"full suite + flake8 + docs + doc-codeblock + lychee all green locally\", \"fork PR opened, body maps fixes to #73 items, closes #73\", \"fork CI matrix green\"], \"model\": \"opus\", \"effort\": \"high\", \"issue73\": []}\n```"
+    }
+  ]
+}
