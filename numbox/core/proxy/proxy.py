@@ -1,9 +1,9 @@
 import hashlib
 import inspect
 from llvmlite import binding as ll
-from llvmlite import ir  # noqa: F401
-from numba import njit
-from numba.core import cgutils  # noqa: F401
+from llvmlite import ir
+from numba import cfunc, njit
+from numba.core import cgutils
 from numba.core.errors import TypingError
 from numba.core.types.function_type import CompileResultWAP
 from numba.core.typing.templates import Signature
@@ -11,11 +11,33 @@ from numba.extending import intrinsic, overload
 from types import FunctionType as PyFunctionType
 from typing import List, Optional, Tuple
 
+from numbox.utils.fingerprint import (
+    _Unfingerprintable, _fingerprint_function, _fingerprint_function_best_effort,
+)
 from numbox.utils.standard import make_params_strings
 
 
 def make_proxy_name(name):
     return f'__{name}'
+
+
+def _body_fingerprint(func):
+    """Content fingerprint of ``func``'s body, for alias disambiguation.
+
+    Reuses the deep walker so bytecode, constants, default arguments, closure
+    cell values and referenced-global values all count. The common numbox
+    binding body references the ``@intrinsic`` ``_call_lib_func``, which has no
+    canonical form, so the strict walker raises; the best-effort walker then
+    still captures the constants/closure/defaults/globals it *can* canonicalize
+    (substituting an opaque type placeholder for the rest). Two bodies that
+    differ only in a captured value -- a factory over per-instance C symbol
+    names, or a literal-only redefinition -- therefore get distinct aliases,
+    not one collapsed to bytecode alone.
+    """
+    try:
+        return _fingerprint_function(func, set())
+    except (_Unfingerprintable, RecursionError):
+        return _fingerprint_function_best_effort(func)
 
 
 def _stable_cfunc_alias(func, main_sig):
@@ -32,10 +54,77 @@ def _stable_cfunc_alias(func, main_sig):
     this deterministic alias instead (resolved per-process via
     ``llvmlite.binding.add_symbol``) keeps cached references valid
     across processes.
+
+    The alias folds a body fingerprint alongside ``module + qualname + sig``:
+    without it, two different bodies sharing one identity (factory-made
+    same-qualname closures, in-process redefinition, or fork twins on a shared
+    cache) collapse onto one alias, and the last-writer-wins ``add_symbol``
+    silently rebinds callers to the wrong body. Folding the body gives each body
+    its own alias. A consequence is that a body/signature change renames the
+    alias, so a warm ``cache=True`` caller in another file (numba's cache key is
+    callee-blind) references a symbol this process never registered -- clear the
+    numba cache after such a change. The one variant that leaves the alias
+    unchanged, an absent ``proxy_if_available`` binding, is covered by a
+    diagnostic trap (see ``_register_absent_alias_trap``) so it surfaces a named
+    error rather than a null-pointer call.
     """
-    raw = f"{func.__module__ or ''}.{func.__qualname__}.{main_sig}".encode("utf-8")
+    raw = (
+        f"{func.__module__ or ''}.{func.__qualname__}.{main_sig}."
+        f"{_body_fingerprint(func)}"
+    ).encode("utf-8")
     safe_name = "".join(c if c.isascii() and c.isalnum() else "_" for c in func.__name__)
     return f"numbox_pxy_{safe_name}_{hashlib.sha256(raw).hexdigest()[:16]}"
+
+
+def _call_proxied_alias(context, builder, main_sig, alias_name, args):
+    """Emit a call to the proxied body's process-stable cfunc alias.
+
+    Factored out of the generated codegen so the exec'd template stays short:
+    every line above its ``@njit`` raises the minimum source line a ``@proxy``
+    function may occupy (the ``co_firstlineno`` cache anchor).
+    """
+    func_ty_ll = ir.FunctionType(
+        context.get_data_type(main_sig.return_type),
+        [context.get_data_type(arg) for arg in main_sig.args],
+    )
+    f = cgutils.get_or_insert_function(builder.module, func_ty_ll, alias_name)
+    return builder.call(f, args)
+
+
+# The cfunc traps below must outlive the add_symbol registrations that publish
+# their addresses, so keep a process-lifetime reference to each.
+_PROXY_TRAP_KEEPALIVE = []
+
+
+def _register_absent_alias_trap(func, main_sig):
+    """Register a diagnostic trap under the alias ``proxy(sig)(func)`` would use.
+
+    A ``cache=True`` caller compiled when the binding was present bakes that
+    alias into its cached object; numba's cache key is callee-blind, so the
+    caller cache-hits even in a process where ``proxy_if_available`` took the
+    absent (stub) path and registered no real body. With no symbol there the
+    baked extern call is a null-pointer jump -- a bare SIGSEGV with zero
+    diagnostics. Registering a cfunc that raises a named ``RuntimeError`` under
+    the same alias turns that into a clear message on stderr instead. The trap
+    matches ``main_sig``'s arity with plain positional parameters (the cfunc
+    wrapper the caller invokes is positional, even for ``Omitted`` bindings).
+    """
+    alias = _stable_cfunc_alias(func, main_sig)
+    msg = (
+        f"numbox @proxy binding {func.__name__!r} is not available in the loaded library "
+        f"(C symbol missing), but a cache=True caller compiled when it was present is "
+        f"calling it -- clear the numba cache (NUMBA_CACHE_DIR) and rebuild."
+    )
+    trap_params = ", ".join(f"_a{i}" for i in range(len(main_sig.args)))
+    trap_ns = {"cfunc": cfunc, "main_sig": main_sig, "_trap_msg": msg}
+    exec(  # nosec B102 - internal codegen of a fixed-shape trap body
+        f"def _trap({trap_params}):\n"
+        f"    raise RuntimeError(_trap_msg)\n"
+        f"_trap_cfunc = cfunc(main_sig)(_trap)\n",
+        trap_ns,
+    )
+    _PROXY_TRAP_KEEPALIVE.append(trap_ns["_trap_cfunc"])
+    ll.add_symbol(alias, trap_ns["_trap_cfunc"].address)
 
 
 def proxy(sig, jit_options: Optional[dict] = None):
@@ -81,16 +170,14 @@ def proxy(sig, jit_options: Optional[dict] = None):
         ll.add_symbol(cfunc_alias, cres.library.get_pointer_to_function(cres.fndesc.llvm_cfunc_wrapper_name))
         func_args_str, func_names_args_str = make_params_strings(func)
         func_proxy_name = make_proxy_name(func.__name__)
+        # The alias resolution lives in _call_proxied_alias so this generated
+        # source stays short: every line above the @njit raises the minimum source
+        # line a @proxy function may occupy (the co_firstlineno cache anchor below).
         code_txt = f"""
 @intrinsic
 def _{func_proxy_name}(typingctx, {func_names_args_str}):
     def codegen(context, builder, signature, args):
-        func_ty_ll = ir.FunctionType(
-            context.get_data_type(main_sig.return_type),
-            [context.get_data_type(arg) for arg in main_sig.args]
-        )
-        f = cgutils.get_or_insert_function(builder.module, func_ty_ll, "{cfunc_alias}")
-        return builder.call(f, args)
+        return _call_proxied_alias(context, builder, main_sig, "{cfunc_alias}", args)
     return main_sig, codegen
 
 @njit(sig, **jit_opts)
@@ -101,7 +188,7 @@ def {func_proxy_name}({func_args_str}):
             **inspect.getmodule(func).__dict__,
             **{
                 'cgutils': cgutils, 'intrinsic': intrinsic, 'ir': ir, 'jit_opts': jit_opts, 'njit': njit,
-                'sig': sig, 'main_sig': main_sig
+                'sig': sig, 'main_sig': main_sig, '_call_proxied_alias': _call_proxied_alias
             }
         }
         if ns.get(func_proxy_name) is not None:
@@ -161,6 +248,11 @@ def proxy_if_available(lib, sig, jit_options: Optional[dict] = None):
             return proxy(sig, jit_options=jit_options)(func)
 
         name = func.__name__
+        main_sig = sig if isinstance(sig, Signature) else sig[0]
+        # A warm cache=True caller from a process where the binding WAS present
+        # will cache-hit and call the alias; register a loud trap under it so that
+        # is a named error rather than a null-pointer SIGSEGV. See the helper.
+        _register_absent_alias_trap(func, main_sig)
 
         def stub(*args, **_kwargs):
             raise NotImplementedError(f"{name} is not available")

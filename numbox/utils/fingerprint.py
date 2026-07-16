@@ -110,3 +110,58 @@ def _fingerprint_function(func: FunctionType, seen: set[int]) -> str:
         f"kwdefaults={_canon_value(func.__kwdefaults__ or {}, seen)};"
         f"closure=[{';'.join(cells)}];globals=[{';'.join(hashed_globals)}])"
     )
+
+
+def _fingerprint_function_best_effort(func: FunctionType) -> str:
+    """Best-effort function fingerprint that never raises.
+
+    ``_fingerprint_function`` raises ``_Unfingerprintable`` on the *first* value
+    with no canonical form and discards everything computed so far, so a body
+    that merely *references* an un-canonicalizable global (e.g. an
+    ``@intrinsic``) collapses to nothing usable. This variant substitutes a
+    stable ``<opaque:type>`` placeholder for any such value instead, so bodies
+    differing only in a captured constant, closure cell, default, or a
+    canonicalizable global still fingerprint distinctly. For consumers that need
+    a discriminating identifier even for un-fingerprintable bodies -- the
+    ``@proxy`` cfunc alias -- rather than the degrade-to-uncached path that
+    ``_fingerprint_function``'s raising contract serves (``compile_kernel``,
+    ``digest``). Process-stable: every placeholder is derived from a type name,
+    never an address.
+    """
+    seen: set[int] = set()
+
+    def _canon(value: Any) -> str:
+        try:
+            return _canon_value(value, seen)
+        except (_Unfingerprintable, RecursionError):
+            return f"<opaque:{type(value).__name__}>"
+
+    def _canon_const(const: object) -> str:
+        if isinstance(const, CodeType):
+            inner = ",".join(_canon_const(c) for c in const.co_consts)
+            return f"code({const.co_code.hex()};consts=[{inner}])"
+        return _canon(const)
+
+    code = func.__code__
+    consts = ",".join(_canon_const(c) for c in code.co_consts)
+    cells = []
+    for name, cell in zip(code.co_freevars, func.__closure__ or ()):
+        try:
+            contents = cell.cell_contents
+        except ValueError:
+            cells.append(f"{name}=<empty-cell>")
+            continue
+        cells.append(f"{name}={_canon(contents)}")
+    hashed_globals = [
+        f"{name}={_canon(func.__globals__[name])}"
+        for name in sorted(_referenced_global_names(code))
+        if name in func.__globals__
+    ]
+    return (
+        f"besteffort({func.__module__}:{func.__qualname__};"
+        f"code({code.co_code.hex()};flags={code.co_flags};argc={code.co_argcount};"
+        f"kwonly={code.co_kwonlyargcount};names={','.join(code.co_names)};consts=[{consts}]);"
+        f"defaults={_canon(func.__defaults__ or ())};"
+        f"kwdefaults={_canon(func.__kwdefaults__ or {})};"
+        f"closure=[{';'.join(cells)}];globals=[{';'.join(hashed_globals)}])"
+    )

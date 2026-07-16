@@ -63,6 +63,30 @@ wrapper template itself — without a corresponding user-file edit — do
 wrapper-template changes as developer-managed (clear
 ``~/.cache/numba/`` when shipping a template change to numbox).
 
+Alias content-addressing and cross-file callers
+------------------------------------------------
+
+``@proxy`` references the proxied body through a deterministic symbol alias
+(``numbox_pxy_<name>_<hash>``) registered per process via
+``llvmlite.binding.add_symbol``. The hash folds the body's content fingerprint
+alongside ``module``, ``qualname`` and the signature, so two different bodies
+that share one identity — factory-made same-qualname closures, an in-process
+redefinition, or ``fork()`` twins on a shared cache — get distinct aliases
+instead of colliding on one (a collision let the last ``add_symbol`` win and
+silently rebound callers to the wrong body).
+
+Because the alias encodes the body, changing a proxied binding's **signature or
+body renames its alias**. numba's cache key for a *caller* is callee-blind, so a
+``cache=True`` caller in another file cache-hits unchanged after such a change
+and references the old alias, which the new process never registers — clear the
+numba cache (``~/.cache/numba/`` or ``NUMBA_CACHE_DIR``) after changing a
+proxied binding while a warm caller cache exists. The one variant that leaves
+the alias unchanged — a ``proxy_if_available`` binding that was present when the
+caller was cached but is absent on reload — is covered by a diagnostic trap: the
+absent path registers a cfunc under the alias that raises a named
+``RuntimeError`` on stderr, so that case surfaces a clear message rather than a
+null-pointer call.
+
 Multi-decorator support
 -----------------------
 
