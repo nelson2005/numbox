@@ -119,7 +119,18 @@ def _derived_cres(ty, sources: Sequence[End], derive, jit_options=None):
         source_ty = get_ty(source)
         sources_ty.append(source_ty)
     derive_sig = ty(*sources_ty)
-    derive_cres = cres(derive_sig, **jit_options)(derive)
+    try:
+        derive_cres = cres(derive_sig, **jit_options)(derive)
+    except RuntimeError as e:
+        # numba refuses cache=True for a function whose source file it cannot
+        # locate (an exec/<string>- or <stdin>-defined derive). Fall back to
+        # uncached rather than crashing -- a body numba cannot cache cannot go
+        # stale anyway. Derives defined in real modules or notebooks have a
+        # locator and are unaffected.
+        if jit_options.get("cache") and "locator" in str(e):
+            derive_cres = cres(derive_sig, **{**jit_options, "cache": False})(derive)
+        else:
+            raise
     _derive_funcs[id(derive_cres)] = derive
     return derive_cres
 

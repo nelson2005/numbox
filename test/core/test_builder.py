@@ -558,5 +558,19 @@ def test_make_graph_kernel_name_depends_on_declared_type(monkeypatch):
     assert captured[0] != captured[1]
 
 
+def test_make_graph_exec_defined_derive_degrades_to_uncached():
+    # A derive defined via exec has co_filename '<string>', which numba cannot
+    # locate for caching; with the default cache=True it must degrade to uncached
+    # rather than raise (completes the exec/REPL-derive handling, issue #73 L19).
+    reg = {}
+    exec_ns = {}
+    exec("def d(x):\n    return x + 1.0\n", exec_ns)  # nosec B102 - test fixture
+    x_ = End(name="exec_x", init_value=2.0, registry=reg)
+    y_ = Derived(name="exec_y", init_value=0.0, derive=exec_ns["d"], sources=(x_,), registry=reg)
+    access = make_graph(y_, registry=reg)
+    access.exec_y.calculate()
+    assert isclose(access.exec_y.data, 3.0)
+
+
 if __name__ == "__main__":
     collect_and_run_tests(__name__)
