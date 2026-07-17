@@ -21,7 +21,9 @@ from numba.core.serialize import cloudpickle
 
 import numbox
 from numbox.core.configurations import jit_options
-from numbox.utils.fingerprint import _Unfingerprintable, _fingerprint_function
+from numbox.utils.fingerprint import (
+    _Unfingerprintable, _fingerprint_function, _fingerprint_function_best_effort,
+)
 
 
 def digest(subject, fns):
@@ -44,10 +46,18 @@ def digest(subject, fns):
         if isinstance(py, FunctionType):
             try:
                 h.update(_fingerprint_function(py, set()).encode("utf-8"))
-                continue
             except (_Unfingerprintable, RecursionError):
-                pass  # un-canonicalizable closure/global -> fall back below
-        # codeless callable (partial/builtin/callable object) or un-fingerprintable
-        # function: cloudpickle the object (captures bound state) or its code object.
-        h.update(cloudpickle.dumps(getattr(py, "__code__", py)))
+                # An un-canonicalizable closure/global aborts the strict walker;
+                # the best-effort walker still captures the constants, closure
+                # cells, defaults and globals it can (substituting opaque
+                # placeholders for the rest, and sorting sets so it is
+                # PYTHONHASHSEED-stable). A bare __code__ cloudpickle here dropped
+                # exactly the closure/default state that forced the fallback and
+                # leaked str-set iteration order.
+                h.update(_fingerprint_function_best_effort(py).encode("utf-8"))
+            continue
+        # Codeless callable (partial / builtin / callable object): cloudpickle the
+        # object to capture bound state. (Only these remain on the cloudpickle
+        # path, so its uuid4 nondeterminism for __main__ objects is confined here.)
+        h.update(cloudpickle.dumps(py))
     return h.hexdigest()[:16]

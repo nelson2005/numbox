@@ -104,3 +104,36 @@ def test_make_structref_method_ns_value_is_not_stale_across_processes(tmp_path):
     env["G_VAL"] = "5.0"
     got = _run_probe(probe, env)                        # process 2: shared cache, changed ns value
     assert got == "10.0", f"method served a stale ns value (H4): got {got}, expected 10.0"
+
+
+def test_digest_fallback_is_pythonhashseed_stable(tmp_path):
+    """The digest fallback for an un-fingerprintable function with a str-set
+    constant must be PYTHONHASHSEED-independent (issue #73 M11).
+
+    A bare code-object hash embedded the frozenset in its (hash-seeded)
+    iteration order, so the cache key varied per process -> cross-process cache
+    misses and unbounded cache-dir growth. The best-effort walker canonicalizes
+    the set sorted, so the digest is identical across seeds.
+    """
+    probe = tmp_path / "digest_probe.py"
+    probe.write_text(textwrap.dedent('''
+        from numbox.core.bindings.call import _call_lib_func
+        from numbox.utils.digest import digest
+
+        def cb(x):
+            s = {"alpha", "beta", "gamma", "delta", "epsilon"}
+            # references the @intrinsic _call_lib_func -> strict walker aborts ->
+            # the set-bearing body goes through the best-effort fallback.
+            return _call_lib_func("cos", (x,)) if "alpha" in s else 0.0
+
+        print(digest("StateType", (cb,)))
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    env["PYTHONHASHSEED"] = "0"
+    d0 = _run_probe(probe, env)
+    env["PYTHONHASHSEED"] = "123456789"
+    d1 = _run_probe(probe, env)
+    assert d0 == d1, f"digest fallback leaked set iteration order (M11): {d0} != {d1}"

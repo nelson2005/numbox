@@ -63,5 +63,22 @@ def test_digest_empty_inputs_deterministic():
     assert len(digest("", ())) == 16
 
 
+def test_digest_unfingerprintable_function_captures_closure():
+    # When the strict walker aborts on an un-canonicalizable referenced value, the
+    # fallback must still capture closure state: two functions with identical
+    # source but different closure values yield different digests. The old
+    # fallback cloudpickled the bare __code__, dropping exactly that state (H7).
+    class Opaque:  # not a canonicalizable type -> forces the strict walker to abort
+        pass
+    marker = Opaque()
+
+    def make(k):
+        def cb(x):
+            return (marker, k, x)  # references the opaque global; k lives in the closure
+        return cb
+
+    assert digest("StateType", (make(1),)) != digest("StateType", (make(2),))
+
+
 if __name__ == '__main__':
     collect_and_run_tests(__name__)
