@@ -12,60 +12,145 @@
     {
       "id": "CK2",
       "subject": "CK2: fold DUFunc targetoptions into _formula_fingerprint (digest collision)",
-      "status": "pending",
-      "description": "**Findings 3,4,14 (HIGH).** _formula_fingerprint folds targetoptions only for isinstance(formula, Dispatcher) (compile_kernel.py:123-124); the DUFunc branch (115-117) adds only ';kind=DUFunc', so vectorize(fastmath=True) and vectorize(fastmath=False) get identical digests -> same _kernel_<digest> anchor -> outer served stale directly on a cache hit (silent wrong numeric result, both flip directions). Fix: fold dict(formula.targetoptions or {}) into `extra` for the DUFunc branch, mirroring the Dispatcher branch. Independent of CK1 (needed even for cache=False DUFuncs so the outer re-keys).\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel_cache.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel.py test/core/test_compile_kernel_cache.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"vectorize(fastmath=True) vs (fastmath=False) formulas produce distinct digests\", \"two-process shared-cache test: fastmath flip on a DUFunc formula no longer serves stale (fails pre-fix, passes post)\"], \"model\": \"opus\", \"effort\": \"high\", \"findings\": [3, 4, 14]}\n```"
+      "status": "completed",
+      "description": "**Findings 3,4,14 (HIGH).** _formula_fingerprint folds targetoptions only for isinstance(formula, Dispatcher) (compile_kernel.py:123-124); the DUFunc branch (115-117) adds only ';kind=DUFunc', so vectorize(fastmath=True) and vectorize(fastmath=False) get identical digests -> same _kernel_<digest> anchor -> outer served stale directly on a cache hit (silent wrong numeric result, both flip directions). Fix: fold dict(formula.targetoptions or {}) into `extra` for the DUFunc branch, mirroring the Dispatcher branch. Independent of CK1 (needed even for cache=False DUFuncs so the outer re-keys).\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel_cache.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel.py test/core/test_compile_kernel_cache.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"vectorize(fastmath=True) vs (fastmath=False) formulas produce distinct digests\", \"two-process shared-cache test: fastmath flip on a DUFunc formula no longer serves stale (fails pre-fix, passes post)\"], \"model\": \"opus\", \"effort\": \"high\", \"findings\": [3, 4, 14]}\n```",
+      "commit": "205e277"
     },
     {
       "id": "CK3",
       "subject": "CK3: fold data-valued module.ATTR reads into _fingerprint_function (H6/T4)",
-      "status": "pending",
-      "description": "**Finding 12 (HIGH) = #73 H6 / T4.** _fingerprint_function folds only names in __globals__ (fingerprint.py:121-124); for `x * cfg.SCALE`, co_names has 'cfg' (a module, canon = module(name) only) and 'SCALE' (not in __globals__), so SCALE's VALUE never enters the digest -> module-attr value change served stale. Fix: disassemble the code object to pair LOAD_ATTR against a module-typed global, and fold the canonicalized VALUE of getattr(module, attr) when it is freezable data (int/float/str/array/...); skip attributes that are functions/ufuncs/modules (stable references, not frozen data -> _Unfingerprintable caught and skipped, formula stays cacheable). Shared walker -> also fixes builder's compile_kernel path. Adversarial verify: must not make np.sqrt-using formulas uncacheable, must re-key on cfg.SCALE change.\n\n```json:metadata\n{\"files\": [\"numbox/utils/fingerprint.py\", \"test/utils/test_fingerprint.py\", \"test/core/test_compile_kernel_cache.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/utils/test_fingerprint.py test/utils/test_digest.py test/core/test_compile_kernel.py test/core/test_compile_kernel_cache.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"cfg.SCALE value change re-keys the fingerprint (two-process test fails pre-fix, passes post)\", \"a formula using np.sqrt (module-function attr) stays cacheable, fingerprint stable\", \"no regression to same-module global-by-value fingerprinting\"], \"model\": \"opus\", \"effort\": \"max\", \"findings\": [12]}\n```"
+      "status": "completed",
+      "description": "**Finding 12 (HIGH) = #73 H6 / T4.** _fingerprint_function folds only names in __globals__ (fingerprint.py:121-124); for `x * cfg.SCALE`, co_names has 'cfg' (a module, canon = module(name) only) and 'SCALE' (not in __globals__), so SCALE's VALUE never enters the digest -> module-attr value change served stale. Fix: disassemble the code object to pair LOAD_ATTR against a module-typed global, and fold the canonicalized VALUE of getattr(module, attr) when it is freezable data (int/float/str/array/...); skip attributes that are functions/ufuncs/modules (stable references, not frozen data -> _Unfingerprintable caught and skipped, formula stays cacheable). Shared walker -> also fixes builder's compile_kernel path. Adversarial verify: must not make np.sqrt-using formulas uncacheable, must re-key on cfg.SCALE change.\n\n```json:metadata\n{\"files\": [\"numbox/utils/fingerprint.py\", \"test/utils/test_fingerprint.py\", \"test/core/test_compile_kernel_cache.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/utils/test_fingerprint.py test/utils/test_digest.py test/core/test_compile_kernel.py test/core/test_compile_kernel_cache.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"cfg.SCALE value change re-keys the fingerprint (two-process test fails pre-fix, passes post)\", \"a formula using np.sqrt (module-function attr) stays cacheable, fingerprint stable\", \"no regression to same-module global-by-value fingerprinting\"], \"model\": \"opus\", \"effort\": \"max\", \"findings\": [12]}\n```",
+      "commit": "f8a0f4b"
     },
     {
       "id": "CK1",
       "subject": "CK1: self-cached formula -> unit uncacheable + warn + document",
-      "status": "pending",
-      "blockedBy": ["CK2"],
-      "description": "**Findings 1,2,8,9,13 (HIGH), conservative approach.** A user @njit(cache=True) Dispatcher (or a DUFunc with cache=True) keeps its own numba cache keyed by the flag/global-blind _index_key; the fresh outer links AND serializes the stale inner binary = permanent poisoning. numbox cannot cure numba's inner cache but can refuse to compound it. Fix in _compile: when any formula in the unit carries its own on-disk cache (Dispatcher/DUFunc whose targetoptions.get('cache') is truthy; CFunc already uncacheable at :125), set cacheable=False (opts['cache']=False), warnings.warn a branded message naming the formula, and proceed (correct via always-recompile; no numbox-owned stale artifact). Document the limitation (see CK7). Do NOT re-wrap py_func (no semantic change). Detection helper likely in compile_kernel or a small utils function.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"numbox/core/variable/utils.py\", \"test/core/test_compile_kernel_cache.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel.py test/core/test_compile_kernel_cache.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"a kernel with a @njit(cache=True) Dispatcher formula writes NO numba/anchor cache (cacheable=False) and warns\", \"no permanent-poisoning artifact: two-process test shows the outer is not served from a numbox-cached blob\", \"a plain-Python formula kernel still caches normally (no false-positive uncaching)\"], \"model\": \"opus\", \"effort\": \"max\", \"findings\": [1, 2, 8, 9, 13]}\n```"
+      "status": "completed",
+      "blockedBy": [
+        "CK2"
+      ],
+      "description": "**Findings 1,2,8,9,13 (HIGH), conservative approach.** A user @njit(cache=True) Dispatcher (or a DUFunc with cache=True) keeps its own numba cache keyed by the flag/global-blind _index_key; the fresh outer links AND serializes the stale inner binary = permanent poisoning. numbox cannot cure numba's inner cache but can refuse to compound it. Fix in _compile: when any formula in the unit carries its own on-disk cache (Dispatcher/DUFunc whose targetoptions.get('cache') is truthy; CFunc already uncacheable at :125), set cacheable=False (opts['cache']=False), warnings.warn a branded message naming the formula, and proceed (correct via always-recompile; no numbox-owned stale artifact). Document the limitation (see CK7). Do NOT re-wrap py_func (no semantic change). Detection helper likely in compile_kernel or a small utils function.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"numbox/core/variable/utils.py\", \"test/core/test_compile_kernel_cache.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel.py test/core/test_compile_kernel_cache.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"a kernel with a @njit(cache=True) Dispatcher formula writes NO numba/anchor cache (cacheable=False) and warns\", \"no permanent-poisoning artifact: two-process test shows the outer is not served from a numbox-cached blob\", \"a plain-Python formula kernel still caches normally (no false-positive uncaching)\"], \"model\": \"opus\", \"effort\": \"max\", \"findings\": [1, 2, 8, 9, 13]}\n```",
+      "commit": "bdb8cd8"
+    },
+    {
+      "id": "CK1b",
+      "subject": "CK1b: uncacheable when a formula transitively references a cache=True dispatcher",
+      "status": "completed",
+      "commit": "4043237",
+      "description": "A plain formula that CALLS (not is) a @njit(cache=True) dispatcher links the callee's flag/global-blind binary; CK1's top-level _is_self_cached missed it. Reproduced: error_model flip returned inf where ZeroDivisionError is required, with the outer .nbc written (poisoning one call deeper). Fix: _references_self_cached walks referenced globals + closure cells recursively for a cache-enabled Dispatcher; unit uncacheable + warn. Found while verifying CK8 (the residual the re-audit targeted)."
     },
     {
       "id": "CK4",
       "subject": "CK4: fold numba.core.config.BOUNDSCHECK into hash_text",
-      "status": "pending",
-      "description": "**Finding 7 (MED).** NUMBA_BOUNDSCHECK env overrides even an explicit boundscheck flag at lowering (base.py:192-195) and is in neither _effective_flags nor numba's key: a process with NUMBA_BOUNDSCHECK=1 cache-hits the unchecked binary. Fix: fold numba.core.config.BOUNDSCHECK (readable at digest time) into hash_text in _compile.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel_cache.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel_cache.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"digest differs between BOUNDSCHECK unset and set (two-process test: bounds-check flip no longer serves the unchecked binary)\"], \"model\": \"opus\", \"effort\": \"high\", \"findings\": [7]}\n```"
+      "status": "completed",
+      "description": "**Finding 7 (MED).** NUMBA_BOUNDSCHECK env overrides even an explicit boundscheck flag at lowering (base.py:192-195) and is in neither _effective_flags nor numba's key: a process with NUMBA_BOUNDSCHECK=1 cache-hits the unchecked binary. Fix: fold numba.core.config.BOUNDSCHECK (readable at digest time) into hash_text in _compile.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel_cache.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel_cache.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"digest differs between BOUNDSCHECK unset and set (two-process test: bounds-check flip no longer serves the unchecked binary)\"], \"model\": \"opus\", \"effort\": \"high\", \"findings\": [7]}\n```",
+      "commit": "f1cabf3"
     },
     {
       "id": "CK5",
       "subject": "CK5: include canonical flags in the _validated_returns memo key",
-      "status": "pending",
-      "description": "**Finding 11 (MED).** The declared-return probe memo key (compile_kernel.py:~872) = (formula fingerprint, input types, declared type) omits flags, yet the probe compiles under the flags; a flag (e.g. locals={'m': float32}) that changes the natural return type is skipped after a prior default-flag build -> declared-type violation silently accepted (order-dependent, in-process). Fix: fold flags_canon into the memo key.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"same-process build pair differing only in a return-type-affecting flag: the declared-return probe fires for the second build (fails pre-fix, passes post)\"], \"model\": \"opus\", \"effort\": \"high\", \"findings\": [11]}\n```"
+      "status": "completed",
+      "description": "**Finding 11 (MED).** The declared-return probe memo key (compile_kernel.py:~872) = (formula fingerprint, input types, declared type) omits flags, yet the probe compiles under the flags; a flag (e.g. locals={'m': float32}) that changes the natural return type is skipped after a prior default-flag build -> declared-type violation silently accepted (order-dependent, in-process). Fix: fold flags_canon into the memo key.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"same-process build pair differing only in a return-type-affecting flag: the declared-return probe fires for the second build (fails pre-fix, passes post)\"], \"model\": \"opus\", \"effort\": \"high\", \"findings\": [11]}\n```",
+      "commit": "f1cabf3"
     },
     {
       "id": "CK6",
       "subject": "CK6: warn on the silent cacheable=False degrade path",
-      "status": "pending",
-      "description": "**Finding 5 (LOW).** _canon_value(flags) raising _Unfingerprintable (pipeline_class, numba-typed locals) flips cacheable=False silently (compile_kernel.py:288-292,299-300) while the sibling OSError path (311-315) warns. Fix: warnings.warn on the flag/formula un-fingerprintable degrade, mirroring the OSError warning.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"un-canonicalizable flags emit a UserWarning and disable caching (was silent)\"], \"model\": \"sonnet\", \"effort\": \"medium\", \"findings\": [5]}\n```"
+      "status": "completed",
+      "description": "**Finding 5 (LOW).** _canon_value(flags) raising _Unfingerprintable (pipeline_class, numba-typed locals) flips cacheable=False silently (compile_kernel.py:288-292,299-300) while the sibling OSError path (311-315) warns. Fix: warnings.warn on the flag/formula un-fingerprintable degrade, mirroring the OSError warning.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_compile_kernel.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"un-canonicalizable flags emit a UserWarning and disable caching (was silent)\"], \"model\": \"sonnet\", \"effort\": \"medium\", \"findings\": [5]}\n```",
+      "commit": "f1cabf3"
     },
     {
       "id": "CK7",
       "subject": "CK7: scope the never-stale docstring honestly",
-      "status": "pending",
-      "blockedBy": ["CK1", "CK3", "CK4"],
-      "description": "**Findings 6,10 + cross-cutting.** The module docstring (compile_kernel.py:32-40) and compile_kernel() docstring (~799-809) claim 'a stale binary is never reused'. Scope it: the guarantee covers units numbox itself generates and njit-wraps from raw Python; it excludes (a) independently numba-cached callees (user @njit(cache=True) formulas -> CK1 makes such units uncacheable + warns), and (b) env-level codegen knobs not folded. Note first-call discovery-vs-fused fastmath divergence is already documented (833-837). Docs-only; last so it reflects the shipped fixes.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/flake8 . && cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html\", \"acceptanceCriteria\": [\"docstring no longer promises unconditional freshness; scopes to numbox-generated units; flake8 + sphinx clean\"], \"model\": \"sonnet\", \"effort\": \"low\", \"findings\": [6, 10]}\n```"
+      "status": "completed",
+      "blockedBy": [
+        "CK1",
+        "CK3",
+        "CK4"
+      ],
+      "description": "**Findings 6,10 + cross-cutting.** The module docstring (compile_kernel.py:32-40) and compile_kernel() docstring (~799-809) claim 'a stale binary is never reused'. Scope it: the guarantee covers units numbox itself generates and njit-wraps from raw Python; it excludes (a) independently numba-cached callees (user @njit(cache=True) formulas -> CK1 makes such units uncacheable + warns), and (b) env-level codegen knobs not folded. Note first-call discovery-vs-fused fastmath divergence is already documented (833-837). Docs-only; last so it reflects the shipped fixes.\n\n```json:metadata\n{\"files\": [\"numbox/core/variable/compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/flake8 . && cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html\", \"acceptanceCriteria\": [\"docstring no longer promises unconditional freshness; scopes to numbox-generated units; flake8 + sphinx clean\"], \"model\": \"sonnet\", \"effort\": \"low\", \"findings\": [6, 10]}\n```",
+      "commit": "daa7b07"
     },
     {
       "id": "CK8",
       "subject": "CK8: adversarial re-audit against the fixed tree",
-      "status": "pending",
-      "blockedBy": ["CK1", "CK2", "CK3", "CK4", "CK5", "CK6", "CK7"],
-      "description": "Re-run the Fable flag-fold audit (workflow wf_79c1d680-540 script) against the fixed working tree. Expect all HIGH/MED findings now REFUTED (no stale serve reproducible); any surviving CONFIRMED is a fix gap to address. LOW never-stale items (spelling accretion) may remain by design.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"\", \"acceptanceCriteria\": [\"HIGH/MED defects refuted on the fixed tree\", \"any survivor triaged\"], \"model\": \"fable\", \"effort\": \"high\", \"findings\": []}\n```"
+      "status": "completed",
+      "blockedBy": [
+        "CK1",
+        "CK2",
+        "CK3",
+        "CK4",
+        "CK5",
+        "CK6",
+        "CK7"
+      ],
+      "description": "Re-run the Fable flag-fold audit (workflow wf_79c1d680-540 script) against the fixed working tree. Expect all HIGH/MED findings now REFUTED (no stale serve reproducible); any surviving CONFIRMED is a fix gap to address. LOW never-stale items (spelling accretion) may remain by design.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"\", \"acceptanceCriteria\": [\"HIGH/MED defects refuted on the fixed tree\", \"any survivor triaged\"], \"model\": \"fable\", \"effort\": \"high\", \"findings\": []}\n```",
+      "note": "Fable round-1 audit found 14; Sonnet re-audits (rounds 2-4) drove the CK1c/CK3b/CK3c/CK4b + module-attr follow-ups. See auditRounds/followups."
     },
     {
       "id": "CK9",
       "subject": "CK9: full CI-equivalent gate",
       "status": "pending",
-      "blockedBy": ["CK8"],
+      "blockedBy": [
+        "CK8"
+      ],
       "description": "Cache-cleared full pytest (+cov), flake8 ., Sphinx docs build, doc-codeblock-flake8, lychee link-check. All green before any push. No PR opened by this task (the #73 fork PR is T7 of the parent campaign).\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 . && cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html\", \"acceptanceCriteria\": [\"full suite + flake8 + docs all green locally\"], \"model\": \"opus\", \"effort\": \"high\", \"findings\": []}\n```"
+    }
+  ],
+  "auditRounds": [
+    {
+      "round": 1,
+      "workflow": "wf_79c1d680-540 (Fable)",
+      "outcome": "14 defects -> CK1-CK7"
+    },
+    {
+      "round": 2,
+      "workflow": "wf_29f7e7ab-20e (Sonnet)",
+      "outcome": "reproduced defaults/container reachability, chained+closure module-attr, vectorize env knobs -> CK1c/CK3b/CK4b (2d75bdf); cres-degrade doc"
+    },
+    {
+      "round": 3,
+      "workflow": "wf_29d448e1-9bb (Sonnet)",
+      "outcome": "reproduced module-attr cache=False Dispatcher stale-value -> CK3c (aa8b95f); main-context found module-attr cache=True dispatcher poisoning (16611e8) + module-attr DUFunc stale (444a899)"
+    },
+    {
+      "round": 4,
+      "workflow": "wf_394f1b7a-644 (Sonnet)",
+      "outcome": "final convergence check (in progress)"
+    }
+  ],
+  "followups": [
+    {
+      "id": "CK1c",
+      "commit": "2d75bdf",
+      "desc": "_references_self_cached mirrors _canon_value: defaults, kwdefaults, containers, all global values (was: closures + direct-callable globals only)"
+    },
+    {
+      "id": "module-attr-selfcached",
+      "commit": "16611e8",
+      "desc": "_references_self_cached descends into referenced module attributes (chained, id-cycle protected) for cache=True dispatchers"
+    },
+    {
+      "id": "CK3b",
+      "commit": "2d75bdf",
+      "desc": "_fingerprint_module_attrs recurses into chained submodules + scans closure-captured modules (namespace = globals + closure)"
+    },
+    {
+      "id": "CK3c",
+      "commit": "aa8b95f",
+      "desc": "module-attribute Dispatchers folded into the digest (cache=False stale-value); DUFunc bodies folded in _canon_value (444a899)"
+    },
+    {
+      "id": "CK4b",
+      "commit": "2d75bdf",
+      "desc": "fold LOOP_VECTORIZE/SLP_VECTORIZE/ENABLE_AVX/DISABLE_INTEL_SVML into the digest alongside BOUNDSCHECK"
+    },
+    {
+      "id": "module-attr-cfunc",
+      "commit": "n/a",
+      "desc": "module-attr CFunc verified SAFE (numba refuses to cache dynamic-global kernels) -- no fix needed"
     }
   ]
 }
