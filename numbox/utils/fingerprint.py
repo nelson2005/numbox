@@ -106,6 +106,45 @@ def _referenced_global_names(code: CodeType) -> set[str]:
     return names
 
 
+# The value types numba freezes into a compiled artifact as constants -- the
+# only module attributes whose value must enter the fingerprint. A module
+# attribute that is a function, ufunc, dispatcher, type or submodule is a stable
+# reference numba resolves by identity, not a frozen value, so it is skipped.
+_FROZEN_DATA_TYPES = (bool, int, float, complex, str, bytes,
+                      np.generic, np.ndarray, tuple, list, set, frozenset, dict)
+
+
+def _fingerprint_module_attrs(referenced: set[str], func_globals: dict, seen: set[int]) -> str:
+    """Fold the values of ``<module>.<attr>`` reads that numba freezes as constants.
+
+    ``_fingerprint_function`` folds referenced globals present in ``__globals__``,
+    but a value read through one level of module indirection (``import cfg;
+    cfg.SCALE``) is invisible: ``cfg`` canonicalizes to ``module(<name>)`` and
+    ``SCALE`` is not itself a global. numba bakes ``cfg.SCALE``'s value into the
+    binary, so a later change would be served stale. For every referenced global
+    that is a module, fold the canonical value of each referenced name present in
+    that module's ``__dict__`` whose value is frozen data. ``__dict__`` membership
+    (not ``getattr``) avoids triggering a module ``__getattr__`` (lazy import)."""
+    attrs = []
+    for gname in sorted(referenced):
+        mod = func_globals.get(gname)
+        if not isinstance(mod, ModuleType):
+            continue
+        mod_dict = getattr(mod, "__dict__", {})
+        for attr in sorted(referenced):
+            if attr == gname or attr not in mod_dict:
+                continue
+            value = mod_dict[attr]
+            if value is not None and not isinstance(value, _FROZEN_DATA_TYPES):
+                continue
+            try:
+                canon = _canon_value(value, seen)
+            except (_Unfingerprintable, RecursionError):
+                continue
+            attrs.append(f"{gname}.{attr}={canon}")
+    return f";module_attrs=[{';'.join(attrs)}]" if attrs else ""
+
+
 def _fingerprint_function(func: FunctionType, seen: set[int]) -> str:
     if id(func) in seen:
         return f"recursive({func.__qualname__})"
@@ -118,15 +157,17 @@ def _fingerprint_function(func: FunctionType, seen: set[int]) -> str:
         except ValueError as e:
             raise _Unfingerprintable("empty closure cell") from e
         cells.append(f"{name}={_canon_value(contents, seen)}")
+    referenced = _referenced_global_names(code)
     hashed_globals = []
-    for name in sorted(_referenced_global_names(code)):
+    for name in sorted(referenced):
         if name in func.__globals__:
             hashed_globals.append(f"{name}={_canon_value(func.__globals__[name], seen)}")
+    module_attrs = _fingerprint_module_attrs(referenced, func.__globals__, seen)
     return (
         f"func({func.__module__}:{func.__qualname__};{_fingerprint_codeobj(code, seen)};"
         f"defaults={_canon_value(func.__defaults__ or (), seen)};"
         f"kwdefaults={_canon_value(func.__kwdefaults__ or {}, seen)};"
-        f"closure=[{';'.join(cells)}];globals=[{';'.join(hashed_globals)}])"
+        f"closure=[{';'.join(cells)}];globals=[{';'.join(hashed_globals)}]{module_attrs})"
     )
 
 
