@@ -101,7 +101,7 @@ def _formula_fingerprint(formula) -> tuple[str, bool]:
     names, default-argument values, closure-cell values, the values of
     referenced module-level globals (recursing into helper functions and
     dispatchers, with cycle protection), the defining module, and
-    dispatcher targetoptions. Builtins resolve outside ``__globals__``
+    dispatcher / DUFunc targetoptions. Builtins resolve outside ``__globals__``
     and are deliberately not hashed. Any value with no canonical form
     makes the formula un-fingerprintable: the returned text is then a
     per-object placeholder and ``cacheable`` is False, so the kernel is
@@ -120,8 +120,8 @@ def _formula_fingerprint(formula) -> tuple[str, bool]:
     if not isinstance(target, FunctionType):
         return f"{_safe_repr(formula)} @{id(formula)}", False
     try:
-        if isinstance(formula, Dispatcher):
-            extra += ";targetoptions=" + _canon_value(dict(formula.targetoptions or {}), set())
+        if isinstance(formula, (Dispatcher, DUFunc)):
+            extra += ";targetoptions=" + _canon_value(dict(getattr(formula, "targetoptions", {}) or {}), set())
         return _fingerprint_function(target, set()) + extra, not isinstance(formula, CFunc)
     except (_Unfingerprintable, RecursionError):
         return f"{_safe_repr(formula)} @{id(formula)}", False
