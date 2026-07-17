@@ -193,3 +193,69 @@ def test_plain_formula_unit_stays_cacheable():
     flag-folded outer, so the unit must still cache (no false-positive uncaching)."""
     disp = _compile(_KERNEL_SRC, {"f_x": _plain_formula}, None, None)
     assert not isinstance(disp._cache, NullCache), "plain-formula kernel should cache"
+
+
+# NUMBA_BOUNDSCHECK is an env codegen knob outside the jit flags and numba's key
+# ---------------------------------------------------------------------------
+
+def test_boundscheck_env_enters_digest(monkeypatch):
+    """NUMBA_BOUNDSCHECK overrides even an explicit boundscheck flag at lowering
+    but is in neither the jit flags nor numba's cache key; it must enter the
+    digest so a bounds-check flip does not cache-hit the unchecked binary."""
+    import numbox.core.variable.compile_kernel as ck
+    src = "def _kernel(a0):\n    return (a0,)\n"
+    monkeypatch.setattr(ck.numba_config, "BOUNDSCHECK", None)
+    name_off = _compile(src, {}, None, None).py_func.__name__
+    monkeypatch.setattr(ck.numba_config, "BOUNDSCHECK", 1)
+    name_on = _compile(src, {}, None, None).py_func.__name__
+    assert name_off != name_on, "BOUNDSCHECK absent from the cache digest"
+
+
+# Un-canonicalizable jit flags must warn, not silently disable caching
+# ---------------------------------------------------------------------------
+
+def test_uncanonicalizable_flags_warn_and_disable_cache():
+    from numba.core.compiler import Compiler
+    src = "def _kernel(a0):\n    return (a0,)\n"
+    with pytest.warns(UserWarning, match="no canonical"):
+        disp = _compile(src, {}, {"pipeline_class": Compiler}, None)
+    assert isinstance(disp._cache, NullCache)
+
+
+# The declared-return probe memo must key on flags, not skip a flag-dependent probe
+# ---------------------------------------------------------------------------
+
+def _declared_locals_graph():
+    """A declared float64 node whose formula returns a local `m`. Under
+    ``locals={'m': float32}`` the natural return type becomes float32, which
+    violates the declared float64 -- caught by the build-time probe."""
+    from numba.core.types import float64
+    from numbox.core.variable.variable import Graph, Params
+
+    def f(x):
+        m = x
+        return m
+    g = Graph(variables_lists={"variables": [
+        {"name": "a", "inputs": {"x": "e"}, "formula": f, "params": Params(type=float64)},
+    ]}, external_source_names=["e"])
+    g.external["e"].declare("x", Params(type=float64))
+    return g
+
+
+def test_validated_returns_memo_keys_on_flags():
+    """A prior default-flags build must not let a later build under a
+    return-type-affecting flag skip the declared-return probe via a flag-blind
+    memo key -- else a float32-under-declared-float64 violation is accepted."""
+    from numba.core.types import float32
+    from numbox.core.variable.compile_kernel import compile_kernel, _validated_returns
+
+    saved = set(_validated_returns)
+    _validated_returns.clear()
+    try:
+        compile_kernel(_declared_locals_graph(), "variables.a")   # default flags: OK, memoized
+        with pytest.raises(ValueError, match="float32"):
+            compile_kernel(_declared_locals_graph(), "variables.a",
+                           jit_options={"locals": {"m": float32}})
+    finally:
+        _validated_returns.clear()
+        _validated_returns.update(saved)

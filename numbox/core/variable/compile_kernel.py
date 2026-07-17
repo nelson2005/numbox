@@ -47,6 +47,7 @@ from types import FunctionType
 from typing import Any, Callable, NamedTuple
 
 from numba import njit, typeof
+from numba.core import config as numba_config
 from numba.core.caching import NullCache
 from numba.core.ccallback import CFunc
 from numba.core.dispatcher import Dispatcher
@@ -92,6 +93,17 @@ def _effective_flags(jit_options: dict | None) -> dict:
     as `fastmath`/`error_model` otherwise diverge across the discovery boundary)."""
     opts = {**_default_jit_options, **(jit_options or {})}
     return {k: v for k, v in opts.items() if k != "cache"}
+
+
+def _flags_canon(flags: dict) -> tuple[str, bool]:
+    """Canonical string for the effective jit flags, and whether it is a true
+    canonicalization (``False`` if a flag value had no canonical form, e.g. a
+    ``pipeline_class`` or numba-typed ``locals``). Used both for the cache digest
+    and the declared-return memo key so both re-key when the flags change."""
+    try:
+        return _canon_value(flags, set()), True
+    except (_Unfingerprintable, RecursionError):
+        return repr(sorted(flags.items(), key=repr)), False
 
 
 def _formula_fingerprint(formula) -> tuple[str, bool]:
@@ -319,15 +331,20 @@ def _compile(
         opts["cache"] = cache
     opts.setdefault("cache", True)
     flags = _effective_flags(jit_options)
-    try:
-        flags_canon = _canon_value(flags, set())
-    except (_Unfingerprintable, RecursionError):
-        flags_canon = repr(sorted(flags.items(), key=repr))
+    flags_canon, ok_flags = _flags_canon(flags)
+    if not ok_flags:
         cacheable = False
+        warnings.warn(
+            f"compile_kernel: jit flags {sorted(flags)} have no canonical "
+            "fingerprint; compiling this kernel without an on-disk cache."
+        )
     hash_text = (
         "ck-digest-v3\n" + source
         + "\n# formulas:\n" + "\n".join(fingerprints)
         + "\n# flags: " + flags_canon
+        # NUMBA_BOUNDSCHECK overrides even an explicit boundscheck flag at lowering
+        # and is in neither the jit flags nor numba's own cache key.
+        + "\n# boundscheck: " + repr(numba_config.BOUNDSCHECK)
         + "\n# declared_sigs: " + repr([repr(s) for s in declared_sigs])
     )
     if not cacheable:
@@ -896,6 +913,7 @@ def compile_kernel(
     case, dispositions, consumed = _classify(compiled)
     idents = _assign_identifiers([n.variable for n in compiled.ordered_nodes])
     flags = _effective_flags(jit_options)
+    flags_key, _ = _flags_canon(flags)
     if case in ("A", "B"):
         for node in compiled.ordered_nodes:
             var = node.variable
@@ -903,7 +921,7 @@ def compile_kernel(
                 continue
             in_types = tuple(i.params.type for i in node.inputs)
             fp, fingerprintable = _formula_fingerprint(var.formula)
-            key = (fp, in_types, var.params.type)
+            key = (fp, in_types, var.params.type, flags_key)
             if fingerprintable and key in _validated_returns:
                 continue
             _validate_declared_return(var.formula, in_types, var.params.type, flags)
