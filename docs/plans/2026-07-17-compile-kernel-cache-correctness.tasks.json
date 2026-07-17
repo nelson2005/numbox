@@ -125,6 +125,11 @@
       "round": 5,
       "workflow": "wf_394f1b7a-644 (Sonnet) synthesis",
       "outcome": "reproduced PEP 562 __getattr__ stale-value + poisoning -> fixed (6d65434); final confirmation audit pending"
+    },
+    {
+      "round": "5 (confirmation)",
+      "workflow": "wf_501910c9-03a (Sonnet)",
+      "outcome": "confirmed all correctness fixes hold; caught a REGRESSION from the PEP 562 getattr fallback (numpy __getattr__ side-effects: spurious warnings + eager submodule imports on every numpy-formula compile) -> REVERTED (a625d72), PEP 562 lazy-attr documented as a known limitation."
     }
   ],
   "followups": [
@@ -163,5 +168,7 @@
       "commit": "6d65434",
       "desc": "both walkers resolve PEP 562 __getattr__ module attributes via getattr (normal modules stay __dict__-only)"
     }
-  ]
+  ],
+  "converged": true,
+  "convergenceNote": "Every reproduced correctness defect fixed; the walkers mirror numba's __dict__ attribute resolution + _canon_value's value traversal (data/Dispatcher/DUFunc; ufunc/plain-fn/type skipped; CFunc safe-by-numba). Accepted/documented limitations: (1) a user's own @njit(cache=True) dispatcher's flag/global-blind INNER cache (numba limitation; numbox prevents poisoning + warns); (2) a value/dispatcher exposed ONLY via PEP 562 __getattr__ (resolving it fires unrelated modules' __getattr__ every compile). NOTE: full CK9 gate was green before the revert; the revert is a pure removal + doc + 2 test deletions (affected-file subset re-verified green) -- re-run the full gate before any push."
 }
