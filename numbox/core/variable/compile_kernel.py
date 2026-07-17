@@ -54,7 +54,7 @@ import hashlib
 import warnings
 
 from collections import OrderedDict
-from types import FunctionType
+from types import FunctionType, ModuleType
 from typing import Any, Callable, NamedTuple
 
 from numba import njit, typeof
@@ -223,8 +223,37 @@ def _references_self_cached(value, seen: set[int]) -> bool:
     for default in (func.__defaults__ or ()) + tuple((func.__kwdefaults__ or {}).values()):
         if _references_self_cached(default, seen):
             return True
-    for name in _referenced_global_names(func.__code__):
-        if name in func.__globals__ and _references_self_cached(func.__globals__[name], seen):
+    referenced = _referenced_global_names(func.__code__)
+    for name in referenced:
+        if name not in func.__globals__:
+            continue
+        gval = func.__globals__[name]
+        if isinstance(gval, ModuleType):
+            # a dispatcher reached as a (possibly chained) module attribute --
+            # e.g. helpers.helper(x) -- is linked just like a direct global one.
+            if _module_reaches_self_cached(gval, referenced, seen, set()):
+                return True
+        elif _references_self_cached(gval, seen):
+            return True
+    return False
+
+
+def _module_reaches_self_cached(mod, ref_names, seen: set[int], mods_seen: set[int]) -> bool:
+    """True if any referenced name in ``mod``'s ``__dict__`` (recursing into
+    referenced submodules) reaches a cache-carrying Dispatcher. ``__dict__``
+    membership avoids triggering a module ``__getattr__`` (lazy import)."""
+    if id(mod) in mods_seen:
+        return False
+    mods_seen.add(id(mod))
+    mod_dict = getattr(mod, "__dict__", {})
+    for name in ref_names:
+        if name not in mod_dict:
+            continue
+        val = mod_dict[name]
+        if isinstance(val, ModuleType):
+            if _module_reaches_self_cached(val, ref_names, seen, mods_seen):
+                return True
+        elif _references_self_cached(val, seen):
             return True
     return False
 

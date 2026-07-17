@@ -48,6 +48,15 @@ def _formula_container_global(x):
     return _HELPERS[0](x)
 
 
+# The cached dispatcher reached as a module attribute (helpers.helper(x)).
+_helpers_mod = types.ModuleType("test_ck_helpers_mod")
+_helpers_mod.helper = _cached_formula
+
+
+def _formula_module_attr(x):
+    return _helpers_mod.helper(x)
+
+
 def _run_probe(probe, env):
     r = subprocess.run(
         [sys.executable, str(probe)],
@@ -275,6 +284,10 @@ def test_references_self_cached_through_default_argument():
 
 def test_references_self_cached_through_container_global():
     assert _references_self_cached(_formula_container_global, set()) is True
+
+
+def test_references_self_cached_through_module_attribute():
+    assert _references_self_cached(_formula_module_attr, set()) is True
 
 
 def test_default_arg_cached_dispatcher_makes_unit_uncacheable():
