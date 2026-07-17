@@ -346,6 +346,23 @@ def test_module_attr_dispatcher_captured_value_rekeys_fingerprint():
         != _fingerprint_function(_module_attr_dispatcher_formula(999.0), set())
 
 
+def _module_attr_dufunc_formula(other_val):
+    """f(x) = cfg.uf(x), where cfg.uf is a @vectorize DUFunc capturing OTHER --
+    numba links its loop and freezes OTHER, so the digest must fold it too."""
+    wrapped = types.FunctionType(
+        compile("def uf(z):\n    return z + OTHER\n", "<d>", "exec").co_consts[0], {"OTHER": other_val})
+    uf = vectorize(["float64(float64)"], nopython=True)(wrapped)
+    cfg = types.ModuleType("cfg_uf_fp_probe")
+    cfg.uf = uf
+    f_code = compile("def f(x):\n    return cfg.uf(x)\n", "<f>", "exec").co_consts[0]
+    return types.FunctionType(f_code, {"cfg": cfg})
+
+
+def test_module_attr_dufunc_captured_value_rekeys_fingerprint():
+    assert _fingerprint_function(_module_attr_dufunc_formula(10.0), set()) \
+        != _fingerprint_function(_module_attr_dufunc_formula(999.0), set())
+
+
 # Result-affecting numba codegen env knobs beyond BOUNDSCHECK enter the digest
 # ---------------------------------------------------------------------------
 

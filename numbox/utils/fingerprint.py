@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from numba.core.dispatcher import Dispatcher
+from numba.np.ufunc.dufunc import DUFunc
 
 
 class _Unfingerprintable(Exception):
@@ -82,6 +83,13 @@ def _canon_value(value: Any, seen: set[int]) -> str:
             return f"proxy({proxy_alias})"
         topts = _canon_value(dict(getattr(value, "targetoptions", {}) or {}), seen)
         return f"dispatcher({_fingerprint_function(value.py_func, seen)};{topts})"
+    if isinstance(value, DUFunc):
+        # @vectorize: numba links its compiled loop and freezes the scalar body's
+        # captured globals/closure, so fold that body plus its targetoptions.
+        wrapped = getattr(value, "__wrapped__", None)
+        topts = _canon_value(dict(getattr(value, "targetoptions", {}) or {}), seen)
+        body = _fingerprint_function(wrapped, seen) if isinstance(wrapped, FunctionType) else _safe_repr(wrapped)
+        return f"dufunc({body};{topts})"
     if isinstance(value, FunctionType):
         return f"function({_fingerprint_function(value, seen)})"
     raise _Unfingerprintable(type(value).__name__)
@@ -150,7 +158,7 @@ def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[i
                 _walk(f"{prefix}.{attr}", value)
                 continue
             if not (value is None or isinstance(value, _FROZEN_DATA_TYPES)
-                    or isinstance(value, Dispatcher)):
+                    or isinstance(value, (Dispatcher, DUFunc))):
                 continue
             try:
                 canon = _canon_value(value, seen)
