@@ -16,7 +16,9 @@ import pytest
 from numba import njit, vectorize
 from numba.core.caching import NullCache
 
-from numbox.core.variable.compile_kernel import _compile, _formula_fingerprint, _is_self_cached
+from numbox.core.variable.compile_kernel import (
+    _compile, _formula_fingerprint, _is_self_cached, _references_self_cached,
+)
 from numbox.utils.fingerprint import _fingerprint_function
 
 
@@ -25,6 +27,12 @@ from numbox.utils.fingerprint import _fingerprint_function
 _cached_formula = njit(cache=True)(lambda y: y + 1.0)
 _plain_formula = njit(lambda y: y + 1.0)                     # cache=False -> safe
 _KERNEL_SRC = "def _kernel(a0):\n    return (f_x(a0),)\n"
+
+
+# A plain formula that CALLS a module-level cache=True dispatcher (rather than
+# being one) -- the transitive case CK1's top-level check would miss.
+def _formula_calls_cached(x):
+    return _cached_formula(x)
 
 
 def _run_probe(probe, env):
@@ -183,7 +191,7 @@ def test_self_cached_dispatcher_formula_makes_unit_uncacheable():
     outer would link + serialize the stale inner binary (permanent poisoning).
     The unit must compile uncached, with a warning."""
     assert not isinstance(_cached_formula._cache, NullCache)   # precondition
-    with pytest.warns(UserWarning, match="carry their own numba cache"):
+    with pytest.warns(UserWarning, match="a @njit.cache=True. dispatcher"):
         disp = _compile(_KERNEL_SRC, {"f_x": _cached_formula}, None, None)
     assert isinstance(disp._cache, NullCache), "outer kernel must not be disk-cached"
 
@@ -193,6 +201,59 @@ def test_plain_formula_unit_stays_cacheable():
     flag-folded outer, so the unit must still cache (no false-positive uncaching)."""
     disp = _compile(_KERNEL_SRC, {"f_x": _plain_formula}, None, None)
     assert not isinstance(disp._cache, NullCache), "plain-formula kernel should cache"
+
+
+def test_references_self_cached_detects_a_cached_callee():
+    assert _references_self_cached(_formula_calls_cached, set()) is True
+    assert _references_self_cached(_plain_formula, set()) is False
+
+
+def test_formula_calling_cache_true_dispatcher_makes_unit_uncacheable():
+    """A plain formula that CALLS a @njit(cache=True) dispatcher links the callee's
+    flag/global-blind binary; the unit must be uncacheable too, else a stale inner
+    is serialized into a fresh-digest artifact (poisoning one call deeper)."""
+    with pytest.warns(UserWarning, match="reference, a @njit"):
+        disp = _compile(_KERNEL_SRC, {"f_x": njit(_formula_calls_cached)}, None, None)
+    assert isinstance(disp._cache, NullCache), "unit linking a cache=True callee must not cache"
+
+
+def test_formula_calling_cache_true_dispatcher_not_poisoned(tmp_path):
+    """End-to-end: a plain formula calling a cache=True dispatcher whose flags flip
+    between processes must leave NO numbox-owned outer cache artifact (no poisoning
+    surface). numba still serves the user dispatcher's own stale binary in-process
+    -- an accepted numba limitation, not a numbox defect."""
+    probe = tmp_path / "calls_cached_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import os
+        import numpy as np
+        from numba import njit
+        from numbox.core.variable.variable import Graph
+        from numbox.core.variable.compile_kernel import compile_kernel
+
+        helper = njit(cache=True, error_model=os.environ["EM"])(lambda y: 1.0 / y)
+
+        def f(x):
+            return helper(x)
+
+        g = Graph(
+            variables_lists={"variables": [
+                {"name": "out", "inputs": {"y": "basket"}, "formula": f}]},
+            external_source_names=["basket"],
+        )
+        ck = compile_kernel(g, "variables.out")
+        try:
+            print(float(np.asarray(ck.kernel(0.0)[0]).ravel()[0]))
+        except ZeroDivisionError:
+            print("ZeroDivisionError")
+    '''), encoding="utf-8")
+
+    env = _shared_cache_env(tmp_path)
+    env["EM"] = "numpy"
+    _run_probe(probe, env)
+    env["EM"] = "python"
+    _run_probe(probe, env)
+    outer = list((tmp_path / "nbcache").rglob("_kernel_*"))
+    assert not outer, f"numbox cached an outer kernel despite a cache=True callee (poisoning): {outer}"
 
 
 # NUMBA_BOUNDSCHECK is an env codegen knob outside the jit flags and numba's key

@@ -77,7 +77,7 @@ from numbox.core.variable.variable import (
     QUAL_SEP, CompiledGraph, CompiledNode, Graph, Variable, make_qual_name,
 )
 from numbox.utils.fingerprint import (
-    _Unfingerprintable, _canon_value, _fingerprint_function, _safe_repr,
+    _Unfingerprintable, _canon_value, _fingerprint_function, _referenced_global_names, _safe_repr,
 )
 from numbox.utils.preprocessing import (
     _anchor_root, _materialize_anchor, _orphan_anchor_sweep,
@@ -164,6 +164,47 @@ def _is_self_cached(formula) -> bool:
     if isinstance(formula, Dispatcher):
         cache = getattr(formula, "_cache", None)
         return cache is not None and not isinstance(cache, NullCache)
+    return False
+
+
+def _pyfunc_of(formula):
+    """The plain Python function underlying a formula (or None): the dispatcher's
+    ``py_func``, a DUFunc/CFunc's ``__wrapped__``, or a bare function itself."""
+    func = getattr(formula, "py_func", None)
+    if func is None and isinstance(formula, (DUFunc, CFunc)):
+        func = getattr(formula, "__wrapped__", None)
+    if func is None and isinstance(formula, FunctionType):
+        func = formula
+    return func if isinstance(func, FunctionType) else None
+
+
+def _references_self_cached(formula, seen: set[int]) -> bool:
+    """True if ``formula`` IS, or transitively references through its globals or
+    closure, a Dispatcher carrying its own numba cache. A plain formula that
+    *calls* a ``@njit(cache=True)`` dispatcher links that dispatcher's flag- and
+    global-blind binary; the outer digest re-keys but cannot invalidate the
+    callee's cache, so the unit must not be disk-cached either (else a stale inner
+    is serialized into a fresh-digest artifact -- the same poisoning as the direct
+    case, one call deeper)."""
+    if id(formula) in seen:
+        return False
+    seen.add(id(formula))
+    if _is_self_cached(formula):
+        return True
+    func = _pyfunc_of(formula)
+    if func is None:
+        return False
+    for cell in func.__closure__ or ():
+        try:
+            val = cell.cell_contents
+        except ValueError:
+            continue
+        if callable(val) and _references_self_cached(val, seen):
+            return True
+    for name in _referenced_global_names(func.__code__):
+        val = func.__globals__.get(name)
+        if callable(val) and _references_self_cached(val, seen):
+            return True
     return False
 
 
@@ -325,17 +366,17 @@ def _compile(
         fp, ok = _formula_fingerprint(formula)
         fingerprints.append(f"{fg}: {fp}")
         cacheable = cacheable and ok
-        if _is_self_cached(formula):
+        if _references_self_cached(formula, set()):
             cacheable = False
             self_cached.append(_self_cached_name(formula))
     if self_cached:
         warnings.warn(
             "compile_kernel: formula(s) " + ", ".join(sorted(set(self_cached)))
-            + " carry their own numba cache (cache=True), whose key is blind to jit "
-            "flags and referenced global values; compiling this kernel without an "
-            "on-disk cache so a stale inner binary cannot be linked into a cached "
-            "artifact. Pass cache=False to those formulas (or supply plain-Python "
-            "formulas) to restore caching."
+            + " are, or reference, a @njit(cache=True) dispatcher whose cache key is "
+            "blind to jit flags and referenced global values; compiling this kernel "
+            "without an on-disk cache so a stale inner binary cannot be linked into a "
+            "cached artifact. Pass cache=False to those dispatchers (or supply "
+            "plain-Python formulas) to restore caching."
         )
     opts = {**_default_jit_options, **(jit_options or {})}
     if cache is not None:
