@@ -108,17 +108,17 @@ class S3(StructRefProxy):
         return self.y
 
     def calculate_1(self, z, w=1):
-        return self.calculate_1_ce22f04cc18ac7c1059871d9675272b0766d329e8c416d9ec4ddf77b181ebcbc(z, w)
+        return self.calculate_1_e4becd075d47f322cb5a112c18fb1dc7ab9517080db91c6007dcd9d960fd8c04(z, w)
 
     @njit(**jit_options)
-    def calculate_1_ce22f04cc18ac7c1059871d9675272b0766d329e8c416d9ec4ddf77b181ebcbc(self, z, w=1):
+    def calculate_1_e4becd075d47f322cb5a112c18fb1dc7ab9517080db91c6007dcd9d960fd8c04(self, z, w=1):
         return self.calculate_1(z, w)
 
     def calculate_2(self):
-        return self.calculate_2_fab97c51f1b4a572251c56be8e4326cd39d00f328b4f85e3174b2b3d3fcff3f0()
+        return self.calculate_2_a10ca4da04fc9e54d2d5f98f3c6455098248bd3fceeca1d24276daf0ee693441()
 
     @njit(**jit_options)
-    def calculate_2_fab97c51f1b4a572251c56be8e4326cd39d00f328b4f85e3174b2b3d3fcff3f0(self):
+    def calculate_2_a10ca4da04fc9e54d2d5f98f3c6455098248bd3fceeca1d24276daf0ee693441(self):
         return self.calculate_2()
 
 define_boxing(S3TypeClass, S3)
