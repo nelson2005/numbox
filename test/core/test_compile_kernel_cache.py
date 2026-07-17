@@ -12,10 +12,19 @@ import sys
 import textwrap
 import types
 
-from numba import vectorize
+import pytest
+from numba import njit, vectorize
+from numba.core.caching import NullCache
 
-from numbox.core.variable.compile_kernel import _formula_fingerprint
+from numbox.core.variable.compile_kernel import _compile, _formula_fingerprint, _is_self_cached
 from numbox.utils.fingerprint import _fingerprint_function
+
+
+# A module-level cache=True dispatcher has a real locator (this file), so numba
+# enables its FunctionCache -- the self-cached formula the fix must detect.
+_cached_formula = njit(cache=True)(lambda y: y + 1.0)
+_plain_formula = njit(lambda y: y + 1.0)                     # cache=False -> safe
+_KERNEL_SRC = "def _kernel(a0):\n    return (f_x(a0),)\n"
 
 
 def _run_probe(probe, env):
@@ -158,3 +167,29 @@ def test_module_constant_change_not_stale_across_processes(tmp_path):
     env["SCALE"] = "3.0"
     got = _run_probe(probe, env)                        # shared cache, constant changed
     assert got == "30.0", f"module constant change served a stale kernel: got {got}, expected 30.0"
+
+
+# A self-cached formula makes the unit uncacheable (no poisoned artifact)
+# ---------------------------------------------------------------------------
+
+def test_is_self_cached_detects_only_cache_true_dispatchers():
+    assert _is_self_cached(_cached_formula) is True
+    assert _is_self_cached(_plain_formula) is False
+
+
+def test_self_cached_dispatcher_formula_makes_unit_uncacheable():
+    """A user @njit(cache=True) formula keeps its own flag/global-blind numba
+    cache; folding flags into the outer name cannot invalidate it, and a fresh
+    outer would link + serialize the stale inner binary (permanent poisoning).
+    The unit must compile uncached, with a warning."""
+    assert not isinstance(_cached_formula._cache, NullCache)   # precondition
+    with pytest.warns(UserWarning, match="carry their own numba cache"):
+        disp = _compile(_KERNEL_SRC, {"f_x": _cached_formula}, None, None)
+    assert isinstance(disp._cache, NullCache), "outer kernel must not be disk-cached"
+
+
+def test_plain_formula_unit_stays_cacheable():
+    """A cache=False formula has no independent on-disk cache and re-keys with the
+    flag-folded outer, so the unit must still cache (no false-positive uncaching)."""
+    disp = _compile(_KERNEL_SRC, {"f_x": _plain_formula}, None, None)
+    assert not isinstance(disp._cache, NullCache), "plain-formula kernel should cache"

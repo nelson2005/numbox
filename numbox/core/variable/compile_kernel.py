@@ -47,6 +47,7 @@ from types import FunctionType
 from typing import Any, Callable, NamedTuple
 
 from numba import njit, typeof
+from numba.core.caching import NullCache
 from numba.core.ccallback import CFunc
 from numba.core.dispatcher import Dispatcher
 from numba.core.errors import NumbaError
@@ -125,6 +126,26 @@ def _formula_fingerprint(formula) -> tuple[str, bool]:
         return _fingerprint_function(target, set()) + extra, not isinstance(formula, CFunc)
     except (_Unfingerprintable, RecursionError):
         return f"{_safe_repr(formula)} @{id(formula)}", False
+
+
+def _is_self_cached(formula) -> bool:
+    """True if ``formula`` carries its own numba on-disk cache -- a Dispatcher
+    built with ``cache=True`` (its ``_cache`` is a ``FunctionCache``, not a
+    ``NullCache``). That cache is keyed by numba's flag- and global-blind
+    ``_index_key``, so folding flags into the outer kernel name cannot keep it
+    fresh: a fresh outer compile links -- and would serialize -- the stale inner
+    binary. Such a unit must not be disk-cached. A ``cache=False`` Dispatcher
+    recompiles in-process and is safe; a DUFunc's cache is not independently
+    introspectable, but its flag identity is folded into the digest so the outer
+    re-keys."""
+    if isinstance(formula, Dispatcher):
+        cache = getattr(formula, "_cache", None)
+        return cache is not None and not isinstance(cache, NullCache)
+    return False
+
+
+def _self_cached_name(formula) -> str:
+    return getattr(getattr(formula, "py_func", formula), "__qualname__", None) or _safe_repr(formula)
 
 
 # Build-time return-type validations are memoized by (formula fingerprint,
@@ -276,10 +297,23 @@ def _compile(
     for undeclared (Case C) units."""
     fingerprints = []
     cacheable = True
+    self_cached = []
     for fg, formula in bindings.items():
         fp, ok = _formula_fingerprint(formula)
         fingerprints.append(f"{fg}: {fp}")
         cacheable = cacheable and ok
+        if _is_self_cached(formula):
+            cacheable = False
+            self_cached.append(_self_cached_name(formula))
+    if self_cached:
+        warnings.warn(
+            "compile_kernel: formula(s) " + ", ".join(sorted(set(self_cached)))
+            + " carry their own numba cache (cache=True), whose key is blind to jit "
+            "flags and referenced global values; compiling this kernel without an "
+            "on-disk cache so a stale inner binary cannot be linked into a cached "
+            "artifact. Pass cache=False to those formulas (or supply plain-Python "
+            "formulas) to restore caching."
+        )
     opts = {**_default_jit_options, **(jit_options or {})}
     if cache is not None:
         opts["cache"] = cache
