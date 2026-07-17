@@ -92,11 +92,12 @@
     {
       "id": "CK9",
       "subject": "CK9: full CI-equivalent gate",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         "CK8"
       ],
-      "description": "Cache-cleared full pytest (+cov), flake8 ., Sphinx docs build, doc-codeblock-flake8, lychee link-check. All green before any push. No PR opened by this task (the #73 fork PR is T7 of the parent campaign).\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 . && cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html\", \"acceptanceCriteria\": [\"full suite + flake8 + docs all green locally\"], \"model\": \"opus\", \"effort\": \"high\", \"findings\": []}\n```"
+      "description": "Cache-cleared full pytest (+cov), flake8 ., Sphinx docs build, doc-codeblock-flake8, lychee link-check. All green before any push. No PR opened by this task (the #73 fork PR is T7 of the parent campaign).\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 . && cd docs && /home/erik/projects/numbox/venv/bin/sphinx-build -b html . _build/html\", \"acceptanceCriteria\": [\"full suite + flake8 + docs all green locally\"], \"model\": \"opus\", \"effort\": \"high\", \"findings\": []}\n```",
+      "note": "Gate GREEN: full cache-cleared suite 958 passed / 2 skipped / 0 failed; flake8 clean; sphinx build succeeded. No push (T7 of the #73 campaign, pending user approval)."
     }
   ],
   "auditRounds": [
@@ -119,6 +120,11 @@
       "round": 4,
       "workflow": "wf_394f1b7a-644 (Sonnet)",
       "outcome": "final convergence check (in progress)"
+    },
+    {
+      "round": 5,
+      "workflow": "wf_394f1b7a-644 (Sonnet) synthesis",
+      "outcome": "reproduced PEP 562 __getattr__ stale-value + poisoning -> fixed (6d65434); final confirmation audit pending"
     }
   ],
   "followups": [
@@ -151,6 +157,11 @@
       "id": "module-attr-cfunc",
       "commit": "n/a",
       "desc": "module-attr CFunc verified SAFE (numba refuses to cache dynamic-global kernels) -- no fix needed"
+    },
+    {
+      "id": "pep562",
+      "commit": "6d65434",
+      "desc": "both walkers resolve PEP 562 __getattr__ module attributes via getattr (normal modules stay __dict__-only)"
     }
   ]
 }
