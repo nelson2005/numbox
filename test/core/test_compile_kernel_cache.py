@@ -329,6 +329,23 @@ def test_closure_captured_module_attribute_rekeys_fingerprint():
         != _fingerprint_function(_closure_module_formula(3.0), set())
 
 
+def _module_attr_dispatcher_formula(other_val):
+    """f(x) = cfg.compute(x), where cfg.compute is a Dispatcher capturing the
+    module global OTHER -- numba links it and freezes OTHER, so the digest must
+    fold the module-attr dispatcher's fingerprint (as it does a direct global)."""
+    disp_code = compile("def compute(z):\n    return z + OTHER\n", "<d>", "exec").co_consts[0]
+    compute = njit(cache=False)(types.FunctionType(disp_code, {"OTHER": other_val}))
+    cfg = types.ModuleType("cfg_disp_fp_probe")
+    cfg.compute = compute
+    f_code = compile("def f(x):\n    return cfg.compute(x)\n", "<f>", "exec").co_consts[0]
+    return types.FunctionType(f_code, {"cfg": cfg})
+
+
+def test_module_attr_dispatcher_captured_value_rekeys_fingerprint():
+    assert _fingerprint_function(_module_attr_dispatcher_formula(10.0), set()) \
+        != _fingerprint_function(_module_attr_dispatcher_formula(999.0), set())
+
+
 # Result-affecting numba codegen env knobs beyond BOUNDSCHECK enter the digest
 # ---------------------------------------------------------------------------
 

@@ -107,9 +107,11 @@ def _referenced_global_names(code: CodeType) -> set[str]:
 
 
 # The value types numba freezes into a compiled artifact as constants -- the
-# only module attributes whose value must enter the fingerprint. A module
-# attribute that is a function, ufunc, dispatcher, type or submodule is a stable
-# reference numba resolves by identity, not a frozen value, so it is skipped.
+# data module attributes whose value must enter the fingerprint. A Dispatcher
+# module attribute is folded too (numba links it and freezes its own captured
+# globals/closure, exactly as for a direct global dispatcher). A ufunc, plain
+# function, or type is a stable reference numba resolves by identity (or by its
+# own builtin lowering), so it is skipped.
 _FROZEN_DATA_TYPES = (bool, int, float, complex, str, bytes,
                       np.generic, np.ndarray, tuple, list, set, frozenset, dict)
 
@@ -124,11 +126,14 @@ def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[i
     a global. numba bakes the leaf value into the binary, so a later change would be
     served stale. ``namespace`` maps referenced globals AND closure free-variables
     to their values; for each module reachable there, fold every referenced name in
-    its ``__dict__`` that is frozen data, recursing into referenced submodules (with
-    module-id cycle protection). Functions/ufuncs/types are stable references numba
-    resolves by identity, so they are skipped (the formula stays cacheable, no
-    recursion into e.g. numpy). ``__dict__`` membership (not ``getattr``) avoids
-    triggering a module ``__getattr__`` (lazy import)."""
+    its ``__dict__`` that is frozen data or a Dispatcher (whose own captured
+    globals/closure numba freezes when it links the call -- folded via
+    ``_canon_value`` exactly as a direct global dispatcher is), recursing into
+    referenced submodules (with module-id cycle protection). Ufuncs, plain
+    functions and types are stable references numba resolves by identity, so they
+    are skipped (the formula stays cacheable, no recursion into e.g. numpy).
+    ``__dict__`` membership (not ``getattr``) avoids triggering a module
+    ``__getattr__`` (lazy import)."""
     attrs: list[str] = []
     mods_seen: set[int] = set()
 
@@ -144,7 +149,8 @@ def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[i
             if isinstance(value, ModuleType):
                 _walk(f"{prefix}.{attr}", value)
                 continue
-            if value is not None and not isinstance(value, _FROZEN_DATA_TYPES):
+            if not (value is None or isinstance(value, _FROZEN_DATA_TYPES)
+                    or isinstance(value, Dispatcher)):
                 continue
             try:
                 canon = _canon_value(value, seen)
