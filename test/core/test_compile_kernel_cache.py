@@ -363,39 +363,11 @@ def test_module_attr_dufunc_captured_value_rekeys_fingerprint():
         != _fingerprint_function(_module_attr_dufunc_formula(999.0), set())
 
 
-# A PEP 562 __getattr__ lazily exposes SCALE (numba resolves and freezes it), so
-# the digest must resolve it via getattr for modules that define __getattr__.
-def _pep562_module_formula(scale_val):
-    mod = types.ModuleType("lazyfp_probe")
-
-    def _lazy(name):
-        if name == "SCALE":
-            return scale_val
-        raise AttributeError(name)
-    mod.__getattr__ = _lazy
-    f_code = compile("def f(x):\n    return x * lazyfp.SCALE\n", "<f>", "exec").co_consts[0]
-    return types.FunctionType(f_code, {"lazyfp": mod})
-
-
-def test_pep562_lazy_module_attribute_rekeys_fingerprint():
-    assert _fingerprint_function(_pep562_module_formula(2.0), set()) \
-        != _fingerprint_function(_pep562_module_formula(3.0), set())
-
-
-def _pep562_module_cached_dispatcher_formula():
-    mod = types.ModuleType("lazyfp_disp_probe")
-
-    def _lazy(name):
-        if name == "cached":
-            return _cached_formula
-        raise AttributeError(name)
-    mod.__getattr__ = _lazy
-    f_code = compile("def f(x):\n    return lazyfp.cached(x)\n", "<f>", "exec").co_consts[0]
-    return types.FunctionType(f_code, {"lazyfp": mod})
-
-
-def test_references_self_cached_through_pep562_module_attribute():
-    assert _references_self_cached(_pep562_module_cached_dispatcher_formula(), set()) is True
+# A value a module exposes ONLY via a PEP 562 __getattr__ is deliberately NOT
+# folded: resolving referenced names via getattr would fire an unrelated module's
+# __getattr__ (numpy's) on co-name collisions, importing submodules and emitting
+# deprecation warnings on every compile. Documented limitation -- no test asserts
+# the lazy-attribute case is covered.
 
 
 # Result-affecting numba codegen env knobs beyond BOUNDSCHECK enter the digest

@@ -48,7 +48,10 @@ inner binary. Such a unit is compiled without an on-disk cache, with a warning:
 numbox refuses to compound numba's flag-blind inner cache but cannot cure it (a
 change to the user dispatcher's flags or globals still serves that dispatcher's
 own stale binary in-process). Env-level codegen knobs other than
-``NUMBA_BOUNDSCHECK`` are likewise outside the digest.
+``NUMBA_BOUNDSCHECK`` are likewise outside the digest, as is a value or dispatcher
+a module exposes ONLY through a PEP 562 ``__getattr__`` (resolving it would fire
+unrelated modules' ``__getattr__`` on every compile) -- change such a value and
+clear the cache.
 """
 import hashlib
 import warnings
@@ -239,26 +242,19 @@ def _references_self_cached(value, seen: set[int]) -> bool:
 
 
 def _module_reaches_self_cached(mod, ref_names, seen: set[int], mods_seen: set[int]) -> bool:
-    """True if any referenced name in ``mod`` (recursing into referenced
-    submodules) reaches a cache-carrying Dispatcher. A normal module is scanned by
-    ``__dict__`` membership (no lazy-import side effects); a module that defines a
-    PEP 562 ``__getattr__`` also resolves each referenced name via ``getattr``,
-    since numba links a dispatcher it exposes lazily just the same."""
+    """True if any referenced name in ``mod``'s ``__dict__`` (recursing into
+    referenced submodules) reaches a cache-carrying Dispatcher. Scanning is by
+    ``__dict__`` membership (never ``getattr``) to avoid triggering an unrelated
+    module's PEP 562 ``__getattr__`` on a co-name collision; a dispatcher a module
+    exposes ONLY via PEP 562 ``__getattr__`` is a documented uncovered case."""
     if id(mod) in mods_seen:
         return False
     mods_seen.add(id(mod))
     mod_dict = getattr(mod, "__dict__", {})
-    pep562 = "__getattr__" in mod_dict
     for name in ref_names:
-        if name in mod_dict:
-            val = mod_dict[name]
-        elif pep562:
-            try:
-                val = getattr(mod, name)
-            except Exception:  # noqa: BLE001 - a PEP 562 __getattr__ may raise anything
-                continue
-        else:
+        if name not in mod_dict:
             continue
+        val = mod_dict[name]
         if isinstance(val, ModuleType):
             if _module_reaches_self_cached(val, ref_names, seen, mods_seen):
                 return True
