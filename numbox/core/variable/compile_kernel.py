@@ -31,13 +31,24 @@ runtime-discovery path; a graph that declares nothing behaves exactly as today.
 
 The on-disk cache is content-addressed per compiled unit (the fused kernel, or
 each jit segment): the digest fingerprints each formula's code, constants,
-default arguments, closure-cell values, referenced globals, and the kernel's
-effective jit flags, so a stale binary is never reused and two distinct
-kernels never collide. The kernel source never mentions types, so declared
-signatures are appended to the digest as well: two declared-type variants of one
-graph therefore get distinct cache anchors. A formula with no canonical
-fingerprint forces its unit uncached (no anchor, no numba cache) -- never
-reused, never wrong.
+default arguments, closure-cell values, referenced globals and the values of
+referenced module attributes, plus the kernel's effective jit flags, any
+Dispatcher/DUFunc formula's targetoptions, and the process ``NUMBA_BOUNDSCHECK``
+setting. The kernel source never mentions types, so declared signatures are
+appended to the digest as well: two declared-type variants of one graph get
+distinct cache anchors. A formula with no canonical fingerprint forces its unit
+uncached (no anchor, no numba cache).
+
+This freshness guarantee covers the code numbox generates and njit-wraps from
+raw Python. It does *not* extend to a formula that carries its OWN numba on-disk
+cache -- a ``@njit(cache=True)`` Dispatcher -- whose cache key is blind to jit
+flags and global values: folding those into the outer kernel name cannot
+invalidate it, and a fresh outer would otherwise link (and serialize) the stale
+inner binary. Such a unit is compiled without an on-disk cache, with a warning:
+numbox refuses to compound numba's flag-blind inner cache but cannot cure it (a
+change to the user dispatcher's flags or globals still serves that dispatcher's
+own stale binary in-process). Env-level codegen knobs other than
+``NUMBA_BOUNDSCHECK`` are likewise outside the digest.
 """
 import hashlib
 import warnings
@@ -846,15 +857,20 @@ def compile_kernel(
 
     Caching: the kernel digest fingerprints each formula's bytecode,
     constants, default values, closure-cell values, referenced module-level
-    globals (including helper functions, recursively), defining module, and
-    the effective jit flags. Because the generated source never mentions types,
+    globals (including helper functions, recursively) and referenced
+    module-attribute values, defining module, the effective jit flags, any
+    Dispatcher/DUFunc formula's targetoptions, and the process
+    ``NUMBA_BOUNDSCHECK``. Because the generated source never mentions types,
     a declared graph's signatures are appended to the digest too (the consumed
     external signature for an eager fused kernel, each segment's live-in/out
     signature for an eager segment), so two declared-type variants of one
     type-free graph get distinct cache anchors and never reuse each other's
     binary. A formula whose state cannot be fingerprinted (e.g.
-    cres/CompileResultWAP objects, values with no canonical form) downgrades
-    that one kernel to cache=False: always recompiled, never stale. When caching
+    cres/CompileResultWAP objects, values with no canonical form), or that
+    carries its own numba cache (a `@njit(cache=True)` Dispatcher, whose key is
+    flag- and global-blind and cannot be invalidated from outside), downgrades
+    that one kernel to cache=False, with a warning: always recompiled, never
+    stale. See the module docstring for the guarantee's scope. When caching
     is enabled, a content-addressed anchor `.py` file is written under numba's
     cache directory; with caching off (or the cache dir unwritable, which warns
     and degrades) nothing is written.
