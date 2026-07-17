@@ -140,8 +140,10 @@ def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[i
     referenced submodules (with module-id cycle protection). Ufuncs, plain
     functions and types are stable references numba resolves by identity, so they
     are skipped (the formula stays cacheable, no recursion into e.g. numpy).
-    ``__dict__`` membership (not ``getattr``) avoids triggering a module
-    ``__getattr__`` (lazy import)."""
+    A normal module is scanned by ``__dict__`` membership (no lazy-import side
+    effects); a module that defines a PEP 562 ``__getattr__`` also resolves each
+    referenced name via ``getattr`` (numba freezes such lazy attributes the same
+    way)."""
     attrs: list[str] = []
     mods_seen: set[int] = set()
 
@@ -150,10 +152,22 @@ def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[i
             return
         mods_seen.add(id(mod))
         mod_dict = getattr(mod, "__dict__", {})
+        pep562 = "__getattr__" in mod_dict
         for attr in sorted(referenced):
-            if attr not in mod_dict:
+            if attr in mod_dict:
+                value = mod_dict[attr]
+            elif pep562:
+                # PEP 562: numba resolves lazy module attributes via getattr and
+                # freezes them, so a __getattr__-only module must be resolved the
+                # same way. Normal modules stay __dict__-only (no lazy-import side
+                # effects). getattr on a name meant for another object may raise;
+                # skip on any failure.
+                try:
+                    value = getattr(mod, attr)
+                except Exception:  # noqa: BLE001 - a PEP 562 __getattr__ may raise anything
+                    continue
+            else:
                 continue
-            value = mod_dict[attr]
             if isinstance(value, ModuleType):
                 _walk(f"{prefix}.{attr}", value)
                 continue

@@ -239,17 +239,26 @@ def _references_self_cached(value, seen: set[int]) -> bool:
 
 
 def _module_reaches_self_cached(mod, ref_names, seen: set[int], mods_seen: set[int]) -> bool:
-    """True if any referenced name in ``mod``'s ``__dict__`` (recursing into
-    referenced submodules) reaches a cache-carrying Dispatcher. ``__dict__``
-    membership avoids triggering a module ``__getattr__`` (lazy import)."""
+    """True if any referenced name in ``mod`` (recursing into referenced
+    submodules) reaches a cache-carrying Dispatcher. A normal module is scanned by
+    ``__dict__`` membership (no lazy-import side effects); a module that defines a
+    PEP 562 ``__getattr__`` also resolves each referenced name via ``getattr``,
+    since numba links a dispatcher it exposes lazily just the same."""
     if id(mod) in mods_seen:
         return False
     mods_seen.add(id(mod))
     mod_dict = getattr(mod, "__dict__", {})
+    pep562 = "__getattr__" in mod_dict
     for name in ref_names:
-        if name not in mod_dict:
+        if name in mod_dict:
+            val = mod_dict[name]
+        elif pep562:
+            try:
+                val = getattr(mod, name)
+            except Exception:  # noqa: BLE001 - a PEP 562 __getattr__ may raise anything
+                continue
+        else:
             continue
-        val = mod_dict[name]
         if isinstance(val, ModuleType):
             if _module_reaches_self_cached(val, ref_names, seen, mods_seen):
                 return True
