@@ -38,11 +38,23 @@ def _safe_repr(obj: object) -> str:
         return f"<{type(obj).__name__} repr-failed>"
 
 
+def _dtype_key(dtype: np.dtype) -> str:
+    """Canonical string for a numpy dtype that preserves structured layout.
+
+    ``dtype.str`` collapses any structured dtype to ``|V<itemsize>`` -- field
+    names, types, order and offsets are all erased, so two same-byte different-
+    layout arrays would collide. For a structured dtype fold its full
+    descriptor and itemsize instead."""
+    if dtype.names is not None:
+        return f"struct({dtype!s};descr={dtype.descr};itemsize={dtype.itemsize})"
+    return dtype.str
+
+
 def _canon_value(value: Any, seen: set[int]) -> str:
     if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
         return repr(value)
     if isinstance(value, np.generic):
-        return f"npscalar({value.dtype.str};{value.tobytes().hex()})"
+        return f"npscalar({_dtype_key(value.dtype)};{value.tobytes().hex()})"
     if isinstance(value, np.ndarray):
         if value.dtype.hasobject:
             raise _Unfingerprintable(f"object-dtype ndarray {value.dtype.str}")
@@ -51,7 +63,7 @@ def _canon_value(value: Any, seen: set[int]) -> str:
             raw = hashlib.sha256(data.tobytes()).hexdigest()
         except (ValueError, TypeError) as e:
             raise _Unfingerprintable(f"unhashable ndarray {value.dtype.str}") from e
-        return f"ndarray({data.dtype.str};{value.shape};{raw})"
+        return f"ndarray({_dtype_key(data.dtype)};{value.shape};{raw})"
     if isinstance(value, (tuple, list)):
         return f"{type(value).__name__}[" + ",".join(_canon_value(v, seen) for v in value) + "]"
     if isinstance(value, (set, frozenset)):
@@ -62,6 +74,12 @@ def _canon_value(value: Any, seen: set[int]) -> str:
     if isinstance(value, ModuleType):
         return f"module({value.__name__})"
     if isinstance(value, Dispatcher):
+        proxy_alias = getattr(value, "_numbox_proxy_alias", None)
+        if proxy_alias is not None:
+            # A @proxy binding: its content-addressed alias fully identifies the
+            # body and signature. Walking its wrapper would recurse into the
+            # @intrinsic it calls, which has no canonical form.
+            return f"proxy({proxy_alias})"
         topts = _canon_value(dict(getattr(value, "targetoptions", {}) or {}), seen)
         return f"dispatcher({_fingerprint_function(value.py_func, seen)};{topts})"
     if isinstance(value, FunctionType):

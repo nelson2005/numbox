@@ -217,6 +217,12 @@ def {func_proxy_name}({func_args_str}):
         exec(code, ns)  # nosec B102 - JIT codegen of internal source
         dispatcher = ns[func_proxy_name]
         dispatcher.as_func = CompileResultWAP(cres)
+        # Tag the dispatcher with its process-stable alias so the fingerprint
+        # walker can identify a @proxy binding by that alias instead of recursing
+        # into its wrapper's @intrinsic (which has no canonical form) -- otherwise
+        # a callback that calls a proxied binding is un-fingerprintable and its
+        # cache digest silently degrades to a coarse fallback.
+        dispatcher._numbox_proxy_alias = cfunc_alias
         return dispatcher
     return wrap
 
