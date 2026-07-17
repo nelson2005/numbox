@@ -1,6 +1,6 @@
 from collections import namedtuple
 from hashlib import sha256
-from inspect import getfile, getmodule, getsource
+from inspect import getfile, getmodule
 from io import StringIO
 from itertools import chain
 from numba import njit, typeof
@@ -9,6 +9,9 @@ from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple as
 
 from numbox.core.configurations import jit_options as jit_options_
 from numbox.core.work.lowlevel_work_utils import ll_make_work
+from numbox.utils.fingerprint import (
+    _Unfingerprintable, _fingerprint_function, _referenced_global_names, _safe_repr,
+)
 from numbox.utils.highlevel import cres, hash_type
 
 
@@ -84,6 +87,31 @@ def get_ty(spec_):
 _derive_funcs = {}
 
 
+def _derive_fingerprint(derive) -> tuple[str, bool]:
+    """Return ``(fingerprint, cacheable)`` for a derive function.
+
+    Routes the derive through the deep walker so its referenced-global *values*
+    enter the kernel fingerprint, replacing a bare ``sha256(getsource(...))``
+    that was blind to them (and raised ``OSError`` on exec/REPL-defined derives).
+
+    A derive that reads module globals is fingerprinted but **not** cacheable:
+    it is compiled as a standalone dispatcher (not inlined into the
+    content-addressed kernel), and numba's own cache key covers only
+    ``co_code`` + closure, so a changed global would silently serve a stale
+    binary. Such a derive is compiled uncached -- recompiled per process,
+    never wrong -- mirroring ``compile_kernel``'s degrade path. An
+    un-fingerprintable derive is likewise uncached.
+    """
+    try:
+        fingerprint = _fingerprint_function(derive, set())
+    except (_Unfingerprintable, RecursionError):
+        return f"{_safe_repr(derive)} @{id(derive)}", False
+    reads_module_state = any(
+        name in derive.__globals__ for name in _referenced_global_names(derive.__code__)
+    )
+    return fingerprint, not reads_module_state
+
+
 def _derived_cres(ty, sources: Sequence[End], derive, jit_options=None):
     jit_options = jit_options if jit_options is not None else {}
     sources_ty = []
@@ -105,8 +133,10 @@ def _derived_line(
     sources_ = sources_ + ", " if sources_ and "," not in sources_ else sources_
     ty_ = get_ty(derived_)
     derive_func = derived_.derive
-    derive_hashes.append(sha256(getsource(derive_func).encode("utf-8")).hexdigest())
-    derive_ = _derived_cres(ty_, derived_.sources, derive_func, jit_options)
+    derive_fp, derive_cacheable = _derive_fingerprint(derive_func)
+    derive_hashes.append(derive_fp)
+    derive_jit = jit_options if derive_cacheable else {**(jit_options or {}), "cache": False}
+    derive_ = _derived_cres(ty_, derived_.sources, derive_func, derive_jit)
     derive_name = f"{name_}_derive"
     init_name = f"{name_}_init"
     _make_args.append(derive_name)
