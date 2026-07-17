@@ -35,6 +35,19 @@ def _formula_calls_cached(x):
     return _cached_formula(x)
 
 
+# The cached dispatcher reached only through a default argument, or nested in a
+# container global -- channels the digest folds, so the guard must too.
+def _formula_default_arg(x, h=_cached_formula):
+    return h(x)
+
+
+_HELPERS = (_cached_formula,)
+
+
+def _formula_container_global(x):
+    return _HELPERS[0](x)
+
+
 def _run_probe(probe, env):
     r = subprocess.run(
         [sys.executable, str(probe)],
@@ -254,6 +267,66 @@ def test_formula_calling_cache_true_dispatcher_not_poisoned(tmp_path):
     _run_probe(probe, env)
     outer = list((tmp_path / "nbcache").rglob("_kernel_*"))
     assert not outer, f"numbox cached an outer kernel despite a cache=True callee (poisoning): {outer}"
+
+
+def test_references_self_cached_through_default_argument():
+    assert _references_self_cached(_formula_default_arg, set()) is True
+
+
+def test_references_self_cached_through_container_global():
+    assert _references_self_cached(_formula_container_global, set()) is True
+
+
+def test_default_arg_cached_dispatcher_makes_unit_uncacheable():
+    with pytest.warns(UserWarning, match="reference, a @njit"):
+        disp = _compile(_KERNEL_SRC, {"f_x": njit(_formula_default_arg)}, None, None)
+    assert isinstance(disp._cache, NullCache)
+
+
+# Chained (cfg.sub.SCALE) and closure-captured module attributes must fold too
+# ---------------------------------------------------------------------------
+
+def _func_reading_chained_module_attr(scale):
+    cfg = types.ModuleType("cfg_chain_probe")
+    sub = types.ModuleType("cfg_chain_probe.sub")
+    cfg.sub = sub
+    sub.SCALE = scale
+    code = compile("def f(x):\n    return x * cfg.sub.SCALE\n", "<p>", "exec").co_consts[0]
+    return types.FunctionType(code, {"cfg": cfg})
+
+
+def test_chained_module_attribute_rekeys_fingerprint():
+    assert _fingerprint_function(_func_reading_chained_module_attr(2.0), set()) \
+        != _fingerprint_function(_func_reading_chained_module_attr(3.0), set())
+
+
+def _closure_module_formula(scale):
+    mod = types.ModuleType("cmod_closure_probe")
+    mod.SCALE = scale
+
+    def make(m):
+        def f(x):
+            return x * m.SCALE
+        return f
+    return make(mod)
+
+
+def test_closure_captured_module_attribute_rekeys_fingerprint():
+    assert _fingerprint_function(_closure_module_formula(2.0), set()) \
+        != _fingerprint_function(_closure_module_formula(3.0), set())
+
+
+# Result-affecting numba codegen env knobs beyond BOUNDSCHECK enter the digest
+# ---------------------------------------------------------------------------
+
+def test_vectorize_env_knob_enters_digest(monkeypatch):
+    import numbox.core.variable.compile_kernel as ck
+    src = "def _kernel(a0):\n    return (a0,)\n"
+    monkeypatch.setattr(ck.numba_config, "LOOP_VECTORIZE", 0, raising=False)
+    name0 = _compile(src, {}, None, None).py_func.__name__
+    monkeypatch.setattr(ck.numba_config, "LOOP_VECTORIZE", 1, raising=False)
+    name1 = _compile(src, {}, None, None).py_func.__name__
+    assert name0 != name1, "LOOP_VECTORIZE absent from the cache digest"
 
 
 # NUMBA_BOUNDSCHECK is an env codegen knob outside the jit flags and numba's key

@@ -106,6 +106,20 @@ def _effective_flags(jit_options: dict | None) -> dict:
     return {k: v for k, v in opts.items() if k != "cache"}
 
 
+# Env-level codegen knobs that change the emitted binary but live in neither the
+# jit flags nor numba's own on-disk cache key (which covers only sig + target
+# magic + code hashes). They override even an explicit jit flag at lowering, so
+# they must enter the digest directly, read at compile time.
+_CODEGEN_ENV_KNOBS = (
+    "BOUNDSCHECK", "LOOP_VECTORIZE", "SLP_VECTORIZE", "ENABLE_AVX", "DISABLE_INTEL_SVML",
+)
+
+
+def _codegen_env_canon() -> str:
+    """Canonical string for the process's result-affecting numba codegen env knobs."""
+    return repr([(k, getattr(numba_config, k, None)) for k in _CODEGEN_ENV_KNOBS])
+
+
 def _flags_canon(flags: dict) -> tuple[str, bool]:
     """Canonical string for the effective jit flags, and whether it is a true
     canonicalization (``False`` if a flag value had no canonical form, e.g. a
@@ -178,32 +192,39 @@ def _pyfunc_of(formula):
     return func if isinstance(func, FunctionType) else None
 
 
-def _references_self_cached(formula, seen: set[int]) -> bool:
-    """True if ``formula`` IS, or transitively references through its globals or
-    closure, a Dispatcher carrying its own numba cache. A plain formula that
-    *calls* a ``@njit(cache=True)`` dispatcher links that dispatcher's flag- and
-    global-blind binary; the outer digest re-keys but cannot invalidate the
-    callee's cache, so the unit must not be disk-cached either (else a stale inner
-    is serialized into a fresh-digest artifact -- the same poisoning as the direct
-    case, one call deeper)."""
-    if id(formula) in seen:
+def _references_self_cached(value, seen: set[int]) -> bool:
+    """True if ``value`` IS, or transitively holds/references, a Dispatcher with
+    its own numba cache. A formula that reaches a ``@njit(cache=True)`` dispatcher
+    -- through a call, a default argument, a container, a closure cell, or a global
+    -- links that dispatcher's flag- and global-blind binary; the outer digest
+    re-keys on it yet cannot invalidate the callee's cache, so the unit must not be
+    disk-cached either (else a stale inner is serialized into a fresh-digest
+    artifact). This mirrors ``_canon_value``'s traversal so every channel the
+    digest folds is also covered here -- a narrower walk leaves a poisoning gap."""
+    if id(value) in seen:
         return False
-    seen.add(id(formula))
-    if _is_self_cached(formula):
+    seen.add(id(value))
+    if _is_self_cached(value):
         return True
-    func = _pyfunc_of(formula)
+    if isinstance(value, (tuple, list, set, frozenset)):
+        return any(_references_self_cached(v, seen) for v in value)
+    if isinstance(value, dict):
+        return any(_references_self_cached(v, seen) for v in value.values())
+    func = _pyfunc_of(value)
     if func is None:
         return False
     for cell in func.__closure__ or ():
         try:
-            val = cell.cell_contents
+            contents = cell.cell_contents
         except ValueError:
             continue
-        if callable(val) and _references_self_cached(val, seen):
+        if _references_self_cached(contents, seen):
+            return True
+    for default in (func.__defaults__ or ()) + tuple((func.__kwdefaults__ or {}).values()):
+        if _references_self_cached(default, seen):
             return True
     for name in _referenced_global_names(func.__code__):
-        val = func.__globals__.get(name)
-        if callable(val) and _references_self_cached(val, seen):
+        if name in func.__globals__ and _references_self_cached(func.__globals__[name], seen):
             return True
     return False
 
@@ -394,9 +415,10 @@ def _compile(
         "ck-digest-v3\n" + source
         + "\n# formulas:\n" + "\n".join(fingerprints)
         + "\n# flags: " + flags_canon
-        # NUMBA_BOUNDSCHECK overrides even an explicit boundscheck flag at lowering
-        # and is in neither the jit flags nor numba's own cache key.
-        + "\n# boundscheck: " + repr(numba_config.BOUNDSCHECK)
+        # Env codegen knobs (BOUNDSCHECK, LOOP/SLP vectorize, ...) override even an
+        # explicit jit flag at lowering and are in neither the jit flags nor numba's
+        # own cache key.
+        + "\n# codegen_env: " + _codegen_env_canon()
         + "\n# declared_sigs: " + repr([repr(s) for s in declared_sigs])
     )
     if not cacheable:
@@ -908,10 +930,12 @@ def compile_kernel(
     type-free graph get distinct cache anchors and never reuse each other's
     binary. A formula whose state cannot be fingerprinted (e.g.
     cres/CompileResultWAP objects, values with no canonical form), or that
-    carries its own numba cache (a `@njit(cache=True)` Dispatcher, whose key is
-    flag- and global-blind and cannot be invalidated from outside), downgrades
-    that one kernel to cache=False, with a warning: always recompiled, never
-    stale. See the module docstring for the guarantee's scope. When caching
+    carries -- or reaches -- its own numba cache (a `@njit(cache=True)` Dispatcher,
+    whose key is flag- and global-blind and cannot be invalidated from outside),
+    downgrades that one kernel to cache=False: always recompiled, never stale. The
+    self-cached-dispatcher and un-canonicalizable-flag degrades emit a warning; an
+    inherently unfingerprintable formula kind (CFunc, cres) degrades silently as
+    documented. See the module docstring for the guarantee's scope. When caching
     is enabled, a content-addressed anchor `.py` file is written under numba's
     cache directory; with caching off (or the cache dir unwritable, which warns
     and degrades) nothing is written.

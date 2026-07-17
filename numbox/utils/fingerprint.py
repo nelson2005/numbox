@@ -114,35 +114,49 @@ _FROZEN_DATA_TYPES = (bool, int, float, complex, str, bytes,
                       np.generic, np.ndarray, tuple, list, set, frozenset, dict)
 
 
-def _fingerprint_module_attrs(referenced: set[str], func_globals: dict, seen: set[int]) -> str:
+def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[int]) -> str:
     """Fold the values of ``<module>.<attr>`` reads that numba freezes as constants.
 
     ``_fingerprint_function`` folds referenced globals present in ``__globals__``,
-    but a value read through one level of module indirection (``import cfg;
-    cfg.SCALE``) is invisible: ``cfg`` canonicalizes to ``module(<name>)`` and
-    ``SCALE`` is not itself a global. numba bakes ``cfg.SCALE``'s value into the
-    binary, so a later change would be served stale. For every referenced global
-    that is a module, fold the canonical value of each referenced name present in
-    that module's ``__dict__`` whose value is frozen data. ``__dict__`` membership
-    (not ``getattr``) avoids triggering a module ``__getattr__`` (lazy import)."""
-    attrs = []
-    for gname in sorted(referenced):
-        mod = func_globals.get(gname)
-        if not isinstance(mod, ModuleType):
-            continue
+    but a value read through module indirection (``import cfg; cfg.SCALE``, or the
+    chained ``cfg.sub.SCALE``, or a closure-captured module) is invisible: the
+    module canonicalizes to ``module(<name>)`` and the leaf ``SCALE`` is not itself
+    a global. numba bakes the leaf value into the binary, so a later change would be
+    served stale. ``namespace`` maps referenced globals AND closure free-variables
+    to their values; for each module reachable there, fold every referenced name in
+    its ``__dict__`` that is frozen data, recursing into referenced submodules (with
+    module-id cycle protection). Functions/ufuncs/types are stable references numba
+    resolves by identity, so they are skipped (the formula stays cacheable, no
+    recursion into e.g. numpy). ``__dict__`` membership (not ``getattr``) avoids
+    triggering a module ``__getattr__`` (lazy import)."""
+    attrs: list[str] = []
+    mods_seen: set[int] = set()
+
+    def _walk(prefix: str, mod: ModuleType) -> None:
+        if id(mod) in mods_seen:
+            return
+        mods_seen.add(id(mod))
         mod_dict = getattr(mod, "__dict__", {})
         for attr in sorted(referenced):
-            if attr == gname or attr not in mod_dict:
+            if attr not in mod_dict:
                 continue
             value = mod_dict[attr]
+            if isinstance(value, ModuleType):
+                _walk(f"{prefix}.{attr}", value)
+                continue
             if value is not None and not isinstance(value, _FROZEN_DATA_TYPES):
                 continue
             try:
                 canon = _canon_value(value, seen)
             except (_Unfingerprintable, RecursionError):
                 continue
-            attrs.append(f"{gname}.{attr}={canon}")
-    return f";module_attrs=[{';'.join(attrs)}]" if attrs else ""
+            attrs.append(f"{prefix}.{attr}={canon}")
+
+    for name in sorted(namespace):
+        val = namespace[name]
+        if isinstance(val, ModuleType):
+            _walk(name, val)
+    return f";module_attrs=[{';'.join(sorted(attrs))}]" if attrs else ""
 
 
 def _fingerprint_function(func: FunctionType, seen: set[int]) -> str:
@@ -151,18 +165,22 @@ def _fingerprint_function(func: FunctionType, seen: set[int]) -> str:
     seen = seen | {id(func)}
     code = func.__code__
     cells = []
+    closure_vals = {}
     for name, cell in zip(code.co_freevars, func.__closure__ or ()):
         try:
             contents = cell.cell_contents
         except ValueError as e:
             raise _Unfingerprintable("empty closure cell") from e
         cells.append(f"{name}={_canon_value(contents, seen)}")
+        closure_vals[name] = contents
     referenced = _referenced_global_names(code)
     hashed_globals = []
     for name in sorted(referenced):
         if name in func.__globals__:
             hashed_globals.append(f"{name}={_canon_value(func.__globals__[name], seen)}")
-    module_attrs = _fingerprint_module_attrs(referenced, func.__globals__, seen)
+    modattr_ns = {n: func.__globals__[n] for n in referenced if n in func.__globals__}
+    modattr_ns.update(closure_vals)
+    module_attrs = _fingerprint_module_attrs(referenced, modattr_ns, seen)
     return (
         f"func({func.__module__}:{func.__qualname__};{_fingerprint_codeobj(code, seen)};"
         f"defaults={_canon_value(func.__defaults__ or (), seen)};"
