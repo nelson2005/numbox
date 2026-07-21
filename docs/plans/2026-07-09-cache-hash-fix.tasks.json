@@ -59,11 +59,31 @@
     {
       "id": 4,
       "subject": "T4: Walk module-attribute reads in _canon_value",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
-      "description": "**Goal:** A formula reading `cfg.SCALE` keeps its fingerprint when `SCALE` changes because a referenced module canonicalizes as `module(<name>)` without descending (H6). Pair `co_names` attribute reads against module globals in the walker, or conservatively mark module-attribute-reading formulas unfingerprintable so they degrade to uncached.\n\n**Files:** `numbox/utils/fingerprint.py`, tests (new `test/utils/test_fingerprint.py` if warranted).\n\nAdversarial verify.\n\n```json:metadata\n{\"files\": [\"numbox/utils/fingerprint.py\", \"test/utils/test_digest.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/utils/test_digest.py test/core/test_compile_kernel.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"cfg.SCALE change either re-keys the fingerprint or degrades the formula to uncached (repro no longer serves stale)\", \"module-attr repro from the review fails on pre-fix, passes after\", \"no regression to existing global-by-value fingerprinting\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"H6\"]}\n```"
+      "description": "**Goal:** A formula reading `cfg.SCALE` keeps its fingerprint when `SCALE` changes because a referenced module canonicalizes as `module(<name>)` without descending (H6). Pair `co_names` attribute reads against module globals in the walker, or conservatively mark module-attribute-reading formulas unfingerprintable so they degrade to uncached.\n\n**Files:** `numbox/utils/fingerprint.py`, tests (new `test/utils/test_fingerprint.py` if warranted).\n\nAdversarial verify.\n\n```json:metadata\n{\"files\": [\"numbox/utils/fingerprint.py\", \"test/utils/test_digest.py\", \"test/core/test_compile_kernel.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/utils/test_digest.py test/core/test_compile_kernel.py --durations=20 && /home/erik/projects/numbox/venv/bin/flake8 .\", \"acceptanceCriteria\": [\"cfg.SCALE change either re-keys the fingerprint or degrades the formula to uncached (repro no longer serves stale)\", \"module-attr repro from the review fails on pre-fix, passes after\", \"no regression to existing global-by-value fingerprinting\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"H6\"]}\n```",
+      "closure": {
+        "outcome": "Already satisfied by the 2026-07-17 compile_kernel cache-correctness remediation (CK3); no new code needed. Verified 2026-07-21 rather than assumed.",
+        "mechanism": "_fingerprint_module_attrs (numbox/utils/fingerprint.py) pairs co_names attribute reads against module globals and is called from _fingerprint_function, so a read module attribute enters the fingerprint even though a bare module still canonicalizes as module(<name>).",
+        "verified": [
+          "cfg.SCALE 2.0 -> 99.0 re-keys _fingerprint_function: True",
+          "cfg.OFFSET (present but never read) changed: fingerprint unchanged -- precise, no over-invalidation",
+          "builder path: a derive reading cfg.SCALE is marked cacheable=False by _derive_fingerprint (the 'conservatively degrade' arm of the task goal) AND its fingerprint re-keys on the value; a derive reading nothing stays cacheable=True"
+        ],
+        "pinnedBy": [
+          "test_module_attribute_value_change_rekeys_fingerprint",
+          "test_module_function_attr_stays_a_stable_reference",
+          "test_module_constant_change_not_stale_across_processes (cross-process)",
+          "test_chained_module_attribute_rekeys_fingerprint",
+          "test_closure_captured_module_attribute_rekeys_fingerprint",
+          "test_module_attr_dispatcher_captured_value_rekeys_fingerprint",
+          "test_module_attr_dufunc_captured_value_rekeys_fingerprint",
+          "test_make_graph_derive_reading_global_is_not_stale_across_processes (builder, cross-process)"
+        ],
+        "knownLimitation": "A value or dispatcher exposed ONLY via a PEP 562 module __getattr__ is left uncovered on purpose -- resolving it fires unrelated modules' __getattr__ on every compile. The getattr fallback was tried and reverted (a625d72); documented in the _fingerprint_module_attrs docstring."
+      }
     },
     {
       "id": 5,
