@@ -21,8 +21,11 @@ from typing import Any
 
 import numpy as np
 
+from numba.core import config as numba_config
 from numba.core.dispatcher import Dispatcher
 from numba.np.ufunc.dufunc import DUFunc
+
+from numbox.core.configurations import jit_options as _default_jit_options
 
 
 class _Unfingerprintable(Exception):
@@ -261,3 +264,49 @@ def _fingerprint_function_best_effort(func: FunctionType) -> str:
         f"kwdefaults={_canon(func.__kwdefaults__ or {})};"
         f"closure=[{';'.join(cells)}];globals=[{';'.join(hashed_globals)}])"
     )
+
+
+# ---- Effective jit flags ----
+#
+# Shared by every content-addressed cache key that must re-key when the resolved
+# jit flags change: the `compile_kernel` digest and the `make_graph` kernel
+# fingerprint. Kept here rather than in `compile_kernel` so `builder` can reuse it
+# without importing that module (whose import runs an orphan-anchor sweep).
+
+_CODEGEN_ENV_KNOBS = (
+    "BOUNDSCHECK", "LOOP_VECTORIZE", "SLP_VECTORIZE", "ENABLE_AVX", "DISABLE_INTEL_SVML",
+)
+
+
+def _effective_flags(jit_options: dict | None) -> dict:
+    """The non-`cache` jit flags, resolved against the numbox defaults.
+
+    `cache` is excluded deliberately: whether an artifact is written to disk does
+    not change the emitted binary, so folding it would split the key needlessly.
+    Every other flag (`fastmath`, `error_model`, `boundscheck`, ...) does change
+    the binary and must re-key.
+    """
+    opts = {**_default_jit_options, **(jit_options or {})}
+    return {k: v for k, v in opts.items() if k != "cache"}
+
+
+def _codegen_env_canon() -> str:
+    """Canonical string for the process's result-affecting numba codegen env knobs.
+
+    These change the emitted binary but live in neither the jit flags nor numba's
+    own on-disk cache key, and they override even an explicit jit flag at lowering,
+    so they must enter a digest directly, read at compile time.
+    """
+    return repr([(k, getattr(numba_config, k, None)) for k in _CODEGEN_ENV_KNOBS])
+
+
+def _flags_canon(flags: dict) -> tuple[str, bool]:
+    """Canonical string for the effective jit flags, and whether it is a true
+    canonicalization (``False`` if a flag value had no canonical form, e.g. a
+    ``pipeline_class`` or numba-typed ``locals``). A ``False`` here means the
+    caller must degrade to uncached: a key that cannot see a flag cannot protect
+    the binary that flag produced."""
+    try:
+        return _canon_value(flags, set()), True
+    except (_Unfingerprintable, RecursionError):
+        return repr(sorted(flags.items(), key=repr)), False

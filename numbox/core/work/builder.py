@@ -10,7 +10,8 @@ from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple as
 from numbox.core.configurations import jit_options as jit_options_
 from numbox.core.work.lowlevel_work_utils import ll_make_work
 from numbox.utils.fingerprint import (
-    _Unfingerprintable, _fingerprint_function, _referenced_global_names, _safe_repr,
+    _Unfingerprintable, _codegen_env_canon, _effective_flags, _fingerprint_function,
+    _flags_canon, _referenced_global_names, _safe_repr,
 )
 from numbox.utils.highlevel import cres, hash_type
 
@@ -162,13 +163,24 @@ def code_block_hash(code_txt: str):
     return sha256(code_txt.encode("utf-8")).hexdigest()
 
 
-def _kernel_fingerprint(code_block: str, derive_hashes: list, type_sigs: list) -> str:
+def _kernel_fingerprint(code_block: str, derive_hashes: list, type_sigs: list, jit_options=None) -> str:
     """Content hash baked into the name ``_make_<hash>`` of the generated kernel.
+
     Folds each node's declared type (``type_sigs``) in alongside the body text and
     derive source hashes, since a declared ty reaches the generated code only as the
-    bare global name ``{name}_ty`` and so is not otherwise captured by the body."""
+    bare global name ``{name}_ty`` and so is not otherwise captured by the body.
+
+    Also folds the resolved jit flags and the process codegen env knobs. The body
+    text renders them only as the literal ``@njit(**jit_options)``, so without this
+    two graphs differing solely in ``error_model`` or ``fastmath`` produced the same
+    ``_make_<hash>`` name, shared numba's cache key, and the second process linked
+    the first's binary -- a kernel cached under ``error_model="numpy"`` returned
+    ``inf`` for a division by zero that the default model must raise on.
+    """
+    flags_canon, _ = _flags_canon(_effective_flags(jit_options))
     return code_block_hash(
         f"code_block = {code_block} derive_hashes = {derive_hashes} type_sigs = {type_sigs}"
+        f" flags = {flags_canon} codegen_env = {_codegen_env_canon()}"
     )
 
 
@@ -219,7 +231,7 @@ def make_graph(
         line_ = _derived_line(derived_, ns, initializers, derive_hashes, _make_args, jit_options)
         code_txt.write(f"\n\t{line_}")
     type_sigs = [(n.name, hash_type(get_ty(n))) for n in chain(all_inputs_, all_derived_)]
-    hash_ = _kernel_fingerprint(code_txt.getvalue(), derive_hashes, type_sigs)
+    hash_ = _kernel_fingerprint(code_txt.getvalue(), derive_hashes, type_sigs, jit_options)
     access_nodes_names = [n.name for n in access_nodes]
     tup_ = ", ".join(access_nodes_names) + ","
     code_txt.write(f"""\n\taccess_tuple = ({tup_})""")

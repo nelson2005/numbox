@@ -61,7 +61,6 @@ from types import FunctionType, ModuleType
 from typing import Any, Callable, NamedTuple
 
 from numba import njit, typeof
-from numba.core import config as numba_config
 from numba.core.caching import NullCache
 from numba.core.ccallback import CFunc
 from numba.core.dispatcher import Dispatcher
@@ -80,7 +79,8 @@ from numbox.core.variable.variable import (
     QUAL_SEP, CompiledGraph, CompiledNode, Graph, Variable, make_qual_name,
 )
 from numbox.utils.fingerprint import (
-    _Unfingerprintable, _canon_value, _fingerprint_function, _referenced_global_names, _safe_repr,
+    _Unfingerprintable, _canon_value, _codegen_env_canon, _effective_flags, _fingerprint_function,
+    _flags_canon, _referenced_global_names, _safe_repr,
 )
 from numbox.utils.preprocessing import (
     _anchor_root, _materialize_anchor, _orphan_anchor_sweep,
@@ -98,40 +98,6 @@ class _KernelCtx(NamedTuple):
     jit_options: dict | None
     cache: bool | None
     external: set
-
-
-def _effective_flags(jit_options: dict | None) -> dict:
-    """The non-`cache` jit flags for the kernel. Threaded into the inner formula
-    njit-wraps too, so a plain-Python formula computes identically whether reached
-    via discovery, a fused segment, or the fully fused kernel (non-default flags such
-    as `fastmath`/`error_model` otherwise diverge across the discovery boundary)."""
-    opts = {**_default_jit_options, **(jit_options or {})}
-    return {k: v for k, v in opts.items() if k != "cache"}
-
-
-# Env-level codegen knobs that change the emitted binary but live in neither the
-# jit flags nor numba's own on-disk cache key (which covers only sig + target
-# magic + code hashes). They override even an explicit jit flag at lowering, so
-# they must enter the digest directly, read at compile time.
-_CODEGEN_ENV_KNOBS = (
-    "BOUNDSCHECK", "LOOP_VECTORIZE", "SLP_VECTORIZE", "ENABLE_AVX", "DISABLE_INTEL_SVML",
-)
-
-
-def _codegen_env_canon() -> str:
-    """Canonical string for the process's result-affecting numba codegen env knobs."""
-    return repr([(k, getattr(numba_config, k, None)) for k in _CODEGEN_ENV_KNOBS])
-
-
-def _flags_canon(flags: dict) -> tuple[str, bool]:
-    """Canonical string for the effective jit flags, and whether it is a true
-    canonicalization (``False`` if a flag value had no canonical form, e.g. a
-    ``pipeline_class`` or numba-typed ``locals``). Used both for the cache digest
-    and the declared-return memo key so both re-key when the flags change."""
-    try:
-        return _canon_value(flags, set()), True
-    except (_Unfingerprintable, RecursionError):
-        return repr(sorted(flags.items(), key=repr)), False
 
 
 def _formula_fingerprint(formula) -> tuple[str, bool]:
