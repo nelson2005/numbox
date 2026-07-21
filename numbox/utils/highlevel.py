@@ -101,7 +101,29 @@ def determine_field_index(struct_ty, field_name):
 
 
 def hash_type(ty: Type):
-    mangled_ty = mangle_type_or_value(ty)
+    """Content hash of a numba type, for folding into a content-addressed name.
+
+    A Dispatcher type mangles through its *repr* --
+    ``type(CPUDispatcher(<function f at 0x7f...>))`` -- which carries an ASLR
+    address, so the hash changes every process. Any name built on it then never
+    cache-hits and accretes an orphan cache pair per run (issue #73 M13/L18).
+    Dispatchers are fingerprinted by the wrapped function's content instead,
+    which is both process-stable and sensitive to a changed body.
+
+    Every other type tested mangles stably, including CFunc and cres, which both
+    render as ``FunctionType[<sig>]``.
+
+    A Dispatcher whose function has no canonical fingerprint falls back to the
+    address-bearing mangle: process-unstable, so it simply keeps missing the
+    cache, which is the pre-existing behaviour and never a wrong hit.
+    """
+    if isinstance(ty, Dispatcher):
+        try:
+            mangled_ty = "dispatcher(" + _fingerprint_function(ty.dispatcher.py_func, set()) + ")"
+        except (_Unfingerprintable, RecursionError):
+            mangled_ty = mangle_type_or_value(ty)
+    else:
+        mangled_ty = mangle_type_or_value(ty)
     return hashlib.sha256(mangled_ty.encode("utf-8")).hexdigest()
 
 

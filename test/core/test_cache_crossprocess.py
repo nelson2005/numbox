@@ -204,3 +204,76 @@ def test_make_graph_kernel_is_not_stale_across_jit_flags(tmp_path):
     assert _run_probe(probe, env) == "0.0"
     after = sorted(p.name for p in cache_root.rglob("*.nbi"))
     assert before == after, f"identical rebuild recompiled instead of reusing: {set(after) - set(before)}"
+
+
+def test_dispatcher_typed_node_hash_is_process_stable(tmp_path):
+    """hash_type of a Dispatcher type must be the same in every process
+    (issue #73 M13/L18).
+
+    A Dispatcher type mangles through its repr --
+    `type(CPUDispatcher(<function f at 0x7f...>))` -- which carries an ASLR
+    address. Folding that into the content-addressed `_make_<hash>` made the
+    kernel name change every run, so `cache=True` never hit and each run left a
+    fresh orphan cache pair behind. Dispatchers are now fingerprinted by the
+    wrapped function's content.
+
+    Both the bare hash and a whole graph's kernel fingerprint are checked, and a
+    changed body must still re-key -- process-stability is worthless if it is
+    bought by ignoring the content.
+    """
+    probe = tmp_path / "disp_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import os
+        import numbox.core.work.builder as builder_mod
+        from numba import njit
+        from numba.core.types import float64
+        from numbox.core.work.builder import End, Derived, make_graph
+        from numbox.utils.highlevel import hash_type
+
+        captured = []
+        orig = builder_mod._kernel_fingerprint
+
+        def spy(*a, **k):
+            h = orig(*a, **k)
+            captured.append(h)
+            return h
+
+        builder_mod._kernel_fingerprint = spy
+
+        BUMP = float(os.environ["BUMP"])
+
+        @njit(float64(float64))
+        def helper(x):
+            return x + BUMP
+
+        reg = {}
+        x = End(name="x", init_value=1.0, ty=float64, registry=reg)
+        h = End(name="h", init_value=helper, registry=reg)
+
+        def derive_y(x, h):
+            return h(x)
+
+        y = Derived(name="y", init_value=0.0, derive=derive_y, sources=(x, h),
+                    ty=float64, registry=reg)
+        make_graph(y, registry=reg, jit_options={"cache": True})
+        print(hash_type(helper._numba_type_), captured[0])
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["NUMBA_CACHE_DIR"] = str(tmp_path / "nbcache")
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    env["BUMP"] = "1.0"
+    first = _run_probe(probe, env)
+    second = _run_probe(probe, env)
+    assert first == second, (
+        f"Dispatcher-typed hash is process-unstable: {first} != {second}; the "
+        "kernel name would change every run and never cache-hit"
+    )
+
+    env["BUMP"] = "2.0"
+    changed = _run_probe(probe, env)
+    assert changed != first, (
+        "a changed dispatcher body did not re-key; process-stability must not be "
+        "bought by ignoring the content"
+    )
