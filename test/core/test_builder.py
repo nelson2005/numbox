@@ -558,6 +558,49 @@ def test_make_graph_kernel_name_depends_on_declared_type(monkeypatch):
     assert captured[0] != captured[1]
 
 
+def test_make_graph_kernel_name_depends_on_jit_flags(monkeypatch):
+    """Two graphs identical except a jit flag must produce different
+    _make_<hash> kernel names (issue #73 H5).
+
+    numba caches the whole library, including the generated CPython wrapper,
+    and the wrapper is flag-sensitive independently of the body: nogil=True
+    emits PyEval_SaveThread/PyEval_RestoreThread around the call, nogil=False
+    does not. The derive anchor does not re-key the kernel, so only the flag
+    fold in _kernel_fingerprint keeps the two apart -- without it both share one
+    cache entry and the first writer wins.
+
+    nogil is used rather than error_model/fastmath/boundscheck precisely because
+    those three only affect arithmetic, of which the generated kernel body (a
+    sequence of ll_make_work calls and a tuple build) has none. `cache` itself
+    must NOT re-key: it does not change the emitted binary.
+    """
+    import numbox.core.work.builder as builder_mod
+    captured = []
+    orig = builder_mod._kernel_fingerprint
+
+    def spy(*args, **kwargs):
+        h = orig(*args, **kwargs)
+        captured.append(h)
+        return h
+    monkeypatch.setattr(builder_mod, "_kernel_fingerprint", spy)
+
+    # Identical graph every time -- only the jit flags vary, so the node name
+    # must stay constant or the body text alone would move the fingerprint.
+    for opts in ({"cache": False, "nogil": True},
+                 {"cache": False, "nogil": False},
+                 {"cache": True, "nogil": False}):
+        reg = {}
+        make_graph(End(name="flag_x", init_value=7, ty=int64, registry=reg),
+                   registry=reg, jit_options=opts)
+
+    assert len(captured) == 3
+    assert captured[0] != captured[1], "nogil absent from the kernel fingerprint"
+    assert captured[1] == captured[2], (
+        "`cache` re-keyed the kernel; it does not change the emitted binary and "
+        "folding it would split the cache for nothing"
+    )
+
+
 def test_make_graph_exec_defined_derive_is_cached_through_its_anchor():
     """A derive defined via exec has co_filename '<string>', which numba cannot
     locate for caching. It used to degrade to uncached rather than raise (issue
