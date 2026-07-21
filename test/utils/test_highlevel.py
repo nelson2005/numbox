@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from typing import Callable
 
@@ -89,6 +90,8 @@ def test_make_structref_2():
     assert aux_test_make_structref(s2_1) == 45
 
 
+_method_digest_re = re.compile(r"(?<=_)[0-9a-f]{64}\b")
+
 ref_s3_code_txt = """
 class S3(StructRefProxy):
     def __new__(cls, x, y):
@@ -108,17 +111,17 @@ class S3(StructRefProxy):
         return self.y
 
     def calculate_1(self, z, w=1):
-        return self.calculate_1_e4becd075d47f322cb5a112c18fb1dc7ab9517080db91c6007dcd9d960fd8c04(z, w)
+        return self.calculate_1_<digest>(z, w)
 
     @njit(**jit_options)
-    def calculate_1_e4becd075d47f322cb5a112c18fb1dc7ab9517080db91c6007dcd9d960fd8c04(self, z, w=1):
+    def calculate_1_<digest>(self, z, w=1):
         return self.calculate_1(z, w)
 
     def calculate_2(self):
-        return self.calculate_2_a10ca4da04fc9e54d2d5f98f3c6455098248bd3fceeca1d24276daf0ee693441()
+        return self.calculate_2_<digest>()
 
     @njit(**jit_options)
-    def calculate_2_a10ca4da04fc9e54d2d5f98f3c6455098248bd3fceeca1d24276daf0ee693441(self):
+    def calculate_2_<digest>(self):
         return self.calculate_2()
 
 define_boxing(S3TypeClass, S3)
@@ -169,7 +172,18 @@ def test_make_structref_3():
     def calculate_impl(self):
         return self.y * 3 + aux()
     m1 = {"calculate_1": calculate_1, "calculate_2": calculate_impl}
-    assert make_structref_code_txt("S3", ("x", "y"), S3TypeClass, struct_methods=m1)[0] == ref_s3_code_txt
+    code_txt = make_structref_code_txt("S3", ("x", "y"), S3TypeClass, struct_methods=m1)[0]
+    # The method-name suffix is a fingerprint that folds code.co_code, so it moves
+    # with every CPython bytecode change and can only ever match one interpreter.
+    # Pin what is portable -- the generated structure, that each call site names
+    # the method it defines, and that distinct methods get distinct suffixes --
+    # and normalise the suffix itself out of the comparison.
+    digests = _method_digest_re.findall(code_txt)
+    assert len(digests) == 4, digests
+    assert digests[0] == digests[1], digests
+    assert digests[2] == digests[3], digests
+    assert digests[0] != digests[2], digests
+    assert _method_digest_re.sub("<digest>", code_txt) == ref_s3_code_txt
     make_s3 = make_structref("S3", ("x", "y"), S3TypeClass, struct_methods=m1, ns={"aux": aux})
     s1 = make_s3(2.17, 3.14)
 
