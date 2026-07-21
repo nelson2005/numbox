@@ -14,6 +14,7 @@ from numbox.utils.fingerprint import (
     _flags_canon, _referenced_global_names, _safe_repr,
 )
 from numbox.utils.highlevel import cres, hash_type
+from numbox.utils.preprocessing import _anchor_root, _materialize_anchor, _orphan_anchor_sweep
 
 
 def _file_anchor():
@@ -113,13 +114,83 @@ def _derive_fingerprint(derive) -> tuple[str, bool]:
     return fingerprint, not reads_module_state
 
 
-def _derived_cres(ty, sources: Sequence[End], derive, jit_options=None):
+_DERIVE_ANCHOR_SUBDIR = "numbox-derive"
+# Clear `.tmp-*` anchors left behind by a SIGKILL'd writer, as every other
+# anchor-writing module does for its own subdir.
+_orphan_anchor_sweep(_DERIVE_ANCHOR_SUBDIR)
+
+
+def _derive_anchor_cres(derive_sig, derive, derive_fp, jit_options):
+    """Compile ``derive`` under a cache identity that depends on the jit flags.
+
+    Folding the flags into the kernel name re-keys the kernel but not the derive:
+    the derive is compiled as its own ``cres``, and numba's cache file for it is
+    named after the derive's own source file and qualname, so a graph built under
+    ``error_model="numpy"`` and one built under the default model share it. The
+    second process then links the first's binary -- a division by zero returns
+    ``inf`` where it must raise.
+
+    So the derive is compiled through a generated wrapper whose *name* carries a
+    digest of the derive fingerprint plus the effective flags, written to its own
+    on-disk anchor. A flag change moves the name, which moves the anchor, which
+    moves numba's cache file. Mirrors ``compile_kernel._compile``.
+
+    The wrapper delegates to the derive njit-wrapped with ``cache=False``: it is
+    linked into the wrapper's cached artifact, and it must not carry a cache of
+    its own, which would be flag-blind exactly like the one this works around.
+
+    Returns ``None`` if no anchor can be written, leaving the caller on the direct
+    (uncached) path.
+    """
+    flags = _effective_flags(jit_options)
+    flags_canon, ok_flags = _flags_canon(flags)
+    if not ok_flags:
+        # A flag with no canonical form cannot be keyed on; a key blind to a flag
+        # cannot protect the binary that flag produced.
+        return None
+    digest = sha256(
+        f"derive-anchor-v1\n{derive_fp}\n# sig: {derive_sig}\n# flags: {flags_canon}"
+        f"\n# codegen_env: {_codegen_env_canon()}".encode("utf-8")
+    ).hexdigest()[:16]
+    name = f"_derive_{digest}"
+    params = ", ".join(f"a{i}" for i in range(len(derive_sig.args)))
+    src = (
+        f"@_cres(_derive_sig, **_derive_jit_options)\n"
+        f"def {name}({params}):\n"
+        f"    return _inner({params})\n"
+    )
+    anchor = _anchor_root(_DERIVE_ANCHOR_SUBDIR) / f"{name}.py"
+    try:
+        anchor.parent.mkdir(parents=True, exist_ok=True)
+        _materialize_anchor(anchor, src)
+    except OSError:
+        return None
+    ns = {
+        "_cres": cres,
+        "_derive_sig": derive_sig,
+        "_derive_jit_options": jit_options,
+        "_inner": njit(**{**flags, "cache": False})(derive),
+        # __name__ must be an importable module so numba can rebuild the cached
+        # overload's environment in another process; mirrors compile_kernel.
+        "__name__": __name__,
+    }
+    code = compile(src, str(anchor), "exec")
+    exec(code, ns)  # nosec B102 - JIT codegen of internal source
+    return ns[name]
+
+
+def _derived_cres(ty, sources: Sequence[End], derive, jit_options=None, derive_fp=None):
     jit_options = jit_options if jit_options is not None else {}
     sources_ty = []
     for source in sources:
         source_ty = get_ty(source)
         sources_ty.append(source_ty)
     derive_sig = ty(*sources_ty)
+    if jit_options.get("cache") and derive_fp is not None:
+        anchored = _derive_anchor_cres(derive_sig, derive, derive_fp, jit_options)
+        if anchored is not None:
+            _derive_funcs[id(anchored)] = derive
+            return anchored
     try:
         derive_cres = cres(derive_sig, **jit_options)(derive)
     except RuntimeError as e:
@@ -148,7 +219,7 @@ def _derived_line(
     derive_fp, derive_cacheable = _derive_fingerprint(derive_func)
     derive_hashes.append(derive_fp)
     derive_jit = jit_options if derive_cacheable else {**(jit_options or {}), "cache": False}
-    derive_ = _derived_cres(ty_, derived_.sources, derive_func, derive_jit)
+    derive_ = _derived_cres(ty_, derived_.sources, derive_func, derive_jit, derive_fp)
     derive_name = f"{name_}_derive"
     init_name = f"{name_}_init"
     _make_args.append(derive_name)

@@ -137,3 +137,70 @@ def test_digest_fallback_is_pythonhashseed_stable(tmp_path):
     env["PYTHONHASHSEED"] = "123456789"
     d1 = _run_probe(probe, env)
     assert d0 == d1, f"digest fallback leaked set iteration order (M11): {d0} != {d1}"
+
+
+def test_make_graph_kernel_is_not_stale_across_jit_flags(tmp_path):
+    """A graph built under one ``error_model`` must not be served the binary
+    compiled under another in a later process (issue #73 H5).
+
+    ``error_model="numpy"`` makes ``x / 0`` evaluate to ``inf``; the default
+    "python" model raises ZeroDivisionError, which ``calculate()`` surfaces by
+    leaving the node at its init value. The jit flags reach the generated kernel
+    source only as the literal ``@njit(**jit_options)``, and the derive compiles
+    as its own cres whose numba cache file is named after the derive's own source
+    and qualname -- so before the fix both the kernel name and the derive cache
+    entry were identical across the two models, and the second process was served
+    the first's binary: ``inf`` where the default model must not produce a value.
+
+    The kernel fingerprint now folds the effective flags, and the derive is
+    compiled through a digest-named anchor that folds them too.
+    """
+    probe = tmp_path / "flags_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import os
+        from numba.core.types import float64
+        from numbox.core.work.builder import End, Derived, make_graph
+
+        opts = {"cache": True}
+        if os.environ["ERROR_MODEL"] == "numpy":
+            opts["error_model"] = "numpy"
+
+        reg = {}
+        num = End(name="num", init_value=1.0, ty=float64, registry=reg)
+        den = End(name="den", init_value=0.0, ty=float64, registry=reg)
+
+        def derive_ratio(num, den):
+            return num / den
+
+        ratio = Derived(name="ratio", init_value=0.0, derive=derive_ratio,
+                        sources=(num, den), ty=float64, registry=reg)
+        access = make_graph(ratio, registry=reg, jit_options=opts)
+        try:
+            access.ratio.calculate()
+        except ZeroDivisionError:
+            pass
+        print(access.ratio.data)
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["NUMBA_CACHE_DIR"] = str(tmp_path / "nbcache")
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    env["ERROR_MODEL"] = "numpy"
+    assert _run_probe(probe, env) == "inf"             # process 1: cold, writes cache
+
+    env["ERROR_MODEL"] = "python"
+    got = _run_probe(probe, env)                       # process 2: shared cache, other model
+    assert got == "0.0", (
+        f"kernel/derive served a binary compiled under another error_model (H5): "
+        f"got {got}, expected 0.0"
+    )
+
+    # And the cache must still be doing its job: the same configuration re-run
+    # must not mint a new entry. A "fix" that merely disabled caching would pass
+    # the assertion above.
+    cache_root = tmp_path / "nbcache"
+    before = sorted(p.name for p in cache_root.rglob("*.nbi"))
+    assert _run_probe(probe, env) == "0.0"
+    after = sorted(p.name for p in cache_root.rglob("*.nbi"))
+    assert before == after, f"identical rebuild recompiled instead of reusing: {set(after) - set(before)}"
