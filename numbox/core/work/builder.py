@@ -139,8 +139,9 @@ def _derive_anchor_cres(derive_sig, derive, derive_fp, jit_options):
     linked into the wrapper's cached artifact, and it must not carry a cache of
     its own, which would be flag-blind exactly like the one this works around.
 
-    Returns ``None`` if no anchor can be written, leaving the caller on the direct
-    (uncached) path.
+    Returns ``None`` if the flags cannot be canonicalized or no anchor can be
+    written; the caller must then compile the derive **uncached**, because the
+    anchor is the only thing making a cached derive flag-safe.
     """
     flags = _effective_flags(jit_options)
     flags_canon, ok_flags = _flags_canon(flags)
@@ -191,6 +192,12 @@ def _derived_cres(ty, sources: Sequence[End], derive, jit_options=None, derive_f
         if anchored is not None:
             _derive_funcs[id(anchored)] = derive
             return anchored
+        # The anchor is what makes a cached derive flag-safe. Falling back to a
+        # plain cache=True compile here would restore exactly the flag-blind
+        # cache entry -- named after the derive's own source file and qualname --
+        # that the anchor exists to avoid, so the degrade must drop the cache
+        # too: recompiled per process, never wrong.
+        jit_options = {**jit_options, "cache": False}
     try:
         derive_cres = cres(derive_sig, **jit_options)(derive)
     except RuntimeError as e:

@@ -574,3 +574,45 @@ def test_make_graph_exec_defined_derive_degrades_to_uncached():
 
 if __name__ == "__main__":
     collect_and_run_tests(__name__)
+
+
+def test_derive_anchor_degrade_drops_the_cache(monkeypatch):
+    """When the derive anchor cannot be built, the fallback compile must drop
+    `cache` (issue #73 H5).
+
+    The anchor is the only thing that makes a cached derive flag-safe: numba
+    names a plain `cres(..., cache=True)` cache file after the derive's own
+    source file and qualname, so it is shared across jit-flag variants. Falling
+    back to that on the degrade paths -- flags with no canonical form, or an
+    unwritable anchor -- would restore the exact staleness the anchor exists to
+    prevent, so the degrade compiles uncached instead.
+    """
+    from numbox.core.work import builder as builder_mod
+
+    recorded = {}
+    real_cres = builder_mod.cres
+
+    def recording_cres(sig, **kwargs):
+        recorded.update(kwargs)
+        return real_cres(sig, **kwargs)
+
+    monkeypatch.setattr(builder_mod, "cres", recording_cres)
+    monkeypatch.setattr(builder_mod, "_derive_anchor_cres", lambda *a, **k: None)
+
+    reg = {}
+    x = End(name="degrade_x", init_value=1.0, ty=float64, registry=reg)
+
+    def derive_degrade(x):
+        return x * 2.0
+
+    y = Derived(name="degrade_y", init_value=0.0, derive=derive_degrade,
+                sources=(x,), ty=float64, registry=reg)
+
+    builder_mod._derived_cres(
+        float64, y.sources, derive_degrade,
+        {"cache": True}, "fingerprint-placeholder",
+    )
+    assert recorded.get("cache") is False, (
+        f"anchor degrade compiled with cache={recorded.get('cache')!r}; a plain "
+        "cache=True compile is the flag-blind entry the anchor exists to avoid"
+    )
