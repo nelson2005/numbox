@@ -558,10 +558,13 @@ def test_make_graph_kernel_name_depends_on_declared_type(monkeypatch):
     assert captured[0] != captured[1]
 
 
-def test_make_graph_exec_defined_derive_degrades_to_uncached():
-    # A derive defined via exec has co_filename '<string>', which numba cannot
-    # locate for caching; with the default cache=True it must degrade to uncached
-    # rather than raise (completes the exec/REPL-derive handling, issue #73 L19).
+def test_make_graph_exec_defined_derive_is_cached_through_its_anchor():
+    """A derive defined via exec has co_filename '<string>', which numba cannot
+    locate for caching. It used to degrade to uncached rather than raise (issue
+    #73 L19); it is now compiled through its own on-disk anchor, which gives
+    numba a real source file, so it caches instead of degrading -- and the anchor
+    digest folds the derive fingerprint, so two exec'd bodies never collide.
+    """
     reg = {}
     exec_ns = {}
     exec("def d(x):\n    return x + 1.0\n", exec_ns)  # nosec B102 - test fixture
@@ -571,9 +574,16 @@ def test_make_graph_exec_defined_derive_degrades_to_uncached():
     access.exec_y.calculate()
     assert isclose(access.exec_y.data, 3.0)
 
-
-if __name__ == "__main__":
-    collect_and_run_tests(__name__)
+    # A second exec'd body differing only in a constant must get its own anchor,
+    # not the first one's binary.
+    reg2 = {}
+    exec_ns2 = {}
+    exec("def d(x):\n    return x + 100.0\n", exec_ns2)  # nosec B102 - test fixture
+    x2_ = End(name="exec_x2", init_value=2.0, registry=reg2)
+    y2_ = Derived(name="exec_y2", init_value=0.0, derive=exec_ns2["d"], sources=(x2_,), registry=reg2)
+    access2 = make_graph(y2_, registry=reg2)
+    access2.exec_y2.calculate()
+    assert isclose(access2.exec_y2.data, 102.0)
 
 
 def test_derive_anchor_degrade_drops_the_cache(monkeypatch):
@@ -616,3 +626,7 @@ def test_derive_anchor_degrade_drops_the_cache(monkeypatch):
         f"anchor degrade compiled with cache={recorded.get('cache')!r}; a plain "
         "cache=True compile is the flag-blind entry the anchor exists to avoid"
     )
+
+
+if __name__ == "__main__":
+    collect_and_run_tests(__name__)
