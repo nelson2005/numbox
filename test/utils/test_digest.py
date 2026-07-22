@@ -113,8 +113,11 @@ def test_digest_of_dispatcher_is_deterministic_and_body_sensitive():
 
 
 def test_digest_folds_dufunc_jit_flags():
-    # @vectorize lands on the same shortcut; its scalar body is frozen at
-    # compile time, so its targetoptions belong in the key too.
+    # @vectorize freezes its scalar body at compile time, so its targetoptions
+    # belong in the key too. Note this holds on the cloudpickle path as well, so
+    # unlike the Dispatcher case above it does not by itself pin the _canon_value
+    # routing -- what routing buys DUFuncs is escaping cloudpickle's documented
+    # nondeterminism for __main__ objects.
     def cb(x):
         return x + 1
 
