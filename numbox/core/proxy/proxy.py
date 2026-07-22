@@ -40,7 +40,7 @@ def _body_fingerprint(func):
         return _fingerprint_function_best_effort(func)
 
 
-def _stable_cfunc_alias(func, main_sig):
+def _stable_cfunc_alias(func, main_sig, jit_options=None):
     """Deterministic, process-stable LLVM symbol name for ``func``'s cfunc wrapper.
 
     numba mangles the wrapper name (``fndesc.llvm_cfunc_wrapper_name``) with a
@@ -67,10 +67,20 @@ def _stable_cfunc_alias(func, main_sig):
     unchanged, an absent ``proxy_if_available`` binding, is covered by a
     diagnostic trap (see ``_register_absent_alias_trap``) so it surfaces a named
     error rather than a null-pointer call.
+
+    The resolved ``jit_options`` are folded too. They govern the machine code
+    ``njit(sig, **jit_options)`` emits, but appear nowhere in the identity above,
+    so two decorations of one body differing only in a flag -- ``error_model``,
+    ``fastmath``, ``boundscheck`` -- collapsed onto a single alias and
+    last-writer-wins ``add_symbol`` sent every caller to whichever compiled last.
+    That is silent and total: a caller of the ``numpy`` error-model binding ran
+    the ``python`` one, so a division by zero returned 0.0 instead of inf with the
+    exception swallowed at the cfunc boundary.
     """
     raw = (
         f"{func.__module__ or ''}.{func.__qualname__}.{main_sig}."
-        f"{_body_fingerprint(func)}"
+        f"{_body_fingerprint(func)}."
+        f"{sorted((jit_options or {}).items(), key=repr)!r}"
     ).encode("utf-8")
     safe_name = "".join(c if c.isascii() and c.isalnum() else "_" for c in func.__name__)
     return f"numbox_pxy_{safe_name}_{hashlib.sha256(raw).hexdigest()[:16]}"
@@ -96,7 +106,7 @@ def _call_proxied_alias(context, builder, main_sig, alias_name, args):
 _PROXY_TRAP_KEEPALIVE = []
 
 
-def _register_absent_alias_trap(func, main_sig):
+def _register_absent_alias_trap(func, main_sig, jit_options=None):
     """Register a diagnostic trap under the alias ``proxy(sig)(func)`` would use.
 
     A ``cache=True`` caller compiled when the binding was present bakes that
@@ -109,7 +119,7 @@ def _register_absent_alias_trap(func, main_sig):
     matches ``main_sig``'s arity with plain positional parameters (the cfunc
     wrapper the caller invokes is positional, even for ``Omitted`` bindings).
     """
-    alias = _stable_cfunc_alias(func, main_sig)
+    alias = _stable_cfunc_alias(func, main_sig, jit_options)
     msg = (
         f"numbox @proxy binding {func.__name__!r} is not available in the loaded library "
         f"(C symbol missing), but a cache=True caller compiled when it was present is "
@@ -166,7 +176,7 @@ def proxy(sig, jit_options: Optional[dict] = None):
         cres = func_jit.get_compile_result(main_sig)
         # Register a process-stable alias for the body's cfunc wrapper and reference
         # that instead of numba's process-local ``v<uid>`` name (see _stable_cfunc_alias).
-        cfunc_alias = _stable_cfunc_alias(func, main_sig)
+        cfunc_alias = _stable_cfunc_alias(func, main_sig, jit_options)
         ll.add_symbol(cfunc_alias, cres.library.get_pointer_to_function(cres.fndesc.llvm_cfunc_wrapper_name))
         func_args_str, func_names_args_str = make_params_strings(func)
         func_proxy_name = make_proxy_name(func.__name__)
@@ -258,7 +268,7 @@ def proxy_if_available(lib, sig, jit_options: Optional[dict] = None):
         # A warm cache=True caller from a process where the binding WAS present
         # will cache-hit and call the alias; register a loud trap under it so that
         # is a named error rather than a null-pointer SIGSEGV. See the helper.
-        _register_absent_alias_trap(func, main_sig)
+        _register_absent_alias_trap(func, main_sig, jit_options)
 
         def stub(*args, **_kwargs):
             raise NotImplementedError(f"{name} is not available")

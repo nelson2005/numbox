@@ -467,3 +467,37 @@ def test_proxy_function_above_anchor_line_raises_clear_error(tmp_path):
 
 if __name__ == "__main__":
     collect_and_run_tests(__name__)
+
+
+def test_proxy_jit_flags_dispatch_to_their_own_body():
+    """Two decorations of one body differing only in jit flags must not collide.
+
+    The flags govern the machine code ``njit(sig, **jit_options)`` emits, but
+    they appear in neither the module+qualname+signature identity nor the body
+    fingerprint -- the body source is byte-identical here. Both decorations
+    therefore mapped to a single alias and llvmlite's last-writer-wins
+    ``add_symbol`` rebound every caller to whichever compiled last: a jitted
+    caller of the ``numpy`` error-model binding ran the ``python`` one, so
+    ``1.0 / 0.0`` returned 0.0 instead of inf, exit 0, with the
+    ``ZeroDivisionError`` swallowed at the cfunc boundary.
+    """
+    def mk(error_model):
+        @proxy(float64(float64), jit_options={"error_model": error_model})
+        def recip(x):
+            return 1.0 / x
+        return recip
+
+    p_np = mk("numpy")
+    p_py = mk("python")
+
+    assert p_np._numbox_proxy_alias != p_py._numbox_proxy_alias, (
+        "jit flags absent from the alias -- the two bodies collide"
+    )
+
+    @njit
+    def call_np(x):
+        return p_np(x)
+
+    assert math.isinf(call_np(0.0)), (
+        "jitted caller of the numpy error-model binding reached the python one"
+    )
