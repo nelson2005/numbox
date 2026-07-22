@@ -21,8 +21,11 @@ from numba.core.serialize import cloudpickle
 
 import numbox
 from numbox.core.configurations import jit_options
+from numba.core.dispatcher import Dispatcher
+from numba.np.ufunc.dufunc import DUFunc
+
 from numbox.utils.fingerprint import (
-    _Unfingerprintable, _fingerprint_function, _fingerprint_function_best_effort,
+    _Unfingerprintable, _canon_value, _fingerprint_function, _fingerprint_function_best_effort,
 )
 
 
@@ -42,6 +45,19 @@ def digest(subject, fns):
     # (e.g. cache off) re-keys the digest; numba's own cache also keys on flags.
     h.update(repr(sorted(jit_options.items())).encode("utf-8"))
     for fn in fns:
+        if isinstance(fn, (Dispatcher, DUFunc)):
+            # Route jitted callables through the shared value canonicalizer,
+            # which folds targetoptions (and honours a @proxy's content-addressed
+            # alias). The py_func shortcut below sees only the Python body, so
+            # dispatchers over one body compiled with different jit flags --
+            # nogil, fastmath, error_model, boundscheck -- all collided.
+            try:
+                h.update(_canon_value(fn, set()).encode("utf-8"))
+                continue
+            except (_Unfingerprintable, RecursionError):
+                # Body not canonicalizable; fold the flags on their own so they
+                # still re-key, then fall through to the best-effort walker.
+                h.update(repr(sorted((getattr(fn, "targetoptions", None) or {}).items())).encode("utf-8"))
         py = getattr(fn, "py_func", fn)
         if isinstance(py, FunctionType):
             try:
