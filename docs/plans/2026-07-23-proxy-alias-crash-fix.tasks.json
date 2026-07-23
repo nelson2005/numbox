@@ -1,0 +1,107 @@
+{
+  "planPath": "docs/plans/2026-07-23-proxy-alias-crash-fix-plan.md",
+  "issue": "https://github.com/nelson2005/numbox/issues/73",
+  "reviewSubject": "@proxy alias-rename cache crash — load-time validation fix (s3)",
+  "branch": "fix/cache-hash-2026-07-09",
+  "workspace": "~/.claude/projects/-home-erik/numbox-proxy-alias-crash-2026-07-22/",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "T1: two-process stale-heal test harness + baseline crash pin",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "Add a subprocess stale-heal test mirroring test/core/test_cache_crossprocess.py (_run_probe, tmp_path, dedicated NUMBA_CACHE_DIR). P1 warms a cache=True cross-file caller of a @proxy binding; edit the binding body; P2 reruns on the same cache dir. Assert target: rc=0, new-body result, StaleProxyCacheWarning. Include a second unedited caller and assert it hits (selectivity). Pin both baseline crash shapes (silent SIGSEGV; LLVM ERROR SIGABRT) behind a marker so the suite stays green pre-fix. Runs on the full CI matrix — it is the verification target for every later phase.\n\n```json:metadata\n{\"files\": [\"test/core/test_proxy_cache_stale.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q\", \"acceptanceCriteria\": [\"harness collects and runs on Linux\", \"baseline (unpatched) reproduces both crash shapes\", \"heal + selectivity assertions are the pass target\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "T2: port the s3 ELF core into proxy.py behind a format dispatcher",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Port the prototyped block from designs/s3-load-time-validation.md into numbox/core/proxy/proxy.py: StaleProxyCacheWarning, _stale_proxy_aliases, _guarded_rebuild, _install_cache_alias_guard, import-time install; add imports struct, warnings. Put the parser behind a single _undefined_symbols(object_code) dispatcher that sniffs object magic and routes per format; wire the ELF parser now, stub Mach-O and COFF to return set() so Phase 2 is pure fill-in. flake8-clean at 127.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py test/core/test_proxy.py -q && /home/erik/projects/numbox/venv/bin/flake8 . --max-line-length=127\", \"acceptanceCriteria\": [\"T1 heal assertion passes on Linux\", \"full suite green with guard live\", \"dispatcher shape is final; Mach-O/COFF stubbed\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "T3: make the guard installer fail-open",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "Wrap _install_cache_alias_guard so any exception during install degrades to 'no guard installed' rather than breaking import — matching the per-load validator's fail-open philosophy (portability verdict finding: the installer was not fail-open). Keep it idempotent.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q\", \"acceptanceCriteria\": [\"a forced install failure leaves import numbox.core.proxy.proxy working\", \"idempotent double-install is a no-op\"], \"model\": \"opus\", \"effort\": \"high\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "T4: ELF-path regression tests (strict mode, fast path, selectivity, CodeLibraryCacheImpl)",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "Tests for: strict-mode escalation (-W error and targeted filterwarnings both raise the named error); the no-alias fast path (a non-proxy cache=True function loads with no warning and only the bytes.find cost); partial staleness (two proxies, one edited — only the edited caller heals, the stable one hits with zero warnings); and the CodeLibraryCacheImpl path via a @guvectorize(cache=True) caller of a proxy (code-read-only in the prototype — make it live).\n\n```json:metadata\n{\"files\": [\"test/core/test_proxy_cache_stale.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q\", \"acceptanceCriteria\": [\"strict mode raises named error\", \"no-alias fast path: no warning\", \"partial staleness: exact selectivity\", \"guvectorize-calls-proxy heals\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "T5: Mach-O undefined-symbol parser (with leading-underscore handling)",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "Parse LC_SYMTAB; collect external undefined symbols (n_type & N_STAB == 0, (n_type & N_TYPE) == N_UNDF, n_type & N_EXT). CRITICAL: strip the leading underscore Mach-O prepends to C symbols BEFORE the numbox_pxy_ prefix test and the ll.address_of_symbol lookup, else the parser matches _numbox_pxy_ against numbox_pxy_ , finds nothing, and silently passes every stale object (the trap the portability verdict flagged). Handle 32/64-bit + both endiannesses via magic (0xFEEDFACE/0xFEEDFACF + byteswaps); handle fat/universal if numba emits it. Check in a small Mach-O fixture object carrying a numbox_pxy_* undefined symbol for a Linux-runnable unit test. Cannot be truly validated locally — final proof is the fork CI macos-latest job.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\", \"test/core/test_proxy_cache_stale.py\", \"test/core/fixtures/macho_undef.o\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q -k macho\", \"acceptanceCriteria\": [\"fixture test extracts the numbox_pxy_* symbol with the underscore stripped\", \"malformed object returns empty, does not throw\", \"final validation deferred to fork CI macos-latest\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "T6: COFF/PE undefined-symbol parser (Windows)",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "Parse the COFF symbol table at f_symptr with the string table immediately after; collect external undefined symbols (n_scnum == IMAGE_SYM_UNDEFINED (0) and n_sclass == IMAGE_SYM_CLASS_EXTERNAL); names are inline (8 bytes, NUL-padded) or a string-table offset (first 4 bytes zero). Confirm empirically whether x64 prepends a leading underscore (x64 __cdecl generally does not, unlike x86) rather than assuming. Check in a small COFF fixture for a Linux-runnable unit test. Final proof is the fork CI windows-latest job.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\", \"test/core/test_proxy_cache_stale.py\", \"test/core/fixtures/coff_undef.obj\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q -k coff\", \"acceptanceCriteria\": [\"fixture test extracts the numbox_pxy_* symbol\", \"inline and string-table names both handled\", \"malformed object returns empty, does not throw\", \"final validation deferred to fork CI windows-latest\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "T7: guard-fires CI assertion (silent-no-op parser becomes a red job)",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "On a deliberately seeded stale cache, assert that a StaleProxyCacheWarning is actually raised (escalated to error). This is the single test that converts a silently-no-op parser — a broken Mach-O/COFF port, or a future numba payload-shape change — into a red job on every platform (analogue of the campaign's read-the-key-back guard for s4). Must run on the full matrix.\n\n```json:metadata\n{\"files\": [\"test/core/test_proxy_cache_stale.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q -k guard_fires\", \"acceptanceCriteria\": [\"fails when the format parser is stubbed empty\", \"passes with a correct parser\", \"runs on every CI platform\"], \"model\": \"opus\", \"effort\": \"high\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "T8: strict/debug env knob to make fail-open loud",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "Add an env knob (e.g. NUMBOX_PROXY_CACHE_STRICT) that makes the fail-open paths loud (validator exceptions and payload-shape surprises raise instead of degrading) and escalates stale detections to a hard error. Document that strict mode aborts BEFORE the heal, preserving the stale entry for inspection (observed in the correctness verdict).\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\", \"test/core/test_proxy_cache_stale.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q -k strict\", \"acceptanceCriteria\": [\"knob on -> stale load raises named error before heal\", \"knob off -> heals silently\"], \"model\": \"opus\", \"effort\": \"high\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "T9: diagnostic completeness — name every stale alias",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "Ensure the warning names every stale alias present in an object; the correctness verdict observed an undercount in a multi-entry scenario. Add a multi-stale-entry test.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\", \"test/core/test_proxy_cache_stale.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q -k undercount\", \"acceptanceCriteria\": [\"a multi-stale-entry object names all stale aliases in the warning\"], \"model\": \"sonnet\", \"effort\": \"high\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "T10: docs — replace clear-the-cache guidance with self-healing behaviour",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "Rewrite the migration guidance: the _stable_cfunc_alias docstring's 'clear the numba cache after such a change' line and the incorrect ~/.cache/numba remedy location in docs/numbox.core.proxy.rst (stale entries live in the user's own __pycache__). Document self-healing on load, StaleProxyCacheWarning, the strict-mode recipe, and the first-upgrade transition. Docs are mandatory and gated.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\", \"docs/numbox.core.proxy.rst\"], \"verifyCommand\": \"cd /home/erik/projects/numbox/docs && /home/erik/projects/numbox/venv/bin/sphinx-build -W -b html . _build/html\", \"acceptanceCriteria\": [\"sphinx-build -W clean\", \"doc code-blocks pass doc-codeblock flake8\", \"no stale clear-the-cache guidance remains\"], \"model\": \"opus\", \"effort\": \"high\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "T11: full CI-equivalent local gate (Linux)",
+      "status": "pending",
+      "blockedBy": [3, 4, 5, 6, 7, 8, 9, 10],
+      "description": "Run the full gate: docs/plans/matrix_check.sh across all 5 CPythons, flake8 --max-line-length=127, sphinx-build -W, the doc-codeblock flake8, and the new subprocess tests. The lone expected test_numbox_and_python_use_same_libsqlite3 failure on uv interpreters is the documented sqlite-mismatch artifact.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"bash /home/erik/projects/numbox/docs/plans/matrix_check.sh && /home/erik/projects/numbox/venv/bin/flake8 . --max-line-length=127\", \"acceptanceCriteria\": [\"all gates green modulo the documented sqlite artifact\", \"Mach-O/COFF parsers still stubbed-safe on Linux (no crash)\"], \"model\": \"sonnet\", \"effort\": \"high\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "T12: push to fork feature branch, drive CI matrix green — real parser validation",
+      "status": "pending",
+      "blockedBy": [11],
+      "description": "Push and drive the fork CI matrix to green. THIS is where the Mach-O and COFF parsers get their only real validation — the macos-latest and windows-latest jobs run T1's stale-heal test; a crash there loops back to T5/T6. Filter gh run list by --workflow numbox_ci. Report the test count.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"gh run list --repo nelson2005/numbox --workflow numbox_ci --branch fix/cache-hash-2026-07-09 --limit 1\", \"acceptanceCriteria\": [\"all 27 numbox_ci jobs succeed\", \"macos + windows stale-heal test passes (proves the parsers)\", \"test count reported\"], \"model\": \"haiku\", \"effort\": \"low\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "T13: adversarial review of the final diff",
+      "status": "pending",
+      "blockedBy": [12],
+      "description": "Independent reviewer (correctness + portability lenses): confirm no in-object stale reference can reach the engine on any format, the fail-open paths are safe, the parsers reject a malformed object without throwing, and the underscore/name-mangling handling is correct per format. Address findings.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"git -C /home/erik/projects/numbox diff origin/fix/cache-hash-2026-07-09..HEAD -- numbox/core/proxy/proxy.py\", \"acceptanceCriteria\": [\"reviewer sign-off\", \"findings addressed or dispositioned\"], \"model\": \"sonnet\", \"effort\": \"max\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "T14: update tracker, open fork PR referencing #73",
+      "status": "pending",
+      "blockedBy": [13],
+      "description": "Update this tracker to completion state; open the fork PR (fork first, upstream only with per-PR approval per project rules). Body references #73, links the workspace REVIEW.md, states the migration behaviour and the first-upgrade note. No test-plan section; no reviewer-bias section.\n\n```json:metadata\n{\"files\": [\"docs/plans/2026-07-23-proxy-alias-crash-fix.tasks.json\"], \"verifyCommand\": \"gh pr view --repo nelson2005/numbox --json state,statusCheckRollup\", \"acceptanceCriteria\": [\"fork PR open and green\", \"#73 item linked\", \"tracker at completion state\"], \"model\": \"haiku\", \"effort\": \"low\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+    }
+  ]
+}
