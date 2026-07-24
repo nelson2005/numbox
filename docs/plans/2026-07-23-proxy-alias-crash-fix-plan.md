@@ -130,12 +130,19 @@ live on every cache load.
   prefix a leading underscore on `__cdecl` x64 symbols, but confirm against a real
   object rather than assuming. Unit-test against a checked-in COFF fixture.
   `verify:` fixture test; final proof is the fork CI `windows-latest` job.
+  **Outcome: not written.** numba hands Windows ELF, so a COFF parser would be a
+  code path no platform in the matrix exercises; the inference is pinned by the
+  test below instead. See the findings section.
 - **T7.** Guard-fires CI assertion test. On a deliberately seeded stale cache,
   assert a `StaleProxyCacheWarning` is actually raised (escalated to error). This
   is the one test that converts a silently-no-op parser (a broken Mach-O/COFF
   port, or a future numba payload-shape change) into a red job on every platform —
   the analogue of the campaign's "read the key back" guard for s4. `verify:` fails
   on a stubbed-empty parser, passes on a correct one.
+  **Outcome: superseded.** Measurement showed a stubbed-empty parser already fails
+  6 of the 9 tests then shipped, so this was redundant as specified; it was
+  replaced by the positive premise assertion that closed T6. See the findings
+  section.
 
 ### Phase 3 — Diagnostics and hardening
 
@@ -196,7 +203,7 @@ live on every cache load.
   return, the opaque-capture fingerprint collision) are orthogonal to the crash and
   out of scope for this plan; note them as follow-ups, do not fold them in.
 
-## Findings from executing T1–T5 (recorded here because the analysis workspace is machine-local)
+## Findings from executing T1–T7 (recorded here because the analysis workspace is machine-local)
 
 - **A resolvable alias does not imply a callable body.** `proxy_if_available`'s absent path registers a
   diagnostic trap under the alias, so `ll.address_of_symbol` resolves and the validator would pass the
@@ -206,8 +213,18 @@ live on every cache load.
   therefore tracked in `_ABSENT_ALIASES` and treated as stale.
 - **numba's cached objects on Windows are ELF, not COFF.** LLVM's MCJIT rewrites a COFF target to ELF for
   JIT, so `ll.get_object_format('x86_64-pc-windows-msvc')` reports COFF while the JIT emits ELF. The
-  Windows CI jobs pass with the COFF branch stubbed. Confirm with an object-magic assertion before
-  writing a COFF parser.
+  Windows CI jobs pass with the COFF branch stubbed. No COFF parser was written; the inference is pinned
+  instead by `test_the_reader_recognises_the_objects_numba_actually_caches`, which asserts on every
+  platform that the reader parses an alias out of an object numba really cached and reports the leading
+  magic bytes when it cannot (Linux: `7f454c46`).
+- **The guard's premise needed pinning separately from its behaviour.** Every scenario test reaches the
+  reader through a stale entry, so each proves the guard works by watching a crash *not* happen; none
+  asserted the reader ever successfully read anything. A reader that recognises no format is silent and
+  total — no symbols, no stale alias, every object passed exactly as if the guard were absent. Measured:
+  stubbing `_undefined_symbols` to `set()` already failed 6 of 9 tests with a named cause, so the
+  originally-planned "guard fires" test was redundant; what was missing was the positive assertion that a
+  real numba-produced object was parsed at all, which needs no stale entry and no edit and so survives the
+  crash scenario itself ceasing to reproduce.
 - **A real Mach-O fixture can be produced on Linux** — `ll.initialize_all_targets()` then
   `Target.from_triple("<arch>-apple-darwin").create_target_machine().emit_object(...)` — so the reader has
   a compiler-produced test input on any host, with no binary checked in.

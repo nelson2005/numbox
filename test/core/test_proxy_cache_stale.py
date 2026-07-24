@@ -438,6 +438,62 @@ def test_the_mach_o_reader_strips_the_leading_underscore(tmp_path):
     assert "_numbox_pxy_probe_0123456789abcdef" not in found, "the leading underscore was left on"
 
 
+def test_the_reader_recognises_the_objects_numba_actually_caches(tmp_path):
+    """Whatever container numba caches on this platform, the reader must be able to parse it.
+
+    Every other test here reaches the reader only through a stale entry, so each one proves the guard works by
+    watching a crash *not* happen. That leaves the guard's most basic premise unpinned: that the objects numba
+    hands it are a format it reads at all. A reader that recognises nothing is silent and total -- it returns no
+    symbols, finds no stale alias, and passes every object exactly as if the guard were absent -- and the only
+    evidence is a segfault on whichever platform stopped matching, with nothing naming the cause.
+
+    Which branch matches is not obvious from the platform: the Windows jobs are served by the ELF reader, because
+    LLVM rewrites a COFF target to ELF for the JIT, so ``get_object_format`` naming COFF says nothing about the
+    bytes. This asserts the outcome rather than that reasoning -- a warm re-run, with the reader recording what it
+    was handed -- so the day it stops holding is a named failure here rather than a crash somewhere else. It needs
+    no stale entry and no edit, so it stands up even if the crash scenario itself ever stops reproducing.
+    """
+    probe = _write_scenario(tmp_path)
+    env = _probe_env(tmp_path, "nbcache")
+    _warm(probe, env)
+
+    reader = tmp_path / "reader_probe.py"
+    reader.write_text(textwrap.dedent('''
+        """Re-run the warm callers with the format reader recording every object it is asked about."""
+        import numbox.core.proxy.proxy as proxy_mod
+
+        seen = []
+        read_symbols = proxy_mod._undefined_symbols
+
+
+        def recording(object_code):
+            found = read_symbols(object_code)
+            seen.append((object_code[:4].hex(), any(s.startswith(proxy_mod._ALIAS_PREFIX) for s in found)))
+            return found
+
+
+        proxy_mod._undefined_symbols = recording
+
+        from cached_callers import call_scale
+        print("RESULT", call_scale(5.0), flush=True)
+        print("INSPECTED", len(seen), flush=True)
+        print("WITH_ALIAS", sum(1 for _magic, found_alias in seen if found_alias), flush=True)
+        print("MAGIC", ",".join(sorted({magic for magic, _found_alias in seen})) or "-", flush=True)
+        print("DONE ok", flush=True)
+    '''), encoding="utf-8")
+
+    fields = _fields(_run_probe(reader, env))
+    assert fields["RESULT"] == _OLD_BODY["call_scale"], f"the warm caller did not run: {fields['RESULT']}"
+    assert int(fields["INSPECTED"]) > 0, (
+        "no alias-bearing object reached the reader, so nothing here was tested: the callers were recompiled "
+        "rather than served, or the guard is not installed"
+    )
+    assert int(fields["WITH_ALIAS"]) > 0, (
+        f"the reader parsed no alias out of any object numba cached here, so it passes every stale entry "
+        f"untouched: leading magic bytes {fields['MAGIC']}"
+    )
+
+
 def test_an_unrecognised_cache_payload_is_handed_on_untouched(tmp_path):
     """The payload's shape is the assumption most likely to change under this guard, so a shape it cannot read
     must cost only the validation -- never the load. Every numba in the supported range passes a tuple here."""
