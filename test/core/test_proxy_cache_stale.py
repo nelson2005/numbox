@@ -24,7 +24,9 @@ import textwrap
 import pytest
 
 _EDITED = "proxied_binding.py"
-_HEALED = {"call_scale": "compiled", "call_scale2": "compiled", "call_offset": "served"}
+_HEALED = {"call_scale": "compiled", "call_scale2": "compiled", "call_offset": "served", "plain": "served"}
+_OLD_BODY = {"call_scale": "11.0", "call_scale2": "12.0", "call_offset": "108.0", "plain": "12.0"}
+_NEW_BODY = {"call_scale": "16.0", "call_scale2": "17.0", "call_offset": "108.0", "plain": "12.0"}
 
 
 def _write_binding(path, name, expr):
@@ -68,7 +70,9 @@ def _write_scenario(tmp_path):
     The two bindings get separate files so the control is untouched at file level as well: nothing about it, alias or
     source stamp, can move when the other body is edited. The three callers share one file to make the control as
     tight as possible: same module, same cache directory, same run. Two callers of the edited body rather than one is
-    what pins that *every* stale entry is discarded, not just the first the loader reaches.
+    what pins that *every* stale entry is discarded, not just the first the loader reaches, and ``plain`` -- cached,
+    but referencing no alias at all -- is the control for the other direction: it takes the validator's early exit,
+    and must survive untouched.
     """
     _write_binding(tmp_path / _EDITED, "scale", "x * 2.0")
     _write_binding(tmp_path / "proxied_binding_stable.py", "offset", "x + 100.0")
@@ -94,6 +98,11 @@ def _write_scenario(tmp_path):
         @njit(cache=True)
         def call_offset(x):
             return offset(x) + 3.0
+
+
+        @njit(cache=True)
+        def plain(x):
+            return x + 7.0
     '''), encoding="utf-8")
 
     probe = tmp_path / "stale_alias_probe.py"
@@ -114,8 +123,8 @@ def _write_scenario(tmp_path):
         # decide whether it is printed, swallowed, or fatal, and the default filter shows a given warning once.
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            from cached_callers import call_offset, call_scale, call_scale2
-            fns = {"call_scale": call_scale, "call_scale2": call_scale2, "call_offset": call_offset}
+            from cached_callers import call_offset, call_scale, call_scale2, plain
+            fns = {"call_scale": call_scale, "call_scale2": call_scale2, "call_offset": call_offset, "plain": plain}
             print("CALLERS_IMPORTED", flush=True)
             if os.environ["PRECOMPILE"] == "1":
                 for name, fn in fns.items():
@@ -212,7 +221,7 @@ def test_unedited_rerun_is_served_from_cache(tmp_path):
 
     cold = _warm(probe, env)
     assert _stats(cold) == dict.fromkeys(_HEALED, "compiled"), _stats(cold)
-    assert _results(cold) == {"call_scale": "11.0", "call_scale2": "12.0", "call_offset": "108.0"}, _results(cold)
+    assert _results(cold) == _OLD_BODY, _results(cold)
 
     warm = _warm(probe, env)
     assert _stats(warm) == dict.fromkeys(_HEALED, "served"), f"an unchanged re-run recompiled: {_stats(warm)}"
@@ -233,7 +242,7 @@ def test_editing_a_proxied_body_renames_only_that_binding_alias(tmp_path):
 
     assert after["ALIAS_edited"] != before["ALIAS_edited"], "the edited body kept its alias"
     assert after["ALIAS_stable"] == before["ALIAS_stable"], "the untouched body was re-keyed"
-    assert _results(after) == {"call_scale": "16.0", "call_scale2": "17.0", "call_offset": "108.0"}, _results(after)
+    assert _results(after) == _NEW_BODY, _results(after)
 
 
 @pytest.mark.parametrize("precompile", [False, True], ids=["call", "compile"])
@@ -262,7 +271,7 @@ def test_stale_proxy_alias_is_discarded_and_recompiled(tmp_path, precompile):
         raise RuntimeError(f"the edit re-keyed the callers too, so no stale entry was ever loaded\n{_report(r)}")
     assert r.returncode == 0, f"a cache entry referencing an unregistered proxy alias reached the engine\n{_report(r)}"
     fields = _fields(r)
-    assert _results(fields) == {"call_scale": "16.0", "call_scale2": "17.0", "call_offset": "108.0"}, _results(fields)
+    assert _results(fields) == _NEW_BODY, _results(fields)
     assert _stats(fields) == _HEALED, f"the wrong entries were discarded: {_stats(fields)}"
     assert "StaleProxyCacheWarning" in fields["WARNINGS"], f"the discard was not announced: {fields['WARNINGS']}"
     assert stale_alias in fields["WARNINGS"], f"no warning named {stale_alias}: {fields['WARNINGS']}"
@@ -270,3 +279,76 @@ def test_stale_proxy_alias_is_discarded_and_recompiled(tmp_path, precompile):
     healed = _fields(_run_probe(probe, env))
     assert _stats(healed) == dict.fromkeys(_HEALED, "served"), f"the recompile was not written back: {_stats(healed)}"
     assert "StaleProxyCacheWarning" not in healed["WARNINGS"], f"the heal repeats forever: {healed['WARNINGS']}"
+
+
+def test_the_discard_can_be_escalated_to_an_error(tmp_path):
+    """Healing silently is the default, not the only option: a caller who would rather know can escalate.
+
+    The warning is a named class reachable from the public module path, so a filter can single it out without
+    catching every ``RuntimeWarning``. Escalation aborts before the heal, which leaves the stale entry on disk for
+    inspection rather than replacing it.
+    """
+    probe = _write_scenario(tmp_path)
+    env = _probe_env(tmp_path, "nbcache")
+    _warm(probe, env)
+
+    strict = tmp_path / "strict_probe.py"
+    strict.write_text(textwrap.dedent('''
+        import warnings
+
+        from numbox.core.proxy.proxy import StaleProxyCacheWarning
+
+        warnings.filterwarnings("error", category=StaleProxyCacheWarning)
+        from cached_callers import call_scale
+        print("RESULT", call_scale(5.0), flush=True)
+    '''), encoding="utf-8")
+
+    _edit_body(tmp_path)
+    r = _run_probe(strict, env)
+    assert r.returncode != 0, f"the stale entry was healed despite the filter\n{_report(r)}"
+    assert "StaleProxyCacheWarning" in r.stderr, f"escalated to something unnamed\n{_report(r)}"
+
+
+def test_a_guvectorize_caller_heals_too(tmp_path):
+    """A gufunc reaches the cache through a second implementation, whose payload is shaped differently.
+
+    ``@njit`` stores the serialized library inside a compile result; a gufunc's wrapper library is the payload, so
+    the two are unwrapped differently and only this exercises the second one. It also compiles eagerly at import
+    rather than on first call, which is why the warning capture has to wrap the import.
+    """
+    _write_binding(tmp_path / _EDITED, "scale", "x * 2.0")
+    (tmp_path / "gufunc_caller.py").write_text(textwrap.dedent('''
+        """A cached gufunc calling the proxied body, in a file the edit never touches."""
+        from numba import guvectorize
+        from numba.core.types import float64
+
+        from proxied_binding import scale
+
+
+        @guvectorize([(float64[:], float64[:])], "(n)->(n)", cache=True, nopython=True)
+        def gu_scale(x, out):
+            for i in range(x.shape[0]):
+                out[i] = scale(x[i]) + 1.0
+    '''), encoding="utf-8")
+    probe = tmp_path / "gufunc_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import warnings
+
+        import numpy as np
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            from gufunc_caller import gu_scale
+            result = gu_scale(np.array([5.0]))[0]
+        print("RESULT_gu_scale", result, flush=True)
+        print("WARNINGS", " | ".join(f"{w.category.__name__}: {w.message}".replace("\\n", " ") for w in caught))
+        print("DONE ok", flush=True)
+    '''), encoding="utf-8")
+
+    env = _probe_env(tmp_path, "nbcache")
+    assert _warm(probe, env)["RESULT_gu_scale"] == "11.0"
+
+    _edit_body(tmp_path)
+    fields = _fields(_run_probe(probe, env))
+    assert fields["RESULT_gu_scale"] == "16.0", f"the gufunc served a stale body: {fields['RESULT_gu_scale']}"
+    assert "StaleProxyCacheWarning" in fields["WARNINGS"], f"the discard was not announced: {fields['WARNINGS']}"

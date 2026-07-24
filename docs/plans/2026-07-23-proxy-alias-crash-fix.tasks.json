@@ -29,7 +29,7 @@
     {
       "id": 4,
       "subject": "T4: ELF-path regression tests (strict mode, fast path, selectivity, CodeLibraryCacheImpl)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "Tests for: strict-mode escalation (-W error and targeted filterwarnings both raise the named error); the no-alias fast path (a non-proxy cache=True function loads with no warning and only the bytes.find cost); partial staleness (two proxies, one edited — only the edited caller heals, the stable one hits with zero warnings); and the CodeLibraryCacheImpl path via a @guvectorize(cache=True) caller of a proxy (code-read-only in the prototype — make it live).\n\n```json:metadata\n{\"files\": [\"test/core/test_proxy_cache_stale.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q\", \"acceptanceCriteria\": [\"strict mode raises named error\", \"no-alias fast path: no warning\", \"partial staleness: exact selectivity\", \"guvectorize-calls-proxy heals\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
     },
