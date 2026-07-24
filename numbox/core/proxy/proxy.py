@@ -455,13 +455,17 @@ def _undefined_symbols(object_code):
 def _stale_proxy_aliases(payload, libdata_of_payload):
     """``@proxy`` aliases a serialized code library references that this process cannot correctly call.
 
-    A non-empty result means the payload must not be loaded. ``ll.address_of_symbol`` is nearly an exact
-    oracle: these names live only in llvmlite's explicit-symbol map, and because the alias encodes the body,
-    signature and jit options, a resolving alias is normally the right body to call. The exception is an alias
-    standing for an absent ``proxy_if_available`` binding, which resolves to a trap holding no body at all.
-    Loading that object is worse than discarding it -- the trap's error is raised inside a ``@cfunc``, where
-    numba swallows it and returns zero, so the caller silently computes on a wrong value, while discarding
-    yields the same clean typing error a cold cache gives.
+    A non-empty result means the payload must not be loaded. It is *every* stale alias the object imports,
+    not the first -- an object that calls two edited proxies carries two unregistered names, and the caller
+    joins the whole list into one warning, so the diagnostic never undercounts within an object. (What the
+    guard cannot enumerate is stale entries never loaded: a proxied body whose own source changed recompiles
+    fresh, overwriting its cache file, and is never handed to ``rebuild`` -- correctly drawing no warning.)
+    ``ll.address_of_symbol`` is nearly an exact oracle: these names live only in llvmlite's explicit-symbol
+    map, and because the alias encodes the body, signature and jit options, a resolving alias is normally the
+    right body to call. The exception is an alias standing for an absent ``proxy_if_available`` binding, which
+    resolves to a trap holding no body at all. Loading that object is worse than discarding it -- the trap's
+    error is raised inside a ``@cfunc``, where numba swallows it and returns zero, so the caller silently
+    computes on a wrong value, while discarding yields the same clean typing error a cold cache gives.
 
     The payload is unpacked inside the handler rather than by the caller, because its shape is precisely the
     thing a future numba might change.

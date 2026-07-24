@@ -285,6 +285,106 @@ def test_stale_proxy_alias_is_discarded_and_recompiled(tmp_path, precompile):
     assert "StaleProxyCacheWarning" not in healed["WARNINGS"], f"the heal repeats forever: {healed['WARNINGS']}"
 
 
+def _rewrite(path, old, new):
+    """Replace a body expression and bump the source stamp, as ``_write_binding`` does, so the edit is seen."""
+    before = path.stat()
+    path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+    os.utime(path, (before.st_mtime + 10,) * 2)
+
+
+def _write_two_proxy_scenario(tmp_path):
+    """One cached caller of two *different* proxied bodies in separate files, so its object imports two aliases.
+
+    Each binding sits below the cache anchor's minimum line. Editing both bodies renames both aliases, so the
+    single caller object references two names this process never registered -- the case that would undercount
+    if the warning named only the first stale alias it found rather than all of them.
+    """
+    (tmp_path / "bind_a.py").write_text(textwrap.dedent('''
+        """binding a."""
+        from numba import types
+        from numbox.core.proxy.proxy import proxy
+
+        SIG = types.float64(types.float64)
+
+
+        @proxy(SIG, jit_options={"cache": True})
+        def scale(x):
+            return x * 2.0
+    '''), encoding="utf-8")
+    (tmp_path / "bind_b.py").write_text(textwrap.dedent('''
+        """binding b."""
+        from numba import types
+        from numbox.core.proxy.proxy import proxy
+
+        SIG = types.float64(types.float64)
+
+
+        @proxy(SIG, jit_options={"cache": True})
+        def shift(x):
+            return x + 10.0
+    '''), encoding="utf-8")
+    (tmp_path / "two_caller.py").write_text(textwrap.dedent('''
+        """One cached caller of both proxies, in a file the edits never touch."""
+        from numba import njit
+
+        from bind_a import scale
+        from bind_b import shift
+
+
+        @njit(cache=True)
+        def call_both(x):
+            return scale(x) + shift(x) + 1.0
+    '''), encoding="utf-8")
+    probe = tmp_path / "two_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import warnings
+
+        import bind_a
+        import bind_b
+
+        print("ALIAS_a", bind_a.scale._numbox_proxy_alias, flush=True)
+        print("ALIAS_b", bind_b.shift._numbox_proxy_alias, flush=True)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            from two_caller import call_both
+            print("RESULT", call_both(5.0), flush=True)
+        stale = [w for w in caught if w.category.__name__ == "StaleProxyCacheWarning"]
+        print("N_STALE_WARNINGS", len(stale), flush=True)
+        for w in stale:
+            print("WARN", str(w.message).replace(chr(10), " "), flush=True)
+        print("DONE ok", flush=True)
+    '''), encoding="utf-8")
+    return probe
+
+
+def test_a_multi_alias_object_names_every_stale_alias_no_undercount(tmp_path):
+    """One cached object that imports two stale aliases must name *both* in its discard warning.
+
+    The correctness review saw a diagnostic that could undercount: an object referencing several retired
+    aliases getting a warning that named only some. The guard returns the whole set and the caller joins it,
+    so a single warning for the one stale object here has to carry both retired names -- an implementation
+    that stopped at the first stale symbol would name one and pass this by. Nothing numeric about compilation
+    is asserted; the retired aliases are captured from the warm run's own output.
+    """
+    probe = _write_two_proxy_scenario(tmp_path)
+    env = _probe_env(tmp_path, "nbcache")
+
+    warm = _fields(_run_probe(probe, env))
+    old_a, old_b = warm["ALIAS_a"], warm["ALIAS_b"]
+
+    for name, old, new in (("bind_a.py", "x * 2.0", "x * 3.0"), ("bind_b.py", "x + 10.0", "x + 20.0")):
+        _rewrite(tmp_path / name, old, new)
+
+    fields = _fields(_run_probe(probe, env))
+    assert fields["ALIAS_a"] != old_a and fields["ALIAS_b"] != old_b, "an edited body kept its alias"
+    assert fields["N_STALE_WARNINGS"] == "1", (
+        f"the single stale object should draw exactly one warning, got {fields['N_STALE_WARNINGS']}"
+    )
+    warned = fields["WARN"]
+    for retired in (old_a, old_b):
+        assert retired in warned, f"the warning undercounted -- it did not name {retired}: {warned}"
+
+
 def test_the_discard_can_be_escalated_to_an_error(tmp_path):
     """Healing silently is the default, not the only option: a caller who would rather know can escalate.
 
