@@ -78,11 +78,11 @@
     {
       "id": 9,
       "subject": "T9: diagnostic completeness \u2014 name every stale alias",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
-      "description": "Ensure the warning names every stale alias present in an object; the correctness verdict observed an undercount in a multi-entry scenario. Add a multi-stale-entry test.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\", \"test/core/test_proxy_cache_stale.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q -k undercount\", \"acceptanceCriteria\": [\"a multi-stale-entry object names all stale aliases in the warning\"], \"model\": \"sonnet\", \"effort\": \"high\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
+      "description": "Ensure the warning names every stale alias present in an object; the correctness verdict observed an undercount in a multi-entry scenario. Add a multi-stale-entry test.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\", \"test/core/test_proxy_cache_stale.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q -k undercount\", \"acceptanceCriteria\": [\"a multi-stale-entry object names all stale aliases in the warning\"], \"model\": \"sonnet\", \"effort\": \"high\", \"issue73\": [\"proxy-alias-crash\"]}\n```\n\nCOMPLETED 2026-07-24, commit 905a562 (pushed; CI 30100209711). NO code fix needed -- the guard already returns EVERY stale alias an object imports (sorted set, joined into one warning), verified: a single caller of two edited proxies gets one warning naming both retired aliases. The correctness verdict's '6 stale entries but 5 warnings' was diagnosed and is NOT an undercount: 5 warm caller objects loaded stale and each warned (incl. the gufunc's CodeLibrary wrapper -- the verdict's 'gufunc/dedup' hypothesis was wrong, it did warn); the 6th file was the proxied body's OWN cache entry, whose source changed, so numba recompiles it fresh and overwrites the .nbc (after the reload it holds only the NEW alias) -- it is never handed to rebuild, so correctly no warning. Pinned by test_a_multi_alias_object_names_every_stale_alias_no_undercount (verifyCommand -k undercount); mutant 'name only the first stale alias' (return [...][:1]) fails it. Docstring of _stale_proxy_aliases now states the per-object completeness and the superseded-body boundary. Gate: 996 passed/2 skipped, flake8 0, sphinx ok."
     },
     {
       "id": 10,

@@ -167,6 +167,10 @@ live on every cache load.
 - **T9.** Diagnostic completeness: ensure every stale alias in an object is named
   in the warning (the correctness verdict saw an undercount in a multi-entry
   scenario). `verify:` a multi-stale-entry scenario names all of them.
+  **Outcome: already complete; pinned, no code fix.** The guard returns the whole
+  set and the warning joins it, so a single object importing two stale aliases
+  names both. The verdict's "6 vs 5" was the proxied body's own superseded entry,
+  never loaded stale — see the findings section.
 
 ### Phase 4 — Documentation (mandatory)
 
@@ -215,7 +219,17 @@ live on every cache load.
   return, the opaque-capture fingerprint collision) are orthogonal to the crash and
   out of scope for this plan; note them as follow-ups, do not fold them in.
 
-## Findings from executing T1–T8 (recorded here because the analysis workspace is machine-local)
+## Findings from executing T1–T9 (recorded here because the analysis workspace is machine-local)
+
+- **The "6 stale entries but 5 warnings" observation is not a diagnostic undercount.** The guard names every
+  stale alias an object imports (it returns the whole set, joined into one warning; verified with a caller of
+  two edited proxies → one warning, both retired names). The sixth stale-alias-bearing file in the 5-flavor
+  scenario is the *proxied body's own* cache entry: its source changed, so numba recompiles it fresh and
+  overwrites the `.nbc` (after the reload it holds only the new alias), and it is never handed to `rebuild` —
+  so it correctly draws no warning. The five warnings correspond exactly to the five warm caller objects
+  loaded stale, the gufunc's `CodeLibrary` wrapper among them (the verdict's "gufunc/dedup" guess was wrong —
+  that wrapper *did* warn). The boundary the guard cannot enumerate is stale entries never loaded, not stale
+  aliases within a loaded object.
 
 - **A strict/paranoid check keyed on "the alias prefix is in the object bytes" has a false-positive surface
   as wide as "any cached code that mentions the alias name as data".** T8's optional "prefix present but no
