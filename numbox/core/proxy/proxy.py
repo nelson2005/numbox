@@ -354,8 +354,42 @@ def _elf_undefined_symbols(obj):
 
 
 def _macho_undefined_symbols(obj):
-    """Mach-O (macOS). Not read yet -- see ``_undefined_symbols`` for what an empty result means here."""
-    return set()
+    """Names of the undefined external symbols of a 64-bit little-endian Mach-O relocatable object.
+
+    Mach-O prefixes C symbols with an underscore, and it is stripped here so the names come back as numbox
+    registered them. A reader that skipped that step would test ``_numbox_pxy_...`` against the prefix, match
+    nothing, and quietly pass every stale object -- the failure mode this whole guard exists to prevent, in the
+    one place it would look like success. Other widths, byte orders and the fat container are left unread, as
+    in the ELF reader.
+    """
+    und = set()
+    if len(obj) < 32 or struct.unpack_from("<I", obj, 0)[0] != 0xFEEDFACF:
+        return und
+    (ncmds,) = struct.unpack_from("<I", obj, 16)
+    off = 32
+    for _ in range(ncmds):
+        if off + 8 > len(obj):
+            break
+        cmd, cmdsize = struct.unpack_from("<II", obj, off)
+        # Both bounds are about a corrupt or foreign object, not a real one: cmdsize is what advances the
+        # walk, so a zero would spin here forever, and this runs on every cache load. Fail-open cannot
+        # rescue a hang the way it rescues an exception.
+        if cmdsize < 8 or off + cmdsize > len(obj):
+            break
+        if cmd == 0x2:  # LC_SYMTAB
+            symoff, nsyms, stroff = struct.unpack_from("<III", obj, off + 8)
+            nsyms = min(nsyms, max(0, len(obj) - symoff) // 16)
+            for i in range(nsyms):
+                n_strx, n_type = struct.unpack_from("<IB", obj, symoff + i * 16)
+                if n_type & 0xE0:  # N_STAB: a debugging entry, never a link-time import
+                    continue
+                if (n_type & 0x0E) or not (n_type & 0x01):  # not N_UNDF, or not N_EXT
+                    continue
+                end = obj.index(b"\x00", stroff + n_strx)
+                name = obj[stroff + n_strx:end].decode("utf-8", "replace")
+                und.add(name[1:] if name.startswith("_") else name)
+        off += cmdsize
+    return und
 
 
 def _coff_undefined_symbols(obj):

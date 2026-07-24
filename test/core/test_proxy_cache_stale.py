@@ -23,6 +23,8 @@ import textwrap
 
 import pytest
 
+from numbox.core.proxy.proxy import _undefined_symbols
+
 _EDITED = "proxied_binding.py"
 _HEALED = {"call_scale": "compiled", "call_scale2": "compiled", "call_offset": "served", "plain": "served"}
 _OLD_BODY = {"call_scale": "11.0", "call_scale2": "12.0", "call_offset": "108.0", "plain": "12.0"}
@@ -380,6 +382,60 @@ def test_a_binding_that_disappeared_is_discarded_rather_than_called(tmp_path):
     assert "RESULT" not in fields, f"the vanished binding was called and returned {fields.get('RESULT')}"
     assert fields["RAISED"] == "TypingError", f"failed in an unexpected way: {fields['RAISED']}"
     assert "StaleProxyCacheWarning" in fields["WARNINGS"], f"the discard was not announced: {fields['WARNINGS']}"
+
+
+def test_the_mach_o_reader_strips_the_leading_underscore(tmp_path):
+    """The scenarios above cannot reach the Mach-O reader anywhere but macOS, so it is driven directly against
+    a real Mach-O object emitted by the same LLVM numba compiles with.
+
+    What this pins is the underscore Mach-O puts in front of every C symbol. A reader that forgets to strip it
+    compares ``_numbox_pxy_...`` against the prefix, matches nothing, and passes every stale object -- which is
+    indistinguishable from having nothing to do, on the one platform where nobody can watch it fail.
+    """
+    emit = tmp_path / "emit_macho.py"
+    emit.write_text(textwrap.dedent('''
+        import platform
+        import sys
+
+        from llvmlite import binding as ll
+        from llvmlite import ir
+
+        arch = {"aarch64": "arm64", "AMD64": "x86_64"}.get(platform.machine(), platform.machine())
+        triple = f"{arch}-apple-darwin"
+        try:
+            ll.initialize_all_targets()
+            ll.initialize_all_asmprinters()
+            target = ll.Target.from_triple(triple)
+        except Exception as exc:
+            print("SKIP", triple, exc)
+            sys.exit(0)
+
+        mod = ir.Module(name="fixture")
+        mod.triple = triple
+        fnty = ir.FunctionType(ir.DoubleType(), [ir.DoubleType()])
+        callee = ir.Function(mod, fnty, name="numbox_pxy_probe_0123456789abcdef")
+        fn = ir.Function(mod, fnty, name="caller")
+        builder = ir.IRBuilder(fn.append_basic_block("entry"))
+        builder.ret(builder.call(callee, [fn.args[0]]))
+
+        tm = target.create_target_machine(reloc="static", codemodel="large")
+        obj = tm.emit_object(ll.parse_assembly(str(mod)))
+        with open(sys.argv[1], "wb") as f:
+            f.write(obj)
+        print("OK", len(obj))
+    '''), encoding="utf-8")
+
+    obj_path = tmp_path / "fixture.o"
+    r = subprocess.run([sys.executable, str(emit), str(obj_path)], capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stderr
+    if r.stdout.startswith("SKIP"):
+        pytest.skip(f"llvmlite cannot emit Mach-O here: {r.stdout.strip()}")
+
+    obj = obj_path.read_bytes()
+    assert obj[:4] == b"\xcf\xfa\xed\xfe", f"not a 64-bit little-endian Mach-O: {obj[:4]!r}"
+    found = _undefined_symbols(obj)
+    assert "numbox_pxy_probe_0123456789abcdef" in found, f"the aliased import was not found: {sorted(found)}"
+    assert "_numbox_pxy_probe_0123456789abcdef" not in found, "the leading underscore was left on"
 
 
 def test_an_unrecognised_cache_payload_is_handed_on_untouched(tmp_path):
