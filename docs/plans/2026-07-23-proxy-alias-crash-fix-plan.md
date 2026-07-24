@@ -196,6 +196,27 @@ live on every cache load.
   return, the opaque-capture fingerprint collision) are orthogonal to the crash and
   out of scope for this plan; note them as follow-ups, do not fold them in.
 
+## Findings from executing T1–T5 (recorded here because the analysis workspace is machine-local)
+
+- **A resolvable alias does not imply a callable body.** `proxy_if_available`'s absent path registers a
+  diagnostic trap under the alias, so `ll.address_of_symbol` resolves and the validator would pass the
+  object. Reaching the trap is not a safe outcome: its `RuntimeError` is raised inside a `@cfunc`, numba
+  swallows it at the C boundary and returns zero, and the caller computes on the zero and exits 0 — a
+  silent wrong answer where a cold cache raises a clean `TypingError`. Trap-registered aliases are
+  therefore tracked in `_ABSENT_ALIASES` and treated as stale.
+- **numba's cached objects on Windows are ELF, not COFF.** LLVM's MCJIT rewrites a COFF target to ELF for
+  JIT, so `ll.get_object_format('x86_64-pc-windows-msvc')` reports COFF while the JIT emits ELF. The
+  Windows CI jobs pass with the COFF branch stubbed. Confirm with an object-magic assertion before
+  writing a COFF parser.
+- **A real Mach-O fixture can be produced on Linux** — `ll.initialize_all_targets()` then
+  `Target.from_triple("<arch>-apple-darwin").create_target_machine().emit_object(...)` — so the reader has
+  a compiler-produced test input on any host, with no binary checked in.
+- **A malformed object can hang a reader, and fail-open cannot rescue a hang.** In Mach-O, `cmdsize` is
+  what advances the load-command walk, so a zeroed one spins forever. Every reader added here must bound
+  its loops on both the declared count and the buffer.
+- **`.nbc` bytes are not deterministic** across processes for an identical body (same size, differing
+  bytes observed), so object content is not a valid staleness check — only the cache key is.
+
 ## Out of scope (follow-ups, recorded not done)
 
 - The four r4 silent-wrong-answer routes (separate `fingerprint.py` / cfunc-ABI
