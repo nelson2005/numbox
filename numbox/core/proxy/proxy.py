@@ -68,11 +68,16 @@ def _stable_cfunc_alias(func, main_sig, jit_options=None):
     silently rebinds callers to the wrong body. Folding the body gives each body
     its own alias. A consequence is that a body/signature change renames the
     alias, so a warm ``cache=True`` caller in another file (numba's cache key is
-    callee-blind) references a symbol this process never registered -- clear the
-    numba cache after such a change. The one variant that leaves the alias
-    unchanged, an absent ``proxy_if_available`` binding, is covered by a
-    diagnostic trap (see ``_register_absent_alias_trap``) so it surfaces a named
-    error rather than a null-pointer call.
+    callee-blind) references a symbol this process never registered. The load-time
+    guard heals this automatically -- it discards that one cache entry and
+    recompiles it, warning once with :class:`StaleProxyCacheWarning`; no manual
+    cache clearing is needed (set ``NUMBOX_PROXY_CACHE_STRICT`` to raise
+    :class:`StaleProxyCacheError` before the heal instead). The one variant that
+    leaves the alias unchanged, an absent ``proxy_if_available`` binding, is
+    covered by a diagnostic trap (see ``_register_absent_alias_trap``); the guard
+    treats such an alias as stale too, so a warm caller reaches the same clean
+    typing error a cold cache gives rather than the trap's swallowed-in-a-cfunc
+    zero.
 
     The resolved ``jit_options`` are folded too. They govern the machine code
     ``njit(sig, **jit_options)`` emits, but appear nowhere in the identity above,

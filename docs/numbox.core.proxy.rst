@@ -60,8 +60,10 @@ Any edit to the user's file (the file containing the ``@proxy``
 decoration) invalidates the wrapper's cache. Edits to ``proxy.py``'s
 wrapper template itself — without a corresponding user-file edit — do
 *not* invalidate the cache (the user file's mtime is unchanged); treat
-wrapper-template changes as developer-managed (clear
-``~/.cache/numba/`` when shipping a template change to numbox).
+wrapper-template changes as developer-managed. Clear the affected
+entries — the ``.nbc`` / ``.nbi`` files in the ``__pycache__`` beside
+each binding's source, or under ``NUMBA_CACHE_DIR`` — when shipping a
+template change to numbox.
 
 Alias content-addressing and cross-file callers
 ------------------------------------------------
@@ -78,14 +80,44 @@ silently rebound callers to the wrong body).
 Because the alias encodes the body, changing a proxied binding's **signature or
 body renames its alias**. numba's cache key for a *caller* is callee-blind, so a
 ``cache=True`` caller in another file cache-hits unchanged after such a change
-and references the old alias, which the new process never registers — clear the
-numba cache (``~/.cache/numba/`` or ``NUMBA_CACHE_DIR``) after changing a
-proxied binding while a warm caller cache exists. The one variant that leaves
-the alias unchanged — a ``proxy_if_available`` binding that was present when the
-caller was cached but is absent on reload — is covered by a diagnostic trap: the
-absent path registers a cfunc under the alias that raises a named
-``RuntimeError`` on stderr, so that case surfaces a clear message rather than a
-null-pointer call.
+and references the old alias, which the new process never registers. Left
+unhandled this is a hard crash rather than a miss: RuntimeDyld resolves an
+object's externals in one batch, so the single missing name zeroes *every*
+relocation in the object and the process dies inside the argument-unpacking
+wrapper — a bare segfault with an empty stderr, or, once any later cached object
+is loaded, an ``LLVM ERROR: Symbol not found`` abort.
+
+**numbox heals this on load; no manual cache clearing is needed.** Importing any
+``@proxy`` binding imports numbox, which installs a guard around numba's cache
+``rebuild``. Before a cached object reaches the execution engine its undefined
+``numbox_pxy_*`` symbols are checked against the registered aliases; an object
+referencing one this process never registered is discarded and recompiled in
+place, emitting a :class:`~numbox.core.proxy.proxy.StaleProxyCacheWarning` that
+names the retired alias. ``@njit``, ``@vectorize``, ``@guvectorize`` and
+``@cfunc`` callers all heal.
+
+Set ``NUMBOX_PROXY_CACHE_STRICT`` (truthy: anything other than unset / ``0`` /
+``false`` / ``no`` / ``off``, case-insensitive) to make the guard fail loud
+instead of healing: a stale alias then raises
+:class:`~numbox.core.proxy.proxy.StaleProxyCacheError` *before* the discard,
+leaving the stale entry on disk to inspect, and a payload the guard cannot read
+raises :class:`~numbox.core.proxy.proxy.UnvalidatedProxyCacheError` rather than
+loading unchecked.
+
+**First run after an upgrade.** A numbox release that changes the alias
+fingerprint renames every shipped alias at once, so the first process after the
+upgrade heals every warm caller of a numbox binding — a one-time burst of
+recompiles and warnings, after which the cache is warm again. To clear it by hand
+instead, the entries are the ``.nbc`` / ``.nbi`` files in the ``__pycache__``
+directory beside each caller's own source (or under ``NUMBA_CACHE_DIR`` if set);
+``~/.cache/numba`` holds only callers numba cannot anchor to a source file.
+
+The one variant that leaves the alias unchanged — a ``proxy_if_available``
+binding present when the caller was cached but absent on reload — would otherwise
+resolve to a diagnostic trap (a cfunc registered under the alias whose
+``RuntimeError`` numba swallows at the C boundary, returning zero); the guard
+treats such an alias as stale too, so the caller reaches the same clean typing
+error a cold cache gives.
 
 Multi-decorator support
 -----------------------
