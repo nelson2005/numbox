@@ -227,7 +227,31 @@ live on every cache load.
   return, the opaque-capture fingerprint collision) are orthogonal to the crash and
   out of scope for this plan; note them as follow-ups, do not fold them in.
 
-## Findings from executing T1–T9 (recorded here because the analysis workspace is machine-local)
+## Findings from executing T1–T9, T15 (recorded here because the analysis workspace is machine-local)
+
+- **`co_names` conflates a global read with an attribute access, and folding globals off it is a stale-cache
+  hazard (T15).** `_referenced_global_names` returned `set(co_names)`, which pools `LOAD_GLOBAL` with
+  `LOAD_ATTR`/`LOAD_METHOD`. A derive doing `a_[t].c1` (or a chained `cfg.SCALE`) put `c1`/`SCALE` in
+  `co_names`, so `_fingerprint_function` folded — or, when the colliding module global had no canonical
+  form, *raised* on — a value the body never reads. On the builder derive path the raise forced the
+  `@id(derive)` address fallback ⇒ unbounded cache growth. Fixed by collecting globals from the instruction
+  stream (`_loaded_global_names`, global-namespace opcodes only). The `cfg.SCALE` module-attribute walk keeps
+  keying on the full `co_names` set, so T4/H6 is preserved; the builder's `reads_module_state` uses the new
+  primitive, so `a_[t].c1` no longer marks a derive uncacheable while a genuine `LOAD_GLOBAL` still does.
+- **A numba `Record` mangles by a creation-order `_code`, so a record-typed graph kernel's cache key is
+  process-order-dependent (T15, second root cause).** `mangle_type_or_value` on a `Record` uses
+  `mangling_args == ('Record', (self._code,))`, and `_code` is a global counter assigned as types are
+  created — so a cold process (which compiles, hence creates, many types) and a warm one hash the same
+  structural record differently. This is the same orphan-per-run failure class as the Dispatcher ASLR-repr
+  case (M13/L18), for Records; it was masked by the larger co_names leak until that was fixed. `str(record)`
+  is fully structural (fields, offsets, size, alignment) with no `_code`, so `hash_type` hashes a
+  Record-bearing type (`"Record(" in str(ty)`) on `str()`; every other type keeps the mangle, so only
+  record-typed names re-key once.
+- **Reusable:** a "N-run cache growth" symptom on a shared fingerprint can hide *two* independent
+  order/address instabilities; fixing the dominant (unbounded) one unmasks the smaller (bounded) one. And a
+  pin at the *builder* level (a record-field-collision derive) cannot isolate the co_names bug from the
+  Record-`_code` bug — the plain-array `a_.size` collision is what isolates co_names, a plain-array test
+  never touching the Record path.
 
 - **The "6 stale entries but 5 warnings" observation is not a diagnostic undercount.** The guard names every
   stale alias an object imports (it returns the whole set, joined into one warning; verified with a caller of
