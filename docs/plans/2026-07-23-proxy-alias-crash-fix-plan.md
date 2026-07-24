@@ -180,6 +180,14 @@ live on every cache load.
   behaviour: self-healing on load, the `StaleProxyCacheWarning`, the strict-mode
   recipe, and a plain statement of the first-upgrade transition. `verify:`
   `sphinx-build -W` clean; the doc code-blocks pass the doc-codeblock flake8.
+  **Outcome: done.** Rewrote the alias section + docstring around the self-heal
+  (crash prevented, guard install on import, all caller kinds heal, warning,
+  strict recipe, first-upgrade recompile burst). Verified empirically that a
+  file-backed caller caches to `__pycache__` beside its source (or
+  `NUMBA_CACHE_DIR`), not `~/.cache/numba` — corrected both spots. The runtime
+  trap message is unchanged (two tests pin its substrings; manual clearing is
+  still the correct fallback when the guard is inactive). No python code-blocks
+  in the rst, so the doc-codeblock lint is a no-op here.
 
 ### Phase 5 — Full gate and ship
 
