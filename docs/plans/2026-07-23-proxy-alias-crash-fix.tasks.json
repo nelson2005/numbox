@@ -8,7 +8,7 @@
     {
       "id": 1,
       "subject": "T1: two-process stale-heal test harness + baseline crash pin",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "Add a subprocess stale-heal test mirroring test/core/test_cache_crossprocess.py (_run_probe, tmp_path, dedicated NUMBA_CACHE_DIR). P1 warms a cache=True cross-file caller of a @proxy binding; edit the binding body; P2 reruns on the same cache dir. Assert target: rc=0, new-body result, StaleProxyCacheWarning. Include a second unedited caller and assert it hits (selectivity). Pin both baseline crash shapes (silent SIGSEGV; LLVM ERROR SIGABRT) behind a marker so the suite stays green pre-fix. Runs on the full CI matrix — it is the verification target for every later phase.\n\n```json:metadata\n{\"files\": [\"test/core/test_proxy_cache_stale.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q\", \"acceptanceCriteria\": [\"harness collects and runs on Linux\", \"baseline (unpatched) reproduces both crash shapes\", \"heal + selectivity assertions are the pass target\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
     },
