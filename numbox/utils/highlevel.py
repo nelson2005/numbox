@@ -111,17 +111,23 @@ def hash_type(ty: Type):
     which is both process-stable and sensitive to a changed body.
 
     Every other type tested mangles stably, including CFunc and cres, which both
-    render as ``FunctionType[<sig>]``.
-
-    A Dispatcher whose function has no canonical fingerprint falls back to the
-    address-bearing mangle: process-unstable, so it simply keeps missing the
-    cache, which is the pre-existing behaviour and never a wrong hit.
+    render as ``FunctionType[<sig>]`` -- **except a Record**. A ``Record`` mangles
+    by a process-order-dependent id (``mangling_args == ('Record', (self._code,))``,
+    ``_code`` being a global counter assigned in type-creation order), so a node
+    typed as a Record -- or an ``Array`` / tuple containing one -- would get a
+    different hash in a cold process (which compiles, and so creates, many types)
+    than in a warm one, the same orphan-per-run failure as the Dispatcher case.
+    Its ``str`` is fully structural (field names, types, offsets, size, alignment)
+    and carries no ``_code``, so a Record-bearing type is hashed on ``str`` instead;
+    every other type keeps the mangle, so only Record-typed names re-key.
     """
     if isinstance(ty, Dispatcher):
         try:
             mangled_ty = "dispatcher(" + _fingerprint_function(ty.dispatcher.py_func, set()) + ")"
         except (_Unfingerprintable, RecursionError):
             mangled_ty = mangle_type_or_value(ty)
+    elif "Record(" in str(ty):
+        mangled_ty = "structural(" + str(ty) + ")"
     else:
         mangled_ty = mangle_type_or_value(ty)
     return hashlib.sha256(mangled_ty.encode("utf-8")).hexdigest()

@@ -543,6 +543,53 @@ def test_attribute_named_global_does_not_grow_the_cache(tmp_path):
         f"the kernel was reminted across processes (cache grows): {counts}")
 
 
+_RECORD_GRAPH_DRIVER = textwrap.dedent('''
+    import numpy as np
+    from numba import from_dtype
+    from numba.core.types import Array
+    from numbox.core.work.builder import End, Derived, make_graph
+
+    dt = np.dtype([("c1", np.float64), ("c2", np.float64)])
+    T = 4
+    tau = End(name="tau", init_value=np.arange(T))
+    a = End(name="a", init_value=np.zeros(T, dtype=dt), ty=Array(from_dtype(dt), 1, "C"))
+
+
+    def derive_c1(tau_, a_):
+        for t in tau_:
+            a_[t]["c1"] = t * 1.0
+        return 0
+
+
+    c1 = Derived(name="c1", init_value=0, sources=(tau, a), derive=derive_c1)
+    acc = make_graph(c1, a)
+    acc.c1.calculate()
+    print("RESULT", acc.a.data[2]["c1"])
+''')
+
+
+def test_record_typed_graph_kernel_is_process_stable(tmp_path):
+    """A graph node typed as an ``Array`` of a numpy record must produce the same ``_make_<hash>`` kernel in
+    every process. A ``Record`` mangles by a creation-order ``_code``, so its hash -- and the kernel name
+    folding it -- differed between a cold process (which compiles, hence creates, many types before this one)
+    and a warm one, reminting the kernel on the first warm run. Three fresh processes against one cache dir
+    must add zero kernels after the first."""
+    cache = tmp_path / "nbcache"
+    cache.mkdir()
+    script = tmp_path / "record_graph_drv.py"
+    script.write_text(_RECORD_GRAPH_DRIVER)
+    counts = []
+    for _ in range(3):
+        out = subprocess.run([sys.executable, str(script)],
+                             env=dict(os.environ, NUMBA_CACHE_DIR=str(cache)),
+                             capture_output=True, text=True, timeout=600)
+        assert out.returncode == 0, out.stderr
+        counts.append(sum(1 for _ in cache.rglob("builder._make*.nbc")))
+    assert counts[0] > 0, "the graph kernel was never cached"
+    assert counts[1] == counts[0] and counts[2] == counts[0], (
+        f"a record-typed graph kernel was reminted across processes (cache grows): {counts}")
+
+
 _TYPED_GRAPH_DRIVER = textwrap.dedent('''
     import sys
     from numbox.core.work.builder import End, Derived, make_graph
