@@ -499,6 +499,50 @@ def test_make_graph_cache_key_content_independent(tmp_path):
         "contents (cache key depends on init values, not just types)")
 
 
+_ATTR_COLLIDE_DRIVER = textwrap.dedent('''
+    import numpy as np
+    from numbox.core.work.builder import End, Derived, make_graph
+
+    # A module global whose name collides with the array attribute the derive reads (``a_.size``),
+    # and which has no canonical fingerprint. Folding globals off co_names would fold -- and choke on --
+    # this, forcing the address-bearing derive fallback and a fresh kernel every process.
+    size = np.array([object()], dtype=object)
+
+
+    def derive_s(a_):
+        return a_.size * 1.0
+
+
+    a = End(name="a", init_value=np.zeros(4, dtype=np.float64))
+    s = Derived(name="s", init_value=0.0, sources=(a,), derive=derive_s)
+    acc = make_graph(s)
+    acc.s.calculate()
+    print("RESULT", acc.s.data)
+''')
+
+
+def test_attribute_named_global_does_not_grow_the_cache(tmp_path):
+    """A derive whose attribute access (``a_.size``) shares a name with an un-fingerprintable module global
+    must still fingerprint stably, so its graph kernel caches once and hits thereafter -- not a fresh
+    ``_make_<hash>`` per process. Uses a plain float64 array (no record dtype) to isolate the ``co_names``
+    vs ``LOAD_ATTR`` distinction from any type-mangling concern; running three fresh processes against one
+    cache dir must add zero kernels after the first."""
+    cache = tmp_path / "nbcache"
+    cache.mkdir()
+    script = tmp_path / "attr_collide_drv.py"
+    script.write_text(_ATTR_COLLIDE_DRIVER)
+    counts = []
+    for _ in range(3):
+        out = subprocess.run([sys.executable, str(script)],
+                             env=dict(os.environ, NUMBA_CACHE_DIR=str(cache)),
+                             capture_output=True, text=True, timeout=600)
+        assert out.returncode == 0, out.stderr
+        counts.append(sum(1 for _ in cache.rglob("builder._make*.nbc")))
+    assert counts[0] > 0, "the graph kernel was never cached"
+    assert counts[1] == counts[0] and counts[2] == counts[0], (
+        f"the kernel was reminted across processes (cache grows): {counts}")
+
+
 _TYPED_GRAPH_DRIVER = textwrap.dedent('''
     import sys
     from numbox.core.work.builder import End, Derived, make_graph

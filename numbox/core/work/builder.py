@@ -11,7 +11,7 @@ from numbox.core.configurations import jit_options as jit_options_
 from numbox.core.work.lowlevel_work_utils import ll_make_work
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _codegen_env_canon, _effective_flags, _fingerprint_function,
-    _flags_canon, _referenced_global_names, _safe_repr,
+    _flags_canon, _loaded_global_names, _safe_repr,
 )
 from numbox.utils.highlevel import cres, hash_type
 from numbox.utils.preprocessing import _anchor_root, _materialize_anchor, _orphan_anchor_sweep
@@ -103,13 +103,21 @@ def _derive_fingerprint(derive) -> tuple[str, bool]:
     binary. Such a derive is compiled uncached -- recompiled per process,
     never wrong -- mirroring ``compile_kernel``'s degrade path. An
     un-fingerprintable derive is likewise uncached.
+
+    "Reads module globals" is measured off the instruction stream
+    (``_loaded_global_names``), not ``co_names``: a record-field access such as
+    ``a_[t].c1`` is a ``LOAD_ATTR`` whose name would otherwise collide with a
+    module global of the same name, spuriously marking the derive uncacheable
+    (and, via ``_fingerprint_function``, forcing the ``@id`` fallback below and
+    unbounded cache growth). A genuine ``cfg.SCALE`` read still counts -- its base
+    ``cfg`` is a real ``LOAD_GLOBAL`` -- so module-state derives stay uncacheable.
     """
     try:
         fingerprint = _fingerprint_function(derive, set())
     except (_Unfingerprintable, RecursionError):
         return f"{_safe_repr(derive)} @{id(derive)}", False
     reads_module_state = any(
-        name in derive.__globals__ for name in _referenced_global_names(derive.__code__)
+        name in derive.__globals__ for name in _loaded_global_names(derive.__code__)
     )
     return fingerprint, not reads_module_state
 

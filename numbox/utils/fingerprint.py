@@ -14,6 +14,7 @@ closure/global values fingerprint differently. Shared by
 decide how to degrade (compile_kernel marks the kernel uncached, digest falls
 back to cloudpickle of the code object).
 """
+import dis
 import hashlib
 
 from types import CodeType, FunctionType, ModuleType
@@ -117,6 +118,39 @@ def _referenced_global_names(code: CodeType) -> set[str]:
     return names
 
 
+# The bytecode ops that name the *global/module namespace*, as opposed to an
+# attribute (``LOAD_ATTR``/``LOAD_METHOD``/``STORE_ATTR``) or an import target.
+_GLOBAL_NAME_OPS = frozenset({
+    "LOAD_GLOBAL", "STORE_GLOBAL", "DELETE_GLOBAL",
+    "LOAD_NAME", "STORE_NAME", "DELETE_NAME",
+})
+
+
+def _loaded_global_names(code: CodeType) -> set[str]:
+    """Names this code touches in the *global* namespace, from the instruction stream.
+
+    ``co_names`` (used by :func:`_referenced_global_names`) pools global reads with
+    attribute names: ``a.c1`` and ``cfg.SCALE`` both put ``c1`` / ``SCALE`` in
+    ``co_names`` via ``LOAD_ATTR``, though neither is a global. Deciding which
+    globals' *values* to fold off ``co_names`` therefore folds -- or, if the value
+    has no canonical form, chokes on -- a module global that merely shares a name with
+    a record field or a chained attribute, over-invalidating the fingerprint (or, for
+    the builder's derive path, forcing the address-bearing fallback and unbounded cache
+    growth). Reading the opcodes tells a ``LOAD_GLOBAL c1`` from a ``LOAD_ATTR c1``.
+    Recurses into nested code objects (comprehensions, lambdas). ``cfg.SCALE``-style
+    module-attribute folding stays keyed on the full ``co_names`` set, so a module
+    attribute still re-keys; only the base ``cfg`` is a global here, and it is caught.
+    """
+    names: set[str] = set()
+    for instr in dis.get_instructions(code):
+        if instr.opname in _GLOBAL_NAME_OPS and isinstance(instr.argval, str):
+            names.add(instr.argval)
+    for c in code.co_consts:
+        if isinstance(c, CodeType):
+            names |= _loaded_global_names(c)
+    return names
+
+
 # The value types numba freezes into a compiled artifact as constants -- the
 # data module attributes whose value must enter the fingerprint. A Dispatcher
 # module attribute is folded too (numba links it and freezes its own captured
@@ -196,8 +230,9 @@ def _fingerprint_function(func: FunctionType, seen: set[int]) -> str:
         cells.append(f"{name}={_canon_value(contents, seen)}")
         closure_vals[name] = contents
     referenced = _referenced_global_names(code)
+    global_names = _loaded_global_names(code)
     hashed_globals = []
-    for name in sorted(referenced):
+    for name in sorted(global_names):
         if name in func.__globals__:
             hashed_globals.append(f"{name}={_canon_value(func.__globals__[name], seen)}")
     modattr_ns = {n: func.__globals__[n] for n in referenced if n in func.__globals__}
@@ -253,7 +288,7 @@ def _fingerprint_function_best_effort(func: FunctionType) -> str:
         cells.append(f"{name}={_canon(contents)}")
     hashed_globals = [
         f"{name}={_canon(func.__globals__[name])}"
-        for name in sorted(_referenced_global_names(code))
+        for name in sorted(_loaded_global_names(code))
         if name in func.__globals__
     ]
     return (
