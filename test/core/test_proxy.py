@@ -369,15 +369,19 @@ def test_proxy_redefinition_keeps_callers_on_their_own_body():
 
 def test_proxy_absent_binding_caller_gets_loud_diagnostic_not_segfault(tmp_path):
     """A cache=True caller of a proxy_if_available binding that is present when
-    the cache is written but absent on reload must get a loud diagnostic, not a
-    silent segfault.
+    the cache is written but absent on reload must fail loudly -- not segfault,
+    and not hand back a value.
 
     numba's caller cache key is callee-blind, so a warm-cached caller cache-hits
     even in a process where ``proxy_if_available`` took the absent (stub) path
-    and registered no real body. Before the fix the unresolved extern linked to
-    null and the call was a bare SIGSEGV (exit 139, zero diagnostics). The absent
-    path now registers a diagnostic trap under the same alias, so the call
-    resolves to a cfunc that raises a named ``RuntimeError`` printed to stderr.
+    and registered no real body. Before the trap the unresolved extern linked to
+    null and the call was a bare SIGSEGV (exit 139, zero diagnostics). The trap
+    keeps the alias resolvable, but reaching it is not enough on its own: the
+    ``RuntimeError`` it raises is raised inside a ``@cfunc``, where numba swallows
+    it and returns zero, so the caller went on to print a wrong answer and exit 0.
+    The cache guard now discards an entry whose alias resolves only to a trap, so
+    the recompile reaches the stub's typing error instead -- the same outcome a
+    cold cache gives.
     """
     pkg = tmp_path / "flip_pkg"
     pkg.mkdir()
@@ -432,13 +436,14 @@ def test_proxy_absent_binding_caller_gets_loud_diagnostic_not_segfault(tmp_path)
         [sys.executable, str(pkg / "run_flip.py")],
         capture_output=True, text=True, encoding="utf-8", env=env,
     )
-    # The trap makes this loud (a named RuntimeError on stderr) instead of the
-    # pre-fix bare SIGSEGV; the key regression guard is "not a segfault".
     assert r2.returncode not in (-11, 139), (
         f"segfault instead of a loud diagnostic (returncode={r2.returncode})\n{r2.stderr}"
     )
-    assert "RuntimeError" in r2.stderr and "myfn" in r2.stderr, (
-        f"expected a RuntimeError naming the binding on stderr, got:\n{r2.stderr}"
+    assert "RESULT" not in r2.stdout, (
+        f"the absent binding was called and produced a value: {r2.stdout!r}"
+    )
+    assert "TypingError" in r2.stderr and "myfn" in r2.stderr, (
+        f"expected a typing error naming the binding on stderr, got:\n{r2.stderr}"
     )
     assert "not available in the loaded library" in r2.stderr, r2.stderr
 

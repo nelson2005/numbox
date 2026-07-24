@@ -110,6 +110,10 @@ def _call_proxied_alias(context, builder, main_sig, alias_name, args):
 # their addresses, so keep a process-lifetime reference to each.
 _PROXY_TRAP_KEEPALIVE = []
 
+# Aliases currently standing for an ABSENT binding. A trap registration makes the alias resolve without
+# there being a body behind it, so presence alone stops meaning "safe to call" -- see _stale_proxy_aliases.
+_ABSENT_ALIASES = set()
+
 
 def _register_absent_alias_trap(func, main_sig, jit_options=None):
     """Register a diagnostic trap under the alias ``proxy(sig)(func)`` would use.
@@ -139,6 +143,7 @@ def _register_absent_alias_trap(func, main_sig, jit_options=None):
         trap_ns,
     )
     _PROXY_TRAP_KEEPALIVE.append(trap_ns["_trap_cfunc"])
+    _ABSENT_ALIASES.add(alias)
     ll.add_symbol(alias, trap_ns["_trap_cfunc"].address)
 
 
@@ -182,6 +187,7 @@ def proxy(sig, jit_options: Optional[dict] = None):
         # Register a process-stable alias for the body's cfunc wrapper and reference
         # that instead of numba's process-local ``v<uid>`` name (see _stable_cfunc_alias).
         cfunc_alias = _stable_cfunc_alias(func, main_sig, jit_options)
+        _ABSENT_ALIASES.discard(cfunc_alias)
         ll.add_symbol(cfunc_alias, cres.library.get_pointer_to_function(cres.fndesc.llvm_cfunc_wrapper_name))
         func_args_str, func_names_args_str = make_params_strings(func)
         func_proxy_name = make_proxy_name(func.__name__)
@@ -306,13 +312,24 @@ class StaleProxyCacheWarning(RuntimeWarning):
     """
 
 
+class UnvalidatedProxyCacheWarning(RuntimeWarning):
+    """A cached payload could not be read, so it was loaded without being checked for stale ``@proxy``
+    aliases. Reported once per process: the condition is a property of the environment, not of one entry."""
+
+
 _ELF_MAGIC = b"\x7fELF"
-# 32- and 64-bit, both byte orders, plus the fat/universal container.
-_MACHO_MAGICS = frozenset((0xFEEDFACE, 0xFEEDFACF, 0xCEFAEDFE, 0xCFFAEDFE, 0xCAFEBABE, 0xBEBAFECA))
+# 32- and 64-bit, both byte orders, and both widths of the fat/universal container.
+_MACHO_MAGICS = frozenset((0xFEEDFACE, 0xFEEDFACF, 0xCEFAEDFE, 0xCFFAEDFE,
+                           0xCAFEBABE, 0xBEBAFECA, 0xCAFEBABF, 0xBFBAFECA))
+_unvalidated_reported = False
 
 
 def _elf_undefined_symbols(obj):
-    """Names of the undefined (imported) symbols of an ELF64 little-endian relocatable object."""
+    """Names of the undefined (imported) symbols of an ELF64 little-endian relocatable object.
+
+    A 32-bit or big-endian ELF is left unread and yields nothing, the same contract ``_undefined_symbols``
+    documents for a container format it cannot parse.
+    """
     und = set()
     if len(obj) < 0x40 or obj[4] != 2 or obj[5] != 1:
         return und
@@ -360,15 +377,22 @@ def _undefined_symbols(object_code):
     return _coff_undefined_symbols(object_code)
 
 
-def _stale_proxy_aliases(libdata):
-    """``@proxy`` aliases a serialized code library references that this process has NOT registered.
+def _stale_proxy_aliases(payload, libdata_of_payload):
+    """``@proxy`` aliases a serialized code library references that this process cannot correctly call.
 
-    A non-empty result means the payload must not be loaded. ``ll.address_of_symbol`` is an exact oracle here
-    because these names live only in llvmlite's explicit-symbol map, and since the alias encodes the body,
-    signature and jit options, presence also implies the registered body is the right one to call.
+    A non-empty result means the payload must not be loaded. ``ll.address_of_symbol`` is nearly an exact
+    oracle: these names live only in llvmlite's explicit-symbol map, and because the alias encodes the body,
+    signature and jit options, a resolving alias is normally the right body to call. The exception is an alias
+    standing for an absent ``proxy_if_available`` binding, which resolves to a trap holding no body at all.
+    Loading that object is worse than discarding it -- the trap's error is raised inside a ``@cfunc``, where
+    numba swallows it and returns zero, so the caller silently computes on a wrong value, while discarding
+    yields the same clean typing error a cold cache gives.
+
+    The payload is unpacked inside the handler rather than by the caller, because its shape is precisely the
+    thing a future numba might change.
     """
     try:
-        _name, kind, data = libdata
+        _name, kind, data = libdata_of_payload(payload)
         if kind != "object":
             return []
         object_code = data[0]
@@ -376,12 +400,21 @@ def _stale_proxy_aliases(libdata):
             return []  # fast path: the alias string appears nowhere in the object
         return sorted(
             s for s in _undefined_symbols(object_code)
-            if s.startswith(_ALIAS_PREFIX) and not ll.address_of_symbol(s)
+            if s.startswith(_ALIAS_PREFIX) and (s in _ABSENT_ALIASES or not ll.address_of_symbol(s))
         )
-    except Exception:
+    except Exception as exc:
         # Fail open: this runs on EVERY numba cache load in the process, so a surprise -- a future numba
         # changing the payload shape, a malformed object -- must degrade to "no validation", never to
-        # breaking unrelated caching.
+        # breaking unrelated caching. Say so once, though: abandoning the check silently is indistinguishable
+        # from passing it, and what it silently restores is the crash this guard exists to prevent.
+        global _unvalidated_reported
+        if not _unvalidated_reported:
+            _unvalidated_reported = True
+            warnings.warn(
+                f"numbox: could not check a numba cache payload for stale @proxy aliases ({exc!r}); it was "
+                "loaded unchecked. Later payloads in this process are checked, but not reported again.",
+                UnvalidatedProxyCacheWarning, stacklevel=3,
+            )
         return []
 
 
@@ -394,12 +427,13 @@ def _guarded_rebuild(orig_rebuild, libdata_of_payload):
     cache miss, so the stale entry is discarded and recompiled in place.
     """
     def rebuild(self, target_context, payload):
-        stale = _stale_proxy_aliases(libdata_of_payload(payload))
+        stale = _stale_proxy_aliases(payload, libdata_of_payload)
         if stale:
             warnings.warn(
-                "numbox: discarding a stale numba cache entry and recompiling: it references "
-                "@proxy cfunc alias(es) this process never registered (the proxied body, "
-                "signature or jit_options changed since the caller was cached): "
+                "numbox: discarding a stale numba cache entry and recompiling: "
+                f"{getattr(self, 'filename_base', '?')} references @proxy cfunc alias(es) this process "
+                "cannot call (the proxied body, signature or jit_options changed since the caller was "
+                "cached, or the binding is no longer available): "
                 + ", ".join(stale),
                 StaleProxyCacheWarning,
                 stacklevel=3,

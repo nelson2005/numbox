@@ -309,6 +309,95 @@ def test_the_discard_can_be_escalated_to_an_error(tmp_path):
     assert "StaleProxyCacheWarning" in r.stderr, f"escalated to something unnamed\n{_report(r)}"
 
 
+def test_a_binding_that_disappeared_is_discarded_rather_than_called(tmp_path):
+    """A ``proxy_if_available`` binding that is gone leaves its alias resolvable, and that is the dangerous case.
+
+    The absent path registers a trap under the alias a warm caller baked in, so the symbol resolves and the object
+    looks loadable. Calling it is the worst available outcome: the trap raises inside a ``@cfunc``, numba swallows
+    that at the C boundary and returns zero, and the caller computes on the zero and exits successfully. Discarding
+    the entry instead reaches the same clean typing error a cold cache gives, which is what this pins.
+    """
+    (tmp_path / "fakelib.py").write_text(textwrap.dedent('''
+        """Stands in for a C library whose symbol is present in one process and gone in the next."""
+        import os
+
+
+        class _Lib:
+            pass
+
+
+        lib = _Lib()
+        if os.environ["SYMBOL_PRESENT"] == "1":
+            lib.scale = object()
+    '''), encoding="utf-8")
+    (tmp_path / "optional_binding.py").write_text(textwrap.dedent('''
+        """A binding that exists only when its C symbol does."""
+        from numba import types
+        from numbox.core.proxy.proxy import proxy_if_available
+
+        from fakelib import lib
+
+        SIG = types.float64(types.float64)
+
+
+        @proxy_if_available(lib, SIG, jit_options={"cache": True})
+        def scale(x):
+            return x * 2.0
+    '''), encoding="utf-8")
+    (tmp_path / "optional_caller.py").write_text(textwrap.dedent('''
+        from numba import njit
+
+        from optional_binding import scale
+
+
+        @njit(cache=True)
+        def call_scale(x):
+            return scale(x) + 1.0
+    '''), encoding="utf-8")
+    probe = tmp_path / "optional_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import warnings
+
+        import optional_binding  # noqa: F401
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            from optional_caller import call_scale
+            try:
+                print("RESULT", call_scale(5.0), flush=True)
+            except Exception as exc:
+                print("RAISED", type(exc).__name__, flush=True)
+        print("WARNINGS", " | ".join(f"{w.category.__name__}" for w in caught))
+        print("DONE ok", flush=True)
+    '''), encoding="utf-8")
+
+    env = _probe_env(tmp_path, "nbcache")
+    env["SYMBOL_PRESENT"] = "1"
+    assert _warm(probe, env)["RESULT"] == "11.0"
+
+    env["SYMBOL_PRESENT"] = "0"
+    fields = _fields(_run_probe(probe, env))
+    assert "RESULT" not in fields, f"the vanished binding was called and returned {fields.get('RESULT')}"
+    assert fields["RAISED"] == "TypingError", f"failed in an unexpected way: {fields['RAISED']}"
+    assert "StaleProxyCacheWarning" in fields["WARNINGS"], f"the discard was not announced: {fields['WARNINGS']}"
+
+
+def test_an_unrecognised_cache_payload_is_handed_on_untouched(tmp_path):
+    """The payload's shape is the assumption most likely to change under this guard, so a shape it cannot read
+    must cost only the validation -- never the load. Every numba in the supported range passes a tuple here."""
+    from numbox.core.proxy.proxy import _guarded_rebuild
+
+    class _Impl:
+        filename_base = "unreadable"
+
+    def original(self, target_context, payload):
+        return "loaded"
+
+    rebuild = _guarded_rebuild(original, lambda payload: payload[0])
+    for payload in ({"keyword": "style"}, object(), ()):
+        assert rebuild(_Impl(), None, payload) == "loaded", f"{type(payload).__name__} payload broke the load"
+
+
 def test_a_guvectorize_caller_heals_too(tmp_path):
     """A gufunc reaches the cache through a second implementation, whose payload is shaped differently.
 
