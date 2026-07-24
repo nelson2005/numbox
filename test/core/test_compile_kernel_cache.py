@@ -13,7 +13,7 @@ import textwrap
 import types
 
 import pytest
-from numba import njit, vectorize
+from numba import njit, typeof, vectorize
 from numba.core.caching import NullCache
 
 from numbox.core.variable.compile_kernel import (
@@ -294,6 +294,23 @@ def test_default_arg_cached_dispatcher_makes_unit_uncacheable():
     with pytest.warns(UserWarning, match="reference, a @njit"):
         disp = _compile(_KERNEL_SRC, {"f_x": njit(_formula_default_arg)}, None, None)
     assert isinstance(disp._cache, NullCache)
+
+
+def test_dispatcher_typed_declared_sig_makes_unit_uncacheable():
+    """A declared signature carrying a Dispatcher type (a function-typed external)
+    makes the unit uncacheable. ``declared_sigs`` folded raw ``repr`` of each type;
+    a Dispatcher's ``type(CPUDispatcher(<function f at 0x...>))`` carried an ASLR
+    address, orphaning a ``_kernel_`` cache pair per run, and numba cannot
+    cross-process-cache a Dispatcher signature anyway (issue #73 M13/L18). The
+    declared types now route through ``_type_identity``, which reports a Dispatcher
+    un-cacheable, so ``_compile`` drops the on-disk cache.
+    """
+    disp = _compile(
+        _KERNEL_SRC, {"f_x": _plain_formula}, None, None,
+        declared_sigs=((typeof(_plain_formula),),),
+    )
+    assert isinstance(disp._cache, NullCache), (
+        "a Dispatcher-typed declared signature must make the unit uncacheable")
 
 
 # Chained (cfg.sub.SCALE) and closure-captured module attributes must fold too

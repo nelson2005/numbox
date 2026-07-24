@@ -82,6 +82,7 @@ from numbox.utils.fingerprint import (
     _Unfingerprintable, _canon_value, _codegen_env_canon, _effective_flags, _fingerprint_function,
     _flags_canon, _referenced_global_names, _safe_repr,
 )
+from numbox.utils.highlevel import _type_identity
 from numbox.utils.preprocessing import (
     _anchor_root, _materialize_anchor, _orphan_anchor_sweep,
 )
@@ -411,6 +412,16 @@ def _compile(
             f"compile_kernel: jit flags {sorted(flags)} have no canonical "
             "fingerprint; compiling this kernel without an on-disk cache."
         )
+    # Each declared sig is a tuple of numba types; fold them through the
+    # process-stable identity rather than raw repr, whose Dispatcher form
+    # ``type(CPUDispatcher(<function f at 0x...>))`` carries an ASLR address and
+    # would orphan a cache pair per run (issue #73 M13/L18). An un-fingerprintable
+    # declared type (a Dispatcher wrapping an @intrinsic-referencing body) has only
+    # a best-effort identity -> compile uncached.
+    declared_ids = [[_type_identity(t) for t in s] for s in declared_sigs]
+    declared_canon = [[h for h, _ok in sig] for sig in declared_ids]
+    if not all(ok for sig in declared_ids for _h, ok in sig):
+        cacheable = False
     hash_text = (
         "ck-digest-v3\n" + source
         + "\n# formulas:\n" + "\n".join(fingerprints)
@@ -419,7 +430,7 @@ def _compile(
         # explicit jit flag at lowering and are in neither the jit flags nor numba's
         # own cache key.
         + "\n# codegen_env: " + _codegen_env_canon()
-        + "\n# declared_sigs: " + repr([repr(s) for s in declared_sigs])
+        + "\n# declared_sigs: " + repr(declared_canon)
     )
     if not cacheable:
         opts["cache"] = False

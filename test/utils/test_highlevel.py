@@ -14,9 +14,12 @@ from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib_path
 from numbox.utils.highlevel import (
+    _signature_identity,
+    _type_identity,
     cres,
     cres_if_available,
     determine_field_index,
+    hash_type,
     make_structref,
     make_structref_code_txt,
 )
@@ -404,6 +407,69 @@ def test_materialize_anchor_writes_utf8_bytes(tmp_path):
     anchor = tmp_path / "anchor.py"
     _materialize_anchor(anchor, content)
     assert anchor.read_bytes() == content.encode("utf-8")
+
+
+def test_type_identity_plain_type_is_cacheable():
+    h, ok = _type_identity(float64)
+    assert ok is True
+    assert isinstance(h, str) and len(h) == 64
+    assert hash_type(float64) == h        # hash_type delegates to _type_identity
+
+
+def test_type_identity_dispatcher_is_uncacheable_and_content_sensitive():
+    """A Dispatcher type is un-cacheable regardless of whether its wrapped body
+    fingerprints -- numba cannot cross-process-cache a Dispatcher signature -- yet
+    the hash stays content-sensitive so a changed body re-keys the in-process name.
+    """
+    @njit
+    def plain(x):
+        return x + 1.0
+
+    @njit
+    def intrinsic_ref(x):
+        return _call_lib_func("cos", (x,))     # references an @intrinsic -> unfingerprintable body
+
+    h_plain, ok_plain = _type_identity(typeof(plain))
+    h_intr, ok_intr = _type_identity(typeof(intrinsic_ref))
+    assert ok_plain is False and ok_intr is False
+    assert len(h_plain) == 64 and len(h_intr) == 64
+    assert h_plain != h_intr                   # distinct bodies -> distinct hashes
+
+
+def test_type_identity_nested_dispatcher_is_uncacheable():
+    """A Dispatcher nested in a heterogeneous container escapes the top-level
+    ``isinstance`` check but must still be un-cacheable -- numba cannot
+    cross-process-cache a Dispatcher-carrying signature at any depth."""
+    @njit
+    def helper(x):
+        return x + 1.0
+
+    het = typeof((1.0, helper))                # Tuple(float64, Dispatcher)
+    assert "CPUDispatcher(" in str(het)        # the substring the guard keys on
+    _h, ok = _type_identity(het)
+    assert ok is False
+
+
+def test_type_identity_record_is_cacheable():
+    import numpy as np
+    from numba import from_dtype
+    rec = from_dtype(np.dtype([("a", np.float64), ("b", np.int64)]))
+    h, ok = _type_identity(rec)
+    assert ok is True and len(h) == 64
+    assert "Record(" in str(rec)               # exercises the structural branch
+
+
+def test_signature_identity_folds_component_cacheability():
+    @njit
+    def helper(x):
+        return x + 1.0
+
+    text_plain, ok_plain = _signature_identity(float64(float64, float64))
+    assert ok_plain is True and isinstance(text_plain, str)
+
+    text_disp, ok_disp = _signature_identity(float64(float64, typeof(helper)))
+    assert ok_disp is False                    # a Dispatcher component makes the sig un-cacheable
+    assert isinstance(text_disp, str)
 
 
 if __name__ == '__main__':

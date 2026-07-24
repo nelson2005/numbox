@@ -11,9 +11,9 @@ from numbox.core.configurations import jit_options as jit_options_
 from numbox.core.work.lowlevel_work_utils import ll_make_work
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _codegen_env_canon, _effective_flags, _fingerprint_function,
-    _flags_canon, _loaded_global_names, _safe_repr,
+    _fingerprint_function_best_effort, _flags_canon, _loaded_global_names,
 )
-from numbox.utils.highlevel import cres, hash_type
+from numbox.utils.highlevel import cres, _signature_identity, _type_identity
 from numbox.utils.preprocessing import _anchor_root, _materialize_anchor, _orphan_anchor_sweep
 
 
@@ -89,8 +89,8 @@ def get_ty(spec_):
 _derive_funcs = {}
 
 
-def _derive_fingerprint(derive) -> tuple[str, bool]:
-    """Return ``(fingerprint, cacheable)`` for a derive function.
+def _derive_fingerprint(derive) -> tuple[str, bool, bool]:
+    """Return ``(fingerprint, derive_cacheable, kernel_safe)`` for a derive.
 
     Routes the derive through the deep walker so its referenced-global *values*
     enter the kernel fingerprint, replacing a bare ``sha256(getsource(...))``
@@ -101,25 +101,35 @@ def _derive_fingerprint(derive) -> tuple[str, bool]:
     content-addressed kernel), and numba's own cache key covers only
     ``co_code`` + closure, so a changed global would silently serve a stale
     binary. Such a derive is compiled uncached -- recompiled per process,
-    never wrong -- mirroring ``compile_kernel``'s degrade path. An
-    un-fingerprintable derive is likewise uncached.
+    never wrong -- mirroring ``compile_kernel``'s degrade path. Its fingerprint
+    is still process-stable and captures the global's value at build time, so
+    the enclosing kernel stays cacheable (``kernel_safe`` True): a changed global
+    re-keys the kernel.
+
+    An **un-fingerprintable** derive is different: ``_fingerprint_function``
+    raises, and the best-effort placeholder used instead is process-stable (never
+    an address, so the kernel name no longer explodes per run) but cannot be
+    trusted to change when the un-canonicalizable state does. Both the derive and
+    the enclosing kernel must therefore compile uncached (``kernel_safe`` False):
+    recompiled per process, never wrong. This is the M13/L18 orphan-per-run class
+    -- ``@id``-based names and unconditional kernel caching re-opened it.
 
     "Reads module globals" is measured off the instruction stream
     (``_loaded_global_names``), not ``co_names``: a record-field access such as
     ``a_[t].c1`` is a ``LOAD_ATTR`` whose name would otherwise collide with a
     module global of the same name, spuriously marking the derive uncacheable
-    (and, via ``_fingerprint_function``, forcing the ``@id`` fallback below and
-    unbounded cache growth). A genuine ``cfg.SCALE`` read still counts -- its base
-    ``cfg`` is a real ``LOAD_GLOBAL`` -- so module-state derives stay uncacheable.
+    (and, via ``_fingerprint_function``, forcing the best-effort fallback below).
+    A genuine ``cfg.SCALE`` read still counts -- its base ``cfg`` is a real
+    ``LOAD_GLOBAL`` -- so module-state derives stay uncacheable.
     """
     try:
         fingerprint = _fingerprint_function(derive, set())
     except (_Unfingerprintable, RecursionError):
-        return f"{_safe_repr(derive)} @{id(derive)}", False
+        return _fingerprint_function_best_effort(derive), False, False
     reads_module_state = any(
         name in derive.__globals__ for name in _loaded_global_names(derive.__code__)
     )
-    return fingerprint, not reads_module_state
+    return fingerprint, not reads_module_state, True
 
 
 _DERIVE_ANCHOR_SUBDIR = "numbox-derive"
@@ -128,7 +138,7 @@ _DERIVE_ANCHOR_SUBDIR = "numbox-derive"
 _orphan_anchor_sweep(_DERIVE_ANCHOR_SUBDIR)
 
 
-def _derive_anchor_cres(derive_sig, derive, derive_fp, jit_options):
+def _derive_anchor_cres(derive_sig, sig_canon, derive, derive_fp, jit_options):
     """Compile ``derive`` under a cache identity that depends on the jit flags.
 
     Folding the flags into the kernel name re-keys the kernel but not the derive:
@@ -158,7 +168,7 @@ def _derive_anchor_cres(derive_sig, derive, derive_fp, jit_options):
         # cannot protect the binary that flag produced.
         return None
     digest = sha256(
-        f"derive-anchor-v1\n{derive_fp}\n# sig: {derive_sig}\n# flags: {flags_canon}"
+        f"derive-anchor-v2\n{derive_fp}\n# sig: {sig_canon}\n# flags: {flags_canon}"
         f"\n# codegen_env: {_codegen_env_canon()}".encode("utf-8")
     ).hexdigest()[:16]
     name = f"_derive_{digest}"
@@ -195,8 +205,9 @@ def _derived_cres(ty, sources: Sequence[End], derive, jit_options=None, derive_f
         source_ty = get_ty(source)
         sources_ty.append(source_ty)
     derive_sig = ty(*sources_ty)
-    if jit_options.get("cache") and derive_fp is not None:
-        anchored = _derive_anchor_cres(derive_sig, derive, derive_fp, jit_options)
+    sig_canon, sig_cacheable = _signature_identity(derive_sig)
+    if jit_options.get("cache") and derive_fp is not None and sig_cacheable:
+        anchored = _derive_anchor_cres(derive_sig, sig_canon, derive, derive_fp, jit_options)
         if anchored is not None:
             _derive_funcs[id(anchored)] = derive
             return anchored
@@ -205,6 +216,13 @@ def _derived_cres(ty, sources: Sequence[End], derive, jit_options=None, derive_f
         # cache entry -- named after the derive's own source file and qualname --
         # that the anchor exists to avoid, so the degrade must drop the cache
         # too: recompiled per process, never wrong.
+        jit_options = {**jit_options, "cache": False}
+    elif jit_options.get("cache") and not sig_cacheable:
+        # A source type -- e.g. a Dispatcher wrapping an un-fingerprintable body
+        # -- has only a best-effort identity: the anchor name would be process-
+        # stable but blind to a change in that type, so a later process could link
+        # a stale derive binary. Drop the cache instead: recompiled per process,
+        # never wrong.
         jit_options = {**jit_options, "cache": False}
     try:
         derive_cres = cres(derive_sig, **jit_options)(derive)
@@ -223,7 +241,8 @@ def _derived_cres(ty, sources: Sequence[End], derive, jit_options=None, derive_f
 
 
 def _derived_line(
-    derived_: Derived, ns: dict, initializers: dict, derive_hashes: list, _make_args: list, jit_options=None
+    derived_: Derived, ns: dict, initializers: dict, derive_hashes: list, kernel_safe_flags: list,
+    _make_args: list, jit_options=None
 ):
     name_ = derived_.name
     init_ = derived_.init_value
@@ -231,8 +250,9 @@ def _derived_line(
     sources_ = sources_ + ", " if sources_ and "," not in sources_ else sources_
     ty_ = get_ty(derived_)
     derive_func = derived_.derive
-    derive_fp, derive_cacheable = _derive_fingerprint(derive_func)
+    derive_fp, derive_cacheable, kernel_safe = _derive_fingerprint(derive_func)
     derive_hashes.append(derive_fp)
+    kernel_safe_flags.append(kernel_safe)
     derive_jit = jit_options if derive_cacheable else {**(jit_options or {}), "cache": False}
     derive_ = _derived_cres(ty_, derived_.sources, derive_func, derive_jit, derive_fp)
     derive_name = f"{name_}_derive"
@@ -310,14 +330,27 @@ def make_graph(
     code_txt = StringIO()
     initializers = {}
     derive_hashes = []
+    kernel_safe_flags = []
     for input_ in all_inputs_:
         line_ = _input_line(input_, ns, initializers)
         code_txt.write(f"\n\t{line_}")
     for derived_ in all_derived_:
-        line_ = _derived_line(derived_, ns, initializers, derive_hashes, _make_args, jit_options)
+        line_ = _derived_line(
+            derived_, ns, initializers, derive_hashes, kernel_safe_flags, _make_args, jit_options
+        )
         code_txt.write(f"\n\t{line_}")
-    type_sigs = [(n.name, hash_type(get_ty(n))) for n in chain(all_inputs_, all_derived_)]
+    type_ids = [(n.name, _type_identity(get_ty(n))) for n in chain(all_inputs_, all_derived_)]
+    type_sigs = [(name, h) for name, (h, _c) in type_ids]
     hash_ = _kernel_fingerprint(code_txt.getvalue(), derive_hashes, type_sigs, jit_options)
+    kernel_cacheable = all(kernel_safe_flags) and all(c for _name, (_h, c) in type_ids)
+    if not kernel_cacheable:
+        # A derive with only a best-effort fingerprint, or a node typed as a
+        # Dispatcher wrapping an un-fingerprintable body, has a process-stable but
+        # content-blind identity folded into the kernel name; compile the kernel
+        # without an on-disk cache so a stale binary cannot be linked (issue #73
+        # M13/L18) -- recompiled per process, never wrong. The name (fed by
+        # type_sigs) is unchanged, so nothing else re-keys.
+        ns["jit_options"] = {**jit_options, "cache": False}
     access_nodes_names = [n.name for n in access_nodes]
     tup_ = ", ".join(access_nodes_names) + ","
     code_txt.write(f"""\n\taccess_tuple = ({tup_})""")

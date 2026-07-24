@@ -277,3 +277,253 @@ def test_dispatcher_typed_node_hash_is_process_stable(tmp_path):
         "a changed dispatcher body did not re-key; process-stability must not be "
         "bought by ignoring the content"
     )
+
+
+def test_unfingerprintable_derive_makes_kernel_uncached_no_growth(tmp_path):
+    """A make_graph derive that references an un-canonicalizable global (here a
+    numba Type used as a cast) cannot be fingerprinted; the kernel that folds its
+    hash must compile without an on-disk cache, not mint a fresh id()-named
+    ``_make_<hash>`` entry every run (issue #73 M13/L18).
+
+    Before the fix ``_derive_fingerprint`` fell back to ``<repr> @{id(derive)}``
+    while the kernel stayed ``cache=True``, so ``builder._make*.nbc`` grew
+    1 -> 2 -> 3 across processes. The derive is now fingerprinted best-effort
+    (process-stable) and the enclosing kernel drops its cache, so nothing accretes.
+    """
+    probe = tmp_path / "unfp_derive_probe.py"
+    probe.write_text(textwrap.dedent('''
+        from numba import float64 as nb_float64
+        from numbox.core.work.builder import End, Derived, make_graph
+
+        reg = {}
+        x = End(name="x", init_value=2.0, ty=nb_float64, registry=reg)
+
+        def derive_y(x):
+            return nb_float64(x) * 2.0   # LOAD_GLOBAL of a numba Type -> unfingerprintable
+
+        y = Derived(name="y", init_value=0.0, derive=derive_y, sources=(x,),
+                    ty=nb_float64, registry=reg)
+        access = make_graph(y, registry=reg, jit_options={"cache": True})
+        access.y.calculate()
+        print(access.y.data)
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    cache = tmp_path / "nbcache"
+    env["NUMBA_CACHE_DIR"] = str(cache)
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    counts = []
+    for _ in range(3):
+        assert _run_probe(probe, env) == "4.0"                 # correct value, compiled uncached
+        counts.append(sum(1 for _ in cache.rglob("builder._make*.nbc")))
+    assert counts[1] == counts[0] and counts[2] == counts[0], (
+        f"an un-fingerprintable derive reminted the kernel per process (M13/L18 "
+        f"regression): builder._make*.nbc counts {counts}")
+    assert counts[0] == 0, (
+        f"an un-fingerprintable-derive kernel must be uncached (best-effort hash is "
+        f"content-blind), but {counts[0]} _make .nbc were written")
+
+
+def test_intrinsic_referencing_node_makes_kernel_uncached_no_growth(tmp_path):
+    """A graph node typed as a Dispatcher whose wrapped body references an
+    un-canonicalizable global has only a best-effort type identity; the kernel
+    folding it must drop its on-disk cache (issue #73 M13/L18).
+
+    Before the fix ``hash_type`` fell back to ``mangle_type_or_value``, whose
+    Dispatcher form embeds an ASLR address, so ``builder._make*.nbc`` grew per
+    process. ``_type_identity`` now uses a process-stable best-effort fingerprint
+    and reports the type un-cacheable, so ``make_graph`` compiles the kernel
+    without a cache.
+    """
+    probe = tmp_path / "intrin_node_probe.py"
+    probe.write_text(textwrap.dedent('''
+        from numba import njit, float64 as nb_float64
+        from numbox.core.work.builder import End, Derived, make_graph
+
+        @njit(nb_float64(nb_float64))
+        def helper(x):
+            return nb_float64(x) * 2.0    # numba Type cast in the body -> unfingerprintable
+
+        reg = {}
+        x = End(name="x", init_value=3.0, ty=nb_float64, registry=reg)
+        h = End(name="h", init_value=helper, registry=reg)
+
+        def derive_y(x, h):
+            return h(x)
+
+        y = Derived(name="y", init_value=0.0, derive=derive_y, sources=(x, h),
+                    ty=nb_float64, registry=reg)
+        access = make_graph(y, registry=reg, jit_options={"cache": True})
+        access.y.calculate()
+        print(access.y.data)
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    cache = tmp_path / "nbcache"
+    env["NUMBA_CACHE_DIR"] = str(cache)
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    counts = []
+    for _ in range(3):
+        assert _run_probe(probe, env) == "6.0"
+        counts.append(sum(1 for _ in cache.rglob("builder._make*.nbc")))
+    assert counts[1] == counts[0] and counts[2] == counts[0], (
+        f"a Dispatcher-typed node with an un-fingerprintable body reminted the "
+        f"kernel per process: builder._make*.nbc counts {counts}")
+    assert counts[0] == 0, (
+        f"the kernel must be uncached when a node type has only a best-effort "
+        f"identity, but {counts[0]} _make .nbc were written")
+
+
+def test_dispatcher_typed_component_is_uncached_no_growth(tmp_path):
+    """A graph with a Dispatcher-typed component (here a source node holding an
+    njit helper, feeding a cache=True derive) must not accrete a cache pair per
+    process -- for BOTH the fused kernel and the derive anchor (issue #73 M13/L18).
+
+    numba cannot cross-process-cache a Dispatcher-typed signature: even with a
+    process-stable, content-addressed name, its on-disk index misses every run and
+    appends a fresh ``.nbc`` (measured), so ``builder._make*.nbc`` and
+    ``_derive_*.nbc`` both grew 1 -> 2 -> 3 -- and the two existing Dispatcher
+    tests, which assert only the *name* (fingerprint / ``.nbi``), never caught it.
+    The helper body here is fully fingerprintable, so this is the happy path, not
+    a degenerate one. The numbox-named kernel and derive units are now compiled
+    uncached, so neither is written and neither accretes.
+
+    Scope: this pin covers the numbox-named kernel/derive units the fix controls.
+    numba's OWN Work structref-method cache (``work.Work.calculate``, ``_calculate_``,
+    ...) still grows one entry per process for a Dispatcher-typed node, because those
+    ``@njit(cache=True)`` methods specialize on the Dispatcher-carrying Work type,
+    which numba cannot cross-process-cache either. That is a pre-existing numba
+    limitation tracked as a follow-up (see numbox CLAUDE.md Follow-ups), out of scope
+    here; it never serves a stale binary.
+    """
+    probe = tmp_path / "disp_component_probe.py"
+    probe.write_text(textwrap.dedent('''
+        from numba import njit, float64 as nb_float64
+        from numbox.core.work.builder import End, Derived, make_graph
+
+        @njit(nb_float64(nb_float64))
+        def helper(x):
+            return x + 1.0             # fully fingerprintable body
+
+        reg = {}
+        x = End(name="x", init_value=1.0, ty=nb_float64, registry=reg)
+        h = End(name="h", init_value=helper, registry=reg)
+
+        def derive_y(x, h):
+            return h(x)
+
+        y = Derived(name="y", init_value=0.0, derive=derive_y, sources=(x, h),
+                    ty=nb_float64, registry=reg)
+        access = make_graph(y, registry=reg, jit_options={"cache": True})
+        access.y.calculate()
+        print(access.y.data)
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    cache = tmp_path / "nbcache"
+    env["NUMBA_CACHE_DIR"] = str(cache)
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    kernel_counts, derive_counts = [], []
+    for _ in range(3):
+        assert _run_probe(probe, env) == "2.0"
+        kernel_counts.append(sum(1 for _ in cache.rglob("builder._make*.nbc")))
+        derive_counts.append(sum(1 for _ in cache.rglob("_derive_*.nbc")))
+    assert kernel_counts == [0, 0, 0], (
+        f"a Dispatcher-typed node left kernel cache pairs behind (numba cannot "
+        f"cross-process-cache it): builder._make*.nbc counts {kernel_counts}")
+    assert derive_counts == [0, 0, 0], (
+        f"a Dispatcher-typed source left derive cache pairs behind: "
+        f"_derive_*.nbc counts {derive_counts}")
+
+
+def test_nested_dispatcher_node_kernel_and_derive_uncached_no_growth(tmp_path):
+    """A node typed as a heterogeneous tuple that *contains* an njit dispatcher
+    must not accrete the numbox-named kernel / derive cache units either (issue #73
+    M13/L18). A nested Dispatcher escapes the top-level isinstance check, so before
+    the guard it fell to the address-bearing mangle and both units stayed cache=True
+    -> builder._make*.nbc and _derive_*.nbc grew 1 -> 2 -> 3. (numba's own Work
+    structref-method cache still grows for a Dispatcher-typed node -- a separate,
+    pre-existing numba limitation not addressed here -- so this pin scopes to the
+    numbox-named units the fix controls.)
+    """
+    probe = tmp_path / "nested_disp_probe.py"
+    probe.write_text(textwrap.dedent('''
+        from numba import njit, float64 as nb_float64
+        from numbox.core.work.builder import End, Derived, make_graph
+
+        @njit(nb_float64(nb_float64))
+        def helper(x):
+            return x + 1.0
+
+        reg = {}
+        # a heterogeneous tuple node: Tuple(float64, Dispatcher) -- nested dispatcher
+        p = End(name="p", init_value=(2.0, helper), registry=reg)
+
+        def derive_y(p):
+            return p[0] + 1.0
+
+        y = Derived(name="y", init_value=0.0, derive=derive_y, sources=(p,),
+                    ty=nb_float64, registry=reg)
+        access = make_graph(y, registry=reg, jit_options={"cache": True})
+        access.y.calculate()
+        print(access.y.data)
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    cache = tmp_path / "nbcache"
+    env["NUMBA_CACHE_DIR"] = str(cache)
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    kernel_counts, derive_counts = [], []
+    for _ in range(3):
+        assert _run_probe(probe, env) == "3.0"
+        kernel_counts.append(sum(1 for _ in cache.rglob("builder._make*.nbc")))
+        derive_counts.append(sum(1 for _ in cache.rglob("_derive_*.nbc")))
+    assert kernel_counts == [0, 0, 0], (
+        f"a nested-Dispatcher node left kernel cache pairs behind: {kernel_counts}")
+    assert derive_counts == [0, 0, 0], (
+        f"a nested-Dispatcher node left derive cache pairs behind: {derive_counts}")
+
+
+def test_module_state_derive_keeps_kernel_cacheable(tmp_path):
+    """A derive that reads a module global is compiled uncached, but the enclosing
+    kernel stays cacheable -- its name folds the global's value -- so an unchanged
+    re-run cache-hits rather than reminting. Guards that dropping the kernel cache
+    for the *un-fingerprintable* path did not also drop it for the module-state
+    path (T4/H6): kernel_safe stays True when the derive fingerprints.
+    """
+    probe = tmp_path / "modstate_probe.py"
+    probe.write_text(textwrap.dedent('''
+        from numba import float64 as nb_float64
+        from numbox.core.work.builder import End, Derived, make_graph
+
+        G = 2.0    # plain module global, canonicalizable -> derive fingerprints
+
+        reg = {}
+        x = End(name="x", init_value=3.0, ty=nb_float64, registry=reg)
+
+        def derive_y(x):
+            return x * G
+
+        y = Derived(name="y", init_value=0.0, derive=derive_y, sources=(x,),
+                    ty=nb_float64, registry=reg)
+        access = make_graph(y, registry=reg, jit_options={"cache": True})
+        access.y.calculate()
+        print(access.y.data)
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    cache = tmp_path / "nbcache"
+    env["NUMBA_CACHE_DIR"] = str(cache)
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    counts = []
+    for _ in range(3):
+        assert _run_probe(probe, env) == "6.0"
+        counts.append(sum(1 for _ in cache.rglob("builder._make*.nbc")))
+    assert counts[0] > 0, "a module-state-reading graph's kernel must still cache (T4/H6)"
+    assert counts[1] == counts[0] and counts[2] == counts[0], (
+        f"a module-state kernel reminted across processes with an unchanged global: {counts}")

@@ -100,15 +100,28 @@ def determine_field_index(struct_ty, field_name):
     raise ValueError(f"{field_name} not in {struct_ty}")
 
 
-def hash_type(ty: Type):
-    """Content hash of a numba type, for folding into a content-addressed name.
+def _type_identity(ty: Type) -> tuple[str, bool]:
+    """Return ``(hash, cacheable)`` for a numba type, for folding into a
+    content-addressed name.
 
-    A Dispatcher type mangles through its *repr* --
-    ``type(CPUDispatcher(<function f at 0x7f...>))`` -- which carries an ASLR
-    address, so the hash changes every process. Any name built on it then never
-    cache-hits and accretes an orphan cache pair per run (issue #73 M13/L18).
-    Dispatchers are fingerprinted by the wrapped function's content instead,
-    which is both process-stable and sensitive to a changed body.
+    A **Dispatcher** type is un-cacheable. numba cannot cross-process-cache a
+    signature that carries a Dispatcher type: even given a process-stable,
+    content-addressed name, numba's own on-disk index misses every run and appends
+    a fresh data entry, so the unit's ``.nbc`` grows one pair per process forever
+    (measured; issue #73 M13/L18). The address-bearing ``repr`` fallback --
+    ``type(CPUDispatcher(<function f at 0x7f...>))`` -- made this worse still, a
+    *distinct* orphan anchor per run. The hash is kept content-sensitive and
+    process-stable regardless (a changed wrapped body must re-key the in-process
+    name): the wrapped function is fingerprinted, falling back to a best-effort
+    fingerprint -- never the address-bearing mangle -- when the body references an
+    un-canonicalizable global (an ``@intrinsic`` is the common one). But
+    ``cacheable`` is always False, so a caller folding a Dispatcher-typed component
+    compiles uncached: recompiled per process, never wrong, never accreting. A
+    Dispatcher **nested** in a container (a heterogeneous ``Tuple`` / ``Optional`` /
+    ``Array``, or a ``StructRef`` field) escapes the top-level ``isinstance`` check
+    but is caught by a ``"CPUDispatcher("`` substring on ``str(ty)`` -- numba
+    collapses only a homogeneous ``UniTuple(Dispatcher)`` to a FunctionType (which
+    carries no such substring and correctly stays cacheable).
 
     Every other type tested mangles stably, including CFunc and cres, which both
     render as ``FunctionType[<sig>]`` -- **except a Record**. A ``Record`` mangles
@@ -118,19 +131,54 @@ def hash_type(ty: Type):
     different hash in a cold process (which compiles, and so creates, many types)
     than in a warm one, the same orphan-per-run failure as the Dispatcher case.
     Its ``str`` is fully structural (field names, types, offsets, size, alignment)
-    and carries no ``_code``, so a Record-bearing type is hashed on ``str`` instead;
-    every other type keeps the mangle, so only Record-typed names re-key.
+    and carries no ``_code``, so a Record-bearing type is hashed on ``str`` instead
+    and stays cacheable; every other type keeps the mangle, so only Record-typed
+    names re-key.
     """
+    cacheable = True
+    ty_str = str(ty)
     if isinstance(ty, Dispatcher):
+        cacheable = False
         try:
-            mangled_ty = "dispatcher(" + _fingerprint_function(ty.dispatcher.py_func, set()) + ")"
+            body = "dispatcher(" + _fingerprint_function(ty.dispatcher.py_func, set()) + ")"
         except (_Unfingerprintable, RecursionError):
-            mangled_ty = mangle_type_or_value(ty)
-    elif "Record(" in str(ty):
-        mangled_ty = "structural(" + str(ty) + ")"
+            body = "dispatcher-besteffort(" + _fingerprint_function_best_effort(ty.dispatcher.py_func) + ")"
+    elif "Record(" in ty_str:
+        body = "structural(" + ty_str + ")"
     else:
-        mangled_ty = mangle_type_or_value(ty)
-    return hashlib.sha256(mangled_ty.encode("utf-8")).hexdigest()
+        body = mangle_type_or_value(ty)
+    if cacheable and "CPUDispatcher(" in ty_str:
+        # A Dispatcher nested in a container -- a heterogeneous Tuple / Optional /
+        # Array, or a StructRef field -- is not caught by the top-level isinstance
+        # check and survives verbatim: numba collapses only a homogeneous
+        # UniTuple(Dispatcher) to UniTuple(FunctionType[...]) (whose str carries no
+        # "CPUDispatcher("). Its mangle still embeds the wrapped function's address
+        # and numba cannot cross-process-cache it, so it is un-cacheable for the same
+        # reason as a top-level Dispatcher.
+        cacheable = False
+    return hashlib.sha256(body.encode("utf-8")).hexdigest(), cacheable
+
+
+def hash_type(ty: Type) -> str:
+    """Process-stable content hash of a numba type; see :func:`_type_identity`."""
+    return _type_identity(ty)[0]
+
+
+def _signature_identity(sig: Signature) -> tuple[str, bool]:
+    """Return ``(canonical_text, cacheable)`` for a numba ``Signature``.
+
+    Canonicalizes every argument and return type through :func:`_type_identity`,
+    so a Dispatcher- or Record-typed component contributes a process-stable,
+    content-addressed hash rather than its address-bearing ``str``/``repr``.
+    ``cacheable`` is False if any component type has no trustworthy identity, so
+    a caller folding this into a cache-anchor name can drop the on-disk cache
+    instead of linking a possibly-stale binary.
+    """
+    ret_hash, ret_ok = _type_identity(sig.return_type)
+    arg_ids = [_type_identity(a) for a in sig.args]
+    text = ret_hash + "(" + ",".join(h for h, _ok in arg_ids) + ")"
+    cacheable = ret_ok and all(ok for _h, ok in arg_ids)
+    return text, cacheable
 
 
 def make_structref_code_txt(
