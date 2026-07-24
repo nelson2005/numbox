@@ -15,14 +15,14 @@
     {
       "id": 2,
       "subject": "T2: port the s3 ELF core into proxy.py behind a format dispatcher",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "Port the prototyped block from designs/s3-load-time-validation.md into numbox/core/proxy/proxy.py: StaleProxyCacheWarning, _stale_proxy_aliases, _guarded_rebuild, _install_cache_alias_guard, import-time install; add imports struct, warnings. Put the parser behind a single _undefined_symbols(object_code) dispatcher that sniffs object magic and routes per format; wire the ELF parser now, stub Mach-O and COFF to return set() so Phase 2 is pure fill-in. flake8-clean at 127.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/python -c \\\"import pathlib,shutil;[shutil.rmtree(p,ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')];shutil.rmtree(pathlib.Path.home()/'.cache'/'numba',ignore_errors=True)\\\" && /home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py test/core/test_proxy.py -q && /home/erik/projects/numbox/venv/bin/flake8 . --max-line-length=127\", \"acceptanceCriteria\": [\"T1 heal assertion passes on Linux\", \"full suite green with guard live\", \"dispatcher shape is final; Mach-O/COFF stubbed\"], \"model\": \"opus\", \"effort\": \"max\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
     },
     {
       "id": 3,
       "subject": "T3: make the guard installer fail-open",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "Wrap _install_cache_alias_guard so any exception during install degrades to 'no guard installed' rather than breaking import — matching the per-load validator's fail-open philosophy (portability verdict finding: the installer was not fail-open). Keep it idempotent.\n\n```json:metadata\n{\"files\": [\"numbox/core/proxy/proxy.py\"], \"verifyCommand\": \"/home/erik/projects/numbox/venv/bin/pytest test/core/test_proxy_cache_stale.py -q\", \"acceptanceCriteria\": [\"a forced install failure leaves import numbox.core.proxy.proxy working\", \"idempotent double-install is a no-op\"], \"model\": \"opus\", \"effort\": \"high\", \"issue73\": [\"proxy-alias-crash\"]}\n```"
     },

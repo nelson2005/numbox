@@ -415,17 +415,27 @@ def _install_cache_alias_guard():
     Ordering is guaranteed without any coordination: a caller can only have been compiled against a ``@proxy``
     binding whose module it imports, and importing that module imports this one. A cached function that
     references no alias may load before numbox exists and needs no validation.
+
+    Every lookup happens before the first assignment, so a numba that does not offer one of these classes leaves
+    the process with no guard rather than half of one.
     """
     from numba.core import caching
     if getattr(caching, "_numbox_proxy_alias_guard", False):
         return
+    wrapped = [
+        (caching.CompileResultCacheImpl, _guarded_rebuild(caching.CompileResultCacheImpl.rebuild,
+                                                          lambda payload: payload[0])),
+        (caching.CodeLibraryCacheImpl, _guarded_rebuild(caching.CodeLibraryCacheImpl.rebuild,
+                                                        lambda payload: payload)),
+    ]
     caching._numbox_proxy_alias_guard = True
-    caching.CompileResultCacheImpl.rebuild = _guarded_rebuild(
-        caching.CompileResultCacheImpl.rebuild, lambda payload: payload[0],
-    )
-    caching.CodeLibraryCacheImpl.rebuild = _guarded_rebuild(
-        caching.CodeLibraryCacheImpl.rebuild, lambda payload: payload,
-    )
+    for impl, rebuild in wrapped:
+        impl.rebuild = rebuild
 
 
-_install_cache_alias_guard()
+try:
+    _install_cache_alias_guard()
+except Exception:
+    # Fail open, as the per-load validator does. Losing the guard costs protection against a stale cache
+    # entry; letting an install-time surprise escape would cost the whole library its importability.
+    pass
