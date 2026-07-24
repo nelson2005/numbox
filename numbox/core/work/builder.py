@@ -269,8 +269,10 @@ def code_block_hash(code_txt: str):
     return sha256(code_txt.encode("utf-8")).hexdigest()
 
 
-def _kernel_fingerprint(code_block: str, derive_hashes: list, type_sigs: list, jit_options=None) -> str:
-    """Content hash baked into the name ``_make_<hash>`` of the generated kernel.
+def _kernel_fingerprint(code_block: str, derive_hashes: list, type_sigs: list, jit_options=None) -> tuple[str, bool]:
+    """Return ``(hash, flags_cacheable)`` for the generated kernel.
+
+    The hash is baked into the name ``_make_<hash>``.
 
     Folds each node's declared type (``type_sigs``) in alongside the body text and
     derive source hashes, since a declared ty reaches the generated code only as the
@@ -282,12 +284,19 @@ def _kernel_fingerprint(code_block: str, derive_hashes: list, type_sigs: list, j
     ``_make_<hash>`` name, shared numba's cache key, and the second process linked
     the first's binary -- a kernel cached under ``error_model="numpy"`` returned
     ``inf`` for a division by zero that the default model must raise on.
+
+    ``flags_cacheable`` is False when a flag had no canonical form (a
+    ``pipeline_class``, a numba-typed ``locals``). The fold then degrades to
+    ``repr``, which is neither process-stable for a default-repr object nor
+    guaranteed to distinguish two behaviourally different values, so the caller
+    must compile the kernel uncached -- the same contract ``_derive_anchor_cres``
+    and ``compile_kernel`` already honour for this flag.
     """
-    flags_canon, _ = _flags_canon(_effective_flags(jit_options))
+    flags_canon, ok_flags = _flags_canon(_effective_flags(jit_options))
     return code_block_hash(
         f"code_block = {code_block} derive_hashes = {derive_hashes} type_sigs = {type_sigs}"
         f" flags = {flags_canon} codegen_env = {_codegen_env_canon()}"
-    )
+    ), ok_flags
 
 
 def _infer_end_and_derived_nodes(spec: SpecTy, all_inputs_: Dict[str, Type], all_derived_: Dict[str, Type], registry):
@@ -341,15 +350,15 @@ def make_graph(
         code_txt.write(f"\n\t{line_}")
     type_ids = [(n.name, _type_identity(get_ty(n))) for n in chain(all_inputs_, all_derived_)]
     type_sigs = [(name, h) for name, (h, _c) in type_ids]
-    hash_ = _kernel_fingerprint(code_txt.getvalue(), derive_hashes, type_sigs, jit_options)
-    kernel_cacheable = all(kernel_safe_flags) and all(c for _name, (_h, c) in type_ids)
+    hash_, flags_cacheable = _kernel_fingerprint(code_txt.getvalue(), derive_hashes, type_sigs, jit_options)
+    kernel_cacheable = flags_cacheable and all(kernel_safe_flags) and all(c for _name, (_h, c) in type_ids)
     if not kernel_cacheable:
-        # A derive with only a best-effort fingerprint, or a node typed as a
-        # Dispatcher wrapping an un-fingerprintable body, has a process-stable but
-        # content-blind identity folded into the kernel name; compile the kernel
-        # without an on-disk cache so a stale binary cannot be linked (issue #73
-        # M13/L18) -- recompiled per process, never wrong. The name (fed by
-        # type_sigs) is unchanged, so nothing else re-keys.
+        # A derive with only a best-effort fingerprint, a node typed as a
+        # Dispatcher wrapping an un-fingerprintable body, or a jit flag with no
+        # canonical form has a content-blind identity folded into the kernel name;
+        # compile the kernel without an on-disk cache so a stale binary cannot be
+        # linked (issue #73 M13/L18) -- recompiled per process, never wrong. The
+        # name (fed by type_sigs) is unchanged, so nothing else re-keys.
         ns["jit_options"] = {**jit_options, "cache": False}
     access_nodes_names = [n.name for n in access_nodes]
     tup_ = ", ".join(access_nodes_names) + ","

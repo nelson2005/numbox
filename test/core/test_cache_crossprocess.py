@@ -234,9 +234,9 @@ def test_dispatcher_typed_node_hash_is_process_stable(tmp_path):
         orig = builder_mod._kernel_fingerprint
 
         def spy(*a, **k):
-            h = orig(*a, **k)
+            h, ok = orig(*a, **k)
             captured.append(h)
-            return h
+            return h, ok
 
         builder_mod._kernel_fingerprint = spy
 

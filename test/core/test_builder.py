@@ -636,9 +636,9 @@ def test_make_graph_kernel_name_depends_on_declared_type(monkeypatch):
     orig = builder_mod._kernel_fingerprint
 
     def spy(*args, **kwargs):
-        h = orig(*args, **kwargs)
+        h, ok = orig(*args, **kwargs)
         captured.append(h)
-        return h
+        return h, ok
     monkeypatch.setattr(builder_mod, "_kernel_fingerprint", spy)
 
     reg32, reg64 = {}, {}
@@ -670,9 +670,9 @@ def test_make_graph_kernel_name_depends_on_jit_flags(monkeypatch):
     orig = builder_mod._kernel_fingerprint
 
     def spy(*args, **kwargs):
-        h = orig(*args, **kwargs)
+        h, ok = orig(*args, **kwargs)
         captured.append(h)
-        return h
+        return h, ok
     monkeypatch.setattr(builder_mod, "_kernel_fingerprint", spy)
 
     # Identical graph every time -- only the jit flags vary, so the node name
@@ -759,6 +759,53 @@ def test_derive_anchor_degrade_drops_the_cache(monkeypatch):
     assert recorded.get("cache") is False, (
         f"anchor degrade compiled with cache={recorded.get('cache')!r}; a plain "
         "cache=True compile is the flag-blind entry the anchor exists to avoid"
+    )
+
+
+def test_make_graph_uncanonical_jit_flags_drop_the_kernel_cache(monkeypatch):
+    """A jit flag with no canonical form must compile the outer kernel uncached.
+
+    `_flags_canon` degrades to `repr(sorted(flags.items(), key=repr))` for a
+    value it cannot canonicalize -- a `pipeline_class`, a numba-typed `locals`.
+    That repr is neither process-stable for a default-repr object nor guaranteed
+    to separate two behaviourally different values, so a `_make_<hash>` name
+    built on it can collide across variants or churn across processes. The derive
+    anchor and `compile_kernel` both already drop the cache on this flag; the
+    generated kernel is the third caller and must do the same.
+    """
+    from numba.core.compiler import Compiler
+    from numbox.core.work import builder as builder_mod
+
+    recorded = {}
+    real_njit = builder_mod.njit
+
+    def recording_njit(**kwargs):
+        recorded.update(kwargs)
+        return real_njit(**kwargs)
+
+    monkeypatch.setattr(builder_mod, "njit", recording_njit)
+
+    # Compiler is numba's own default pipeline, so the graph still compiles; it
+    # is passed explicitly to make the flag effective and un-canonicalizable.
+    reg = {}
+    make_graph(
+        End(name="uncanon_x", init_value=7, ty=int64, registry=reg),
+        registry=reg, jit_options={"cache": True, "pipeline_class": Compiler},
+    )
+    assert recorded.get("cache") is False, (
+        f"kernel compiled with cache={recorded.get('cache')!r} while its name folds a "
+        "repr-only flag value; the key cannot see what the flag changed"
+    )
+
+    recorded.clear()
+    reg_ok = {}
+    make_graph(
+        End(name="canon_x", init_value=7, ty=int64, registry=reg_ok),
+        registry=reg_ok, jit_options={"cache": True, "nogil": True},
+    )
+    assert recorded.get("cache") is True, (
+        "a fully canonicalizable flag set must keep the kernel cached; dropping it "
+        "here would disable graph caching outright"
     )
 
 

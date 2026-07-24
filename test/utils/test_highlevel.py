@@ -14,6 +14,7 @@ from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
 from numbox.core.bindings.utils import load_lib_path
 from numbox.utils.highlevel import (
+    _method_identity,
     _signature_identity,
     _type_identity,
     cres,
@@ -470,6 +471,36 @@ def test_signature_identity_folds_component_cacheability():
     text_disp, ok_disp = _signature_identity(float64(float64, typeof(helper)))
     assert ok_disp is False                    # a Dispatcher component makes the sig un-cacheable
     assert isinstance(text_disp, str)
+
+
+def test_method_identity_folds_ns_values_read_as_globals_only():
+    """An `ns` value is folded when the method reads it as a global, and not
+    when the method merely names it as an attribute.
+
+    Deciding this off `co_names` cannot tell `LOAD_GLOBAL knob` from
+    `LOAD_ATTR knob`, so a method doing `self.knob` against an `ns` carrying an
+    unrelated `knob` folded a value it never reads -- and, when that value has no
+    canonical form, dropped the struct's on-disk cache for nothing.
+    """
+    class Opaque:
+        pass
+
+    def reads_attribute(self):
+        return self.knob
+
+    def reads_global(self):
+        return knob                            # noqa: F821 - resolved from the exec'd ns
+
+    ident_attr, cacheable_attr = _method_identity(reads_attribute, {"knob": Opaque()})
+    assert cacheable_attr is True, (
+        "an attribute name colliding with an ns key dropped the cache; only a "
+        "global read can reach an ns value"
+    )
+    assert "ns:knob" not in ident_attr
+
+    ident_global, cacheable_global = _method_identity(reads_global, {"knob": Opaque()})
+    assert cacheable_global is False           # genuinely read, and opaque -> uncacheable
+    assert "ns:knob" in ident_global
 
 
 if __name__ == '__main__':

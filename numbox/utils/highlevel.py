@@ -17,7 +17,7 @@ from typing import Callable, Iterable, Optional
 from numbox.core.configurations import jit_options as jit_options_
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _canon_value, _fingerprint_function,
-    _fingerprint_function_best_effort, _referenced_global_names,
+    _fingerprint_function_best_effort, _loaded_global_names,
 )
 from numbox.utils.preprocessing import _materialize_anchor, _structref_anchor_path
 from numbox.utils.standard import make_params_strings
@@ -40,6 +40,13 @@ def _method_identity(method, user_ns) -> tuple[str, bool]:
     binary). Un-fingerprintable method, or an un-canonicalizable ``ns`` value,
     makes it uncacheable -- the struct is then compiled without an on-disk
     cache, never reused, never wrong.
+
+    Which ``ns`` entries the method references is read off the instruction
+    stream, not ``co_names``: the values arrive as globals of the exec'd
+    namespace, so only a global read can reach one, while ``co_names`` would also
+    offer up every attribute name. A method doing ``self.x`` against an ``ns``
+    that happens to carry an ``x`` would otherwise fold a value it never reads --
+    and drop the struct's cache entirely if that value were opaque.
     """
     try:
         fingerprint = _fingerprint_function(method, set())
@@ -49,7 +56,7 @@ def _method_identity(method, user_ns) -> tuple[str, bool]:
         cacheable = False
     parts = [fingerprint]
     if user_ns:
-        for name in sorted(n for n in _referenced_global_names(method.__code__) if n in user_ns):
+        for name in sorted(n for n in _loaded_global_names(method.__code__) if n in user_ns):
             try:
                 parts.append(f"ns:{name}={_canon_value(user_ns[name], set())}")
             except (_Unfingerprintable, RecursionError):
