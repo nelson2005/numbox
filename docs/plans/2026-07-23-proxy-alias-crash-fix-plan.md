@@ -152,6 +152,18 @@ live on every cache load.
   Document that strict mode aborts *before* the heal, preserving the stale entry
   for inspection (observed in the correctness verdict). `verify:` knob on → stale
   load raises the named error; knob off → heals silently.
+  **Outcome: shipped, with one sub-feature dropped after adversarial review.**
+  Strict mode escalates two paths — a detected stale alias (`StaleProxyCacheError`,
+  before the heal, entry left on disk) and a payload that *raises* when read
+  (`UnvalidatedProxyCacheError`). The "*also consider*" idea from the task —
+  treating "prefix present in the object but no import parsed" as a strict failure
+  to catch a blind reader — was implemented, then **removed**: it false-aborts on a
+  healthy non-proxy `@njit(cache=True)` that merely embeds an alias-shaped string
+  constant in rodata (reproduced three times). Such an object is indistinguishable
+  from a blind-reader object without the parse that "failed", and it lands on
+  strict mode's own audience. Reader blindness is caught where it can be told
+  apart, in CI, by the T6/T7 reader test — not guessed at on live loads. See the
+  findings section.
 - **T9.** Diagnostic completeness: ensure every stale alias in an object is named
   in the warning (the correctness verdict saw an undercount in a multi-entry
   scenario). `verify:` a multi-stale-entry scenario names all of them.
@@ -203,7 +215,21 @@ live on every cache load.
   return, the opaque-capture fingerprint collision) are orthogonal to the crash and
   out of scope for this plan; note them as follow-ups, do not fold them in.
 
-## Findings from executing T1–T7 (recorded here because the analysis workspace is machine-local)
+## Findings from executing T1–T8 (recorded here because the analysis workspace is machine-local)
+
+- **A strict/paranoid check keyed on "the alias prefix is in the object bytes" has a false-positive surface
+  as wide as "any cached code that mentions the alias name as data".** T8's optional "prefix present but no
+  import → strict failure" check false-aborted a healthy, entirely non-`@proxy` `@njit(cache=True)` function
+  that embedded `"numbox_pxy_..."` as a string constant (it lands in rodata; the reader parses the object
+  cleanly and finds no import). It cannot be told apart from a genuinely blind read without the parse that
+  already failed, and it targets exactly strict mode's audience (someone debugging the proxy cache). Dropped
+  the check; reader blindness is caught in CI by the reader test instead. Third over-reach caught on this
+  file — the recurring shape is a clever added check reaching wider than the thing it guards.
+- **The cache guard is only installed in a process that imports numbox.** A module that never imports numbox
+  keeps numba's stock `rebuild`, so *no* guard behaviour (strict or default) can be observed. Any repro of
+  guard behaviour must `import numbox...` or it is vacuously clean — the first F1 repro attempt was falsely
+  green for exactly this reason.
+
 
 - **A resolvable alias does not imply a callable body.** `proxy_if_available`'s absent path registers a
   diagnostic trap under the alias, so `ll.address_of_symbol` resolves and the validator would pass the
