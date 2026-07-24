@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+import os
 import struct
 import warnings
 from llvmlite import binding as ll
@@ -317,6 +318,46 @@ class UnvalidatedProxyCacheWarning(RuntimeWarning):
     aliases. Reported once per process: the condition is a property of the environment, not of one entry."""
 
 
+class StaleProxyCacheError(RuntimeError):
+    """Strict mode found a stale ``@proxy`` alias and refused to heal it.
+
+    Raised in place of :class:`StaleProxyCacheWarning` when ``NUMBOX_PROXY_CACHE_STRICT`` is set. The load
+    is aborted *before* the discard-and-recompile, so the stale entry is left on disk for inspection rather
+    than being replaced -- the opposite of the default heal, which silently overwrites it. Clear the numba
+    cache (``NUMBA_CACHE_DIR``) or unset the knob to recover.
+    """
+
+
+class UnvalidatedProxyCacheError(RuntimeError):
+    """Strict mode could not read a cache payload and refused to load it unchecked.
+
+    Raised in place of :class:`UnvalidatedProxyCacheWarning` when ``NUMBOX_PROXY_CACHE_STRICT`` is set and
+    unpacking the payload raises -- a shape a future numba might introduce, or a malformed object. The
+    default degrades this to loading unchecked; strict mode makes it loud so a validation gap cannot hide.
+    A well-formed object that the reader parses cleanly but finds no stale alias in is *not* a gap and is
+    loaded normally, in strict mode as by default: it cannot be told apart from a healthy object that merely
+    carries the alias prefix in a string constant.
+    """
+
+
+_STRICT_ENV = "NUMBOX_PROXY_CACHE_STRICT"
+
+
+def _strict_cache_mode():
+    """True when ``NUMBOX_PROXY_CACHE_STRICT`` selects strict validation.
+
+    Strict mode makes every fail-open path in the cache guard loud: a payload that cannot be read, or an
+    object whose container cannot be parsed, aborts the load with :class:`UnvalidatedProxyCacheError`
+    instead of loading unchecked; and a detected stale alias raises :class:`StaleProxyCacheError` before
+    the heal, leaving the stale entry on disk. It is a debugging aid, off by default. The value is read on
+    each load so the knob can be toggled within a process; the cost is one environment lookup against a
+    multi-millisecond cache load. Anything other than the unset/empty/``0``/``false``/``no``/``off`` set
+    (case-insensitive) enables it.
+    """
+    value = os.environ.get(_STRICT_ENV)
+    return value is not None and value.strip().lower() not in ("", "0", "false", "no", "off")
+
+
 _ELF_MAGIC = b"\x7fELF"
 # 32- and 64-bit, both byte orders, and both widths of the fat/universal container.
 _MACHO_MAGICS = frozenset((0xFEEDFACE, 0xFEEDFACF, 0xCEFAEDFE, 0xCFFAEDFE,
@@ -424,7 +465,16 @@ def _stale_proxy_aliases(payload, libdata_of_payload):
 
     The payload is unpacked inside the handler rather than by the caller, because its shape is precisely the
     thing a future numba might change.
+
+    Under ``NUMBOX_PROXY_CACHE_STRICT`` a payload that cannot be *read* raises :class:`UnvalidatedProxyCacheError`
+    instead of degrading to unchecked. A well-formed object the reader parses cleanly is not forced to raise
+    even when it yields no stale alias: an object that carries the prefix only as a string constant parses
+    exactly like one that carries it as an unresolved import would if the reader went blind, so there is no
+    way to escalate the second without also aborting the first -- a healthy, entirely non-proxy cached
+    function. Reader blindness is caught where it can be told apart, in CI, by a test that asserts the reader
+    parses the objects numba actually emits; it is not guessed at here on live loads.
     """
+    strict = _strict_cache_mode()
     try:
         _name, kind, data = libdata_of_payload(payload)
         if kind != "object":
@@ -439,8 +489,14 @@ def _stale_proxy_aliases(payload, libdata_of_payload):
     except Exception as exc:
         # Fail open: this runs on EVERY numba cache load in the process, so a surprise -- a future numba
         # changing the payload shape, a malformed object -- must degrade to "no validation", never to
-        # breaking unrelated caching. Say so once, though: abandoning the check silently is indistinguishable
-        # from passing it, and what it silently restores is the crash this guard exists to prevent.
+        # breaking unrelated caching. Under the strict knob a caller has asked for the opposite: surface it.
+        if strict:
+            raise UnvalidatedProxyCacheError(
+                f"numbox: could not check a numba cache payload for stale @proxy aliases ({exc!r}); "
+                f"{_STRICT_ENV} is set, so the load was aborted rather than proceeding unchecked"
+            ) from exc
+        # Say so once, though: abandoning the check silently is indistinguishable from passing it, and what
+        # it silently restores is the crash this guard exists to prevent.
         global _unvalidated_reported
         if not _unvalidated_reported:
             _unvalidated_reported = True
@@ -458,14 +514,23 @@ def _guarded_rebuild(orig_rebuild, libdata_of_payload):
     This is the last point upstream of the execution engine. Once ``unserialize_library`` runs, the object's
     externals are resolved in one batch and a single unregistered name zeroes every relocation in it, which is
     unrecoverable and kills the process without a diagnostic. Returning ``None`` is numba's own contract for a
-    cache miss, so the stale entry is discarded and recompiled in place.
+    cache miss, so the stale entry is discarded and recompiled in place. Under
+    ``NUMBOX_PROXY_CACHE_STRICT`` the discard is refused and :class:`StaleProxyCacheError` is raised instead,
+    before the ``None`` return, so the stale entry stays on disk for inspection.
     """
     def rebuild(self, target_context, payload):
         stale = _stale_proxy_aliases(payload, libdata_of_payload)
         if stale:
+            filename_base = getattr(self, 'filename_base', '?')
+            if _strict_cache_mode():
+                raise StaleProxyCacheError(
+                    f"numbox: {filename_base} references @proxy cfunc alias(es) this process cannot call "
+                    f"({', '.join(stale)}); {_STRICT_ENV} is set, so the stale entry was left on disk for "
+                    "inspection instead of being discarded and recompiled"
+                )
             warnings.warn(
                 "numbox: discarding a stale numba cache entry and recompiling: "
-                f"{getattr(self, 'filename_base', '?')} references @proxy cfunc alias(es) this process "
+                f"{filename_base} references @proxy cfunc alias(es) this process "
                 "cannot call (the proxied body, signature or jit_options changed since the caller was "
                 "cached, or the binding is no longer available): "
                 + ", ".join(stale),

@@ -161,10 +161,12 @@ def _probe_env(tmp_path, cache_name, precompile=False):
     is the other way a same-length edit can go unnoticed. The inherited warning and numba knobs are dropped because
     each of them can empty the scenario out: they decide whether an unrelated warning ends the probe, whether
     anything is compiled at all, and -- at ``NUMBA_OPT=0``, where the proxy call is not folded to a plain extern
-    reference -- whether numba is willing to cache the callers in the first place.
+    reference -- whether numba is willing to cache the callers in the first place. ``NUMBOX_PROXY_CACHE_STRICT``
+    is dropped for the same reason: an exported strict knob would turn every heal scenario below into a hard
+    error, so a strict run sets it back on explicitly rather than inheriting it.
     """
     env = dict(os.environ)
-    for hostile in ("PYTHONWARNINGS", "PYTHONDEVMODE", "NUMBA_DISABLE_JIT", "NUMBA_OPT"):
+    for hostile in ("PYTHONWARNINGS", "PYTHONDEVMODE", "NUMBA_DISABLE_JIT", "NUMBA_OPT", "NUMBOX_PROXY_CACHE_STRICT"):
         env.pop(hostile, None)
     env["NUMBA_CACHE_DIR"] = str(tmp_path / cache_name)
     env["PYTHONPATH"] = os.pathsep.join([str(tmp_path)] + sys.path)
@@ -492,6 +494,152 @@ def test_the_reader_recognises_the_objects_numba_actually_caches(tmp_path):
         f"the reader parsed no alias out of any object numba cached here, so it passes every stale entry "
         f"untouched: leading magic bytes {fields['MAGIC']}"
     )
+
+
+def test_strict_mode_raises_on_a_stale_alias_before_healing(tmp_path):
+    """``NUMBOX_PROXY_CACHE_STRICT`` turns the silent self-heal into a hard error that leaves the entry alone.
+
+    The default is to discard the stale entry, warn, and recompile in place. A caller debugging why a cache
+    misbehaves wants the opposite: stop at the first stale entry, name it, and leave it on disk to inspect.
+    The strict run must therefore die with ``StaleProxyCacheError`` named on stderr rather than exit clean.
+    That it did *not* recompile is then proved by a second run with the knob off, which still finds the same
+    entry stale and heals it -- had strict recompiled, this run would serve the new body silently with no
+    warning at all.
+    """
+    probe = _write_scenario(tmp_path)
+    _warm(probe, _probe_env(tmp_path, "nbcache"))
+    _edit_body(tmp_path)
+
+    strict_env = _probe_env(tmp_path, "nbcache")
+    strict_env["NUMBOX_PROXY_CACHE_STRICT"] = "1"
+    r = _run_probe(probe, strict_env)
+    assert r.returncode != 0, f"strict mode healed the stale entry instead of aborting\n{_report(r)}"
+    assert "StaleProxyCacheError" in r.stderr, f"the abort was not the named strict error\n{_report(r)}"
+
+    healed = _run_probe(probe, _probe_env(tmp_path, "nbcache"))
+    assert healed.returncode == 0, f"the entry strict left behind did not heal with the knob off\n{_report(healed)}"
+    fields = _fields(healed)
+    assert _results(fields) == _NEW_BODY, _results(fields)
+    assert "StaleProxyCacheWarning" in fields["WARNINGS"], (
+        f"strict recompiled the entry after all -- nothing was left stale to heal: {fields['WARNINGS']}"
+    )
+
+
+def test_strict_mode_is_quiet_on_a_healthy_warm_cache(tmp_path):
+    """Strict mode must not cry wolf. On an unedited warm cache every proxy caller imports a resolvable alias,
+    so the prefix-present-but-no-import check can never fire and no error is raised: the run serves the cached
+    bodies exactly as the default would, and neither strict error name appears on stderr."""
+    probe = _write_scenario(tmp_path)
+    _warm(probe, _probe_env(tmp_path, "nbcache"))
+
+    strict_env = _probe_env(tmp_path, "nbcache")
+    strict_env["NUMBOX_PROXY_CACHE_STRICT"] = "1"
+    r = _run_probe(probe, strict_env)
+    assert r.returncode == 0, f"strict mode falsely rejected a healthy warm cache\n{_report(r)}"
+    fields = _fields(r)
+    assert _stats(fields) == dict.fromkeys(_HEALED, "served"), f"a healthy strict run recompiled: {_stats(fields)}"
+    assert _results(fields) == _OLD_BODY, _results(fields)
+    assert "Error" not in r.stderr, f"strict emitted an error on a healthy cache\n{_report(r)}"
+
+
+def test_strict_mode_raises_when_a_payload_cannot_be_read(tmp_path, monkeypatch):
+    """The abstention path -- a payload whose shape the reader cannot unpack -- fails open by default and
+    raises under the knob. This is the counterpart of ``test_an_unrecognised_cache_payload_is_handed_on_untouched``:
+    the same payloads that are handed on untouched with the knob off must abort with the named strict error on."""
+    from numbox.core.proxy.proxy import UnvalidatedProxyCacheError, _guarded_rebuild
+
+    class _Impl:
+        filename_base = "unreadable"
+
+    def original(self, target_context, payload):
+        return "loaded"
+
+    rebuild = _guarded_rebuild(original, lambda payload: payload[0])
+    monkeypatch.setenv("NUMBOX_PROXY_CACHE_STRICT", "1")
+    for payload in ({"keyword": "style"}, object(), ()):
+        with pytest.raises(UnvalidatedProxyCacheError):
+            rebuild(_Impl(), None, payload)
+
+
+def test_strict_mode_still_loads_a_well_formed_object_with_no_stale_alias(tmp_path, monkeypatch):
+    """A cleanly-read object that carries the prefix but imports no matching alias is loaded, strict or not.
+
+    Such an object cannot be told apart from a healthy, entirely non-proxy function that merely embeds an
+    alias-shaped string constant (see ``test_..._embedding_the_prefix`` below), so strict mode does not
+    escalate on it -- only a payload that *raises* when read is a validation gap. Reader blindness on a real
+    numba object is caught in CI instead, by ``test_the_reader_recognises_the_objects_numba_actually_caches``.
+    """
+    from numbox.core.proxy.proxy import _guarded_rebuild
+
+    class _Impl:
+        filename_base = "prefix-without-import"
+
+    def original(self, target_context, payload):
+        return "loaded"
+
+    # Carries the alias prefix so the fast path does not short-circuit, but as data in a blob that is neither
+    # ELF nor Mach-O; the reader parses it cleanly and finds no imported alias.
+    blob = b"numbox_pxy_scale_deadbeefdeadbeef" + b"\x00" * 64
+    payload = ("libname", "object", (blob,))
+    rebuild = _guarded_rebuild(original, lambda p: p)
+
+    assert rebuild(_Impl(), None, payload) == "loaded", "the default must load such an object untouched"
+    monkeypatch.setenv("NUMBOX_PROXY_CACHE_STRICT", "1")
+    assert rebuild(_Impl(), None, payload) == "loaded", "strict must not abort on a cleanly-read prefix-bearing object"
+
+
+def test_strict_mode_does_not_abort_on_a_healthy_object_embedding_the_prefix(tmp_path):
+    """The above, end to end: a real cached function with no proxy involvement, carrying the alias prefix as a
+    runtime string constant, must load under strict mode -- not false-abort.
+
+    The guard only runs where numbox is imported, so the runner imports it; strict mode is exactly what a
+    person debugging the proxy cache turns on, and such a person is the most likely to have jitted code that
+    handles ``numbox_pxy_`` strings. The literal is returned so it materializes into the object rather than
+    being folded away.
+    """
+    (tmp_path / "prefix_literal_mod.py").write_text(textwrap.dedent('''
+        from numba import njit
+
+
+        @njit(cache=True)
+        def has_literal(i):
+            label = "numbox_pxy_scale_deadbeefdeadbeef"
+            return label[i]
+    '''), encoding="utf-8")
+    runner = tmp_path / "prefix_literal_run.py"
+    runner.write_text(textwrap.dedent('''
+        import numbox.core.proxy.proxy  # noqa: F401 -- importing numbox is what installs the cache guard
+        from prefix_literal_mod import has_literal
+        print("RESULT", has_literal(0), flush=True)
+        print("DONE ok", flush=True)
+    '''), encoding="utf-8")
+
+    env = _probe_env(tmp_path, "nbcache")
+    assert _warm(runner, env)["RESULT"] == "n"
+
+    strict_env = dict(env)
+    strict_env["NUMBOX_PROXY_CACHE_STRICT"] = "1"
+    r = _run_probe(runner, strict_env)
+    assert r.returncode == 0, f"strict mode false-aborted on a healthy non-proxy cache\n{_report(r)}"
+    assert _fields(r)["RESULT"] == "n", _report(r)
+
+
+@pytest.mark.parametrize("value,expected", [
+    (None, False), ("", False), ("0", False), ("false", False), ("FALSE", False), ("no", False),
+    ("off", False), ("OFF", False), (" 0 ", False),
+    ("1", True), ("true", True), ("yes", True), ("on", True), ("2", True), ("anything", True),
+])
+def test_strict_cache_mode_reads_the_env_truthily(value, expected, monkeypatch):
+    """The knob's off values are a documented contract a user relies on to disable it per run (``=0``). Pin each
+    one, so dropping an element of the falsey set -- which would turn ``export NUMBOX_PROXY_CACHE_STRICT=0`` into
+    hard cache-load errors -- fails here rather than passing a suite that only ever sets the knob to ``1``."""
+    from numbox.core.proxy.proxy import _strict_cache_mode
+
+    if value is None:
+        monkeypatch.delenv("NUMBOX_PROXY_CACHE_STRICT", raising=False)
+    else:
+        monkeypatch.setenv("NUMBOX_PROXY_CACHE_STRICT", value)
+    assert _strict_cache_mode() is expected
 
 
 def test_an_unrecognised_cache_payload_is_handed_on_untouched(tmp_path):
