@@ -26,11 +26,6 @@ import pytest
 _EDITED = "proxied_binding.py"
 _HEALED = {"call_scale": "compiled", "call_scale2": "compiled", "call_offset": "served"}
 
-_XFAIL = pytest.mark.xfail(
-    strict=True, raises=AssertionError,
-    reason="a warm cache entry referencing an unregistered @proxy alias is still handed to the execution engine",
-)
-
 
 def _write_binding(path, name, expr):
     """Write a one-function proxied binding module.
@@ -241,7 +236,6 @@ def test_editing_a_proxied_body_renames_only_that_binding_alias(tmp_path):
     assert _results(after) == {"call_scale": "16.0", "call_scale2": "17.0", "call_offset": "108.0"}, _results(after)
 
 
-@_XFAIL
 @pytest.mark.parametrize("precompile", [False, True], ids=["call", "compile"])
 def test_stale_proxy_alias_is_discarded_and_recompiled(tmp_path, precompile):
     """Reaching a warm caller after the proxied body was edited must recompile it, not crash.

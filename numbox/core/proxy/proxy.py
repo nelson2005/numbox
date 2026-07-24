@@ -1,5 +1,7 @@
 import hashlib
 import inspect
+import struct
+import warnings
 from llvmlite import binding as ll
 from llvmlite import ir
 from numba import cfunc, njit
@@ -15,6 +17,9 @@ from numbox.utils.fingerprint import (
     _Unfingerprintable, _fingerprint_function, _fingerprint_function_best_effort,
 )
 from numbox.utils.standard import make_params_strings
+
+
+_ALIAS_PREFIX = "numbox_pxy_"
 
 
 def make_proxy_name(name):
@@ -83,7 +88,7 @@ def _stable_cfunc_alias(func, main_sig, jit_options=None):
         f"{sorted((jit_options or {}).items(), key=repr)!r}"
     ).encode("utf-8")
     safe_name = "".join(c if c.isascii() and c.isalnum() else "_" for c in func.__name__)
-    return f"numbox_pxy_{safe_name}_{hashlib.sha256(raw).hexdigest()[:16]}"
+    return f"{_ALIAS_PREFIX}{safe_name}_{hashlib.sha256(raw).hexdigest()[:16]}"
 
 
 def _call_proxied_alias(context, builder, main_sig, alias_name, args):
@@ -287,3 +292,140 @@ def proxy_if_available(lib, sig, jit_options: Optional[dict] = None):
             )
         return stub
     return _
+
+
+class StaleProxyCacheWarning(RuntimeWarning):
+    """A cached numba function referenced a ``@proxy`` alias this process never registered, so the entry was
+    discarded and recompiled.
+
+    To make it fatal instead, filter it programmatically --
+    ``warnings.filterwarnings("error", category=StaleProxyCacheWarning)`` -- or, under pytest, with
+    ``-W error::numbox.core.proxy.proxy.StaleProxyCacheWarning``. The interpreter's own ``-W`` cannot name this
+    class: CLI warning filters are resolved before the import system can reach numbox, so the category is rejected
+    as an invalid module name. The blanket ``-W error::RuntimeWarning`` does work.
+    """
+
+
+_ELF_MAGIC = b"\x7fELF"
+# 32- and 64-bit, both byte orders, plus the fat/universal container.
+_MACHO_MAGICS = frozenset((0xFEEDFACE, 0xFEEDFACF, 0xCEFAEDFE, 0xCFFAEDFE, 0xCAFEBABE, 0xBEBAFECA))
+
+
+def _elf_undefined_symbols(obj):
+    """Names of the undefined (imported) symbols of an ELF64 little-endian relocatable object."""
+    und = set()
+    if len(obj) < 0x40 or obj[4] != 2 or obj[5] != 1:
+        return und
+    (e_shoff,) = struct.unpack_from("<Q", obj, 0x28)
+    e_shentsize, e_shnum = struct.unpack_from("<HH", obj, 0x3A)
+    for i in range(e_shnum):
+        sh = e_shoff + i * e_shentsize
+        (sh_type,) = struct.unpack_from("<I", obj, sh + 4)
+        if sh_type != 2:  # SHT_SYMTAB
+            continue
+        sym_off, sym_size = struct.unpack_from("<QQ", obj, sh + 24)
+        (sh_link,) = struct.unpack_from("<I", obj, sh + 40)
+        (sh_entsize,) = struct.unpack_from("<Q", obj, sh + 56)
+        (str_off,) = struct.unpack_from("<Q", obj, e_shoff + sh_link * e_shentsize + 24)
+        for j in range(sym_size // sh_entsize):
+            (st_name,) = struct.unpack_from("<I", obj, sym_off + j * sh_entsize)
+            (st_shndx,) = struct.unpack_from("<H", obj, sym_off + j * sh_entsize + 6)
+            if st_shndx == 0 and st_name:  # SHN_UNDEF and named
+                end = obj.index(b"\x00", str_off + st_name)
+                und.add(obj[str_off + st_name:end].decode("utf-8", "replace"))
+    return und
+
+
+def _macho_undefined_symbols(obj):
+    """Mach-O (macOS). Not read yet -- see ``_undefined_symbols`` for what an empty result means here."""
+    return set()
+
+
+def _coff_undefined_symbols(obj):
+    """COFF/PE (Windows). Not read yet -- see ``_undefined_symbols`` for what an empty result means here."""
+    return set()
+
+
+def _undefined_symbols(object_code):
+    """Undefined (imported) symbol names of one relocatable object, dispatched on its container format.
+
+    A format this cannot read yields an empty set, which degrades the caller to "nothing to check" rather than
+    to a false verdict: an unreadable object is loaded exactly as it was before this guard existed. COFF is the
+    fallback because a COFF object begins with a machine-type word rather than a distinctive magic.
+    """
+    if object_code[:4] == _ELF_MAGIC:
+        return _elf_undefined_symbols(object_code)
+    if len(object_code) >= 4 and struct.unpack_from("<I", object_code, 0)[0] in _MACHO_MAGICS:
+        return _macho_undefined_symbols(object_code)
+    return _coff_undefined_symbols(object_code)
+
+
+def _stale_proxy_aliases(libdata):
+    """``@proxy`` aliases a serialized code library references that this process has NOT registered.
+
+    A non-empty result means the payload must not be loaded. ``ll.address_of_symbol`` is an exact oracle here
+    because these names live only in llvmlite's explicit-symbol map, and since the alias encodes the body,
+    signature and jit options, presence also implies the registered body is the right one to call.
+    """
+    try:
+        _name, kind, data = libdata
+        if kind != "object":
+            return []
+        object_code = data[0]
+        if _ALIAS_PREFIX.encode() not in object_code:
+            return []  # fast path: the alias string appears nowhere in the object
+        return sorted(
+            s for s in _undefined_symbols(object_code)
+            if s.startswith(_ALIAS_PREFIX) and not ll.address_of_symbol(s)
+        )
+    except Exception:
+        # Fail open: this runs on EVERY numba cache load in the process, so a surprise -- a future numba
+        # changing the payload shape, a malformed object -- must degrade to "no validation", never to
+        # breaking unrelated caching.
+        return []
+
+
+def _guarded_rebuild(orig_rebuild, libdata_of_payload):
+    """Wrap a numba ``CacheImpl.rebuild`` so a payload is validated while it is still plain bytes.
+
+    This is the last point upstream of the execution engine. Once ``unserialize_library`` runs, the object's
+    externals are resolved in one batch and a single unregistered name zeroes every relocation in it, which is
+    unrecoverable and kills the process without a diagnostic. Returning ``None`` is numba's own contract for a
+    cache miss, so the stale entry is discarded and recompiled in place.
+    """
+    def rebuild(self, target_context, payload):
+        stale = _stale_proxy_aliases(libdata_of_payload(payload))
+        if stale:
+            warnings.warn(
+                "numbox: discarding a stale numba cache entry and recompiling: it references "
+                "@proxy cfunc alias(es) this process never registered (the proxied body, "
+                "signature or jit_options changed since the caller was cached): "
+                + ", ".join(stale),
+                StaleProxyCacheWarning,
+                stacklevel=3,
+            )
+            return None
+        return orig_rebuild(self, target_context, payload)
+    return rebuild
+
+
+def _install_cache_alias_guard():
+    """Validate every numba cache load in this process against the registered ``@proxy`` aliases.
+
+    Ordering is guaranteed without any coordination: a caller can only have been compiled against a ``@proxy``
+    binding whose module it imports, and importing that module imports this one. A cached function that
+    references no alias may load before numbox exists and needs no validation.
+    """
+    from numba.core import caching
+    if getattr(caching, "_numbox_proxy_alias_guard", False):
+        return
+    caching._numbox_proxy_alias_guard = True
+    caching.CompileResultCacheImpl.rebuild = _guarded_rebuild(
+        caching.CompileResultCacheImpl.rebuild, lambda payload: payload[0],
+    )
+    caching.CodeLibraryCacheImpl.rebuild = _guarded_rebuild(
+        caching.CodeLibraryCacheImpl.rebuild, lambda payload: payload,
+    )
+
+
+_install_cache_alias_guard()
