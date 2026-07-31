@@ -126,9 +126,9 @@ def iter_files(paths):
 DOC_SNIPPET_IGNORE = 'E302,E303,E305,W292,W391'
 
 
-def lint_block(code, label, max_line_length, extend_ignore, flake8_exe):
+def lint_block(code, label, max_line_length, extend_ignore, flake8_cmd):
     proc = subprocess.run(
-        [flake8_exe, f'--max-line-length={max_line_length}',
+        [*flake8_cmd, f'--max-line-length={max_line_length}',
          f'--extend-ignore={extend_ignore}',
          f'--stdin-display-name={label}', '-'],
         input=code, text=True, capture_output=True,
@@ -147,8 +147,12 @@ def main(argv=None):
     ap.add_argument('--extend-ignore', default=DOC_SNIPPET_IGNORE,
                     help=f'flake8 codes to ignore beyond defaults (default: {DOC_SNIPPET_IGNORE} — '
                          'blank-line rules that do not apply to short snippets). Pass empty string to disable.')
-    ap.add_argument('--flake8', default='flake8')
+    ap.add_argument('--flake8', default=None,
+                    help='flake8 executable to invoke (default: run flake8 as a module of the interpreter '
+                         'running this script, so a virtualenv flake8 is found without any PATH setup)')
     args = ap.parse_args(argv)
+
+    flake8_cmd = [args.flake8] if args.flake8 else [sys.executable, '-m', 'flake8']
 
     worst = 0
     any_blocks = False
@@ -158,7 +162,7 @@ def main(argv=None):
         for start_line, code in blocks:
             any_blocks = True
             label = f'{path}:{start_line}'
-            rc = lint_block(code, label, args.max_line_length, args.extend_ignore, args.flake8)
+            rc = lint_block(code, label, args.max_line_length, args.extend_ignore, flake8_cmd)
             if rc > worst:
                 worst = rc
     if not any_blocks:
