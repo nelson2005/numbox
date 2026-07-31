@@ -44,8 +44,8 @@ Explicit non-goals for 0.5.12: variadic `printf` / `fprintf` / `scanf` family (d
 
 The single most important constraint. Reiterated in the new "Bindings: implementation gotchas" section of `CLAUDE.md`:
 
-- [`ll.address_of_symbol(name)`](numbox/core/bindings/call.py#L76) returns the *current process's* runtime address. ASLR randomizes per-process; cached `@njit` objects are meant to survive across runs and machines. Baking that int into LLVM IR breaks `cache=True`.
-- The correct pattern, used by `_call_lib_func` at [`call.py:185`](numbox/core/bindings/call.py#L185): `get_or_insert_function(builder.module, func_ll_ty, func_name)` emits an extern declaration by name; llvmlite's JIT linker resolves at link time, per process, ASLR-safe.
+- [`ll.address_of_symbol(name)`](../../numbox/core/bindings/call.py#L76) returns the *current process's* runtime address. ASLR randomizes per-process; cached `@njit` objects are meant to survive across runs and machines. Baking that int into LLVM IR breaks `cache=True`.
+- The correct pattern, used by `_call_lib_func` at [`call.py:185`](../../numbox/core/bindings/call.py#L185): `get_or_insert_function(builder.module, func_ll_ty, func_name)` emits an extern declaration by name; llvmlite's JIT linker resolves at link time, per process, ASLR-safe.
 - The literal-address check at `call.py:76` is *only* a presence assertion; `func_p_as_int` is never consumed by codegen.
 
 The same extern-ref pattern works for **data symbols** (`@stdout = external global ptr`) and for **accessor functions whose return value is per-thread** (`__errno_location`, `__error`, `_errno`).
@@ -453,8 +453,8 @@ Each chunk produces its own commit on the feature branch. Eight chunks → eight
 
 Before chunk 1:
 
-1. Read [`numbox/utils/lowlevel.py`](numbox/utils/lowlevel.py) end-to-end. The libc bindings compose `array_data_p`, `get_str_from_p_as_int`, `get_unicode_data_p` extensively.
-2. Read [`numbox/core/bindings/call.py`](numbox/core/bindings/call.py) — specifically the `_call_lib_func` codegen and the `get_or_insert_function` extern-ref pattern at line 185.
+1. Read [`numbox/utils/lowlevel.py`](../../numbox/utils/lowlevel.py) end-to-end. The libc bindings compose `array_data_p`, `get_str_from_p_as_int`, `get_unicode_data_p` extensively.
+2. Read [`numbox/core/bindings/call.py`](../../numbox/core/bindings/call.py) — specifically the `_call_lib_func` codegen and the `get_or_insert_function` extern-ref pattern at line 185.
 3. Run baseline `venv/bin/pytest --durations=20` on `main` to confirm a clean starting point.
 4. Verify `venv/bin/python -c "import numba; print(numba.__version__)"` matches the pinned local version (0.60.0 per `pyproject.toml` local default).
 5. Clean numba cache + `__pycache__` before the first test run:
