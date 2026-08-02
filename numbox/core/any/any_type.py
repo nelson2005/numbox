@@ -47,10 +47,24 @@ AnyType = AnyTypeClass([("p", ErasedType), ("t", unicode_type)])
 
 @overload_method(AnyTypeClass, "get_as", strict=False, jit_options=jit_options)
 def ol_get_as(self_ty, ty_ref: TypeRef):
-    ty_code = str(ty_ref.instance_type)
+    from numba.core.types.function_type import FunctionType
+    from numbox.core.work.derive_wap import DeriveFunctionType
+
+    instance_ty = ty_ref.instance_type
+    ty_code = str(instance_ty)
+
+    # A derive compiled by `cres` stores as `DeriveFunctionType`, which callers
+    # ask back as the plain `FunctionType` of the same signature. Both use
+    # numba's `FunctionModel`, so the erased payload is byte-identical and the
+    # decode is sound. The type codes are kept distinct rather than aliased,
+    # because they also feed content-addressed cache names, where collapsing two
+    # types onto one hash would let a stale binary load.
+    stored_codes = (ty_code,)
+    if type(instance_ty) is FunctionType:
+        stored_codes = (ty_code, str(DeriveFunctionType(instance_ty.signature)))
 
     def _(self, ty):
-        if ty_code != self.t:
+        if self.t not in stored_codes:
             raise NumbaError(f"Any stored type {self.t}, cannot decode as {ty_code}")
         return _deref_payload(self.p, ty)
     return _
