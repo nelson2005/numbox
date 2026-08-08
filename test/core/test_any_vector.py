@@ -9,7 +9,7 @@ import numpy
 import pytest
 
 from numba import njit, types as nb_types
-from numba.core.errors import NumbaError
+from numba.core.errors import NumbaError, TypingError
 from numba.core.runtime import rtsys, _nrt_python
 from numba.core.types import unicode_type
 
@@ -18,6 +18,7 @@ from numbox.core.vector.any_vector import (
     AnyVector, any_vector_clear, any_vector_extend, any_vector_pop,
     any_vector_push, create_any_vector,
 )
+from numbox.core.vector.vector import make_vector
 from numbox.utils.meminfo import get_nrt_refcount, structref_meminfo
 from test.auxiliary_utils import collect_and_run_tests
 from test.common_structrefs import S1, S1Type
@@ -315,6 +316,56 @@ def test_extend_self_doubles():
     assert [v[i].get_as(int64) for i in range(4)] == [1, 2, 1, 2]
 
 
+def test_extend_method_and_proxy():
+    v = create_any_vector(1)
+    v.push(1)
+    w = create_any_vector(1)
+    w.push(2)
+    v.extend(w)
+    assert [v[i].get_as(int64) for i in range(2)] == [1, 2]
+
+    @njit
+    def go(a, b):
+        a.extend(b)
+
+    go(v, w)
+    assert len(v) == 3
+    assert v[2].get_as(int64) == 2
+
+
+def test_zero_capacity_rejected():
+    with pytest.raises(ValueError, match="capacity"):
+        create_any_vector(0)
+
+
+def test_scalar_vector_rejected_by_any_ops():
+    create, _ = make_vector(nb_types.float64)
+    sv = create(4)
+    v = create_any_vector(1)
+    with pytest.raises(TypingError):
+        any_vector_pop(sv)
+    with pytest.raises(TypingError):
+        any_vector_clear(sv)
+    with pytest.raises(TypingError):
+        any_vector_extend(v, sv)
+    with pytest.raises(TypingError):
+        any_vector_extend(sv, v)
+
+
+def test_buf_is_a_defensive_copy():
+    _warmup()
+    before = _settled_balance()
+    v = create_any_vector(1)
+    any_vector_push(v, make_any(42))
+    snap = v.buf
+    assert int(snap[0]) != 0
+    snap[0] = 0
+    assert v[0].get_as(int64) == 42
+    del snap, v
+    gc.collect()
+    assert _settled_balance() == before
+
+
 def test_growth_preserves_stored_pointers():
     v = create_any_vector(1)
     mis = []
@@ -364,7 +415,8 @@ def test_cache_survives_across_processes(tmp_path):
         from numba import types as nb_types
         from numbox.core.any.any_type import make_any
         from numbox.core.vector.any_vector import (
-            any_vector_clear, any_vector_push, create_any_vector,
+            any_vector_clear, any_vector_extend, any_vector_pop,
+            any_vector_push, create_any_vector,
         )
         v = create_any_vector(1)
         any_vector_push(v, make_any(217))
@@ -373,12 +425,20 @@ def test_cache_survives_across_processes(tmp_path):
         print(v[0].get_as(nb_types.int64))
         print(v.get_as(1, nb_types.float64))
         print(v[2].get_as(nb_types.unicode_type))
+        v[1] = make_any(9.5)
+        print(v.get_as(1, nb_types.float64))
+        p = any_vector_pop(v)
+        print(p.get_as(nb_types.unicode_type))
+        w = create_any_vector(1)
+        any_vector_push(w, make_any(7))
+        any_vector_extend(v, w)
+        print(len(v), v[2].get_as(nb_types.int64))
         any_vector_clear(v)
-        del v
+        del v, w, p
         print("ok")
     """)
     env = {**os.environ, "NUMBA_CACHE_DIR": str(tmp_path)}
-    expected = "217\n2.5\ntagged\nok\n"
+    expected = "217\n2.5\ntagged\n9.5\ntagged\n3 7\nok\n"
 
     r1 = subprocess.run(
         [sys.executable, "-c", probe], env=env, capture_output=True, text=True,

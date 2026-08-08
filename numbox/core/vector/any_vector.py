@@ -20,16 +20,33 @@ Ownership contract (each rule is pinned by a test in
 - the vector's NRT destructor walks ``buf[0:size)`` when the vector itself dies
   and releases every remaining element (zeroed slots are skipped), so dropping
   the last reference to the vector cannot leak elements; ``any_vector_clear``
-  does the same eagerly and composes with the destructor.
+  does the same eagerly and composes with the destructor. One exception: NRT is
+  pure reference counting, so a vector that transitively contains itself (a
+  ``make_any(v)`` pushed into ``v``) is an unreclaimable cycle no collector
+  ever visits.
 
 Both a bare and a sugared API are provided: module-level functions
 (``any_vector_push`` etc., all callable from Python and jit) and methods on the
-vector (``v.push(x)``, ``v.pop()``, ``v.clear()``, ``v.get_as(i, ty)``).
-``any_vector_push`` and ``v[i] = x`` wrap a non-``Any`` argument via
-``make_any`` automatically.
+vector (``v.push(x)``, ``v.pop()``, ``v.clear()``, ``v.extend(src)``,
+``v.get_as(i, ty)``). ``any_vector_push`` and ``v[i] = x`` wrap a non-``Any``
+argument via ``make_any`` automatically.
 
-The destructor references the NRT API by symbol name only, never by address, so
-everything here compiles under the module-default ``cache=True``.
+Hazards, documented rather than guarded:
+
+- from jit code ``buf`` and ``size`` are assignable fields; the ownership
+  invariant is maintained only by the operations above. Raw stores (e.g.
+  ``v.buf[i] = export_meminfo(a)`` in a user loop) bypass the contract — numba
+  may even elide an incref whose only consumer is a raw integer slot — and
+  corrupt the destructor's walk. From Python, ``buf`` is a defensive copy for
+  introspection, never an alias of the live table.
+- numba's exception unwind does not release NRT references held by live frames:
+  an accessor raise (out-of-range index, ``get_as`` type mismatch) leaks the
+  references that call held, including the vector's own. Treat accessor
+  exceptions as programming errors to fix, not as control flow.
+
+The destructor references the NRT API by symbol name only, never by address,
+and is emitted with internal linkage into each defining module, so everything
+here compiles under the module-default ``cache=True``.
 """
 import numpy
 import operator
@@ -70,7 +87,8 @@ class AnyVector(StructRefProxy):
     @property
     @njit(**jit_options)
     def buf(self):
-        return self.buf
+        # A writable alias would let plain Python corrupt the ownership table.
+        return self.buf.copy()
 
     @njit(**jit_options)
     def get_as(self, i, ty):
@@ -87,6 +105,10 @@ class AnyVector(StructRefProxy):
     @njit(**jit_options)
     def clear(self):
         return self.clear()
+
+    @njit(**jit_options)
+    def extend(self, src):
+        return self.extend(src)
 
     @njit(**jit_options)
     def __getitem__(self, i):
@@ -124,6 +146,10 @@ def _any_vector_dtor(context, module, inst_ty):
     dtor_ftype = llir.FunctionType(llir.VoidType(), [_voidptr_t, llsize, _voidptr_t])
     fn = cgutils.get_or_insert_function(module, dtor_ftype, f"_numbox_any_vector_dtor.{inst_ty.name}")
     if fn.is_declaration:
+        # Internal linkage: each defining module keeps its own body, so a stale
+        # cached object can never substitute its destructor for another
+        # module's under a shared external symbol.
+        fn.linkage = "internal"
         builder = llir.IRBuilder(fn.append_basic_block())
         payload_fe = inst_ty.get_data_type()
         payload_ll = context.get_value_type(payload_fe)
@@ -170,7 +196,10 @@ def _new_any_vector(typingctx, vec_ty_ref):
 @njit(**jit_options)
 def create_any_vector(capacity):
     """Create an empty ``AnyVector`` with the given initial ``capacity`` >= 1."""
-    assert capacity >= 1
+    if capacity < 1:
+        # Not an assert: asserts vanish under `python -O`, and a zero-capacity
+        # buffer can never grow (0 * 2 == 0), so every push would write past it.
+        raise ValueError("AnyVector capacity must be >= 1")
     v = _new_any_vector(AnyVectorType)
     v.buf = numpy.empty(capacity, dtype=numpy.intp)
     v.size = 0
@@ -259,30 +288,88 @@ def _any_vector_setitem(v, i, x):
     return impl
 
 
+def _any_vector_pop(v):
+    raise NotImplementedError("Not callable from Python")
+
+
+@overload(_any_vector_pop, strict=False, jit_options=jit_options)
+def ol_any_vector_pop_generic(v_ty):
+    # The isinstance guard is not optional: without it any structref exposing
+    # buf/size fields (e.g. the scalar Vector) would type-check here and have
+    # its integers dereferenced as MemInfo pointers.
+    if not isinstance(v_ty, AnyVectorTypeClass):
+        return None
+
+    def impl(v):
+        i = v.size - 1
+        if i < 0:
+            raise IndexError("pop from an empty AnyVector")
+        p = v.buf[i]
+        a = borrow_structref(AnyType, p)
+        v.buf[i] = 0
+        v.size = i
+        release_meminfo(p)
+        return a
+    return impl
+
+
 @njit(**jit_options)
 def any_vector_pop(v):
     """Remove and return the last element, transferring ownership to the caller."""
-    i = v.size - 1
-    if i < 0:
-        raise IndexError("pop from an empty AnyVector")
-    p = v.buf[i]
-    a = borrow_structref(AnyType, p)
-    v.buf[i] = 0
-    v.size = i
-    release_meminfo(p)
-    return a
+    return _any_vector_pop(v)
+
+
+def _any_vector_clear(v):
+    raise NotImplementedError("Not callable from Python")
+
+
+@overload(_any_vector_clear, strict=False, jit_options=jit_options)
+def ol_any_vector_clear_generic(v_ty):
+    if not isinstance(v_ty, AnyVectorTypeClass):
+        return None
+
+    def impl(v):
+        for i in range(v.size):
+            p = v.buf[i]
+            v.buf[i] = 0
+            if p != 0:
+                release_meminfo(p)
+        v.size = 0
+    return impl
 
 
 @njit(**jit_options)
 def any_vector_clear(v):
     """Release every element and empty the vector. Slots are zeroed first, so
     the destructor's later walk over them is a no-op."""
-    for i in range(v.size):
-        p = v.buf[i]
-        v.buf[i] = 0
-        if p != 0:
-            release_meminfo(p)
-    v.size = 0
+    _any_vector_clear(v)
+
+
+def _any_vector_extend(dst, src):
+    raise NotImplementedError("Not callable from Python")
+
+
+@overload(_any_vector_extend, strict=False, jit_options=jit_options)
+def ol_any_vector_extend_generic(dst_ty, src_ty):
+    if not isinstance(dst_ty, AnyVectorTypeClass) or not isinstance(src_ty, AnyVectorTypeClass):
+        return None
+
+    def impl(dst, src):
+        needed = dst.size + src.size
+        cap = dst.buf.shape[0]
+        if needed > cap:
+            while cap < needed:
+                cap *= 2
+            new_buf = numpy.empty(cap, dst.buf.dtype)
+            new_buf[:dst.size] = dst.buf[:dst.size]
+            dst.buf = new_buf
+        n = src.size
+        for i in range(n):
+            p = src.buf[i]
+            _incref_meminfo(p)
+            dst.buf[dst.size + i] = p
+        dst.size += n
+    return impl
 
 
 @njit(**jit_options)
@@ -290,20 +377,7 @@ def any_vector_extend(dst, src):
     """Append every element of ``src`` to ``dst``; each copied slot takes its
     own reference, so the vectors own their elements independently.
     Self-extension ``any_vector_extend(v, v)`` is supported."""
-    needed = dst.size + src.size
-    cap = dst.buf.shape[0]
-    if needed > cap:
-        while cap < needed:
-            cap *= 2
-        new_buf = numpy.empty(cap, dst.buf.dtype)
-        new_buf[:dst.size] = dst.buf[:dst.size]
-        dst.buf = new_buf
-    n = src.size
-    for i in range(n):
-        p = src.buf[i]
-        _incref_meminfo(p)
-        dst.buf[dst.size + i] = p
-    dst.size += n
+    _any_vector_extend(dst, src)
 
 
 @overload_method(AnyVectorTypeClass, "get_as", strict=False, jit_options=jit_options)
@@ -323,12 +397,19 @@ def ol_vec_push(self_ty, x_ty):
 @overload_method(AnyVectorTypeClass, "pop", strict=False, jit_options=jit_options)
 def ol_vec_pop(self_ty):
     def impl(self):
-        return any_vector_pop(self)
+        return _any_vector_pop(self)
     return impl
 
 
 @overload_method(AnyVectorTypeClass, "clear", strict=False, jit_options=jit_options)
 def ol_vec_clear(self_ty):
     def impl(self):
-        return any_vector_clear(self)
+        _any_vector_clear(self)
+    return impl
+
+
+@overload_method(AnyVectorTypeClass, "extend", strict=False, jit_options=jit_options)
+def ol_vec_extend(self_ty, src_ty):
+    def impl(self, src):
+        _any_vector_extend(self, src)
     return impl
