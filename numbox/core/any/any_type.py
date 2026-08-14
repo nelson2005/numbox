@@ -1,6 +1,6 @@
 from numba import njit
 from numba.core.errors import NumbaError
-from numba.core.types import StructRef, TypeRef, unicode_type
+from numba.core.types import StructRef, TypeRef
 from numba.experimental.structref import define_boxing, new, register, StructRefProxy
 from numba.extending import overload, overload_method
 
@@ -30,11 +30,6 @@ class Any(StructRefProxy):
     def reset(self, val):
         return self.reset(val)
 
-    @property
-    @njit(**jit_options)
-    def type_info(self):
-        return self.t
-
 
 def _any_deleted_ctor(p):
     raise NumbaError(deleted_any_ctor_error)
@@ -42,41 +37,20 @@ def _any_deleted_ctor(p):
 
 overload(Any, jit_options=jit_options)(_any_deleted_ctor)
 define_boxing(AnyTypeClass, Any)
-AnyType = AnyTypeClass([("p", ErasedType), ("t", unicode_type)])
+AnyType = AnyTypeClass([("p", ErasedType)])
 
 
 @overload_method(AnyTypeClass, "get_as", strict=False, jit_options=jit_options)
 def ol_get_as(self_ty, ty_ref: TypeRef):
-    from numba.core.types.function_type import FunctionType
-    from numbox.core.work.derive_wap import DeriveFunctionType
-
-    instance_ty = ty_ref.instance_type
-    ty_code = str(instance_ty)
-
-    # A derive compiled by `cres` stores as `DeriveFunctionType`, which callers
-    # ask back as the plain `FunctionType` of the same signature. Both use
-    # numba's `FunctionModel`, so the erased payload is byte-identical and the
-    # decode is sound. The type codes are kept distinct rather than aliased,
-    # because they also feed content-addressed cache names, where collapsing two
-    # types onto one hash would let a stale binary load.
-    stored_codes = (ty_code,)
-    if type(instance_ty) is FunctionType:
-        stored_codes = (ty_code, str(DeriveFunctionType(instance_ty.signature)))
-
     def _(self, ty):
-        if self.t not in stored_codes:
-            raise NumbaError(f"Any stored type {self.t}, cannot decode as {ty_code}")
         return _deref_payload(self.p, ty)
     return _
 
 
 @overload_method(AnyTypeClass, "reset", strict=False, jit_options=jit_options)
 def ol_reset(self_ty, x_ty):
-    ty_code = str(x_ty)
-
     def _(self, x):
         self.p = _cast(_Content(x), ErasedType)
-        self.t = ty_code
     return _
 
 
@@ -86,13 +60,10 @@ def _make_any(x):
 
 @overload(_make_any, strict=False, jit_options=jit_options)
 def ol_make_any(x_ty):
-    ty_code = str(x_ty)
-
     def _(x):
-        any = new(AnyType)
-        any.p = _cast(_Content(x), ErasedType)
-        any.t = ty_code
-        return any
+        any_ = new(AnyType)
+        any_.p = _cast(_Content(x), ErasedType)
+        return any_
     return _
 
 
