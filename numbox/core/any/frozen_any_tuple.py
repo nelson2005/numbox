@@ -1,13 +1,20 @@
 """Immutable heterogeneous snapshot container: a structref-wrapped ``UniTuple(AnyType, n)`` plus per-slot type codes,
 built once from raw values and read many times.
 
-Read discipline. ``fat.get_as(i, ty)`` is the checked default read: at build time every slot records a ``uint32``
-content digest of its value's numba type (``zlib.crc32`` of ``str`` of the unliteral'd type) in the ``codes`` field,
-and ``get_as`` compares the recorded code against the digest of the requested type, baked in as a compile-time
+Read discipline. The index domain is ``0 <= i < len(fat)``; negative indices are not supported on any surface.
+``fat.get_as(i, ty)`` is the checked default read: at build time every slot records a ``uint32`` content digest of
+its value's numba type (``zlib.crc32`` of ``str`` of the unliteral'd type) in the ``codes`` field, and ``get_as``
+first bounds-checks ``i`` against the arity, a compile-time constant of the type, raising ``IndexError`` out of
+range, then compares the recorded code against the digest of the requested type, baked in as a compile-time
 constant, before dereferencing; on a mismatch it raises ``TypeError("FrozenAnyTuple: slot type mismatch")``. The
-check is one array load plus one integer compare, O(1) per call at any arity, and needs no hoisting. ``fat[i]`` is
-the unchecked escape hatch: it returns the slot's ``Any`` in O(1), and ``fat[i].get_as(ty)`` with a wrong type
-silently returns the reinterpreted bit pattern; it never raises. Slot indices are not bounds-checked on either path.
+checked read is O(1) per call at any arity, measured at a few nanoseconds per call, and needs no hoisting. In jit
+code ``fat[i]`` is the escape hatch, bounds- and type-unchecked: it returns the slot's ``Any`` in O(1), an
+out-of-range ``i`` dereferences out of bounds, and ``fat[i].get_as(ty)`` with a wrong type silently returns the
+reinterpreted bit pattern; it never raises. Sub-nanosecond per-element reads belong to that bare
+``fat[i].get_as(ty)`` and to the hoisted ``fat.anys`` iteration idiom, not to the checked read. From Python the
+proxy guards ``fat[i]`` and ``fat.get_as(i, ty)`` alike, raising ``IndexError`` before delegating unless
+``0 <= i < len(fat)``; the guarded ``__getitem__`` also terminates sequence-protocol iteration (``for x in fat``,
+``list(fat)``) correctly.
 
 Exact-match rule. The recorded code is a digest of the exact stored type, so ask with the exact type that was
 stored: ``'C'`` and ``'A'`` array layouts differ, aligned and unaligned records differ.
@@ -20,7 +27,8 @@ can lie to the guard. A collision only downgrades a checked read to unchecked se
 Iteration and bulk access. A direct ``fat.anys`` field access returns an owned copy of the whole tuple, paying one
 incref per slot, so it must not sit inside a loop: hoist ``t = fat.anys`` to a local exactly once, then ``for x in
 t`` is a native runtime loop and ``t[i]`` is O(1). From Python, each ``.anys`` property access boxes all ``n``
-elements to ``Any`` proxies, O(n) per access: bind it once. The default reads (``get_as``, ``fat[i]``) do not need
+elements to ``Any`` proxies, O(n) per access: bind it once; a plain ``for x in fat`` iterates through the guarded
+``__getitem__``, one boundary crossing per element. The default reads (``get_as``, ``fat[i]``) do not need
 hoisting.
 
 Build. ``make_frozen_any_tuple`` is the only constructor, callable from both sides. From Python it accepts any
@@ -70,20 +78,22 @@ deleted_fat_ctor_error = "Use `make_frozen_any_tuple` instead"
 
 
 class FrozenAnyTuple(StructRefProxy):
-    """Python proxy; every method below runs the same jit surface Python-side callers see from ``@njit`` code."""
+    """Python proxy; the indexed reads bounds-guard in Python, then run the same jit surface ``@njit`` callers see."""
 
     def __new__(cls, *args, **kwargs):
         raise NotImplementedError(deleted_fat_ctor_error)
 
-    @njit(**jit_options)
     def get_as(self, i, ty):
-        """Checked read of slot ``i`` as type ``ty``; raises ``TypeError`` unless ``ty`` matches the recorded type."""
-        return self.get_as(i, ty)
+        """Checked read of slot ``i`` as ``ty``: ``IndexError`` out of range, ``TypeError`` on a mismatched type."""
+        if not 0 <= i < len(self):
+            raise IndexError("FrozenAnyTuple index out of range")
+        return _fat_get_as_jit(self, i, ty)
 
-    @njit(**jit_options)
     def __getitem__(self, i):
-        """Unchecked escape hatch: the slot's ``Any``, whose ``get_as`` reinterprets bits on a mistyped ask."""
-        return self[i]
+        """The slot's ``Any``, type-unchecked; bounds-guarded here, which also terminates sequence iteration."""
+        if not 0 <= i < len(self):
+            raise IndexError("FrozenAnyTuple index out of range")
+        return _fat_getitem_jit(self, i)
 
     @njit(**jit_options)
     def __len__(self):
@@ -108,6 +118,16 @@ def _fat_deleted_ctor(*args):
 
 overload(FrozenAnyTuple)(_fat_deleted_ctor)
 define_boxing(FrozenAnyTupleTypeClass, FrozenAnyTuple)
+
+
+@njit(**jit_options)
+def _fat_get_as_jit(fat, i, ty):
+    return fat.get_as(i, ty)
+
+
+@njit(**jit_options)
+def _fat_getitem_jit(fat, i):
+    return fat[i]
 
 
 _fat_type_cache = {}
@@ -196,12 +216,16 @@ def _get_slot(typingctx, fat_ty, i_ty):
 
 @overload_method(FrozenAnyTupleTypeClass, "get_as", strict=False, jit_options=jit_options)
 def ol_fat_get_as(fat, i, ty):
+    """Jit checked read: ``IndexError`` unless ``0 <= i < n``, then the recorded-code compare, then the dereference."""
     inst = getattr(ty, "instance_type", None)
     if inst is None:
         return None
     expected = numpy.uint32(_slot_code(inst))
+    n = fat.field_dict["anys"].count
 
     def impl(fat, i, ty):
+        if i < 0 or i >= n:
+            raise IndexError("FrozenAnyTuple index out of range")
         if fat.codes[i] != expected:
             raise TypeError("FrozenAnyTuple: slot type mismatch")
         return _get_slot(fat, i).get_as(ty)
@@ -220,6 +244,7 @@ def ol_fat_len(fat):
 
 @overload(operator.getitem, jit_options=jit_options)
 def ol_fat_getitem(fat, i):
+    """Jit ``fat[i]``: the raw escape hatch, bounds- and type-unchecked; the Python proxy surface is guarded."""
     if isinstance(fat, FrozenAnyTupleTypeClass):
         def impl(fat, i):
             return _get_slot(fat, i)

@@ -48,6 +48,11 @@ def _jit_len_and_getitem(fat):
     return len(fat), fat[0].get_as(int64)
 
 
+@njit(cache=True)
+def _jit_checked_get_as_int64(fat, i):
+    return fat.get_as(i, int64)
+
+
 def test_python_build_and_reads():
     a = numpy.array([1, 2], dtype=numpy.int32)
     fat = make_frozen_any_tuple([7, 2.5, "abc", a])
@@ -87,6 +92,41 @@ def test_get_as_mismatch_raises():
         fat.get_as(0, float64)
     with pytest.raises(TypeError, match="slot type mismatch"):
         _jit_checked_mismatch(fat)
+
+
+def test_python_iteration_and_list():
+    # The guarded __getitem__ ends the legacy iteration protocol with IndexError at i == n.
+    fat = make_frozen_any_tuple([7, 2.5, "abc"])
+    seen = []
+    for a in fat:
+        seen.append(a)
+    assert len(seen) == 3
+    assert all(isinstance(a, Any) for a in seen)
+    assert seen[0].get_as(int64) == 7
+    assert abs(seen[1].get_as(float64) - 2.5) < 1e-15
+    assert seen[2].get_as(unicode_type) == "abc"
+    assert len(list(fat)) == 3
+
+
+def test_python_oob_raises():
+    fat = make_frozen_any_tuple([7, 2.5])
+    with pytest.raises(IndexError, match="index out of range"):
+        fat[2]
+    with pytest.raises(IndexError, match="index out of range"):
+        fat[-1]
+    with pytest.raises(IndexError, match="index out of range"):
+        fat.get_as(2, int64)
+    with pytest.raises(IndexError, match="index out of range"):
+        fat.get_as(-1, int64)
+
+
+def test_jit_oob_raises():
+    fat = make_frozen_any_tuple([7, 2.5])
+    assert _jit_checked_get_as_int64(fat, 0) == 7
+    with pytest.raises(IndexError, match="index out of range"):
+        _jit_checked_get_as_int64(fat, 2)
+    with pytest.raises(IndexError, match="index out of range"):
+        _jit_checked_get_as_int64(fat, -1)
 
 
 def test_unchecked_reinterpret_semantics_pin():
