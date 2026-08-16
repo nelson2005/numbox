@@ -11,10 +11,9 @@ checked read is O(1) per call at any arity, measured at a few nanoseconds per ca
 code ``fat[i]`` is the escape hatch, bounds- and type-unchecked: it returns the slot's ``Any`` in O(1), an
 out-of-range ``i`` dereferences out of bounds, and ``fat[i].get_as(ty)`` with a wrong type silently returns the
 reinterpreted bit pattern; it never raises. Sub-nanosecond per-element reads belong to that bare
-``fat[i].get_as(ty)`` and to the hoisted ``fat.anys`` iteration idiom, not to the checked read. From Python the
-proxy guards ``fat[i]`` and ``fat.get_as(i, ty)`` alike, raising ``IndexError`` before delegating unless
-``0 <= i < len(fat)``; the guarded ``__getitem__`` also terminates sequence-protocol iteration (``for x in fat``,
-``list(fat)``) correctly.
+``fat[i].get_as(ty)``, not to the checked read. From Python the proxy guards ``fat[i]`` and ``fat.get_as(i, ty)``
+alike, raising ``IndexError`` before delegating unless ``0 <= i < len(fat)``; the guarded ``__getitem__`` also
+terminates sequence-protocol iteration (``for x in fat``, ``list(fat)``) correctly.
 
 Exact-match rule. The recorded code is a digest of the exact stored type, so ask with the exact type that was
 stored: ``'C'`` and ``'A'`` array layouts differ, aligned and unaligned records differ.
