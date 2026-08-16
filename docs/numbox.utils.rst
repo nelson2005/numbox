@@ -75,7 +75,7 @@ The three slots are directly observable through
 :func:`numbox.utils.lowlevel.get_func_tuple`, which is the clearest way to see what the type
 adds. ``jit_addr`` is populated and matches the entry point the wrapper captured, while
 numba's own ``_get_jit_address`` still yields 0 for the same value, because it resolves an
-address only for a ``Dispatcher``:
+address only for a ``Dispatcher``. The example needs numba 0.61 or later:
 
 .. code-block:: python
 
@@ -99,10 +99,14 @@ address only for a ``Dispatcher``:
     assert jit_addr == add.jit_address
     assert _get_jit_address(add, sig) == 0
 
-The tuple has three entries on numba 0.61 and later and two before it, since the slot itself
-was added in 0.61. On a numba without it ``cres`` returns a plain ``CompileResultWAP`` and
-the mechanism is inert. The same assertions are pinned by
-``test/utils/test_lowlevel.py::test_get_func_tuple``.
+Nothing above runs on an earlier numba. ``_get_jit_address`` does not exist there to import,
+the tuple has two entries rather than three, and ``cres`` returns a plain
+``CompileResultWAP`` rather than a :class:`~numbox.utils.derive_wap.DeriveWAP`, because
+without the slot there is nothing for the mechanism to populate.
+
+``test/utils/test_lowlevel.py::test_get_func_tuple`` pins every assertion above except the
+first; the wrapper's type is pinned separately by
+``test/utils/test_derive_wap.py::test_cres_mints_a_derive_wap``.
 
 .. automodule:: numbox.utils.derive_wap
    :members:

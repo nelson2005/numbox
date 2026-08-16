@@ -177,9 +177,10 @@ def make_work(name, data, sources=(), derive=None):
     then the type is fixed and nothing can be re-wrapped.
 
     ``make_work.py_func`` is preserved from when this function was itself a
-    dispatcher. It is the Python source function, kept for the introspection numbox
-    itself does through ``getattr(fn, "py_func", fn)``; it is not callable, then or
-    now, because the body it exposes calls the `ll_make_work` intrinsic.
+    dispatcher, since that attribute was part of the surface callers could reach for.
+    It is not callable, then or now: the body it exposes calls the `ll_make_work`
+    intrinsic and raises `NotImplementedError`. Note it is `_make_work_jit`'s body
+    rather than this one, so it does not carry the `rewrap_derive` call above.
     """
     return _make_work_jit(name, data, sources, rewrap_derive(derive))
 
@@ -198,8 +199,9 @@ make_work.py_func = _make_work_jit.py_func
 def _call_derive(typingctx: Context, derive_ty: FunctionType, sources_ty: Tuple):
     """Call the derive, propagating an exception it raises where possible.
 
-    Three cases, in decreasing order of what the compiler can settle for itself. Only
-    the first is decided at compile time; the second defers to a runtime test:
+    Three cases, and only the second needs a runtime test. The first is settled once
+    the field's type is known. The third is reached both statically, on a numba with
+    no ``jit_addr`` slot at all, and at runtime, where the slot is null:
 
     - a ``DeriveFunctionType`` field carries a populated ``jit_addr`` by
       construction, so the propagating convention is selected outright with no

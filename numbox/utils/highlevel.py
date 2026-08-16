@@ -15,6 +15,7 @@ from textwrap import dedent, indent
 from typing import Callable, Iterable, Optional
 
 from numbox.core.configurations import jit_options as jit_options_
+from numbox.utils.derive_wap import DeriveWAP, jit_addr_supported
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _canon_value, _fingerprint_function,
     _fingerprint_function_best_effort, _loaded_global_names,
@@ -74,13 +75,9 @@ def cres(sig, **kwargs):
     :mod:`numbox.utils.derive_wap` for why that requires a numbox-owned
     type. On numba 0.60, which has no ``jit_addr`` slot to populate, a plain
     ``CompileResultWAP`` is returned and the previous behaviour is kept.
-
-    The import is deferred because ``numbox.utils.lowlevel`` imports this module.
     """
     if not isinstance(sig, Signature):
         raise ValueError(f"Expected a single signature, found {sig} of type {type(sig)}")
-
-    from numbox.utils.derive_wap import DeriveWAP, jit_addr_supported
 
     def _(func):
         func_jit = njit(sig, **kwargs)(func)

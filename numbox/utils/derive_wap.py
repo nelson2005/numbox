@@ -38,10 +38,10 @@ emitting ``call_conv.call_function`` plus ``return_status_propagate`` when it is
 non-null; numba's own version of that is
 ``numba.core.lowering.Lower.__call_first_class_function_pointer``.
 
-:func:`numbox.core.work.work._call_derive` is the worked example in this repository.
-It selects the propagating convention at compile time for a
-:class:`DeriveFunctionType`, and tests the slot at runtime for a plain
-``FunctionType``, which numba does populate for an njit dispatcher passed as a
+``numbox.core.work.work._call_derive`` is the worked example in this repository, and
+:doc:`numbox.core.work` walks through it. It selects the propagating convention at
+compile time for a :class:`DeriveFunctionType`, and tests the slot at runtime for a
+plain ``FunctionType``, which numba does populate for an njit dispatcher passed as a
 ``FunctionType``-typed argument.
 
 Limits
