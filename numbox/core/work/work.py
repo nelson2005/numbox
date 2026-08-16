@@ -175,12 +175,6 @@ def make_work(name, data, sources=(), derive=None):
 
     Jitted callers reach the overload below, which takes the value as given: by
     then the type is fixed and nothing can be re-wrapped.
-
-    ``make_work.py_func`` is preserved from when this function was itself a
-    dispatcher, since that attribute was part of the surface callers could reach for.
-    It is not callable, then or now: the body it exposes calls the `ll_make_work`
-    intrinsic and raises `NotImplementedError`. Note it is `_make_work_jit`'s body
-    rather than this one, so it does not carry the `rewrap_derive` call above.
     """
     return _make_work_jit(name, data, sources, rewrap_derive(derive))
 
@@ -190,9 +184,6 @@ def ol_make_work(name, data, sources=(), derive=None):
     def _(name, data, sources=(), derive=None):
         return ll_make_work(name, data, sources, derive)
     return _
-
-
-make_work.py_func = _make_work_jit.py_func
 
 
 @intrinsic
