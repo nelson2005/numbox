@@ -189,7 +189,7 @@ def ol_make_frozen_any_tuple(values):
     lines.append("    fat.codes = _codes_const.copy()")
     lines.append("    return fat")
     ns = {"make_any": make_any, "new": new, "fat_ty": fat_ty, "_codes_const": _codes_const}
-    exec("\n".join(lines), ns)
+    exec("\n".join(lines), ns)  # nosec B102 - JIT codegen of internal source
     return ns["_build"]
 
 
