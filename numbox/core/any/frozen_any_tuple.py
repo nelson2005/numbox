@@ -18,23 +18,22 @@ terminates sequence-protocol iteration (``for x in fat``, ``list(fat)``) correct
 Exact-match rule. The recorded code is a digest of the exact stored type, so ask with the exact type that was
 stored: ``'C'`` and ``'A'`` array layouts differ, aligned and unaligned records differ.
 
-The guard is a discipline aid, not a safety boundary: crc32 carries intrinsic ``2**-32`` collision odds, and
-``str()`` of a structref type includes the class name and fields but not the defining module, so two same-named,
-same-shaped structref classes from different modules share a code. A collision only downgrades a checked read to
-unchecked semantics.
+The recorded codes are not writable through any ordinary surface. The type defines its own attribute access rather
+than taking numba's generic structref accessors: ``anys`` is readable, ``codes`` does not resolve in jit code at
+all, and **no setattr is defined for either field**, so neither can be rebound. Reads inside the guard go through
+``_get_code``, which loads one ``uint32`` and never materializes an array, and the Python ``codes`` property returns
+a fresh readonly copy per access. So the routes that defeat a merely-readonly array are all closed: element and
+slice stores, ``.flat`` setitem (whose numba typing ignores array mutability), whole-field rebinding, aliasing one
+codes buffer into several containers, ``setflags(write=True)``, ``numpy.frombuffer`` over the meminfo, and a forged
+``__array_interface__``. Building is the sole writer, via ``_init_fat``.
 
-The ``codes`` field is typed readonly, which refuses element stores *through* the array: ``fat.codes[i] = ...``,
-slice assignment, ``+=``, a ufunc ``out=`` target, the ``view``/``reshape``/``ravel``/``T`` family, and passing the
-field to a function whose signature declares a writable array all fail to compile in jit, and on an as-built
-container the boxed array carries ``WRITEABLE=False``, so those stores raise ``ValueError`` from Python. That is
-narrower than immutability, and three routes are known to get past it. Rebinding the whole field, ``fat.codes =
-other`` in jit, is accepted, because it is the same writable-to-readonly conversion the builder itself relies on;
-rebinding from a Python-supplied array additionally hands that array back out of the ``codes`` property, writable.
-``fat.codes.flat[i] = ...`` compiles in jit, numba's ``.flat`` setitem typing not consulting mutability, though the
-Python side does refuse it. And the buffer stays reachable whatever the ndarray flag says: through
-``setflags(write=True)``, through ``numpy.frombuffer(fat.codes.base, ...)``, through a forged
-``__array_interface__``, and through this library's own ``array_data_p`` and ``deref_payload`` helpers. Treat a
-container you did not build yourself as carrying unverified codes.
+Two caveats remain and neither is fixable here, so the guard is a discipline aid rather than a security boundary.
+Raw-pointer escapes reach any structref regardless of its attribute surface: ``array_data_p`` plus a raw store, or
+``deref_payload`` naming a payload type with a writable member, will still rewrite the codes, exactly as they will
+rewrite the internals of any other numba object. And the digest is not injective: crc32 carries intrinsic
+``2**-32`` collision odds, and ``str()`` of a structref type includes the class name and fields but not the defining
+module, so two same-named, same-shaped structref classes from different modules share a code. Either way a checked
+read is downgraded to unchecked semantics, never to a wrong-slot read.
 
 Iteration and bulk access. A direct ``fat.anys`` field access returns an owned copy of the whole tuple, paying one
 incref per slot, so it must not sit inside a loop: hoist ``t = fat.anys`` to a local exactly once, then ``for x in
@@ -51,11 +50,11 @@ types. Arity is fixed at build and is part of the type; ``1 <= n < 1000`` (numba
 practical guidance ``n <= 512``: compile cost is roughly quadratic in ``n`` (x86-measured) and paid once ever per
 reader per machine cache under ``cache=True``.
 
-Frozen describes how the container is built and read, not enforced immutability. Referenced payloads (arrays,
+Frozen covers the slot bindings and their recorded types, not the payloads behind them. Referenced payloads (arrays,
 structrefs) stay mutable, and ``Any.reset`` through an aliased ``fat[i]`` handle changes a payload without updating
-its recorded code, after which a checked ``get_as`` with the original type passes the guard and reinterprets. The
-slot bindings themselves are not sealed either: ``fat.anys = ...`` in jit rebinds every slot and leaves ``codes``
-describing the values that were there before.
+its recorded code, after which a checked ``get_as`` with the original type passes the guard and reinterprets. That
+one is inherent to holding a reference: the container has no way to observe a payload mutated through a handle it
+handed out.
 A reference cycle (a container reachable from one of its own slots) is uncollectable, as NRT has no cycle
 detection; this is inherited from ``Any``, as is the lack of support for numpy record scalars (record arrays work).
 
@@ -67,11 +66,15 @@ import zlib
 import numpy
 
 from numba import njit
-from numba.core import cgutils, types
+from numba.core import cgutils, imputils, types
+from numba.core.datamodel import default_manager, models
 from numba.core.errors import NumbaError, TypingError
+from numba.core.typing.templates import AttributeTemplate
 from numba.experimental import structref
 from numba.experimental.structref import StructRefProxy, define_boxing, new
-from numba.extending import intrinsic, overload, overload_method
+from numba.extending import (
+    infer_getattr, intrinsic, lower_getattr_generic, lower_setattr_generic, overload, overload_method,
+)
 
 from numbox.core.any.any_type import AnyType, make_any
 from numbox.core.configurations import jit_options
@@ -82,10 +85,51 @@ def _slot_code(ty):
     return zlib.crc32(str(types.unliteral(ty)).encode())
 
 
-@structref.register
 class FrozenAnyTupleTypeClass(types.StructRef):
     """Single module-level class for all arities, parameterized per ``n`` via field-tuple instances."""
     pass
+
+
+#: Registered by hand rather than through ``structref.register``, which would also install generic
+#: attribute access. This type defines its own: ``anys`` is readable, ``codes`` is not exposed to jit
+#: code at all, and no setattr is defined for either, which is what makes the container frozen.
+default_manager.register(FrozenAnyTupleTypeClass, models.StructRefModel)
+
+
+@infer_getattr
+class _FrozenAnyTupleAttr(AttributeTemplate):
+    """Reads for ``anys`` only. ``codes`` is deliberately unresolvable in jit code.
+
+    Handing out the codes array in jit would hand out an alias of the guard's own evidence, and
+    numba's readonly array typing does not cover every store reaching it: ``.flat`` setitem ignores
+    array mutability, and a raw data pointer bypasses the type entirely. The guard reads a single
+    code through ``_get_code`` instead, so no array crosses into jit code.
+    """
+    key = FrozenAnyTupleTypeClass
+
+    def generic_resolve(self, typ, attr):
+        if attr == "anys":
+            return typ.field_dict["anys"]
+
+
+@lower_getattr_generic(FrozenAnyTupleTypeClass)
+def _fat_getattr_impl(context, builder, typ, val, attr):
+    utils = structref._Utils(context, builder, typ)
+    dataval = utils.get_data_struct(val)
+    return imputils.impl_ret_borrowed(context, builder, typ.field_dict[attr], getattr(dataval, attr))
+
+
+frozen_fat_setattr_error = "FrozenAnyTuple is frozen; build a new one with `make_frozen_any_tuple`"
+
+
+@lower_setattr_generic(FrozenAnyTupleTypeClass)
+def _fat_setattr_impl(context, builder, sig, args, attr):
+    """Refuse every field write with a readable message.
+
+    Without this the refusal still happens, since no setattr is otherwise defined, but it surfaces
+    as numba's bare ``No definition for lowering <type>.<attr> = ...``.
+    """
+    raise NumbaError(f"{frozen_fat_setattr_error} (tried to set `{attr}`)")
 
 
 deleted_fat_ctor_error = "Use `make_frozen_any_tuple` instead"
@@ -120,10 +164,17 @@ class FrozenAnyTuple(StructRefProxy):
         return self.anys
 
     @property
-    @njit(**jit_options)
     def codes(self):
-        """The recorded per-slot uint32 type codes; readonly as built, so element stores raise ``ValueError``."""
-        return self.codes
+        """A fresh readonly copy of the recorded per-slot uint32 type codes, rebuilt per access.
+
+        A copy rather than the stored array: numpy's ``WRITEABLE`` flag describes one ndarray
+        wrapper, not the memory behind it, so handing out a view of the guard's own evidence would
+        leave it reachable through ``setflags``, through ``numpy.frombuffer`` over the meminfo, and
+        through a forged ``__array_interface__``. Writes to what this returns go to the copy.
+        """
+        out = _fat_codes_copy_jit(self)
+        out.setflags(write=False)
+        return out
 
 
 def _fat_deleted_ctor(*args):
@@ -142,6 +193,15 @@ def _fat_get_as_jit(fat, i, ty):
 @njit(**jit_options)
 def _fat_getitem_jit(fat, i):
     return fat[i]
+
+
+@njit(**jit_options)
+def _fat_codes_copy_jit(fat):
+    n = len(fat)
+    out = numpy.empty(n, dtype=numpy.uint32)
+    for i in range(n):
+        out[i] = _get_code(fat, i)
+    return out
 
 
 _fat_type_cache = {}
@@ -199,10 +259,12 @@ def ol_make_frozen_any_tuple(values):
     for i in range(n):
         lines.append(f"    a{i} = make_any(values[{i}])")
     lines.append("    fat = new(fat_ty)")
-    lines.append("    fat.anys = (%s,)" % ", ".join(f"a{i}" for i in range(n)))
-    lines.append("    fat.codes = _codes_const.copy()")
+    lines.append("    _init_fat(fat, (%s,), _codes_const.copy())" % ", ".join(f"a{i}" for i in range(n)))
     lines.append("    return fat")
-    ns = {"make_any": make_any, "new": new, "fat_ty": fat_ty, "_codes_const": _codes_const}
+    ns = {
+        "make_any": make_any, "new": new, "fat_ty": fat_ty,
+        "_codes_const": _codes_const, "_init_fat": _init_fat,
+    }
     exec("\n".join(lines), ns)  # nosec B102 - JIT codegen of internal source
     return ns["_build"]
 
@@ -228,6 +290,50 @@ def _get_slot(typingctx, fat_ty, i_ty):
     return sig, codegen
 
 
+@intrinsic
+def _init_fat(typingctx, fat_ty, anys_ty, codes_ty):
+    """Populate a freshly allocated container. The only writer of either field.
+
+    No setattr is defined for this type, so the build path cannot use ordinary field assignment and
+    a caller cannot rebind a field afterwards. Both fields are increfed here, matching what numba's
+    generic setattr would have done on a fresh struct whose slots start null.
+    """
+    if not isinstance(fat_ty, FrozenAnyTupleTypeClass):
+        return None
+    sig = types.void(fat_ty, anys_ty, codes_ty)
+
+    def codegen(context, builder, signature, args):
+        fat_v, anys_v, codes_v = args
+        _, anys_t, codes_t = signature.args
+        utils = structref._Utils(context, builder, signature.args[0])
+        dataval = utils.get_data_struct(fat_v)
+        context.nrt.incref(builder, anys_t, anys_v)
+        context.nrt.incref(builder, codes_t, codes_v)
+        setattr(dataval, "anys", anys_v)
+        setattr(dataval, "codes", context.cast(builder, codes_v, codes_t, signature.args[0].field_dict["codes"]))
+
+    return sig, codegen
+
+
+@intrinsic
+def _get_code(typingctx, fat_ty, i_ty):
+    """O(1) scalar read of slot ``i``'s recorded code, without exposing the array to jit code."""
+    if not isinstance(fat_ty, FrozenAnyTupleTypeClass):
+        return None
+    sig = types.uint32(fat_ty, types.intp)
+
+    def codegen(context, builder, signature, args):
+        fat_v, i_v = args
+        utils = structref._Utils(context, builder, signature.args[0])
+        dataval = utils.get_data_struct(fat_v)
+        codes_ty = signature.args[0].field_dict["codes"]
+        ary = context.make_array(codes_ty)(context, builder, value=getattr(dataval, "codes"))
+        ptr = builder.gep(ary.data, [i_v])
+        return builder.load(ptr)
+
+    return sig, codegen
+
+
 @overload_method(FrozenAnyTupleTypeClass, "get_as", strict=False, jit_options=jit_options)
 def ol_fat_get_as(fat, i, ty):
     """Jit checked read: ``IndexError`` unless ``0 <= i < n``, then the recorded-code compare, then the dereference."""
@@ -240,7 +346,7 @@ def ol_fat_get_as(fat, i, ty):
     def impl(fat, i, ty):
         if i < 0 or i >= n:
             raise IndexError("FrozenAnyTuple index out of range")
-        if fat.codes[i] != expected:
+        if _get_code(fat, i) != expected:
             raise TypeError("FrozenAnyTuple: slot type mismatch")
         return _get_slot(fat, i).get_as(ty)
     return impl

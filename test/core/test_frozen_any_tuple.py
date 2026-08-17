@@ -215,42 +215,88 @@ def test_codes_derivation_pin():
     assert [_slot_code(t) for t in (types.int64, types.float64, unicode_type)] == expected
 
 
-def test_codes_refuse_write_from_python():
+def test_codes_not_reachable_from_jit():
+    # The codes array never crosses into jit code. Exposing it there would hand out an alias of
+    # the guard's own evidence, and a readonly array type does not cover every store that reaches
+    # it: `.flat` setitem ignores array mutability, and a raw data pointer bypasses typing.
+    @njit
+    def read_codes(fat):
+        return fat.codes
+
+    @njit
+    def element_store(fat):
+        fat.codes[0] = 0
+
+    @njit
+    def flat_store(fat):
+        fat.codes.flat[0] = 0
+
     fat = make_frozen_any_tuple([7, 2.5])
     before = list(fat.codes)
+    for attempt in (read_codes, element_store, flat_store):
+        with pytest.raises(TypingError, match="Unknown attribute 'codes'"):
+            attempt(fat)
+    assert list(fat.codes) == before
+    assert fat.get_as(0, int64) == 7
+
+
+def test_fields_refuse_rebinding_in_jit():
+    # No setattr is defined for the type, so neither field can be rebound. Without this, a
+    # one-line njit assignment defeats the guard: swapping `codes` forges the recorded types, and
+    # swapping `anys` leaves the recorded types describing values that are no longer there.
+    @njit
+    def rebind_codes(fat, arr):
+        fat.codes = arr
+
+    @njit
+    def rebind_anys(dst, src):
+        dst.anys = src.anys
+
+    fat = make_frozen_any_tuple([7, 2.5])
+    other = make_frozen_any_tuple([1.5, 9])
+    forged = numpy.full(2, _slot_code(types.float64), dtype=numpy.uint32)
+
+    with pytest.raises(TypingError, match="Cannot resolve setattr"):
+        rebind_codes(fat, forged)
+    with pytest.raises(NumbaError, match="FrozenAnyTuple is frozen"):
+        rebind_anys(fat, other)
+
+    assert list(fat.codes) == [_slot_code(types.int64), _slot_code(types.float64)]
+    assert fat.get_as(0, int64) == 7
+    with pytest.raises(TypeError, match="slot type mismatch"):
+        fat.get_as(0, float64)
+
+
+def test_codes_property_is_a_defensive_copy():
+    # numpy's WRITEABLE flag describes one ndarray wrapper, not the memory behind it, so the
+    # property returns a fresh copy per access rather than a view. Each of these writes lands on
+    # a throwaway; none can reach the guard.
+    fat = make_frozen_any_tuple([7, 2.5])
+    expected = [_slot_code(types.int64), _slot_code(types.float64)]
+
+    assert fat.codes is not fat.codes
     assert not fat.codes.flags.writeable
     with pytest.raises(ValueError, match="read-only"):
         fat.codes[0] = 0
-    assert list(fat.codes) == before
+
+    reopened = fat.codes
+    reopened.setflags(write=True)
+    reopened[0] = _slot_code(types.float64)
+
+    class Holder:
+        pass
+
+    got = fat.codes
+    iface = dict(got.__array_interface__)
+    iface["data"] = (iface["data"][0], False)
+    holder = Holder()
+    holder.__array_interface__ = iface
+    numpy.asarray(holder)[0] = _slot_code(types.float64)
+
+    assert list(fat.codes) == expected
+    with pytest.raises(TypeError, match="slot type mismatch"):
+        fat.get_as(0, float64)
     assert fat.get_as(0, int64) == 7
-
-
-def test_codes_refuse_write_from_jit():
-    @njit
-    def write_code(fat):
-        fat.codes[0] = 0
-
-    fat = make_frozen_any_tuple([7, 2.5])
-    before = list(fat.codes)
-    with pytest.raises(TypingError, match="Cannot modify readonly array"):
-        write_code(fat)
-    assert list(fat.codes) == before
-    assert fat.get_as(0, int64) == 7
-
-
-def test_codes_setflags_escape_is_the_documented_limit():
-    # The refusals above stop an accidental write, not a determined one: the boxed array
-    # does not own its data, so numpy permits re-opening it and the guard can then be lied
-    # to. Pinned because the docstring states this boundary as fact.
-    fat = make_frozen_any_tuple([7, 2.5])
-    escaped = fat.codes
-    assert not escaped.flags.owndata
-    # Two-sided on purpose: without this the test passes just as happily against a codes
-    # array that was writable all along, which makes setflags a no-op rather than an escape.
-    assert not escaped.flags.writeable
-    escaped.setflags(write=True)
-    escaped[0] = _slot_code(types.float64)
-    assert fat.get_as(0, float64) == struct.unpack("<d", struct.pack("<q", 7))[0]
 
 
 def test_anys_property_boxes_and_iterates():
