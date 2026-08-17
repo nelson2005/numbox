@@ -16,8 +16,8 @@ from numba.typed import Dict
 
 from numbox.core.any.any_type import Any, AnyType, make_any
 from numbox.core.any.frozen_any_tuple import (
-    _fat_type_cache, _slot_code, FrozenAnyTuple, FrozenAnyTupleTypeClass, frozen_any_tuple_type,
-    make_frozen_any_tuple,
+    _fat_type_cache, _init_fat, _slot_code, FrozenAnyTuple, FrozenAnyTupleTypeClass,
+    frozen_any_tuple_type, make_frozen_any_tuple,
 )
 from numbox.utils.meminfo import get_nrt_refcount, structref_meminfo
 from test.common_structrefs import S1, S1Type
@@ -265,6 +265,55 @@ def test_fields_refuse_rebinding_in_jit():
     assert fat.get_as(0, int64) == 7
     with pytest.raises(TypeError, match="slot type mismatch"):
         fat.get_as(0, float64)
+
+
+def test_get_as_requires_an_integer_index():
+    # `_get_code` declares an `intp` index and numba rates intrinsic arguments with unsafe casting
+    # allowed, so without an explicit typing guard a float index is truncated rather than refused.
+    # Array getitem, which the guard used to go through, refused these.
+    @njit
+    def jit_get(fat, i):
+        return fat.get_as(i, int64)
+
+    fat = make_frozen_any_tuple([7, 2.5, "abc"])
+    for bad in (0.0, 0.9, True):
+        with pytest.raises(TypingError, match="index must be an integer"):
+            jit_get(fat, bad)
+    with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
+        fat.get_as(0.9, int64)
+
+    assert jit_get(fat, 0) == 7
+    assert fat.get_as(0, int64) == 7
+
+
+def test_init_fat_validates_its_codes_argument():
+    # `_init_fat` is private and calling it on a live container is misuse, but it must not be able to
+    # make `_get_code`'s manual GEP read outside the allocation. `context.cast` does not consult
+    # `can_convert`, so the checks have to be explicit: numba's array-to-array cast asserts only on
+    # mutability and layout, and array length is not part of the type at all.
+    @njit
+    def call_init(dst, anys, codes):
+        _init_fat(dst, anys, codes)
+
+    victim = make_frozen_any_tuple([1, 2.5, "z"])
+    donor = make_frozen_any_tuple([10, 20.5, "y"])
+    expected = list(victim.codes)
+
+    rejected_by_typing = (
+        numpy.zeros(3, dtype=numpy.int32),
+        numpy.zeros(3, dtype=numpy.float64),
+        numpy.zeros((3, 1), dtype=numpy.uint32),
+        numpy.arange(6, dtype=numpy.uint32)[::2],
+    )
+    for arr in rejected_by_typing:
+        with pytest.raises(TypingError):
+            call_init(victim, donor.anys, arr)
+
+    with pytest.raises(ValueError, match="codes length does not match the arity"):
+        call_init(victim, donor.anys, numpy.zeros(1, dtype=numpy.uint32))
+
+    assert list(victim.codes) == expected
+    assert victim.get_as(0, int64) == 1
 
 
 def test_codes_property_is_a_defensive_copy():

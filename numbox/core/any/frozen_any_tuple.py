@@ -25,7 +25,19 @@ all, and **no setattr is defined for either field**, so neither can be rebound. 
 a fresh readonly copy per access. So the routes that defeat a merely-readonly array are all closed: element and
 slice stores, ``.flat`` setitem (whose numba typing ignores array mutability), whole-field rebinding, aliasing one
 codes buffer into several containers, ``setflags(write=True)``, ``numpy.frombuffer`` over the meminfo, and a forged
-``__array_interface__``. Building is the sole writer, via ``_init_fat``.
+``__array_interface__``. On every supported path building is the only writer, through ``_init_fat``.
+
+``_init_fat`` itself is private, and calling it on an already-built container is misuse rather than a supported
+operation: it will rewrite both fields. It validates what it can, refusing an ``anys`` tuple of the wrong type and a
+codes array that is not 1-D C-contiguous ``uint32`` at typing time, and a codes array whose length does not match
+the arity at run time, so the manual GEP in ``_get_code`` cannot be walked off the end of an allocation. It also
+releases whatever it displaces, so a second call does not orphan the previous slots.
+
+One upgrade hazard has no in-library fix. The freeze is enforced when a caller is compiled, so a user function
+carrying ``cache=True`` that was compiled against an older numbox keeps its cache key, which is stamped with the
+mtime and size of the *caller's* source file rather than this module's, and reloads pre-upgrade object code that
+still writes the codes. Clear the numba cache after upgrading if that matters. A function whose signature carries
+the container type repartitions correctly on its own.
 
 Two caveats remain and neither is fixable here, so the guard is a discipline aid rather than a security boundary.
 Raw-pointer escapes reach any structref regardless of its attribute surface: ``array_data_p`` plus a raw store, or
@@ -124,10 +136,12 @@ frozen_fat_setattr_error = "FrozenAnyTuple is frozen; build a new one with `make
 
 @lower_setattr_generic(FrozenAnyTupleTypeClass)
 def _fat_setattr_impl(context, builder, sig, args, attr):
-    """Refuse every field write with a readable message.
+    """Refuse the field writes that reach lowering, which is ``anys`` alone.
 
-    Without this the refusal still happens, since no setattr is otherwise defined, but it surfaces
-    as numba's bare ``No definition for lowering <type>.<attr> = ...``.
+    Being a lowering hook, this only fires for a setattr typing already accepted, and typing accepts
+    only ``anys``: ``codes`` is refused earlier because the attribute template does not resolve it.
+    So the two fields are refused at different stages with different messages. Without this hook
+    ``anys`` would still be refused, but as numba's bare ``No definition for lowering ...``.
     """
     raise NumbaError(f"{frozen_fat_setattr_error} (tried to set `{attr}`)")
 
@@ -143,6 +157,9 @@ class FrozenAnyTuple(StructRefProxy):
 
     def get_as(self, i, ty):
         """Checked read of slot ``i`` as ``ty``: ``IndexError`` out of range, ``TypeError`` on a mismatched type."""
+        # `operator.index` rather than a bare comparison: `0 <= 0.9 < n` is true, and a float index
+        # would reach the jit surface and be truncated there.
+        i = operator.index(i)
         if not 0 <= i < len(self):
             raise IndexError("FrozenAnyTuple index out of range")
         return _fat_get_as_jit(self, i, ty)
@@ -294,12 +311,25 @@ def _get_slot(typingctx, fat_ty, i_ty):
 def _init_fat(typingctx, fat_ty, anys_ty, codes_ty):
     """Populate a freshly allocated container. The only writer of either field.
 
-    No setattr is defined for this type, so the build path cannot use ordinary field assignment and
-    a caller cannot rebind a field afterwards. Both fields are increfed here, matching what numba's
-    generic setattr would have done on a fresh struct whose slots start null.
+    Argument types are checked here rather than left to ``context.cast``, which does not consult
+    ``can_convert``: numba's ``array_to_array`` cast asserts only on mutability and layout, so an
+    ``int32`` or strided ``'A'``-layout codes array would be accepted and then read back wrong by
+    ``_get_code``, whose single-index GEP ignores strides. Array LENGTH is not part of the type, so a
+    short array cannot be rejected here; the runtime guard below covers it.
+
+    The old field values are decrefed before the stores. On the build path they are null, because
+    ``structref.new`` nullifies the payload, and ``NRT_decref`` returns early on null; doing it anyway
+    makes a second call on a live container release what it displaces instead of orphaning it.
     """
     if not isinstance(fat_ty, FrozenAnyTupleTypeClass):
         return None
+    if anys_ty != fat_ty.field_dict["anys"]:
+        return None
+    if not (isinstance(codes_ty, types.Array) and codes_ty.dtype == types.uint32
+            and codes_ty.ndim == 1 and codes_ty.layout == "C"):
+        return None
+    field_codes_ty = fat_ty.field_dict["codes"]
+    n = fat_ty.field_dict["anys"].count
     sig = types.void(fat_ty, anys_ty, codes_ty)
 
     def codegen(context, builder, signature, args):
@@ -307,10 +337,22 @@ def _init_fat(typingctx, fat_ty, anys_ty, codes_ty):
         _, anys_t, codes_t = signature.args
         utils = structref._Utils(context, builder, signature.args[0])
         dataval = utils.get_data_struct(fat_v)
+
+        # Length is invisible to the type system, and a short array would make `_get_code` walk off
+        # the end of the allocation, so it is compared against the arity at runtime.
+        ary = context.make_array(codes_t)(context, builder, value=codes_v)
+        too_short = builder.icmp_signed("!=", ary.nitems, ary.nitems.type(n))
+        with cgutils.if_unlikely(builder, too_short):
+            context.call_conv.return_user_exc(
+                builder, ValueError, ("FrozenAnyTuple: codes length does not match the arity",)
+            )
+
+        context.nrt.decref(builder, anys_t, getattr(dataval, "anys"))
+        context.nrt.decref(builder, field_codes_ty, getattr(dataval, "codes"))
         context.nrt.incref(builder, anys_t, anys_v)
         context.nrt.incref(builder, codes_t, codes_v)
         setattr(dataval, "anys", anys_v)
-        setattr(dataval, "codes", context.cast(builder, codes_v, codes_t, signature.args[0].field_dict["codes"]))
+        setattr(dataval, "codes", context.cast(builder, codes_v, codes_t, field_codes_ty))
 
     return sig, codegen
 
@@ -340,6 +382,11 @@ def ol_fat_get_as(fat, i, ty):
     inst = getattr(ty, "instance_type", None)
     if inst is None:
         return None
+    # `_get_code` declares an `intp` index, and numba rates intrinsic arguments with unsafe casting
+    # allowed, so a float or bool index would be silently truncated here. Array getitem, which this
+    # replaced, refused those at typing; keep refusing them.
+    if not isinstance(i, types.Integer):
+        raise TypingError(f"FrozenAnyTuple.get_as: index must be an integer, got {i}")
     expected = numpy.uint32(_slot_code(inst))
     n = fat.field_dict["anys"].count
 
