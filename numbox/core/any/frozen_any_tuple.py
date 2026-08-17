@@ -29,9 +29,12 @@ codes buffer into several containers, ``setflags(write=True)``, ``numpy.frombuff
 
 ``_init_fat`` itself is private, and calling it on an already-built container is misuse rather than a supported
 operation: it will rewrite both fields. It validates what it can, refusing an ``anys`` tuple of the wrong type and a
-codes array that is not 1-D C-contiguous ``uint32`` at typing time, and a codes array whose length does not match
-the arity at run time, so the manual GEP in ``_get_code`` cannot be walked off the end of an allocation. It also
-releases whatever it displaces, so a second call does not orphan the previous slots.
+codes array that is not 1-D C-contiguous ``uint32`` at typing time, and one whose length does not match the arity at
+run time. It also releases whatever it displaces, so a second call does not orphan the previous slots. What it
+cannot do is bound the caller's allocation: the runtime check reads the array struct's ``nitems``, which states the
+shape rather than the extent of the memory, so a view that lies about its shape (``as_strided`` over a shorter base
+types as C-contiguous with whatever ``nitems`` it was given) passes both checks and ``_get_code`` then reads past the
+end. Misusing the private writer is therefore in the same class as the raw-pointer escapes below.
 
 One upgrade hazard has no in-library fix. The freeze is enforced when a caller is compiled, so a user function
 carrying ``cache=True`` that was compiled against an older numbox keeps its cache key, which is stamped with the
@@ -58,9 +61,17 @@ Build. ``make_frozen_any_tuple`` is the only constructor, callable from both sid
 sequence of raw values and crosses the boundary once, with O(n) boxing paid once per build; from jit call it with a
 straight-line tuple display of raw values, e.g. ``make_frozen_any_tuple((x, 2.5, "s"))``. Tuples containing ``Any``
 values are refused at typing time: slot type codes require raw values, and wrapping before freezing erases the
-types. Arity is fixed at build and is part of the type; ``1 <= n < 1000`` (numba's tuple-arity ceiling), with
-practical guidance ``n <= 512``: compile cost is roughly quadratic in ``n`` (x86-measured) and paid once ever per
-reader per machine cache under ``cache=True``.
+types. Arity is fixed at build and is part of the type; ``1 <= n < 1000`` (numba's tuple-arity ceiling).
+
+Compile cost, not the ceiling, is the practical limit, and at the top of the range it is worse than quadratic.
+X86-measured cold builds: 6.0 s at ``n=128``, 58.5 s at ``n=256``, so doubling the arity costs nearly ten times the
+time, and ``n=512`` does not finish inside ten minutes. The time is LLVM's rather than numba's typing, specifically
+the reference-pruning pass over the one very large function the builder generates. Setting
+``NUMBA_LLVM_REFPRUNE_PASS=0`` restores quadratic growth and brings the whole range back: 28.7 s at ``n=512``,
+104 s at ``n=999``. That switch is global to numba and leaves redundant incref/decref pairs in every function it
+compiles, so it buys build time at some run-time cost; prefer it for a one-off build of a large container rather
+than as a standing setting. Either way the cost is paid once ever per reader per machine cache under ``cache=True``,
+and a warm build is milliseconds.
 
 Frozen covers the slot bindings and their recorded types, not the payloads behind them. Referenced payloads (arrays,
 structrefs) stay mutable, and ``Any.reset`` through an aliased ``fat[i]`` handle changes a payload without updating
@@ -158,7 +169,11 @@ class FrozenAnyTuple(StructRefProxy):
     def get_as(self, i, ty):
         """Checked read of slot ``i`` as ``ty``: ``IndexError`` out of range, ``TypeError`` on a mismatched type."""
         # `operator.index` rather than a bare comparison: `0 <= 0.9 < n` is true, and a float index
-        # would reach the jit surface and be truncated there.
+        # would reach the jit surface and be truncated there. `bool` is excluded ahead of it because
+        # `operator.index(True)` is 1, while the jit side refuses it (numba's `types.Boolean` is not
+        # an `Integer`), and one documented method should not answer the same index two ways.
+        if isinstance(i, bool):
+            raise TypeError("FrozenAnyTuple.get_as: index must be an integer, not a bool")
         i = operator.index(i)
         if not 0 <= i < len(self):
             raise IndexError("FrozenAnyTuple index out of range")
@@ -315,7 +330,9 @@ def _init_fat(typingctx, fat_ty, anys_ty, codes_ty):
     ``can_convert``: numba's ``array_to_array`` cast asserts only on mutability and layout, so an
     ``int32`` or strided ``'A'``-layout codes array would be accepted and then read back wrong by
     ``_get_code``, whose single-index GEP ignores strides. Array LENGTH is not part of the type, so a
-    short array cannot be rejected here; the runtime guard below covers it.
+    short array cannot be rejected here; the runtime guard below catches the ordinary case, but it
+    compares ``nitems``, a statement about shape, so a view that misreports its shape still gets
+    through. Bounding a caller-supplied buffer's real extent is not possible from here.
 
     The old field values are decrefed before the stores. On the build path they are null, because
     ``structref.new`` nullifies the payload, and ``NRT_decref`` returns early on null; doing it anyway

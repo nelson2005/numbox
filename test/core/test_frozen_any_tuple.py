@@ -279,11 +279,20 @@ def test_get_as_requires_an_integer_index():
     for bad in (0.0, 0.9, True):
         with pytest.raises(TypingError, match="index must be an integer"):
             jit_get(fat, bad)
+
+    # Both sides of the one documented method must answer the same index the same way. `bool` needs
+    # its own clause: `operator.index(True)` is 1, so Python would otherwise read slot 1 for an index
+    # the jit side refuses outright.
     with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
         fat.get_as(0.9, int64)
+    with pytest.raises(TypeError, match="must be an integer, not a bool"):
+        fat.get_as(True, int64)
 
     assert jit_get(fat, 0) == 7
     assert fat.get_as(0, int64) == 7
+    # every integer width and signedness still works
+    for good in (numpy.int8(1), numpy.uint8(1), numpy.int32(1), numpy.uint64(1), 1):
+        assert fat.get_as(good, float64) == 2.5
 
 
 def test_init_fat_validates_its_codes_argument():
