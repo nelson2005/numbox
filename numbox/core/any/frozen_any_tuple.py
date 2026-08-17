@@ -21,11 +21,20 @@ stored: ``'C'`` and ``'A'`` array layouts differ, aligned and unaligned records 
 The guard is a discipline aid, not a safety boundary: crc32 carries intrinsic ``2**-32`` collision odds, and
 ``str()`` of a structref type includes the class name and fields but not the defining module, so two same-named,
 same-shaped structref classes from different modules share a code. A collision only downgrades a checked read to
-unchecked semantics. The ``codes`` field is typed readonly, so the recorded codes refuse writes on both surfaces:
-``fat.codes[i] = ...`` in jit code fails to compile, and the boxed array arrives with numpy's ``WRITEABLE`` flag
-cleared, so a write from Python raises ``ValueError``. That closes the accidental route rather than a determined
-one: the boxed array does not own its data, so ``setflags(write=True)`` re-opens it and a deliberate write can
-still lie to the guard.
+unchecked semantics.
+
+The ``codes`` field is typed readonly, which refuses element stores *through* the array: ``fat.codes[i] = ...``,
+slice assignment, ``+=``, a ufunc ``out=`` target, the ``view``/``reshape``/``ravel``/``T`` family, and passing the
+field to a function whose signature declares a writable array all fail to compile in jit, and on an as-built
+container the boxed array carries ``WRITEABLE=False``, so those stores raise ``ValueError`` from Python. That is
+narrower than immutability, and three routes are known to get past it. Rebinding the whole field, ``fat.codes =
+other`` in jit, is accepted, because it is the same writable-to-readonly conversion the builder itself relies on;
+rebinding from a Python-supplied array additionally hands that array back out of the ``codes`` property, writable.
+``fat.codes.flat[i] = ...`` compiles in jit, numba's ``.flat`` setitem typing not consulting mutability, though the
+Python side does refuse it. And the buffer stays reachable whatever the ndarray flag says: through
+``setflags(write=True)``, through ``numpy.frombuffer(fat.codes.base, ...)``, through a forged
+``__array_interface__``, and through this library's own ``array_data_p`` and ``deref_payload`` helpers. Treat a
+container you did not build yourself as carrying unverified codes.
 
 Iteration and bulk access. A direct ``fat.anys`` field access returns an owned copy of the whole tuple, paying one
 incref per slot, so it must not sit inside a loop: hoist ``t = fat.anys`` to a local exactly once, then ``for x in
@@ -42,9 +51,11 @@ types. Arity is fixed at build and is part of the type; ``1 <= n < 1000`` (numba
 practical guidance ``n <= 512``: compile cost is roughly quadratic in ``n`` (x86-measured) and paid once ever per
 reader per machine cache under ``cache=True``.
 
-Frozen means the slot bindings and their recorded types, not deep immutability: referenced payloads (arrays,
+Frozen describes how the container is built and read, not enforced immutability. Referenced payloads (arrays,
 structrefs) stay mutable, and ``Any.reset`` through an aliased ``fat[i]`` handle changes a payload without updating
-its recorded code, after which a checked ``get_as`` with the original type passes the guard and reinterprets.
+its recorded code, after which a checked ``get_as`` with the original type passes the guard and reinterprets. The
+slot bindings themselves are not sealed either: ``fat.anys = ...`` in jit rebinds every slot and leaves ``codes``
+describing the values that were there before.
 A reference cycle (a container reachable from one of its own slots) is uncollectable, as NRT has no cycle
 detection; this is inherited from ``Any``, as is the lack of support for numpy record scalars (record arrays work).
 
@@ -111,7 +122,7 @@ class FrozenAnyTuple(StructRefProxy):
     @property
     @njit(**jit_options)
     def codes(self):
-        """The recorded per-slot uint32 type codes, readonly: writing through them raises ``ValueError``."""
+        """The recorded per-slot uint32 type codes; readonly as built, so element stores raise ``ValueError``."""
         return self.codes
 
 

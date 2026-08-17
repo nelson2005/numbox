@@ -245,6 +245,9 @@ def test_codes_setflags_escape_is_the_documented_limit():
     fat = make_frozen_any_tuple([7, 2.5])
     escaped = fat.codes
     assert not escaped.flags.owndata
+    # Two-sided on purpose: without this the test passes just as happily against a codes
+    # array that was writable all along, which makes setflags a no-op rather than an escape.
+    assert not escaped.flags.writeable
     escaped.setflags(write=True)
     escaped[0] = _slot_code(types.float64)
     assert fat.get_as(0, float64) == struct.unpack("<d", struct.pack("<q", 7))[0]
