@@ -325,6 +325,61 @@ def test_init_fat_validates_its_codes_argument():
     assert victim.get_as(0, int64) == 1
 
 
+def test_reference_cycle_is_uncollectable(tmp_path):
+    # Pins the docstring's claim that a container reachable from one of its own slots leaks, NRT
+    # having no cycle detection. Runs in a subprocess because allocation stats are off by default
+    # and `rtsys.get_allocation_stats()` raises RuntimeError("NRT stats are disabled.") without the
+    # env var, which cannot be set after numba has imported.
+    probe = tmp_path / "cycle_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import gc
+        from numba.core.runtime import rtsys
+        from numbox.core.any.frozen_any_tuple import make_frozen_any_tuple
+
+        def live():
+            s = rtsys.get_allocation_stats()
+            return s.alloc - s.free
+
+        def plain():
+            fat = make_frozen_any_tuple([1, 2.5])
+            del fat
+
+        def cyclic():
+            fat = make_frozen_any_tuple([1, 2.5])
+            fat[0].reset(fat)
+            del fat
+
+        plain(); cyclic(); gc.collect()
+
+        gc.collect(); before = live()
+        for _ in range(20):
+            plain()
+        gc.collect()
+        plain_delta = live() - before
+
+        gc.collect(); before = live()
+        for _ in range(20):
+            cyclic()
+        gc.collect()
+        cyclic_delta = live() - before
+
+        assert plain_delta == 0, f"a plain build/drop leaked {plain_delta}"
+        assert cyclic_delta > 0, f"a self-referential container was collected ({cyclic_delta})"
+        print("OK")
+    '''), encoding="utf-8")
+    # A dedicated cache dir, not the repo's: numba pickles module paths into the `.nbi` index and
+    # unpickles them before the freshness check, so a warm entry left by a sibling test that used
+    # `test.common_structrefs` fails to load from this subprocess's cwd.
+    env = {
+        **os.environ,
+        "NUMBA_NRT_STATS": "1",
+        "NUMBA_CACHE_DIR": str(tmp_path / "nbcache"),
+    }
+    r = subprocess.run([sys.executable, str(probe)], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, f"probe failed:\n{r.stdout}\n{r.stderr}"
+    assert r.stdout.strip().endswith("OK")
+
+
 def test_codes_property_is_a_defensive_copy():
     # numpy's WRITEABLE flag describes one ndarray wrapper, not the memory behind it, so the
     # property returns a fresh copy per access rather than a view. Each of these writes lands on
@@ -400,6 +455,30 @@ def test_reset_aliasing_semantics():
     assert fat.codes[0] == _slot_code(types.float64)
     with pytest.raises(TypeError, match="slot type mismatch"):
         fat.get_as(0, int64)
+
+    # The jit routes reach the same shared cell. `fat[i]` and the hoisted `fat.anys[i]` are both
+    # aliases, so a reset through either is visible to a later checked read with the stale type.
+    @njit
+    def reset_via_getitem(f, v):
+        f[0].reset(v)
+
+    @njit
+    def reset_via_anys(f, v):
+        t = f.anys
+        t[1].reset(v)
+
+    reset_via_getitem(fat, 456)
+    assert fat.get_as(0, float64) == struct.unpack("<d", struct.pack("<q", 456))[0]
+
+    reset_via_anys(fat, 9.5)
+    assert fat.codes[1] == _slot_code(types.int64), "the recorded code is unchanged by a reset"
+    assert fat.get_as(1, int64) == struct.unpack("<q", struct.pack("<d", 9.5))[0]
+
+    # A payload held by reference stays mutable, which is the other half of the claim.
+    arr = numpy.arange(3, dtype=numpy.int64)
+    holder = make_frozen_any_tuple([arr])
+    arr[0] = 99
+    assert holder.get_as(0, types.int64[::1])[0] == 99
 
 
 def test_n34_build_crosses_display_lowering():

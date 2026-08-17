@@ -7,11 +7,14 @@ its value's numba type (``zlib.crc32`` of ``str`` of the unliteral'd type) in th
 first bounds-checks ``i`` against the arity, a compile-time constant of the type, raising ``IndexError`` out of
 range, then compares the recorded code against the digest of the requested type, baked in as a compile-time
 constant, before dereferencing; on a mismatch it raises ``TypeError("FrozenAnyTuple: slot type mismatch")``. The
-checked read is O(1) per call at any arity, measured at a few nanoseconds per call, and needs no hoisting. In jit
-code ``fat[i]`` is the escape hatch, bounds- and type-unchecked: it returns the slot's ``Any`` in O(1), an
-out-of-range ``i`` dereferences out of bounds, and ``fat[i].get_as(ty)`` with a wrong type silently returns the
-reinterpreted bit pattern; it never raises. Sub-nanosecond per-element reads belong to that bare
-``fat[i].get_as(ty)``, not to the checked read. From Python the proxy guards ``fat[i]`` and ``fat.get_as(i, ty)``
+checked read is O(1) per call at any arity, a few nanoseconds per call x86-measured under numba's default settings,
+and needs no hoisting. In jit code ``fat[i]`` is the escape hatch, bounds- and type-unchecked: it returns the slot's
+``Any`` in O(1), and neither an out-of-range ``i`` nor a wrong type in ``fat[i].get_as(ty)`` raises. Both are
+undefined behaviour rather than a defined return value: for a pointer-free scalar the wrong type yields a garbage
+number, but for a type carrying pointers (``unicode_type``, arrays, structrefs) it dereferences a bogus pointer and
+can take the process down. Sub-nanosecond per-element figures belong to that bare ``fat[i].get_as(ty)`` amortized
+over a straight-line loop the compiler can hoist and unroll, not to a single call and not to the checked read. From
+Python the proxy guards ``fat[i]`` and ``fat.get_as(i, ty)``
 alike, raising ``IndexError`` before delegating unless ``0 <= i < len(fat)``; the guarded ``__getitem__`` also
 terminates sequence-protocol iteration (``for x in fat``, ``list(fat)``) correctly.
 
@@ -29,12 +32,13 @@ codes buffer into several containers, ``setflags(write=True)``, ``numpy.frombuff
 
 ``_init_fat`` itself is private, and calling it on an already-built container is misuse rather than a supported
 operation: it will rewrite both fields. It validates what it can, refusing an ``anys`` tuple of the wrong type and a
-codes array that is not 1-D C-contiguous ``uint32`` at typing time, and one whose length does not match the arity at
-run time. It also releases whatever it displaces, so a second call does not orphan the previous slots. What it
-cannot do is bound the caller's allocation: the runtime check reads the array struct's ``nitems``, which states the
-shape rather than the extent of the memory, so a view that lies about its shape (``as_strided`` over a shorter base
-types as C-contiguous with whatever ``nitems`` it was given) passes both checks and ``_get_code`` then reads past the
-end. Misusing the private writer is therefore in the same class as the raw-pointer escapes below.
+codes array that is not 1-D C-contiguous aligned ``uint32`` at typing time, and one whose length does not match the
+arity at run time. It also releases whatever it displaces, so a second call does not orphan the previous slots.
+What it cannot do is bound the caller's allocation: the length check compares the array's *shape*, not the extent of
+the memory behind it, so a view that misreports its shape (``as_strided`` over a shorter base types as C-contiguous
+with whatever length it was handed) passes and ``_get_code`` then reads past the end. ``_init_fat_raw``, which
+``_init_fat`` wraps, keeps the type checks but has no length check at all. Misusing either is therefore in the same
+class as the raw-pointer escapes below.
 
 One upgrade hazard has no in-library fix. The freeze is enforced when a caller is compiled, so a user function
 carrying ``cache=True`` that was compiled against an older numbox keeps its cache key, which is stamped with the
@@ -42,13 +46,40 @@ mtime and size of the *caller's* source file rather than this module's, and relo
 still writes the codes. Clear the numba cache after upgrading if that matters. A function whose signature carries
 the container type repartitions correctly on its own.
 
-Two caveats remain and neither is fixable here, so the guard is a discipline aid rather than a security boundary.
+Three caveats remain and none is fixable here, so the guard is a discipline aid rather than a security boundary.
+
 Raw-pointer escapes reach any structref regardless of its attribute surface: ``array_data_p`` plus a raw store, or
 ``deref_payload`` naming a payload type with a writable member, will still rewrite the codes, exactly as they will
 rewrite the internals of any other numba object. And the digest is not injective: crc32 carries intrinsic
 ``2**-32`` collision odds, and ``str()`` of a structref type includes the class name and fields but not the defining
 module, so two same-named, same-shaped structref classes from different modules share a code. Either way a checked
 read is downgraded to unchecked semantics, never to a wrong-slot read.
+
+The third is that **the guards only raise under numba's CPU call convention**. Reached from a ``@cfunc`` body, or
+from a ``cfunc`` or ``cres``/``CompileResultWAP`` value called as a first-class ``types.FunctionType`` -- the shape
+numbox's own ``Work`` and ``Proxy`` machinery uses -- the raise is discarded
+(`numba#8246 <https://github.com/numba/numba/issues/8246>`_, which numba's own suite pins as expected behaviour):
+the call returns a zeroed value of the declared return type and execution continues, with an "Exception ignored in:"
+traceback on stderr. For a scalar that is a plausible ``0``; for an NRT-backed return such as ``unicode_type`` the
+zeroed struct **segfaults the process** when it is boxed back to Python. Nothing here can detect the eventual
+caller's call convention, because the same compiled body is reachable from either. A caller in that position must
+wrap the read itself::
+
+    try:
+        v = fat.get_as(i, ty)
+    except Exception:
+        ...
+
+A bare ``except Exception`` is required, and it cures the swallow, the crash and the reference leak together; numba
+does not compile a typed ``except IndexError``, and ``try``/``finally`` without an ``except`` still discards the
+raise. This is the same boundary ``docs/numbox.core.work.rst`` documents for ``Work.derive``. Left unwrapped, each
+discarded raise leaks the references live in that frame.
+
+A second call convention blunts the guard less severely: inside a ``prange`` body under
+``@njit(parallel=True)`` the raise does reach the caller, but as ``SystemError``, with the guard's own exception
+kept only on ``__cause__``, so ``except IndexError`` will not catch it. That is curable by inlining ``get_as``, and
+deliberately not cured: an inlined raise gives the loop a second exit, and numba responds by declining to
+parallelize the loop at all, which trades a slower happy path for a tidier error path.
 
 Iteration and bulk access. A direct ``fat.anys`` field access returns an owned copy of the whole tuple, paying one
 incref per slot, so it must not sit inside a loop: hoist ``t = fat.anys`` to a local exactly once, then ``for x in
@@ -80,6 +111,8 @@ one is inherent to holding a reference: the container has no way to observe a pa
 handed out.
 A reference cycle (a container reachable from one of its own slots) is uncollectable, as NRT has no cycle
 detection; this is inherited from ``Any``, as is the lack of support for numpy record scalars (record arrays work).
+A record scalar wraps and stores without complaint; the failure surfaces only at the read, as numba's internal
+``AssertionError`` on the by-pointer ``Record`` return.
 
 The ``FrozenAnyTuple`` constructor is deleted on both sides; use ``make_frozen_any_tuple``.
 """
@@ -323,16 +356,16 @@ def _get_slot(typingctx, fat_ty, i_ty):
 
 
 @intrinsic
-def _init_fat(typingctx, fat_ty, anys_ty, codes_ty):
+def _init_fat_raw(typingctx, fat_ty, anys_ty, codes_ty):
     """Populate a freshly allocated container. The only writer of either field.
+
+    The raw writer, with no length check: ``_init_fat`` below wraps it and is what everything calls.
 
     Argument types are checked here rather than left to ``context.cast``, which does not consult
     ``can_convert``: numba's ``array_to_array`` cast asserts only on mutability and layout, so an
     ``int32`` or strided ``'A'``-layout codes array would be accepted and then read back wrong by
-    ``_get_code``, whose single-index GEP ignores strides. Array LENGTH is not part of the type, so a
-    short array cannot be rejected here; the runtime guard below catches the ordinary case, but it
-    compares ``nitems``, a statement about shape, so a view that misreports its shape still gets
-    through. Bounding a caller-supplied buffer's real extent is not possible from here.
+    ``_get_code``, whose single-index GEP ignores strides. ``aligned`` is checked for the same reason:
+    an explicitly unaligned array type reaches that bare assert, which ``python -O`` removes.
 
     The old field values are decrefed before the stores. On the build path they are null, because
     ``structref.new`` nullifies the payload, and ``NRT_decref`` returns early on null; doing it anyway
@@ -343,10 +376,9 @@ def _init_fat(typingctx, fat_ty, anys_ty, codes_ty):
     if anys_ty != fat_ty.field_dict["anys"]:
         return None
     if not (isinstance(codes_ty, types.Array) and codes_ty.dtype == types.uint32
-            and codes_ty.ndim == 1 and codes_ty.layout == "C"):
+            and codes_ty.ndim == 1 and codes_ty.layout == "C" and codes_ty.aligned):
         return None
     field_codes_ty = fat_ty.field_dict["codes"]
-    n = fat_ty.field_dict["anys"].count
     sig = types.void(fat_ty, anys_ty, codes_ty)
 
     def codegen(context, builder, signature, args):
@@ -354,15 +386,6 @@ def _init_fat(typingctx, fat_ty, anys_ty, codes_ty):
         _, anys_t, codes_t = signature.args
         utils = structref._Utils(context, builder, signature.args[0])
         dataval = utils.get_data_struct(fat_v)
-
-        # Length is invisible to the type system, and a short array would make `_get_code` walk off
-        # the end of the allocation, so it is compared against the arity at runtime.
-        ary = context.make_array(codes_t)(context, builder, value=codes_v)
-        too_short = builder.icmp_signed("!=", ary.nitems, ary.nitems.type(n))
-        with cgutils.if_unlikely(builder, too_short):
-            context.call_conv.return_user_exc(
-                builder, ValueError, ("FrozenAnyTuple: codes length does not match the arity",)
-            )
 
         context.nrt.decref(builder, anys_t, getattr(dataval, "anys"))
         context.nrt.decref(builder, field_codes_ty, getattr(dataval, "codes"))
@@ -372,6 +395,23 @@ def _init_fat(typingctx, fat_ty, anys_ty, codes_ty):
         setattr(dataval, "codes", context.cast(builder, codes_v, codes_t, field_codes_ty))
 
     return sig, codegen
+
+
+@njit(inline="always", **jit_options)
+def _init_fat(fat, anys, codes):
+    """The sole writer on any supported path: length-check, then the raw store.
+
+    The check is here, in ordinary jit code, rather than in ``_init_fat_raw``'s codegen, because a
+    raise emitted by ``call_conv.return_user_exc`` from inside an intrinsic bypasses numba's cleanup
+    blocks and leaks the caller's argument increfs. Moving it is not enough on its own, measured:
+    ``inline="always"`` is what actually clears the leak, by putting the raise in the caller's frame
+    where its cleanup blocks apply. The same flag is deliberately NOT set on ``get_as``: it would
+    clear that path's leak too, but a raise inlined into a ``prange`` body gives the loop more than
+    one exit, and numba then silently declines to parallelize it.
+    """
+    if len(codes) != len(fat):
+        raise ValueError("FrozenAnyTuple: codes length does not match the arity")
+    _init_fat_raw(fat, anys, codes)
 
 
 @intrinsic
