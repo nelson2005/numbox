@@ -9,8 +9,13 @@ permissions:
 
 jobs:
   review:
+    # 10 minutes was not enough: on a ~46 KB diff the job spent the whole budget waiting on a single
+    # /chat/completions call and was killed mid-request, so the review never ran. The action exposes
+    # no per-request timeout, and its `max-length` input SKIPS the review (exiting success) rather
+    # than truncating, which would hide the problem behind a green check.
+    # Actions minutes are free on this public repo, so a longer wait costs only wall clock.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: hustcer/deepseek-review@90c887892350e87fdcf517ddc41b3b826941614b # v1
         with:
