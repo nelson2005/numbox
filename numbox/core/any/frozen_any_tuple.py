@@ -18,10 +18,14 @@ terminates sequence-protocol iteration (``for x in fat``, ``list(fat)``) correct
 Exact-match rule. The recorded code is a digest of the exact stored type, so ask with the exact type that was
 stored: ``'C'`` and ``'A'`` array layouts differ, aligned and unaligned records differ.
 
-The guard is a discipline aid, not a safety boundary: crc32 carries intrinsic ``2**-32`` collision odds; ``str()``
-of a structref type includes the class name and fields but not the defining module, so two same-named, same-shaped
-structref classes from different modules share a code; and ``fat.codes`` is a writable numpy array, so a user write
-can lie to the guard. A collision only downgrades a checked read to unchecked semantics.
+The guard is a discipline aid, not a safety boundary: crc32 carries intrinsic ``2**-32`` collision odds, and
+``str()`` of a structref type includes the class name and fields but not the defining module, so two same-named,
+same-shaped structref classes from different modules share a code. A collision only downgrades a checked read to
+unchecked semantics. The ``codes`` field is typed readonly, so the recorded codes refuse writes on both surfaces:
+``fat.codes[i] = ...`` in jit code fails to compile, and the boxed array arrives with numpy's ``WRITEABLE`` flag
+cleared, so a write from Python raises ``ValueError``. That closes the accidental route rather than a determined
+one: the boxed array does not own its data, so ``setflags(write=True)`` re-opens it and a deliberate write can
+still lie to the guard.
 
 Iteration and bulk access. A direct ``fat.anys`` field access returns an owned copy of the whole tuple, paying one
 incref per slot, so it must not sit inside a loop: hoist ``t = fat.anys`` to a local exactly once, then ``for x in
@@ -107,7 +111,7 @@ class FrozenAnyTuple(StructRefProxy):
     @property
     @njit(**jit_options)
     def codes(self):
-        """The recorded per-slot uint32 type codes."""
+        """The recorded per-slot uint32 type codes, readonly: writing through them raises ``ValueError``."""
         return self.codes
 
 
@@ -144,7 +148,7 @@ def frozen_any_tuple_type(n):
         return _fat_type_cache[n]
     inst = FrozenAnyTupleTypeClass([
         ("anys", types.UniTuple(AnyType, n)),
-        ("codes", types.Array(types.uint32, 1, "C")),
+        ("codes", types.Array(types.uint32, 1, "C", readonly=True)),
     ])
     _fat_type_cache[n] = inst
     return inst

@@ -169,7 +169,7 @@ def test_type_factory_memoization_and_structural_equality():
     # across processes with no generated modules.
     independent = FrozenAnyTupleTypeClass([
         ("anys", types.UniTuple(AnyType, 3)),
-        ("codes", types.Array(types.uint32, 1, "C")),
+        ("codes", types.Array(types.uint32, 1, "C", readonly=True)),
     ])
     assert independent == t3
 
@@ -213,6 +213,41 @@ def test_codes_derivation_pin():
     assert fat.codes.dtype == numpy.uint32
     assert list(fat.codes) == expected
     assert [_slot_code(t) for t in (types.int64, types.float64, unicode_type)] == expected
+
+
+def test_codes_refuse_write_from_python():
+    fat = make_frozen_any_tuple([7, 2.5])
+    before = list(fat.codes)
+    assert not fat.codes.flags.writeable
+    with pytest.raises(ValueError, match="read-only"):
+        fat.codes[0] = 0
+    assert list(fat.codes) == before
+    assert fat.get_as(0, int64) == 7
+
+
+def test_codes_refuse_write_from_jit():
+    @njit
+    def write_code(fat):
+        fat.codes[0] = 0
+
+    fat = make_frozen_any_tuple([7, 2.5])
+    before = list(fat.codes)
+    with pytest.raises(TypingError, match="Cannot modify readonly array"):
+        write_code(fat)
+    assert list(fat.codes) == before
+    assert fat.get_as(0, int64) == 7
+
+
+def test_codes_setflags_escape_is_the_documented_limit():
+    # The refusals above stop an accidental write, not a determined one: the boxed array
+    # does not own its data, so numpy permits re-opening it and the guard can then be lied
+    # to. Pinned because the docstring states this boundary as fact.
+    fat = make_frozen_any_tuple([7, 2.5])
+    escaped = fat.codes
+    assert not escaped.flags.owndata
+    escaped.setflags(write=True)
+    escaped[0] = _slot_code(types.float64)
+    assert fat.get_as(0, float64) == struct.unpack("<d", struct.pack("<q", 7))[0]
 
 
 def test_anys_property_boxes_and_iterates():
