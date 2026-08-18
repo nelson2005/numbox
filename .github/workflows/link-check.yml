@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -51,7 +50,7 @@ jobs:
 
       - name: Lychee
         if: steps.scope.outputs.files != ''
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
           # No --accept: passing a list REPLACES lychee's default 100..=103 and
           # 200..=299 rather than extending it. `--accept 200,206,429` accepted a
