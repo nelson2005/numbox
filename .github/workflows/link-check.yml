@@ -84,6 +84,11 @@ jobs:
           # e.g. d9ef658 renamed _c.py to libc.py, breaking links that were right
           # when written. Chasing that is churn, and extract_codeblocks.py already
           # skips 'plans' for the same reason.
+          # A path is a filename chosen by a pull request author, so it can begin
+          # with a dash. lychee parses those as options and exits 2 ("unexpected
+          # argument"); `--` ends option parsing so every following word is an
+          # input path. Quoting alone does not cover this: %q leaves --foo.md
+          # untouched, since it holds no shell metacharacters.
           args: >-
             --no-progress
             --max-concurrency 4
@@ -95,6 +100,7 @@ jobs:
             --exclude-path .git
             --exclude-path venv
             --exclude-path docs/plans
+            --
             ${{ steps.scope.outputs.files }}
           fail: true
           # Don't fail when the changed-file set contains no links at all
