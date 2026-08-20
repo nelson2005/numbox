@@ -18,9 +18,12 @@ jobs:
 
       - name: Determine scope
         id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
             # No --depth: checkout already fetched full history, and a shallow
             # fetch grafts a boundary onto the complete clone, so the three-dot
             # diff below dies with "no merge base" as soon as the base branch
@@ -28,8 +31,8 @@ jobs:
             # too — folding it into the grep pipeline let `|| true` swallow that
             # fatal, which read as "nothing changed" and passed the job having
             # checked zero links.
-            git fetch origin "${{ github.base_ref }}"
-            diff_out=$(git diff --name-only --diff-filter=AMR "origin/${{ github.base_ref }}"...HEAD)
+            git fetch origin "${BASE_REF}"
+            diff_out=$(git diff --name-only --diff-filter=AMR "origin/${BASE_REF}"...HEAD)
             changed=$(printf '%s\n' "$diff_out" \
               | grep -E '\.(rst|md|py)$' \
               | grep -vE '^\.github/' \
