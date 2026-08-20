@@ -23,6 +23,18 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
+
+          # lychee-action runs `eval lychee ... ${ARGS}` with ARGS unquoted
+          # (entrypoint.sh:58), so each path below is parsed as shell rather
+          # than passed as an argument, and on a pull request its author chose
+          # the name. %q leaves an ordinary path untouched.
+          quote_paths() {
+            printf '%s\n' "$1" | while IFS= read -r path; do
+              [[ -n "$path" ]] || continue
+              printf '%q\n' "$path"
+            done
+          }
+
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
             # No --depth: checkout already fetched full history, and a shallow
             # fetch grafts a boundary onto the complete clone, so the three-dot
@@ -41,14 +53,13 @@ jobs:
               echo "files=" >> "$GITHUB_OUTPUT"
               echo "No documentation files (.rst/.md/.py outside .github/) changed in this PR; skipping link check."
             else
-              echo "files<<EOF" >> "$GITHUB_OUTPUT"
-              echo "$changed" >> "$GITHUB_OUTPUT"
-              echo "EOF" >> "$GITHUB_OUTPUT"
+              { echo "files<<EOF"; quote_paths "$changed"; echo EOF; } >> "$GITHUB_OUTPUT"
             fi
           else
-            { echo "files<<EOF"; find . -type f \( -name '*.rst' -o -name '*.md' -o -name '*.py' \) \
+            all_docs=$(find . -type f \( -name '*.rst' -o -name '*.md' -o -name '*.py' \) \
               -not -path './.git/*' -not -path './venv/*' -not -path './*/venv*/*' \
-              -not -path './.github/*'; echo EOF; } >> "$GITHUB_OUTPUT"
+              -not -path './.github/*')
+            { echo "files<<EOF"; quote_paths "$all_docs"; echo EOF; } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Lychee
