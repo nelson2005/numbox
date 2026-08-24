@@ -285,11 +285,13 @@ def proxy(sig, jit_options: Optional[dict] = None):
     ``.as_func`` from Python into a parameter *declared* as a plain ``FunctionType`` also still
     discards, which ``DeriveFunctionType.can_convert_to`` documents.
 
-    Reaching ``.as_func`` as a compile-time constant from a ``cache=True`` jitted caller makes
-    that caller cacheable, which it was not before, and its cached binary then binds the proxied
-    body's machine code: editing the body serves a stale binary until the numba cache is cleared.
-    The stale-alias guard below does not cover that caller, because a constant reference emits
-    no alias for it to check.
+    On numba 0.61 and later, reaching ``.as_func`` as a compile-time constant from a
+    ``cache=True`` jitted caller makes that caller cacheable, which it was not before, and its
+    cached binary then binds the proxied body's machine code: editing the body serves a stale
+    binary until the numba cache is cleared. The stale-alias guard below does not cover that
+    caller, because a constant reference emits no alias for it to check. On numba 0.60 the
+    constant reference carries a dynamic global as it always has, so numba declines to cache
+    such a caller and neither the gain nor the hazard applies.
 
     See tests for some examples of the use cases.
     """
