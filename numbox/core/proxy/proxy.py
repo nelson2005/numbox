@@ -192,9 +192,12 @@ def proxy(sig, jit_options: Optional[dict] = None):
 
     On numba 0.61 and later, reaching ``.as_func`` as a compile-time constant from a
     ``cache=True`` jitted caller makes that caller cacheable, which it was not before, and its
-    cached binary then binds the proxied body's machine code: editing the body serves a stale
-    binary until the numba cache is cleared. The stale-alias guard below does not cover that
-    caller, because a constant reference emits no alias for it to check. On numba 0.60 the
+    cached binary then binds the proxied body's machine code: after an edit to the body such a
+    caller does not reliably pick it up, and which body it does run is not single-valued, so the
+    numba cache has to be cleared rather than trusted to notice. The stale-alias guard below does
+    not cover that caller, because a constant reference emits no alias for it to check; for the
+    same reason it does not catch a ``proxy_if_available`` binding that has since gone absent,
+    where such a caller returns the vanished binding's value or segfaults. On numba 0.60 the
     constant reference carries a dynamic global as it always has, so numba declines to cache
     such a caller and neither the gain nor the hazard applies.
 
