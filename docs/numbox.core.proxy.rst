@@ -10,6 +10,40 @@ to a different function that is only accessible indirectly). As a result, static
 corresponding to proxy-jitted functions called from other jitted functions will
 only paste a declaration rather than the entire LLVM IR code.
 
+The ``.as_func`` first-class value
+++++++++++++++++++++++++++++++++++
+
+Besides being callable, the dispatcher a ``@proxy`` decoration returns exposes
+``.as_func``: a first-class function value for the main signature, to hand to a
+jitted function that takes the binding as a ``FunctionType`` argument, or to
+reference from jitted scope as a constant.
+
+From numba 0.61 onward ``.as_func`` is a
+:class:`~numbox.utils.derive_wap.DeriveWAP` typed as
+:class:`~numbox.utils.derive_wap.DeriveFunctionType`, so the ``jit_addr`` slot of
+its data model carries the numba calling convention entry point and an exception
+raised inside the proxied body propagates out of a first-class call instead of
+being discarded. numba 0.60 has no such slot, so ``.as_func`` is a plain
+``CompileResultWAP`` there and the exception is still discarded. ``DeriveWAP``
+subclasses ``CompileResultWAP``, so ``isinstance`` passes on either version and
+only ``type(...) is CompileResultWAP`` tells the two apart.
+
+Only one of the binding's two handles propagates. **Calling the dispatcher itself
+still discards**, on every numba version: that call reaches the proxied body
+through its C-convention cfunc wrapper, which does not unwind, so the exception
+surfaces only as an unraisable on stderr and the call returns a zero-filled
+value. Handing ``.as_func`` from Python into a jitted parameter *declared* as a
+plain ``FunctionType`` discards as well, because the value degrades to the C
+convention on the way in; ``DeriveFunctionType.can_convert_to`` permits that
+conversion deliberately, so such a call site goes on compiling unchanged. An
+inferred-signature ``@njit`` argument keeps the numbox type and propagates.
+
+``.as_func`` inherits the mixed-container limit of any derive value: a tuple
+holding it alongside a plain ``CompileResultWAP`` no longer unifies, failing with
+a message-less ``AssertionError`` from
+``numba.core.utils.unified_function_type``. See :doc:`numbox.core.work` for that
+limit and for why making the two types compare equal is not available as a fix.
+
 Cache-anchor mechanism
 ++++++++++++++++++++++
 
@@ -64,6 +98,44 @@ wrapper-template changes as developer-managed. Clear the affected
 entries — the ``.nbc`` / ``.nbi`` files in the ``__pycache__`` beside
 each binding's source, or under ``NUMBA_CACHE_DIR`` — when shipping a
 template change to numbox.
+
+A second staleness shape sits outside the wrapper's anchor entirely. A
+``cache=True`` caller that reaches a binding's ``.as_func`` as a compile-time
+constant is newly cacheable, and none of the stamps above notice when the proxied
+body changes underneath it. Constant-lowering a plain ``CompileResultWAP`` bakes
+the entry point into a dynamic global, and numba refuses to cache a function
+carrying one, so such a caller used to recompile in every process and emit
+``NumbaWarning: Cannot cache compiled function ... as it uses dynamic globals``.
+``lower_constant_derive_function_type`` (``numbox/utils/derive_wap.py``) instead
+declares the ``jit_addr`` slot symbolically with ``context.declare_function`` and
+links the proxied body's compile result in with ``add_linking_library``. The call
+site then uses only that slot, so the ``c_addr`` and ``py_addr`` dynamic globals
+are dead and get eliminated before numba scans the final module, and the caller
+caches. This holds from numba 0.61 onward; on 0.60 ``.as_func`` is a plain
+``CompileResultWAP`` and the caller stays uncacheable as before.
+
+What such a caller caches is the proxied body's machine code, linked in. Its
+cached binary binds the body as it stood at compile time, while numba's freshness
+stamp watches only the caller's own source file. **Editing a proxied body and
+rerunning without clearing the numba cache serves the old numbers.** The two
+handles can disagree within one process: a dispatcher-path caller of the same
+binding recompiles and returns the new value while the const-referencing caller
+returns the old one.
+
+The stale-alias guard described below cannot cover this, by construction. It
+scans a cached object's undefined symbols for the ``numbox_pxy_`` prefix, and a
+constant reference emits no such symbol, because the body is linked into the
+object rather than referenced through the alias. The single
+:class:`~numbox.core.proxy.proxy.StaleProxyCacheWarning` such a run emits names
+the dispatcher-path caller that healed correctly, never the const-referencing
+caller serving the stale value, and the run after that is silent. Reverting to a
+numbox that mints a plain ``CompileResultWAP`` is not a remedy either: numba's
+index key is callee-blind, so it loads the entry already on disk. Clearing the
+cache is the remedy.
+
+Both halves are pinned in ``test/core/test_proxy_cache_stale.py``, by
+``test_a_const_reference_caller_becomes_cacheable`` and
+``test_a_const_reference_caller_serves_a_stale_body_after_an_edit``.
 
 Alias content-addressing and cross-file callers
 ------------------------------------------------
