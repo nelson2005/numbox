@@ -166,10 +166,11 @@ def proxy(sig, jit_options: Optional[dict] = None):
     to statically link into (potential) caller's LLVM code, which is the main motivation behind
     this decorator.
 
-    Machine code for `func` can be cached when so specified in `jit_options`, in which case its
-    JIT-compilation will load the `func` into the LLVM scope. Caching option is the other major
-    motivation for this decorator, without the need to cache one can avoid static linking
-    of the callee's LLVM code into the caller's by simply ignoring the former.
+    Machine code for `func` can be cached when so specified in `jit_options`, which is the other
+    major motivation for this decorator: without the need to cache one can avoid static linking
+    of the callee's LLVM code into the caller's by simply ignoring the former. What puts `func`
+    within the proxy's reach is not the caching but the explicit `ll.add_symbol` below, which
+    publishes the body's cfunc wrapper under a process-stable alias on every decoration.
 
     In case when more than one signature is provided as the `sig` parameter, it is assumed
     that the first signature is the 'main' one while the other ones are supplied to
