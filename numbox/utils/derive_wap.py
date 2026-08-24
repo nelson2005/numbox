@@ -236,8 +236,14 @@ def lower_constant_derive_function_type(context, builder, typ, pyval):
     is randomized per process.
 
     That caching is not free: the caller's cached binary binds the derive's
-    code, so editing the derive's body in another module serves a stale binary
-    until the cache is cleared.
+    code, so an edit to the derive's body in another module is not reliably
+    picked up, and which body such a caller runs is not single-valued. A body
+    small enough to inline leaves no separate definition behind and the caller
+    keeps serving the old one; a larger body is embedded as a weak definition
+    under a mangled name folding numba's per-process compile counter, and the
+    caller serves that embedded copy or whatever currently defines the same
+    name, according to whether the counter has shifted. Clearing the cache is
+    the only remedy and nothing warns.
 
     There is deliberately no fallback to a baked address. A value of this type
     always takes the propagating call, so a `jit_addr` that failed to resolve
