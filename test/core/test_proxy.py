@@ -17,7 +17,6 @@ from numba.core.types.function_type import CompileResultWAP
 from numbox.core.bindings.errno import errno_get
 from numbox.core.bindings.libc import getenv, memcpy
 from numbox.core.bindings.call import _call_lib_func
-from numbox.core.configurations import numba_version
 from numbox.core.proxy.proxy import proxy, proxy_if_available, make_proxy_name
 from numbox.utils.derive_wap import DeriveFunctionType, DeriveWAP, jit_addr_supported
 from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
@@ -479,7 +478,7 @@ def aux_raises(x):
     return x + 1.0
 
 
-_JIT_ADDR_REASON = "`jit_addr` slot added to `FunctionModel` in numba 0.61"
+_JIT_ADDR_REASON = "`FunctionModel` has no `jit_addr` slot (numba < 0.61), so `.as_func` stays a plain `CompileResultWAP`"
 
 
 def test_proxy_as_func_is_a_derive_where_the_jit_addr_slot_exists():
@@ -510,7 +509,7 @@ def test_proxy_as_func_is_a_derive_where_the_jit_addr_slot_exists():
         assert type(typeof(as_func)) is FunctionType
 
 
-@pytest.mark.skipif(numba_version < 61, reason=_JIT_ADDR_REASON)
+@pytest.mark.skipif(not jit_addr_supported(), reason=_JIT_ADDR_REASON)
 def test_proxy_as_func_as_an_njit_argument_propagates_a_raising_body():
     """An exception raised inside a proxied body reaches the caller through ``.as_func``.
 
@@ -528,7 +527,7 @@ def test_proxy_as_func_as_an_njit_argument_propagates_a_raising_body():
         call_through(aux_raises.as_func, 1.0)
 
 
-@pytest.mark.skipif(numba_version < 61, reason=_JIT_ADDR_REASON)
+@pytest.mark.skipif(not jit_addr_supported(), reason=_JIT_ADDR_REASON)
 def test_proxy_as_func_as_a_jitted_constant_propagates_a_raising_body():
     """The same contract on the constant path, which is lowered separately.
 
@@ -549,6 +548,7 @@ def test_proxy_as_func_as_a_jitted_constant_propagates_a_raising_body():
         call_constant(1.0)
 
 
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 def test_proxy_dispatcher_call_still_discards_a_raising_body():
     """The binding's other handle keeps its old semantics, on every numba version.
 
@@ -557,15 +557,16 @@ def test_proxy_dispatcher_call_still_discards_a_raising_body():
     reports the failure only as an unraisable on stderr. So one binding carries two handles that
     disagree, and the asymmetry is worth pinning rather than assuming away.
 
-    The unraisable arrives as a ``PytestUnraisableExceptionWarning``, handled the same way as for
-    ``test_a_foreign_wrapper_reached_from_jitted_scope_still_discards`` in
-    ``test/utils/test_derive_wap.py``: the returned value is what is asserted. Its text is not,
-    because the ``repr`` of the context object numba names in it varies by numba version.
+    The unraisable reaches pytest as a ``PytestUnraisableExceptionWarning``, filtered by the
+    marker above, as ``test/core/test_sqlite_tvf.py`` does for its own raising callback. The
+    returned value is what is asserted and the warning text is not, because the ``repr`` of the
+    context object numba names in it varies by numba version.
     """
     assert aux_raises(-3.0) == -2.0
     assert aux_raises(1.0) == 0.0, "the cfunc wrapper stopped zero-filling a discarded raise"
 
 
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 def test_proxy_as_func_declared_as_a_plain_function_type_still_discards():
     """Crossing the Python boundary into a *declared* plain ``FunctionType`` degrades.
 
@@ -575,18 +576,31 @@ def test_proxy_as_func_declared_as_a_plain_function_type_still_discards():
     suite covers that degradation for a ``cres`` value; a ``@proxy`` binding reaches the same
     declaration through ``.as_func`` and is covered here.
 
+    The type of the value handed in is asserted first because both assertions below hold for a
+    plain ``CompileResultWAP`` too: without that check the test would keep passing while
+    ``.as_func`` quietly stopped being a ``DeriveWAP``, and ``can_convert_to`` would never be
+    entered at all. Where the ``jit_addr`` slot is absent there is no conversion to enter and
+    the C convention is all there has ever been, so the check is made only on the other arm.
+
     Like the dispatcher-call test above, the discarded exception surfaces as an unraisable and
     only the returned value is asserted.
     """
+    as_func = aux_raises.as_func
+    if jit_addr_supported():
+        assert isinstance(as_func, DeriveWAP), (
+            f"the value handed in is a {type(as_func).__name__}, so the declared plain "
+            f"`FunctionType` never reaches `DeriveFunctionType.can_convert_to`"
+        )
+
     @njit(float64(FunctionType(float64(float64)), float64))
     def call_through_declared_plain(f, x):
         return f(x)
 
-    assert call_through_declared_plain(aux_raises.as_func, -3.0) == -2.0
-    assert call_through_declared_plain(aux_raises.as_func, 1.0) == 0.0
+    assert call_through_declared_plain(as_func, -3.0) == -2.0
+    assert call_through_declared_plain(as_func, 1.0) == 0.0
 
 
-@pytest.mark.skipif(numba_version < 61, reason=_JIT_ADDR_REASON)
+@pytest.mark.skipif(not jit_addr_supported(), reason=_JIT_ADDR_REASON)
 def test_proxy_as_func_mixed_with_a_numba_native_wrapper_fails_to_unify():
     """Characterization of a narrowing: a heterogeneous tuple of function values is refused.
 

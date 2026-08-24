@@ -19,8 +19,9 @@ re-keys one binding and only one -- is pinned separately, by tests that never go
 A caller that reaches a binding's ``.as_func`` as a compile-time constant is the mirror shape, and it is covered
 here too. Such a caller links the body's machine code into its own object instead of referencing the alias, which
 is what makes numba willing to cache it at all and, in the same stroke, leaves the guard's prefix scan nothing to
-find. Editing the body then serves the old binary silently and indefinitely. Those tests characterize that
-outcome rather than pin a fix, and say in their docstrings what a change to it would look like.
+find. Editing the body then serves the old binary silently and indefinitely, and a binding that vanished rather
+than changed is served just the same. Those tests characterize that outcome rather than pin a fix, and say in
+their docstrings what a change to it would look like.
 """
 import os
 import subprocess
@@ -31,6 +32,7 @@ import pytest
 
 from numbox.core.configurations import numba_version
 from numbox.core.proxy.proxy import _undefined_symbols
+from numbox.utils.derive_wap import jit_addr_supported
 
 _EDITED = "proxied_binding.py"
 _HEALED = {"call_scale": "compiled", "call_scale2": "compiled", "call_offset": "served", "plain": "served"}
@@ -615,13 +617,12 @@ def test_the_discard_can_be_escalated_to_an_error(tmp_path):
     assert "StaleProxyCacheWarning" in r.stderr, f"escalated to something unnamed\n{_report(r)}"
 
 
-def test_a_binding_that_disappeared_is_discarded_rather_than_called(tmp_path):
-    """A ``proxy_if_available`` binding that is gone leaves its alias resolvable, and that is the dangerous case.
+def _write_optional_binding(tmp_path):
+    """Write a binding that exists only in a process where its C symbol does.
 
-    The absent path registers a trap under the alias a warm caller baked in, so the symbol resolves and the object
-    looks loadable. Calling it is the worst available outcome: the trap raises inside a ``@cfunc``, numba swallows
-    that at the C boundary and returns zero, and the caller computes on the zero and exits successfully. Discarding
-    the entry instead reaches the same clean typing error a cold cache gives, which is what this pins.
+    Shared by the two tests below, which reach the very same vanished binding by the two routes: through its
+    dispatcher, where the guard finds the alias, and as a compile-time constant, where there is no alias to find.
+    The comparison is only worth anything if the binding either side of it is identical, so it is written once.
     """
     (tmp_path / "fakelib.py").write_text(textwrap.dedent('''
         """Stands in for a C library whose symbol is present in one process and gone in the next."""
@@ -650,6 +651,17 @@ def test_a_binding_that_disappeared_is_discarded_rather_than_called(tmp_path):
         def scale(x):
             return x * 2.0
     '''), encoding="utf-8")
+
+
+def test_a_binding_that_disappeared_is_discarded_rather_than_called(tmp_path):
+    """A ``proxy_if_available`` binding that is gone leaves its alias resolvable, and that is the dangerous case.
+
+    The absent path registers a trap under the alias a warm caller baked in, so the symbol resolves and the object
+    looks loadable. Calling it is the worst available outcome: the trap raises inside a ``@cfunc``, numba swallows
+    that at the C boundary and returns zero, and the caller computes on the zero and exits successfully. Discarding
+    the entry instead reaches the same clean typing error a cold cache gives, which is what this pins.
+    """
+    _write_optional_binding(tmp_path)
     (tmp_path / "optional_caller.py").write_text(textwrap.dedent('''
         from numba import njit
 
@@ -686,6 +698,93 @@ def test_a_binding_that_disappeared_is_discarded_rather_than_called(tmp_path):
     assert "RESULT" not in fields, f"the vanished binding was called and returned {fields.get('RESULT')}"
     assert fields["RAISED"] == "TypingError", f"failed in an unexpected way: {fields['RAISED']}"
     assert "StaleProxyCacheWarning" in fields["WARNINGS"], f"the discard was not announced: {fields['WARNINGS']}"
+
+
+def test_a_const_reference_caller_calls_a_binding_that_disappeared(tmp_path):
+    """Characterization: the const-route counterpart of the invariant above, which the const route does not uphold.
+
+    Reaching the very same vanished binding as a compile-time constant rather than through its dispatcher links
+    the body's machine code into the caller's own object, so that object names no ``numbox_pxy_`` alias at all,
+    the guard takes its early exit, and the warm entry is served in a process where the binding does not exist.
+    The caller hands back the vanished binding's own number, while the identical source against a cold cache
+    raises the typing error the test above pins. Warm and cold therefore disagree about whether the binding can
+    be called, and the strict knob is no help: the documented way to be told an entry went stale never sees it.
+
+    What is recorded here is a known gap, not a wanted outcome, so a green run is not an endorsement of it. The
+    defect is in the constant lowering that links the body in, and closing it is left to separate work. Were that
+    lowering ever changed to discard such a caller, the warm run would raise as the cold one does and the
+    assertions below would fail; that failure is the report that the gap is closed, not a regression.
+
+    The test is worth having because the shape is one a reader adds deliberately, believing it defensive. An
+    unguarded ``scale.as_func`` raises ``AttributeError`` at import where the binding is absent, and keeping the
+    caller's definition inside the ``hasattr`` statement the proxy docstring shows leaves it undefined there, both
+    of them safe. Demoting that guard to a conditional expression is what turns a loud import failure into a silent
+    wrong answer. A body that calls a real C symbol is worse still, dying on a bare segfault with an empty stderr,
+    which is why the body here needs none: the deterministic arm of the same gap is the one a test can assert on.
+    """
+    _write_optional_binding(tmp_path)
+    (tmp_path / "const_optional_caller.py").write_text(textwrap.dedent('''
+        """A cached caller reading the binding's ``.as_func`` through a guard demoted to a conditional expression,
+        so the module imports and the caller is defined even where the binding is not."""
+        from numba import njit
+
+        from optional_binding import scale
+
+        SCALE_AS_FUNC = scale.as_func if hasattr(scale, "as_func") else None
+
+
+        @njit(cache=True)
+        def const_scale(x):
+            return SCALE_AS_FUNC(x) + 1.0
+    '''), encoding="utf-8")
+    probe = tmp_path / "const_optional_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import warnings
+
+        import optional_binding  # noqa: F401
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            from const_optional_caller import const_scale
+            try:
+                print("RESULT", const_scale(5.0), flush=True)
+            except Exception as exc:
+                print("RAISED", type(exc).__name__, flush=True)
+        hits = sum(const_scale.stats.cache_hits.values())
+        misses = sum(const_scale.stats.cache_misses.values())
+        print("STATS", "served" if hits and not misses else "compiled" if misses and not hits else f"{hits}/{misses}")
+        print("WARNINGS", " | ".join(f"{w.category.__name__}" for w in caught))
+        print("DONE ok", flush=True)
+    '''), encoding="utf-8")
+
+    env = _probe_env(tmp_path, "nbcache")
+    env["SYMBOL_PRESENT"] = "1"
+    assert _warm(probe, env)["RESULT"] == "11.0"
+
+    env["SYMBOL_PRESENT"] = "0"
+    warm = _fields(_run_probe(probe, env))
+
+    cold_env = _probe_env(tmp_path, "nbcache_absent_cold")
+    cold_env["SYMBOL_PRESENT"] = "0"
+    cold = _fields(_run_probe(probe, cold_env))
+    assert cold.get("RAISED") == "TypingError", f"a cold cache did not reach the clean typing error: {cold}"
+
+    if not jit_addr_supported():
+        assert warm.get("RAISED") == "TypingError", (
+            "a numba with no `jit_addr` slot cannot cache a const-reference caller at all, so the warm run has "
+            f"to recompile and reach the same error the cold one did: {warm}"
+        )
+        return
+
+    assert warm.get("RESULT") == "11.0", f"the warm run stopped serving the vanished binding: {warm}"
+    assert warm["STATS"] == "served", f"that number was recompiled rather than loaded from the cache: {warm}"
+    assert "StaleProxyCacheWarning" not in warm["WARNINGS"], f"the guard saw the const route after all: {warm}"
+
+    strict_env = dict(env)
+    strict_env["NUMBOX_PROXY_CACHE_STRICT"] = "1"
+    strict = _run_probe(probe, strict_env)
+    assert strict.returncode == 0, f"strict mode caught the entry the default missed\n{_report(strict)}"
+    assert _fields(strict)["RESULT"] == "11.0", f"strict mode changed the answer without stopping\n{_report(strict)}"
 
 
 def test_the_mach_o_reader_strips_the_leading_underscore(tmp_path):
