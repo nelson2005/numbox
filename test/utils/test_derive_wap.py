@@ -709,25 +709,32 @@ def test_two_derives_over_different_c_pointers_are_not_collapsed_onto_one_alias(
     )
 
 
-def test_a_warm_const_caller_of_a_collided_derive_still_runs_its_own_body(tmp_path):
+def test_a_warm_const_caller_of_a_collided_derive_runs_its_own_body_in_either_order(tmp_path):
     """The same collision across processes, with a cache in the way.
 
-    The in-process test above would pass on an implementation that simply stopped
-    caching every constant caller, and it says nothing about what a warm cache serves.
-    Here the derive that keeps the alias has a genuinely cached caller -- cold miss then
-    warm hit -- and the derive that was refused one has a caller that recompiles every
-    process, which is what keeps it correct. Both have to answer for their own body on
-    the warm run.
+    The in-process test above says nothing about what a warm cache serves, and a warm
+    cache is where the collision does its damage. Which of the two bodies publishes the
+    shared alias is decided by construction order, and numba's cache key never mentions
+    the callee, so a caller cached where one body won the name is loaded unchanged in a
+    process where the other body holds it. The alias resolves there, to the wrong body,
+    so the guard's symbol lookup calls the entry healthy and the caller returns a number
+    the body it was lowered against never computed.
 
-    Construction order is fixed, as it is in any program that builds its bindings at
-    import. Where the order varies between processes a caller cached against the alias
-    in one run is served in a run where the other body holds it, and the alias cannot
-    say so; refusing the second publish does not reach that, and nothing that leaves
-    ``_body_fingerprint`` alone can.
+    Refusing the second body an alias does not reach that on its own. Recording the
+    collision does: the guard reads the record the way it reads an absent binding's, so
+    a warm caller importing a collided alias is discarded and recompiled whichever body
+    it was keyed to, and the lowering stops emitting the name at all. The price is that
+    neither body's constant callers cache once the two have collided, which is the trade
+    the refusal already makes.
+
+    The order is flipped by an environment variable rather than by two probe files, so
+    that the caller numba loads on the flipped run is byte-for-byte the entry the first
+    run wrote.
     """
     probe = tmp_path / "collision_cache_probe.py"
     probe.write_text(textwrap.dedent('''
         import ctypes
+        import os
 
         from numba import cfunc, njit
         from numba.core.types import float64
@@ -753,8 +760,13 @@ def test_a_warm_const_caller_of_a_collided_derive_still_runs_its_own_body(tmp_pa
             return body
 
 
-        hundred = bind(PROTO(_c_times_hundred.address))
-        plus_one = bind(PROTO(_c_plus_one.address))
+        _order = ["hundred", "plus_one"]
+        if os.environ.get("NUMBOX_TEST_FLIP_BINDING_ORDER"):
+            _order.reverse()
+        _pointers = {"hundred": PROTO(_c_times_hundred.address), "plus_one": PROTO(_c_plus_one.address)}
+        _bound = {name: bind(_pointers[name]) for name in _order}
+        hundred = _bound["hundred"]
+        plus_one = _bound["plus_one"]
 
 
         @njit(float64(float64), cache=True)
@@ -788,9 +800,18 @@ def test_a_warm_const_caller_of_a_collided_derive_still_runs_its_own_body(tmp_pa
     )
 
     warm = _run_derive_probe(probe, env)
-    assert warm == "403.0 8.0 served compiled", (
-        f"warm run: the derive holding the alias must cache-hit and still answer 403.0, "
-        f"and the refused one must recompile rather than be served, got {warm!r}"
+    assert warm == "403.0 8.0 compiled compiled", (
+        f"warm run: neither caller may be served from a cache written against a name that "
+        f"stands for two bodies, got {warm!r}"
+    )
+
+    flipped_env = dict(env)
+    flipped_env["NUMBOX_TEST_FLIP_BINDING_ORDER"] = "1"
+    flipped = _run_derive_probe(probe, flipped_env)
+    assert flipped == "403.0 8.0 compiled compiled", (
+        f"flipped run: the body that holds the shared alias changed, so an entry cached in the "
+        f"previous order must not be served. 8.0 403.0 here is each caller running the other "
+        f"body through the shared name, got {flipped!r}"
     )
 
 

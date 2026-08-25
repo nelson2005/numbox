@@ -181,14 +181,23 @@ the *first* derive's machine code, and only the constant route: passing the same
 derive as a function-type argument reads the entry point off the object and stays
 correct, so one value would answer two ways depending on how it was called.
 
-Which of the two publishes is a question of order, and one case is left open by
-that. A program that builds such a pair in a *different* order from one process to
-the next has a caller cached against the alias in one run served in a run where the
-other body holds it, and neither the alias nor the guard can say so. Two bodies one
-fingerprint cannot separate are two bodies one *name* cannot separate; only a
-fingerprint that told them apart would close it, and moving the fingerprint renames
-every shipped alias and invalidates every existing cache. Building bindings at
-import, in one order, is what keeps a program clear of it.
+Which of the two publishes is a question of order, and the refusal on its own settles
+only this process. A program that builds such a pair in a *different* order from one
+process to the next would have a caller cached against the alias in one run served in
+a run where the other body holds it, and the symbol map cannot report that: the name
+resolves, to the wrong body. So the collision is recorded as well as refused, and the
+guard reads that record the way it reads an absent binding's, so any warm caller
+importing a collided alias is discarded and recompiled whichever body it was keyed
+to. The lowering stops emitting a collided name at all, so the surviving body's
+callers bake the address rather than write an entry each run for the next run to
+discard. Once a name stands for two bodies, neither one's constant callers cache; that
+is the same trade the refusal already makes.
+
+The record can only be made when the *second* body is compiled, so a caller loaded
+before that still reads a name with one body behind it. Importing a binding module is
+what compiles its bodies, and a caller reaches a body only through the module that
+defines it, so the exposure is the span between two binding modules' imports. Building
+bindings at import, in one order, keeps a program clear of the question entirely.
 
 Both routes are pinned in ``test/core/test_proxy_cache_stale.py``, by
 ``test_a_const_reference_caller_becomes_cacheable``,
@@ -199,7 +208,8 @@ Both routes are pinned in ``test/core/test_proxy_cache_stale.py``, by
 ``test_an_upgraded_foreign_wrapper_is_lowered_uncacheable``. The refused-alias
 shape is pinned in ``test/utils/test_derive_wap.py``, by
 ``test_two_derives_over_different_c_pointers_are_not_collapsed_onto_one_alias``
-and ``test_a_warm_const_caller_of_a_collided_derive_still_runs_its_own_body``.
+and ``test_a_warm_const_caller_of_a_collided_derive_runs_its_own_body_in_either_order``.
+
 Alias content-addressing and cross-file callers
 ------------------------------------------------
 
