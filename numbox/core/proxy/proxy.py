@@ -16,6 +16,7 @@ from typing import List, Optional, Tuple
 from numbox.core.configurations import _PROXY_CACHE_STRICT_ENV, _strict_cache_mode
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _fingerprint_function, _fingerprint_function_best_effort,
+    _opaque_values_match,
 )
 from numbox.utils.standard import make_params_strings
 
@@ -27,7 +28,7 @@ def make_proxy_name(name):
     return f'__{name}'
 
 
-def _body_fingerprint(func):
+def _body_fingerprint(func, opaque=None):
     """Content fingerprint of ``func``'s body, for alias disambiguation.
 
     Reuses the deep walker so bytecode, constants, default arguments, closure
@@ -39,14 +40,19 @@ def _body_fingerprint(func):
     differ only in a captured value -- a factory over per-instance C symbol
     names, or a literal-only redefinition -- therefore get distinct aliases,
     not one collapsed to bytecode alone.
+
+    ``opaque`` collects the values the best-effort walker could not canonicalize. Those
+    are where two different bodies can still meet on one fingerprint, so
+    ``_publish_cfunc_alias`` compares them to tell a second body apart from the same
+    body registered twice.
     """
     try:
         return _fingerprint_function(func, set())
     except (_Unfingerprintable, RecursionError):
-        return _fingerprint_function_best_effort(func)
+        return _fingerprint_function_best_effort(func, opaque)
 
 
-def _stable_cfunc_alias(func, main_sig, jit_options=None):
+def _stable_cfunc_alias(func, main_sig, jit_options=None, opaque=None):
     """Deterministic, process-stable LLVM symbol name for ``func``'s cfunc wrapper.
 
     numba mangles the wrapper name (``fndesc.llvm_cfunc_wrapper_name``) with a
@@ -90,7 +96,7 @@ def _stable_cfunc_alias(func, main_sig, jit_options=None):
     """
     raw = (
         f"{func.__module__ or ''}.{func.__qualname__}.{main_sig}."
-        f"{_body_fingerprint(func)}."
+        f"{_body_fingerprint(func, opaque)}."
         f"{sorted((jit_options or {}).items(), key=repr)!r}"
     ).encode("utf-8")
     safe_name = "".join(c if c.isascii() and c.isalnum() else "_" for c in func.__name__)
@@ -120,8 +126,10 @@ _PROXY_TRAP_KEEPALIVE = []
 # there being a body behind it, so presence alone stops meaning "safe to call" -- see _stale_proxy_aliases.
 _ABSENT_ALIASES = set()
 
-# Alias -> the address published under it, so a second body reaching the same alias is
-# detected rather than silently rebinding every caller compiled against the first.
+# Alias -> (address published under it, the opaque values its fingerprint stood on), so a
+# second body reaching the same alias is detected rather than silently rebinding every
+# caller compiled against the first. A witness of None marks an alias published by
+# something that is not a proxied body (a trap), which no body can match.
 _PUBLISHED_ALIASES = {}
 
 
@@ -129,7 +137,7 @@ class AliasCollisionWarning(RuntimeWarning):
     """Two different bodies reached one alias, so the alias stopped identifying a body."""
 
 
-def _publish_cfunc_alias(alias, address):
+def _publish_cfunc_alias(alias, address, opaque):
     """Publish ``address`` under ``alias``, and return the alias actually to reference.
 
     ``ll.add_symbol`` is a silent, process-global, last-writer-wins assignment, so a
@@ -137,7 +145,14 @@ def _publish_cfunc_alias(alias, address):
     compiled against the first: a wrong numeric answer with no diagnostic, decided by
     which body was constructed first.
 
-    A collision means the fingerprint could not tell the two bodies apart, which happens
+    Reaching an alias twice is usually not that. The same body is registered again
+    whenever a module is reloaded or a factory is called twice with equal arguments, and
+    then last-writer-wins is exactly right, because both names name the same code. The
+    two cases are told apart by ``opaque``, the values the fingerprint could not
+    canonicalize: two bodies that fingerprint alike are the same body except in those, so
+    if they match it is one body compiled twice and the alias is simply re-pointed.
+
+    They differ only when the fingerprint could not tell two bodies apart, which happens
     for values that have no process-stable identity to fold (see ``_ctypes_func_key``).
     Two things then have to be true at once. The newcomer needs a name of its own, so it
     is given a process-local one and both bodies stay callable in this process. And the
@@ -147,17 +162,15 @@ def _publish_cfunc_alias(alias, address):
     happens to hold the name today. Both bodies lose cross-process caching, which is the
     honest price of a name that does not identify what it names.
     """
-    published = _PUBLISHED_ALIASES.get(alias)
-    if published == address:
-        return alias
-    if published is None:
-        _PUBLISHED_ALIASES[alias] = address
+    published, witness = _PUBLISHED_ALIASES.get(alias, (None, None))
+    if published is None or (witness is not None and _opaque_values_match(witness, opaque)):
+        _PUBLISHED_ALIASES[alias] = (address, tuple(opaque))
         _ABSENT_ALIASES.discard(alias)
         ll.add_symbol(alias, address)
         return alias
     _ABSENT_ALIASES.add(alias)
     distinct = f"{alias}_c{len(_PUBLISHED_ALIASES)}"
-    _PUBLISHED_ALIASES[distinct] = address
+    _PUBLISHED_ALIASES[distinct] = (address, tuple(opaque))
     ll.add_symbol(distinct, address)
     warnings.warn(
         f"two @proxy bodies fingerprint alike and both reached the alias {alias}; it names "
@@ -201,6 +214,9 @@ def _register_absent_alias_trap(func, main_sig, jit_options=None):
     _PROXY_TRAP_KEEPALIVE.append(trap_ns["_trap_cfunc"])
     _ABSENT_ALIASES.add(alias)
     ll.add_symbol(alias, trap_ns["_trap_cfunc"].address)
+    # Record it under a witness no body can match, so a real body that later reaches this
+    # alias is detected rather than quietly taking a name a trap already answers to.
+    _PUBLISHED_ALIASES[alias] = (trap_ns["_trap_cfunc"].address, None)
 
 
 def proxy(sig, jit_options: Optional[dict] = None):
@@ -242,9 +258,11 @@ def proxy(sig, jit_options: Optional[dict] = None):
         cres = func_jit.get_compile_result(main_sig)
         # Register a process-stable alias for the body's cfunc wrapper and reference
         # that instead of numba's process-local ``v<uid>`` name (see _stable_cfunc_alias).
+        opaque = []
         cfunc_alias = _publish_cfunc_alias(
-            _stable_cfunc_alias(func, main_sig, jit_options),
+            _stable_cfunc_alias(func, main_sig, jit_options, opaque),
             cres.library.get_pointer_to_function(cres.fndesc.llvm_cfunc_wrapper_name),
+            opaque,
         )
         func_args_str, func_names_args_str = make_params_strings(func)
         func_proxy_name = make_proxy_name(func.__name__)
