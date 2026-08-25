@@ -181,6 +181,15 @@ the *first* derive's machine code, and only the constant route: passing the same
 derive as a function-type argument reads the entry point off the object and stays
 correct, so one value would answer two ways depending on how it was called.
 
+Which of the two publishes is a question of order, and one case is left open by
+that. A program that builds such a pair in a *different* order from one process to
+the next has a caller cached against the alias in one run served in a run where the
+other body holds it, and neither the alias nor the guard can say so. Two bodies one
+fingerprint cannot separate are two bodies one *name* cannot separate; only a
+fingerprint that told them apart would close it, and moving the fingerprint renames
+every shipped alias and invalidates every existing cache. Building bindings at
+import, in one order, is what keeps a program clear of it.
+
 Both routes are pinned in ``test/core/test_proxy_cache_stale.py``, by
 ``test_a_const_reference_caller_becomes_cacheable``,
 ``test_a_const_reference_caller_heals_after_an_edit``,
