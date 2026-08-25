@@ -78,7 +78,7 @@ from numba.experimental.function_type import (
 )
 from numba.extending import NativeValue, box, register_model, unbox
 
-from numbox.core.configurations import _ALIAS_PREFIX, function_struct_has
+from numbox.core.configurations import _ALIAS_PREFIX, _COLLIDED_ALIASES, function_struct_has
 from numbox.utils.fingerprint import _body_fingerprint
 
 
@@ -237,18 +237,37 @@ def _publish_jit_alias(cres, py_func, jit_options, jit_address):
     derives, which reach jitted scope as arguments rather than as constants, repeat
     compilations of one test helper, and two textually identical lambdas in one test.
 
+    Refusing the second body is enough for this process and not enough for the next one.
+    A caller cached where the *first* body won the name is loaded here by a numba cache
+    key that never mentions the callee, and where the two constructions ran in the other
+    order it is the second body that holds the name, so the caller is served against a
+    body it was never lowered against -- and the alias resolves, so the guard's symbol
+    lookup calls it healthy. The collision is therefore recorded as well as refused, and
+    the guard reads that record exactly as it reads the absent-binding one: any warm
+    caller importing a collided alias is discarded and recompiled, whichever body it was
+    keyed to. That costs the surviving body's callers their cacheability too, which is
+    the same trade the refusal already makes -- once a name stands for two bodies, no
+    caller of it can be served from a cache written by a process that may have resolved
+    it differently.
+
     Registration happens here, when the wrapper is minted, which is strictly before any
     caller can be lowered against it: a caller reaches the alias only through this
-    value, and it does not exist yet.
+    value, and it does not exist yet. The *collision* record is not so ordered: it can
+    only be made when the second body is compiled, so a caller loaded before that still
+    reads a name with one body behind it. Importing a binding module is what compiles
+    its bodies, and a caller reaches a body only through the module that defines it, so
+    the gap is the span between two binding modules' imports -- narrow, and narrower
+    than serving the wrong body indefinitely.
     """
     if py_func is None or not _cache_guard_installed():
         return None
     alias = _stable_jit_alias(py_func, cres.signature, jit_options)
     published = _JIT_ALIASES.get(alias)
     if published is None:
-        _JIT_ALIASES[alias] = cres
         ll.add_symbol(alias, jit_address)
+        _JIT_ALIASES[alias] = cres
     elif published is not cres:
+        _COLLIDED_ALIASES.add(alias)
         return None
     return alias
 
@@ -459,6 +478,13 @@ def lower_constant_derive_function_type(context, builder, typ, pyval):
     sfunc.py_addr = context.add_dynamic_addr(
         builder, id(pyval), info=type(pyval).__name__)
     alias = getattr(pyval, "jit_alias", None)
+    if alias in _COLLIDED_ALIASES:
+        # The body that won this name is still behind it, so emitting it here would be
+        # correct in this process and unserveable in the next one, where the guard now
+        # discards every caller importing it. Bake the address instead and let numba
+        # decline the cache once, rather than write an entry each run for the next run
+        # to throw away.
+        alias = None
     if alias is None:
         sfunc.jit_addr = context.add_dynamic_addr(
             builder, pyval.jit_address, info=f"{typ} callconv entry point")

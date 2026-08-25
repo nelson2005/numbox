@@ -13,7 +13,9 @@ from numba.extending import intrinsic, overload
 from types import FunctionType as PyFunctionType
 from typing import List, Optional, Tuple
 
-from numbox.core.configurations import _ALIAS_PREFIX, _PROXY_CACHE_STRICT_ENV, _strict_cache_mode
+from numbox.core.configurations import (
+    _ALIAS_PREFIX, _COLLIDED_ALIASES, _PROXY_CACHE_STRICT_ENV, _strict_cache_mode,
+)
 from numbox.utils.derive_wap import DeriveWAP, jit_addr_supported
 from numbox.utils.fingerprint import _body_fingerprint
 from numbox.utils.standard import make_params_strings
@@ -453,10 +455,15 @@ def _stale_proxy_aliases(payload, libdata_of_payload):
     fresh, overwriting its cache file, and is never handed to ``rebuild`` -- correctly drawing no warning.)
     ``ll.address_of_symbol`` is nearly an exact oracle: these names live only in llvmlite's explicit-symbol
     map, and because the alias encodes the body, signature and jit options, a resolving alias is normally the
-    right body to call. The exception is an alias standing for an absent ``proxy_if_available`` binding, which
-    resolves to a trap holding no body at all. Loading that object is worse than discarding it -- the trap's
-    error is raised inside a ``@cfunc``, where numba swallows it and returns zero, so the caller silently
-    computes on a wrong value, while discarding yields the same clean typing error a cold cache gives.
+    right body to call. There are two exceptions, and both resolve. One is an alias standing for an absent
+    ``proxy_if_available`` binding, which resolves to a trap holding no body at all. Loading that object is
+    worse than discarding it -- the trap's error is raised inside a ``@cfunc``, where numba swallows it and
+    returns zero, so the caller silently computes on a wrong value, while discarding yields the same clean
+    typing error a cold cache gives. The other is an alias two different bodies both minted, where the second
+    was refused it: within this process the refusal keeps both bodies honest, but the caller being loaded was
+    cached in some other process, which may have run the two constructions in the other order and lowered it
+    against the body that lost the name here. Neither case can be told from the symbol map, so both are
+    recorded as they arise.
 
     The payload is unpacked inside the handler rather than by the caller, because its shape is precisely the
     thing a future numba might change.
@@ -479,7 +486,8 @@ def _stale_proxy_aliases(payload, libdata_of_payload):
             return []  # fast path: the alias string appears nowhere in the object
         return sorted(
             s for s in _undefined_symbols(object_code)
-            if s.startswith(_ALIAS_PREFIX) and (s in _ABSENT_ALIASES or not ll.address_of_symbol(s))
+            if s.startswith(_ALIAS_PREFIX) and (
+                s in _ABSENT_ALIASES or s in _COLLIDED_ALIASES or not ll.address_of_symbol(s))
         )
     except Exception as exc:
         # Fail open: this runs on EVERY numba cache load in the process, so a surprise -- a future numba

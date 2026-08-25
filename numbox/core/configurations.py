@@ -35,6 +35,15 @@ _PROXY_CACHE_STRICT_ENV = "NUMBOX_PROXY_CACHE_STRICT"
 #: entry point.
 _ALIAS_PREFIX = "numbox_pxy_"
 
+#: Aliases two different bodies both minted, so that the name does not identify what it resolves to.
+#: `numbox.utils.derive_wap` refuses the second body an alias, which keeps the two call routes agreeing
+#: within one process, but a caller cached in a process where the *other* body won the name is served
+#: against whichever body happens to hold it here. Recording the collision lets the cache guard in
+#: `numbox.core.proxy.proxy` treat such an alias the way it treats an absent binding's: resolvable, and
+#: still not safe to serve. Lives here for the same reason `_ALIAS_PREFIX` does -- the module that
+#: detects a collision and the module that acts on one are on opposite sides of a deferred import.
+_COLLIDED_ALIASES = set()
+
 
 def _strict_cache_mode():
     """True when ``NUMBOX_PROXY_CACHE_STRICT`` selects strict validation of ``@proxy`` cache loads.
