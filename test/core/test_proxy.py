@@ -17,7 +17,6 @@ from numba.core.types.function_type import CompileResultWAP
 from numbox.core.bindings.errno import errno_get
 from numbox.core.bindings.libc import getenv, memcpy
 from numbox.core.bindings.call import _call_lib_func
-from numbox.core.bindings.utils import load_lib_path, platform_
 from numbox.core.proxy.proxy import proxy, proxy_if_available, make_proxy_name
 from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
 from test.auxiliary_utils import (
@@ -196,22 +195,12 @@ def test_proxy_referenced_symbol_is_process_stable(tmp_path):
     assert "numbox_pxy_" in baseline, f"expected a stable add_symbol alias, got {baseline!r}"
 
 
-def _locate_libm():
-    """Find a math/libc library with at least the ``cos`` symbol."""
-    if platform_ == "Windows":
-        from ctypes.util import find_msvcrt
-        return find_msvcrt()
-    from ctypes.util import find_library
-    return find_library("m")
-
-
 def test_proxy_if_available_present_symbol_returns_real_proxy():
     """When the C symbol is present, ``proxy_if_available`` returns a
     real ``@proxy``-wrapped dispatcher with ``.as_func`` attached."""
-    lib_path = _locate_libm()
-    if lib_path is None:
+    lib = open_libm()
+    if lib is None:
         pytest.skip("No suitable math/C runtime library discoverable")
-    lib = load_lib_path(lib_path)
 
     @proxy_if_available(lib, float64(float64), jit_options={"cache": True})
     def cos(x):
@@ -233,10 +222,9 @@ def test_proxy_if_available_missing_symbol_returns_stub():
     of whether the symbol was available); ``__qualname__`` and
     ``__doc__`` preserve the user-side function for debugging.
     """
-    lib_path = _locate_libm()
-    if lib_path is None:
+    lib = open_libm()
+    if lib is None:
         pytest.skip("No suitable math/C runtime library discoverable")
-    lib = load_lib_path(lib_path)
 
     @proxy_if_available(lib, float64(float64))
     def nonexistent_fn(x):
@@ -255,10 +243,9 @@ def test_proxy_if_available_missing_symbol_njit_raises_clear_error():
     """When the C symbol is absent, calling the stub from ``@njit`` raises a
     clear ``TypingError`` naming the binding and the missing-symbol cause at
     typing time, not an opaque numba typing failure."""
-    lib_path = _locate_libm()
-    if lib_path is None:
+    lib = open_libm()
+    if lib is None:
         pytest.skip("No suitable math/C runtime library discoverable")
-    lib = load_lib_path(lib_path)
 
     @proxy_if_available(lib, float64(float64))
     def nonexistent_njit_fn(x):
