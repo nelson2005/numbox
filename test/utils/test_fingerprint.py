@@ -162,3 +162,54 @@ def test_module_attribute_read_still_rekeys(tmp_path):
     assert _fingerprint_function(f, set()) == before, "an unread module attribute must not re-key"
     cfg.SCALE = 3.0
     assert _fingerprint_function(f, set()) != before, "a read module attribute must re-key"
+
+
+def test_an_external_function_is_canonicalized_by_symbol_and_signature():
+    """Two bindings a factory made over different C symbols must not share a fingerprint.
+
+    ``ExternalFunction`` has no ``_canon_value`` branch of its own until one is written for it,
+    so it used to reach the terminal ``raise`` and, on the best-effort path that the ``@proxy``
+    alias runs on, collapse to ``<opaque:ExternalFunction>``: the same placeholder for every
+    symbol. numba's own key for the type is ``(symbol, signature)``, both of which mean the same
+    thing in the next process, so folding those separates the two without costing stability.
+    """
+    from numba.core.types import ExternalFunction, float64
+
+    sin = _canon_value(ExternalFunction("sin", float64(float64)), set())
+    cos = _canon_value(ExternalFunction("cos", float64(float64)), set())
+    assert sin != cos, "two C symbols collapsed onto one canonical form"
+    assert "sin" in sin and "cos" in cos
+    assert _canon_value(ExternalFunction("sin", float64(float64)), set()) == sin, (
+        "the canonical form has to be the same for an equal value, or it is not a fingerprint"
+    )
+
+
+def test_a_library_bound_ctypes_pointer_is_canonicalized_by_library_and_symbol():
+    """The same for a pointer reached by attribute access on a loaded library."""
+    import ctypes
+
+    libm = ctypes.CDLL("libm.so.6")
+    floor = _canon_value(libm.floor, set())
+    ceil = _canon_value(libm.ceil, set())
+    assert floor != ceil, "two C functions from one library collapsed onto one canonical form"
+    assert _canon_value(ctypes.CDLL("libm.so.6").floor, set()) == floor, (
+        "the canonical form must not depend on which handle the library was opened through"
+    )
+
+
+def test_a_ctypes_pointer_built_from_an_address_stays_unfingerprintable():
+    """The residual class, and why it is deliberate.
+
+    A pointer built from a raw address carries no library and no symbol name. The only thing
+    separating two of them is the address, which ASLR moves, so folding it would buy
+    discrimination at the cost of the process-stability the fingerprint exists for. Refusing is
+    the honest answer, and it leaves the caller to detect the collision instead of hiding it.
+    """
+    import ctypes
+    import pytest
+
+    libm = ctypes.CDLL("libm.so.6")
+    proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+    fp = proto(ctypes.cast(libm.floor, ctypes.c_void_p).value)
+    with pytest.raises(_Unfingerprintable):
+        _canon_value(fp, set())

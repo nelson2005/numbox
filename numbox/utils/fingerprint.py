@@ -14,6 +14,7 @@ closure/global values fingerprint differently. Shared by
 decide how to degrade (compile_kernel marks the kernel uncached, digest falls
 back to cloudpickle of the code object).
 """
+import ctypes
 import dis
 import hashlib
 
@@ -24,6 +25,7 @@ import numpy as np
 
 from numba.core import config as numba_config
 from numba.core.dispatcher import Dispatcher
+from numba.core.types import ExternalFunction
 from numba.np.ufunc.dufunc import DUFunc
 
 from numbox.core.configurations import jit_options as _default_jit_options
@@ -96,7 +98,34 @@ def _canon_value(value: Any, seen: set[int]) -> str:
         return f"dufunc({body};{topts})"
     if isinstance(value, FunctionType):
         return f"function({_fingerprint_function(value, seen)})"
+    if isinstance(value, ExternalFunction):
+        # numba's own key for this type, (symbol, signature): strings and types,
+        # so it is the same in the next process and it separates two bindings a
+        # factory made over different C symbols.
+        return f"externalfunction({value.symbol};{value.sig})"
+    if isinstance(value, ctypes._CFuncPtr):
+        return f"cfuncptr({_ctypes_func_key(value)})"
     raise _Unfingerprintable(type(value).__name__)
+
+
+def _ctypes_func_key(value: Any) -> str:
+    """Library-and-symbol identity of a ctypes function pointer.
+
+    A pointer reached by attribute access on a loaded library carries both, and
+    both survive into the next process. One built from a raw address carries
+    neither: two of those differ only by an address ASLR moves, so folding it
+    would buy discrimination at the cost of the process-stability the whole
+    fingerprint exists for. Those raise, and the caller decides what to do with
+    a value it cannot tell apart from another.
+    """
+    name = getattr(value, "__name__", None)
+    objects = getattr(value, "_objects", None)
+    lib = objects.get("0") if isinstance(objects, dict) else None
+    if name is None or lib is None:
+        raise _Unfingerprintable("ctypes function pointer built from an address")
+    restype = getattr(getattr(value, "restype", None), "__name__", None)
+    argtypes = ",".join(getattr(a, "__name__", "?") for a in (getattr(value, "argtypes", None) or ()))
+    return f"{getattr(lib, '_name', None)}:{name};{restype}({argtypes})"
 
 
 def _fingerprint_codeobj(code: CodeType, seen: set[int]) -> str:

@@ -506,3 +506,88 @@ def test_proxy_jit_flags_dispatch_to_their_own_body():
     assert math.isinf(call_np(0.0)), (
         "jitted caller of the numpy error-model binding reached the python one"
     )
+
+
+def _make_extfn_binding(symbol):
+    """A factory binding, the shape whose captured value the fingerprint has to see."""
+    from numba.core.types import ExternalFunction, float64 as nb_f8
+
+    fn = ExternalFunction(symbol, nb_f8(nb_f8))
+
+    @proxy(float64(float64))
+    def body(x):
+        return fn(x)
+    return body
+
+
+def test_two_factory_bindings_over_different_symbols_get_different_aliases():
+    """Two bodies a factory made over different C symbols must not share one alias.
+
+    They share a code object and a qualname, so the alias can only tell them apart by the
+    captured value. When it could not, both minted one alias, ``ll.add_symbol`` took the
+    second registration, and every caller compiled against the first was silently rebound to
+    the second body: a wrong number, decided by construction order, with no diagnostic.
+    """
+    floor_b = _make_extfn_binding("floor")
+    ceil_b = _make_extfn_binding("ceil")
+    assert floor_b._numbox_proxy_alias != ceil_b._numbox_proxy_alias, (
+        "two bodies over different C symbols collapsed onto one alias"
+    )
+
+    @njit(float64(float64))
+    def call_floor(x):
+        return floor_b(x)
+
+    @njit(float64(float64))
+    def call_ceil(x):
+        return ceil_b(x)
+
+    assert call_floor(2.5) == 2.0, "the floor binding ran another body"
+    assert call_ceil(2.5) == 3.0, "the ceil binding ran another body"
+
+
+def test_bodies_the_fingerprint_cannot_separate_are_detected_rather_than_rebound():
+    """The residual class: a captured value with no process-stable identity.
+
+    A ctypes pointer built from a raw address has no library and no symbol name, so two of
+    them differ only by an address that moves between processes and no fingerprint that has
+    to mean the same thing next run can separate them. The alias is therefore allowed to
+    collide, and the collision is caught instead: the second body is published under a
+    process-local name of its own so both stay callable and correct, and the shared name is
+    retired so no warm caller is served against whichever body holds it today.
+    """
+    import ctypes
+    from numbox.core.proxy.proxy import AliasCollisionWarning, _ABSENT_ALIASES
+
+    libm = ctypes.CDLL("libm.so.6")
+    proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+
+    def make(addr):
+        fp = proto(addr)
+
+        @proxy(float64(float64))
+        def body(x):
+            return fp(x)
+        return body
+
+    first = make(ctypes.cast(libm.floor, ctypes.c_void_p).value)
+    with pytest.warns(AliasCollisionWarning):
+        second = make(ctypes.cast(libm.ceil, ctypes.c_void_p).value)
+
+    assert first._numbox_proxy_alias != second._numbox_proxy_alias, (
+        "the second body was handed a name the first already holds"
+    )
+    assert first._numbox_proxy_alias in _ABSENT_ALIASES, (
+        "the shared name still identifies a body, so a warm caller can be served the wrong one"
+    )
+
+    @njit(float64(float64))
+    def call_first(x):
+        return first(x)
+
+    @njit(float64(float64))
+    def call_second(x):
+        return second(x)
+
+    assert call_first(2.5) == 2.0
+    assert call_second(2.5) == 3.0

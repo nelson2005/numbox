@@ -77,6 +77,23 @@ redefinition, or ``fork()`` twins on a shared cache — get distinct aliases
 instead of colliding on one (a collision let the last ``add_symbol`` win and
 silently rebound callers to the wrong body).
 
+Separating them needs the fingerprint to see the captured value that differs, and
+what it can see is bounded by what has an identity that means the same thing in
+the next process. A ``numba.core.types.ExternalFunction`` and a ctypes pointer
+reached by attribute access on a loaded library both do, and both are folded. A
+ctypes pointer built from a raw address does not: two of them differ only by an
+address that ASLR moves, so folding it would buy discrimination at the cost of the
+process-stability the alias exists for.
+
+Bodies in that last class are therefore allowed to collide, and the collision is
+caught rather than hidden. The newcomer is published under a process-local name of
+its own, so both bodies stay callable and correct in this process, and the shared
+name is retired into the absent-alias set, so a warm caller of either one is
+discarded and recompiled rather than served against whichever body happens to hold
+the name today. Both lose cross-process caching, which is the price of a name that
+does not identify what it names, and a
+:class:`~numbox.core.proxy.proxy.AliasCollisionWarning` says so.
+
 Because the alias encodes the body, changing a proxied binding's **signature or
 body renames its alias**. numba's cache key for a *caller* is callee-blind, so a
 ``cache=True`` caller in another file cache-hits unchanged after such a change
