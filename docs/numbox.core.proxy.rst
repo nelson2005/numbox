@@ -152,14 +152,34 @@ the ``else`` branch supplies.
 
 One derive shape is deliberately left uncacheable: a foreign ``CompileResultWAP``
 upgraded by :func:`~numbox.utils.derive_wap.rewrap_derive`. It carries a compile
-result and nothing else, and a compile result numba restored from its own cache
-has dropped the Python function, so there is no body to fingerprint and no alias
-that would rename itself when the body changed. The lowering bakes the address
-there, numba declines to cache the caller and says so on every run, and the caller
-therefore always runs the current body. A derive minted by
-:func:`~numbox.utils.highlevel.cres` is not in that position, because ``cres`` has
-the function in hand, and it behaves exactly like a ``@proxy`` binding's
-``.as_func``.
+result and nothing else, and nobody who could say which body it holds is present
+to say so. A function *of the right name* can be found from a bare compile result,
+warm as well as cold — ``fndesc.lookup_module()`` and ``fndesc.qualname`` between
+them locate one, and fingerprinting it mints the same alias in a cold process and
+a warm one — but finding it that way is a guess, not a fact: the name may since
+have been rebound, wrapped or deleted, and nothing the compile result carries can
+check the answer. A wrong guess is worse than no alias rather than better, because
+it makes the caller cacheable against a key content-addressed on some *other*
+function, which then never moves when the body the caller actually calls is
+edited: permanent silent staleness, the hazard the alias exists to close. So the
+lowering bakes the address there, numba declines to cache the caller and says so
+on every run, and the caller therefore always runs the current body. A derive
+minted by :func:`~numbox.utils.highlevel.cres` is not in that position, because
+``cres`` is handed the function by the caller that compiled it, and it behaves
+exactly like a ``@proxy`` binding's ``.as_func``.
+
+A second derive can land in the same position, for a different reason. The
+callconv alias folds the body fingerprint, and that fingerprint degrades to a
+best-effort walk for any body it cannot canonicalize — which is every numbox
+binding body, since they all reach the ``@intrinsic`` ``_call_lib_func`` — where
+one placeholder stands for every value of a kind it cannot read. Two bodies from
+one factory closing over different C function pointers therefore mint one alias
+between them. The first publishes its entry point under it; the second is refused,
+bakes its address, and its constant callers are uncacheable and always current.
+Sharing the alias instead would lower the second derive's constant callers against
+the *first* derive's machine code, and only the constant route: passing the same
+derive as a function-type argument reads the entry point off the object and stays
+correct, so one value would answer two ways depending on how it was called.
 
 Both routes are pinned in ``test/core/test_proxy_cache_stale.py``, by
 ``test_a_const_reference_caller_becomes_cacheable``,
@@ -167,7 +187,10 @@ Both routes are pinned in ``test/core/test_proxy_cache_stale.py``, by
 ``test_a_const_reference_caller_discards_a_binding_that_disappeared``,
 ``test_a_const_reference_caller_carries_no_copy_of_the_body``,
 ``test_a_cres_derive_reached_as_a_constant_heals_too`` and
-``test_an_upgraded_foreign_wrapper_is_lowered_uncacheable``.
+``test_an_upgraded_foreign_wrapper_is_lowered_uncacheable``. The refused-alias
+shape is pinned in ``test/utils/test_derive_wap.py``, by
+``test_two_derives_over_different_c_pointers_are_not_collapsed_onto_one_alias``
+and ``test_a_warm_const_caller_of_a_collided_derive_still_runs_its_own_body``.
 Alias content-addressing and cross-file callers
 ------------------------------------------------
 

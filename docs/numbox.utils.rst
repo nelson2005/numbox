@@ -79,9 +79,11 @@ content fingerprint alongside the module, qualname, signature and jit options, a
 lowering emits an external reference to that name. The caller is then cacheable, carries no
 copy of the body, and is validated on load by the same guard that covers a ``@proxy``
 binding's cfunc alias, so editing the body renames the alias and the stale entry is discarded
-and recompiled. :func:`~numbox.utils.derive_wap.rewrap_derive` has no Python function to
-fingerprint, so a wrapper it upgrades gets a baked address and an uncacheable caller instead.
-:doc:`numbox.core.proxy` covers the alias machinery and the guard.
+and recompiled. Two shapes get a baked address and an uncacheable caller instead: a wrapper
+:func:`~numbox.utils.derive_wap.rewrap_derive` upgraded, whose body nobody present can
+identify, and a second derive whose alias is already bound to a different body.
+:doc:`numbox.core.proxy` covers the alias machinery and the guard, and why guessing at the
+first shape's body would be worse than declining to name it.
 
 The three slots are directly observable through
 :func:`numbox.utils.lowlevel.get_func_tuple`, which is the clearest way to see what the type

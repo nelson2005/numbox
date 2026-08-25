@@ -628,14 +628,17 @@ def test_a_cres_derive_reached_as_a_constant_heals_too(tmp_path):
 
 
 def test_an_upgraded_foreign_wrapper_is_lowered_uncacheable(tmp_path):
-    """``rewrap_derive`` has no body to fingerprint, so its constant callers must not be cached at all.
+    """``rewrap_derive`` cannot say which body it holds, so its constant callers must not be cached at all.
 
-    A foreign ``CompileResultWAP`` carries a compile result and nothing else. Nothing there names the body in
-    a way that would change when the body does -- ``fndesc`` is blind to it, and a compile result numba
-    restored from its own cache has dropped the Python function entirely -- so no alias can be minted that
-    would re-key a warm caller. The lowering bakes the address instead, which leaves a dynamic global, so
-    numba declines to cache such a caller and says so. That is the safe half of the trade: the caller is
-    recompiled in every process and therefore always runs the current body.
+    A foreign ``CompileResultWAP`` carries a compile result and nothing else, and nobody who could say which
+    body it holds is present to say so. A function of the right name *is* reachable from it, warm as well as
+    cold -- ``fndesc.lookup_module()`` and ``fndesc.qualname`` find one, and it mints the same alias in both
+    -- but that is a guess the compile result cannot check: the name may since have been rebound, wrapped or
+    deleted. A wrong guess makes the caller cacheable against an alias content-addressed on some other
+    function, which then never moves when the body the caller calls is edited, so it is worse than no alias
+    rather than better. The lowering bakes the address instead, which leaves a dynamic global, so numba
+    declines to cache such a caller and says so. That is the safe half of the trade: the caller is recompiled
+    in every process and therefore always runs the current body.
 
     Deliberately asserted rather than left unpinned: an implementation that started minting an alias out of
     whatever a compile result happens to expose would pass a cold run and re-key nothing on a warm one.
@@ -693,7 +696,7 @@ def test_an_upgraded_foreign_wrapper_is_lowered_uncacheable(tmp_path):
 
     env = _probe_env(tmp_path, "nbcache")
     cold = _warm(probe, env)
-    assert cold["ALIAS"] == "None", f"an alias was minted for a wrapper with no body to fingerprint: {cold}"
+    assert cold["ALIAS"] == "None", f"an alias was minted for a wrapper whose body was only guessed at: {cold}"
     assert cold["RESULT"] == "11.0", cold
 
     warm = _warm(probe, env)

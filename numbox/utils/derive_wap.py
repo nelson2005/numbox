@@ -437,12 +437,14 @@ def lower_constant_derive_function_type(context, builder, typ, pyval):
     what ``@proxy`` exists to avoid, static linking of the callee's LLVM into the
     caller.
 
-    Without an alias -- :func:`rewrap_derive` over a foreign wrapper, which has no
-    Python function to fingerprint -- the address is baked instead. That leaves a
-    live dynamic global, so numba declines to cache the caller and says so; such a
-    caller is recompiled in every process and therefore always runs the current
-    body. Uncacheable is the honest reading of "this body has no name that would
-    change when it does", and it is the safe half of the trade.
+    Without an alias -- :func:`rewrap_derive` over a foreign wrapper, whose body is
+    identified by a guess rather than by the caller that compiled it, or a second
+    derive whose alias is already bound to another body (see
+    :func:`_publish_jit_alias`) -- the address is baked instead. That leaves a live
+    dynamic global, so numba declines to cache the caller and says so; such a caller
+    is recompiled in every process and therefore always runs the current body.
+    Uncacheable is the honest reading of "no name here identifies this body", and it
+    is the safe half of the trade.
 
     There is deliberately no fallback to the entry point's mangled name. A value
     of this type always takes the propagating call, so a `jit_addr` that failed to
