@@ -222,3 +222,44 @@ def test_a_ctypes_pointer_built_from_an_address_stays_unfingerprintable():
     fp = proto(ctypes.cast(libm.floor, ctypes.c_void_p).value)
     with pytest.raises(_Unfingerprintable):
         _canon_value(fp, set())
+
+
+def test_two_python_callbacks_sharing_a_name_are_not_canonicalized_alike():
+    """A Python callback is not a library symbol, and must not be keyed as if it were.
+
+    ``_objects["0"]`` holds the loaded library for a pointer taken off one, but for a
+    callback built from a Python function it holds the CThunkObject instead, which has no
+    ``_name``. Reading that as a library folded the ``None`` into the key, so two
+    unrelated callbacks that happened to share a ``__name__`` -- which any decorator
+    copying ``__name__`` arranges -- canonicalized alike, and the alias they mint stopped
+    telling them apart.
+    """
+    import ctypes
+
+    proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+    one = proto(lambda x: x + 1.0)
+    two = proto(lambda x: x + 2.0)
+    one.__name__ = two.__name__ = "cb"
+
+    assert one(1.0) != two(1.0), "the two callbacks are not distinguishable to begin with"
+    for cb in (one, two):
+        with pytest.raises(_Unfingerprintable):
+            _canon_value(cb, set())
+
+
+def test_unset_and_empty_argtypes_are_canonicalized_apart():
+    """``argtypes = None`` and ``argtypes = ()`` are different, and folded to one string.
+
+    numba refuses a call through a pointer whose ``argtypes`` is unset and accepts one
+    declared to take nothing, so the two cannot share a canonical form.
+    """
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take a symbol from")
+    unset = open_libm().floor
+    assert unset.argtypes is None, "ctypes stopped leaving argtypes unset by default"
+    empty = open_libm().floor
+    empty.argtypes = ()
+    assert _canon_value(unset, set()) != _canon_value(empty, set()), (
+        "an unset argtypes and an empty one collapsed onto one canonical form"
+    )

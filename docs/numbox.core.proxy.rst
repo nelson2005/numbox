@@ -94,6 +94,16 @@ the name today. Both lose cross-process caching, which is the price of a name th
 does not identify what it names, and a
 :class:`~numbox.core.proxy.proxy.AliasCollisionWarning` says so.
 
+Reaching an alias twice is usually not a collision at all. The same body is
+registered again whenever a module is reloaded or a factory is called twice with
+equal arguments, and both registrations name the same code, so the alias is simply
+re-pointed at the newly compiled address and nothing is retired. The two cases are
+told apart by the values the fingerprint could not canonicalize: two bodies that
+fingerprint alike are the same body except in those, so comparing them answers
+whether one body was compiled twice or two bodies met on one name. That comparison
+only has to hold inside the current process, which is why it may look at an address
+where the fingerprint may not.
+
 Because the alias encodes the body, changing a proxied binding's **signature or
 body renames its alias**. numba's cache key for a *caller* is callee-blind, so a
 ``cache=True`` caller in another file cache-hits unchanged after such a change

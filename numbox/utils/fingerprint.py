@@ -19,7 +19,7 @@ import dis
 import hashlib
 
 from types import CodeType, FunctionType, ModuleType
-from typing import Any
+from typing import Any, Optional, Sequence
 
 import numpy as np
 
@@ -109,23 +109,43 @@ def _canon_value(value: Any, seen: set[int]) -> str:
 
 
 def _ctypes_func_key(value: Any) -> str:
-    """Library-and-symbol identity of a ctypes function pointer.
+    """Identity of a ctypes function pointer: the library it was opened under, and the symbol.
 
-    A pointer reached by attribute access on a loaded library carries both, and
-    both survive into the next process. One built from a raw address carries
-    neither: two of those differ only by an address ASLR moves, so folding it
-    would buy discrimination at the cost of the process-stability the whole
-    fingerprint exists for. Those raise, and the caller decides what to do with
-    a value it cannot tell apart from another.
+    A pointer reached by attribute access on a loaded library carries both, and both
+    survive into the next process. What is folded is the *string* the library was opened
+    with rather than the library the loader resolved it to, so two handles on one library
+    opened under a soname and under an absolute path canonicalize differently. That is
+    over-discrimination: it costs a recompile the load-time guard heals, never a wrong
+    answer.
+
+    A pointer with no symbol name to fold carries no identity that means the same thing
+    next run. One built from a raw address is the common case, and two of those differ
+    only by an address ASLR moves; a prototype built over a library, ``proto(("floor",
+    lib))``, and a Windows lookup by ordinal are the same problem for a different reason,
+    since ctypes names neither. Folding an address would buy discrimination at the cost of
+    the process-stability the whole fingerprint exists for, so all three raise and the
+    caller decides what to do with a value it cannot tell apart from another.
+
+    The calling convention is folded because numba selects the call's ABI from it on
+    win32: a symbol reached through ``CDLL`` and the same symbol reached through
+    ``WinDLL`` are two different calls, and sharing one alias would pair a caller with a
+    body at the wrong convention.
     """
     name = getattr(value, "__name__", None)
     objects = getattr(value, "_objects", None)
     lib = objects.get("0") if isinstance(objects, dict) else None
-    if name is None or lib is None:
-        raise _Unfingerprintable("ctypes function pointer built from an address")
+    # Only a library carries ``_name``. A Python callback's ``_objects["0"]`` is its
+    # CThunkObject, which does not, and folding the None would collapse every callback
+    # sharing a ``__name__`` onto one key.
+    lib_name = getattr(lib, "_name", None)
+    if name is None or not isinstance(lib_name, str) or not lib_name:
+        raise _Unfingerprintable("ctypes function pointer with no library and symbol name")
     restype = getattr(getattr(value, "restype", None), "__name__", None)
-    argtypes = ",".join(getattr(a, "__name__", "?") for a in (getattr(value, "argtypes", None) or ()))
-    return f"{getattr(lib, '_name', None)}:{name};{restype}({argtypes})"
+    argtypes = getattr(value, "argtypes", None)
+    # Unset and empty are different: numba rejects a call through the first and accepts
+    # the second, so they must not fold together.
+    args = "<unset>" if argtypes is None else ",".join(getattr(a, "__name__", "?") for a in argtypes)
+    return f"{lib_name}:{name};{restype}({args});flags={getattr(type(value), '_flags_', None)}"
 
 
 def _fingerprint_codeobj(code: CodeType, seen: set[int]) -> str:
@@ -275,7 +295,38 @@ def _fingerprint_function(func: FunctionType, seen: set[int]) -> str:
     )
 
 
-def _fingerprint_function_best_effort(func: FunctionType) -> str:
+def _opaque_values_match(old: Sequence[Any], new: Sequence[Any]) -> bool:
+    """Whether two runs of the best-effort walker stood on the same un-canonical values.
+
+    Two bodies that fingerprint alike are the same body except in whatever the walker
+    could not canonicalize, so comparing exactly those values answers whether they are
+    the same body. The comparison only has to hold within one process, which is why it
+    may do what the fingerprint may not and look at an address.
+
+    Identity settles the ordinary case: reloading a module rebinds the same
+    ``@intrinsic`` object, and a factory called twice closes over the same one.
+    Equality is tried next for values that define it. A ctypes function pointer defines
+    neither, so compare the address it holds.
+    """
+    if len(old) != len(new):
+        return False
+    for a, b in zip(old, new):
+        if a is b:
+            continue
+        if isinstance(a, ctypes._CFuncPtr) and isinstance(b, ctypes._CFuncPtr):
+            if ctypes.cast(a, ctypes.c_void_p).value == ctypes.cast(b, ctypes.c_void_p).value:
+                continue
+            return False
+        try:
+            if bool(a == b):
+                continue
+        except Exception:  # nosec B112 - an object that cannot answer == is not a match
+            pass
+        return False
+    return True
+
+
+def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list] = None) -> str:
     """Best-effort function fingerprint that never raises.
 
     ``_fingerprint_function`` raises ``_Unfingerprintable`` on the *first* value
@@ -290,6 +341,11 @@ def _fingerprint_function_best_effort(func: FunctionType) -> str:
     ``_fingerprint_function``'s raising contract serves (``compile_kernel``,
     ``digest``). Process-stable: every placeholder is derived from a type name,
     never an address.
+
+    A placeholder is where two different bodies can still meet on one fingerprint. Pass
+    ``opaque`` to collect the values that got one, in walk order, so a caller holding two
+    equal fingerprints can ask :func:`_opaque_values_match` whether they came from one
+    body or from two the fingerprint could not separate.
     """
     seen: set[int] = set()
 
@@ -297,6 +353,8 @@ def _fingerprint_function_best_effort(func: FunctionType) -> str:
         try:
             return _canon_value(value, seen)
         except (_Unfingerprintable, RecursionError):
+            if opaque is not None:
+                opaque.append(value)
             return f"<opaque:{type(value).__name__}>"
 
     def _canon_const(const: object) -> str:

@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import textwrap
+import warnings
 
 import numpy as np
 import pytest
@@ -594,3 +595,85 @@ def test_bodies_the_fingerprint_cannot_separate_are_detected_rather_than_rebound
 
     assert call_first(2.5) == 2.0
     assert call_second(2.5) == 3.0
+
+
+def _make_scaling_binding(scale):
+    """A factory whose body captures only values the fingerprint canonicalizes."""
+    @proxy(float64(float64))
+    def scaled(x):
+        return scale * x
+    return scaled
+
+
+def _make_intrinsic_binding():
+    """A factory whose body reads a global the fingerprint cannot canonicalize.
+
+    ``_call_lib_func`` is an ``@intrinsic``, which has no canonical form, so this body
+    fingerprints through the best-effort walker and its digest carries a placeholder
+    where the intrinsic was. That placeholder is the only place two different bodies can
+    still meet on one alias, so it is the path the re-registration check has to get right.
+    """
+    @proxy(float64(float64))
+    def flr(x):
+        return _call_lib_func("floor", (x,))
+    return flr
+
+
+def test_one_body_registered_twice_keeps_its_alias():
+    """Registering the same body again is not a collision, and must not be read as one.
+
+    A factory called twice with equal arguments builds one body twice, and so does
+    reloading a module. Both reach the alias the first registration already holds, but
+    both name the same code, so re-pointing it is correct and is what happened before the
+    collision check existed. Reading it as a collision retires the alias, which discards
+    every warm caller of it in this and every later process, for nothing.
+    """
+    from numbox.core.proxy.proxy import AliasCollisionWarning, _ABSENT_ALIASES
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", AliasCollisionWarning)
+        first = _make_scaling_binding(2.0)
+        second = _make_scaling_binding(2.0)
+
+    assert first._numbox_proxy_alias == second._numbox_proxy_alias, (
+        "one body registered twice was handed two different aliases"
+    )
+    assert first._numbox_proxy_alias not in _ABSENT_ALIASES, (
+        "one body registered twice retired its own alias, so every warm caller recompiles"
+    )
+
+    @njit(float64(float64))
+    def call(x):
+        return second(x)
+
+    assert call(3.0) == 6.0
+
+
+def test_a_body_over_an_opaque_value_registered_twice_keeps_its_alias():
+    """The same, for the fingerprint path that carries a placeholder.
+
+    Every shipped numbox binding takes this path, because every one of them reads the
+    ``@intrinsic`` ``_call_lib_func``. Comparing the two registrations by the address
+    they compiled to reports a collision for all of them -- one ``importlib.reload`` of
+    a bindings module retired all 42 libm aliases -- so the values behind the
+    placeholders are what has to be compared instead.
+    """
+    from numbox.core.proxy.proxy import AliasCollisionWarning, _ABSENT_ALIASES
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", AliasCollisionWarning)
+        first = _make_intrinsic_binding()
+        second = _make_intrinsic_binding()
+
+    assert first._numbox_proxy_alias == second._numbox_proxy_alias, (
+        "one body registered twice was handed two different aliases"
+    )
+    assert first._numbox_proxy_alias not in _ABSENT_ALIASES, (
+        "one body registered twice retired its own alias, so every warm caller recompiles"
+    )
+
+    @njit(float64(float64))
+    def call(x):
+        return second(x)
+
+    assert call(2.5) == 2.0
