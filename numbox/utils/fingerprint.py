@@ -301,6 +301,29 @@ def _fingerprint_function_best_effort(func: FunctionType) -> str:
     )
 
 
+def _body_fingerprint(func: FunctionType) -> str:
+    """Content fingerprint of ``func``'s body, for alias disambiguation.
+
+    Reuses the deep walker so bytecode, constants, default arguments, closure
+    cell values and referenced-global values all count. The common numbox
+    binding body references the ``@intrinsic`` ``_call_lib_func``, which has no
+    canonical form, so the strict walker raises; the best-effort walker then
+    still captures the constants/closure/defaults/globals it *can* canonicalize
+    (substituting an opaque type placeholder for the rest). Two bodies that
+    differ only in a captured value -- a factory over per-instance C symbol
+    names, or a literal-only redefinition -- therefore get distinct aliases,
+    not one collapsed to bytecode alone.
+
+    Shared by both alias minters: `numbox.core.proxy.proxy` for a proxied body's
+    cfunc wrapper and `numbox.utils.derive_wap` for a derive's numba-callconv
+    entry point.
+    """
+    try:
+        return _fingerprint_function(func, set())
+    except (_Unfingerprintable, RecursionError):
+        return _fingerprint_function_best_effort(func)
+
+
 # ---- Effective jit flags ----
 #
 # Shared by every content-addressed cache key that must re-key when the resolved

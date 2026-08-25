@@ -85,7 +85,7 @@ def cres(sig, **kwargs):
         assert len(sigs) == 1, f"Ambiguous signature, {sigs}"
         func_cres = func_jit.get_compile_result(sigs[0])
         if jit_addr_supported():
-            return DeriveWAP(func_cres)
+            return DeriveWAP(func_cres, py_func=func, jit_options=kwargs)
         return CompileResultWAP(func_cres)
     return _
 

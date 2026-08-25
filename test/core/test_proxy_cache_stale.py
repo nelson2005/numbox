@@ -17,11 +17,12 @@ caching off or invalidates the whole directory cannot pass. The premise -- warm 
 re-keys one binding and only one -- is pinned separately, by tests that never go near the crash.
 
 A caller that reaches a binding's ``.as_func`` as a compile-time constant is the mirror shape, and it is covered
-here too. Such a caller links the body's machine code into its own object instead of referencing the alias, which
-is what makes numba willing to cache it at all and, in the same stroke, leaves the guard's prefix scan nothing to
-find. Editing the body then serves the old binary silently and indefinitely, and a binding that vanished rather
-than changed is served just the same. Those tests characterize that outcome rather than pin a fix, and say in
-their docstrings what a change to it would look like.
+here too. Such a caller references a second alias, published over the derive's numba-callconv entry point rather
+than over its cfunc wrapper, and folding the same body fingerprint. Every scenario below therefore applies to
+both routes and must come out the same on both: an edited body re-keys the caller, and a binding that vanished
+is discarded rather than called. What the const route buys on top is that the body is not linked into the
+caller's object at all, so nothing about the caller changes when the body grows past the size LLVM is willing
+to inline -- pinned directly, by reading the object numba cached.
 """
 import os
 import subprocess
@@ -432,20 +433,19 @@ def test_a_const_reference_caller_becomes_cacheable(tmp_path):
     )
 
 
-def test_a_const_reference_caller_serves_a_stale_body_after_an_edit(tmp_path):
-    """Characterization: the cacheability above is bought with a stale binary that the alias guard cannot see.
+def test_a_const_reference_caller_heals_after_an_edit(tmp_path):
+    """Editing the proxied body must re-key the const route too, not just the dispatcher route.
 
-    A const reference links the proxied body's machine code straight into the caller's object, so nothing about
-    the caller mentions the ``numbox_pxy_`` alias and the guard's early exit takes it every time. Edit the body
-    without clearing the cache and the caller keeps returning the old number, while the same process reaches the
-    same binding through two other routes and gets the new one. The only ``StaleProxyCacheWarning`` names the
-    dispatcher-path caller that healed correctly, never the one handing back wrong numbers, and the run after
-    that is silent and still wrong.
+    Lowering the constant emits an extern reference to the derive's callconv alias, which folds a
+    fingerprint of the body, so an edit renames it exactly as it renames the cfunc alias. The warm
+    caller therefore loads an object importing a symbol this process never registered, the guard
+    discards it, and it recompiles against the new body -- the same treatment, through the same
+    guard, the dispatcher route already got. Both routes and the direct call must agree on the new
+    number, and the discard must be announced naming the const caller by name.
 
-    Written to flip. If the guard is ever extended to cover a body linked in rather than referenced by alias,
-    ``const_scale`` will heal and the first assertion below will fail; that failure is the report that the hazard
-    is gone, not a regression. ``const_offset`` and ``disp_offset`` hold the module's control rule meanwhile: a
-    heal bought by refusing to serve the whole directory would show up on them first.
+    ``const_offset`` and ``disp_offset`` hold the module's control rule: a heal bought by refusing
+    to serve the whole directory would show up on them first. The last run pins the heal as a
+    one-time recompile rather than a permanent one.
     """
     probe = _write_const_caller_scenario(tmp_path)
     env = _probe_env(tmp_path, "nbcache")
@@ -453,39 +453,254 @@ def test_a_const_reference_caller_serves_a_stale_body_after_an_edit(tmp_path):
 
     _edit_body(tmp_path)
     fields = _fields(_run_probe(probe, env))
+    assert _results(fields, _CONST_NEW_BODY) == _CONST_NEW_BODY, (
+        f"a caller served a stale body after the edit: {_results(fields, _CONST_NEW_BODY)}"
+    )
     if numba_version < 61:
-        assert _results(fields, _CONST_NEW_BODY) == _CONST_NEW_BODY, (
-            f"a version with no `jit_addr` slot served a stale body: {_results(fields, _CONST_NEW_BODY)}"
-        )
         return
 
-    assert fields["RESULT_const_scale"] == _CONST_OLD_BODY["const_scale"], (
-        f"the const caller healed -- if the guard now covers a linked-in body this test has done its job: "
-        f"{_results(fields, _CONST_NEW_BODY)}"
-    )
-    assert fields["STATS_const_scale"] == "served", f"the old number came from somewhere else: {fields}"
-    assert fields["RESULT_disp_scale"] == _CONST_NEW_BODY["disp_scale"], (
-        f"the dispatcher-path caller did not heal: {fields['RESULT_disp_scale']}"
-    )
-    assert fields["RESULT_direct"] == _CONST_NEW_BODY["direct"], (
-        f"calling the binding itself did not reach the new body: {fields['RESULT_direct']}"
+    assert fields["STATS_const_scale"] == "compiled", (
+        f"the const caller reached the new number without being recompiled: {_stats(fields, _CONST_FNS)}"
     )
     assert fields["STATS_const_offset"] == "served" and fields["STATS_disp_offset"] == "served", (
         f"the untouched binding's callers were invalidated too: {_stats(fields, _CONST_FNS)}"
     )
-    assert "const_callers.disp_scale-" in fields["WARNINGS"], (
-        f"the one entry that was discarded went unannounced: {fields['WARNINGS']}"
-    )
-    assert "const_callers.const_scale-" not in fields["WARNINGS"], (
-        f"the caller serving the old number was named after all: {fields['WARNINGS']}"
-    )
+    for named in ("const_callers.const_scale-", "const_callers.disp_scale-"):
+        assert named in fields["WARNINGS"], f"the discard of {named} went unannounced: {fields['WARNINGS']}"
 
     again = _fields(_run_probe(probe, env))
-    assert again["RESULT_const_scale"] == _CONST_OLD_BODY["const_scale"], (
-        f"the stale entry healed itself on a later run: {again['RESULT_const_scale']}"
+    assert _results(again, _CONST_NEW_BODY) == _CONST_NEW_BODY, _results(again, _CONST_NEW_BODY)
+    assert _stats(again, _CONST_FNS) == dict.fromkeys(_CONST_FNS, "served"), (
+        f"the recompile was not written back, so every later run pays for it: {_stats(again, _CONST_FNS)}"
     )
     assert "StaleProxyCacheWarning" not in again["WARNINGS"], (
-        f"every later run is silent about the entry it is still serving: {again['WARNINGS']}"
+        f"the heal repeats forever: {again['WARNINGS']}"
+    )
+
+
+def test_a_const_reference_caller_carries_no_copy_of_the_body(tmp_path):
+    """The caller's cached object must import the derive's alias and hold no copy of the body.
+
+    This is the invariant the two heal tests above rest on, read straight off the object numba wrote rather
+    than inferred from behaviour. A body large enough that LLVM declines to inline it is the discriminating
+    case: linking the callee's library in leaves a *weak* definition of the body's mangled name inside the
+    caller, so which body such a caller runs depends on whether numba's per-process compile counter -- which
+    that name folds and numba's cache key does not -- still lines up. Referencing the alias instead leaves an
+    undefined symbol and nothing else, so the question cannot arise, and the guard has a name to check.
+
+    The body's own mangled name is searched for as raw bytes rather than through the symbol reader, because
+    an embedded copy is exactly the case where that name is *defined* rather than imported.
+    """
+    if not jit_addr_supported():
+        pytest.skip("no `jit_addr` slot, so `.as_func` is a plain CompileResultWAP and there is no alias")
+
+    stmts = "\n".join(f"            acc = acc * {i + 2}.0 + x" for i in range(60))
+    (tmp_path / "big_binding.py").write_text(textwrap.dedent(f'''
+        """A proxied body past the size LLVM is willing to inline into its caller."""
+        from numba import types
+        from numbox.core.proxy.proxy import proxy
+
+        SIG = types.float64(types.float64)
+
+
+        @proxy(SIG, jit_options={{"cache": True}})
+        def big(x):
+            acc = x
+{stmts}
+            return acc
+    '''), encoding="utf-8")
+    (tmp_path / "big_caller.py").write_text(textwrap.dedent('''
+        """A cached caller reaching the big body as a compile-time constant."""
+        from numba import njit
+        from numba.core.types import float64
+
+        from big_binding import big
+
+        BIG_AS_FUNC = big.as_func
+
+
+        @njit(float64(float64), cache=True)
+        def const_big(x):
+            return BIG_AS_FUNC(x) + 1.0
+    '''), encoding="utf-8")
+    probe = tmp_path / "big_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import big_binding
+        from big_caller import const_big
+
+        print("ALIAS", big_binding.big.as_func.jit_alias, flush=True)
+        print("MANGLED", big_binding.big.as_func.cres.fndesc.llvm_func_name, flush=True)
+        print("RESULT", const_big(2.0), flush=True)
+        print("DONE ok", flush=True)
+    '''), encoding="utf-8")
+
+    env = _probe_env(tmp_path, "nbcache")
+    fields = _warm(probe, env)
+
+    objects = [f.read_bytes() for f in (tmp_path / "nbcache").rglob("big_caller.const_big-*.nbc")]
+    assert objects, "the const caller wrote no cache file, so there is nothing to read"
+    imported = set()
+    for blob in objects:
+        start = blob.find(b"\x7fELF")
+        assert start >= 0, "the cached payload holds no ELF object to read"
+        imported |= _undefined_symbols(blob[start:])
+        assert fields["MANGLED"].encode() not in blob, (
+            f"the caller's object still carries the body's mangled name {fields['MANGLED']}, so a copy of the "
+            "body was linked in rather than referenced"
+        )
+    assert fields["ALIAS"] in imported, (
+        f"the caller imports no alias for the derive, so the guard has nothing to check: {sorted(imported)}"
+    )
+
+
+def test_a_cres_derive_reached_as_a_constant_heals_too(tmp_path):
+    """``numbox.utils.highlevel.cres`` is the other producer of a derive, and it must behave the same.
+
+    ``@proxy`` is the door every test above goes through, but ``cres`` mints a ``DeriveWAP`` directly, with no
+    proxy dispatcher anywhere in the process. Editing its body has to rename the alias and re-key the warm
+    caller exactly as it does for a proxied binding, or half the surface is unprotected.
+    """
+    if not jit_addr_supported():
+        pytest.skip("no `jit_addr` slot, so `cres` returns a plain CompileResultWAP and there is no alias")
+
+    binding = tmp_path / "cres_binding.py"
+
+    def write(factor):
+        before = binding.stat() if binding.exists() else None
+        binding.write_text(textwrap.dedent(f'''
+            """A derive minted by `cres`, with no proxy involved."""
+            from numba.core.types import float64
+            from numbox.utils.highlevel import cres
+
+            SIG = float64(float64)
+
+
+            @cres(SIG, cache=True)
+            def scale(x):
+                return x * {factor}
+        '''), encoding="utf-8")
+        if before is not None:
+            os.utime(binding, (before.st_mtime + 10,) * 2)
+
+    write("2.0")
+    (tmp_path / "cres_caller.py").write_text(textwrap.dedent('''
+        """A cached caller reaching the `cres` derive as a compile-time constant."""
+        from numba import njit
+        from numba.core.types import float64
+
+        from cres_binding import scale
+
+
+        @njit(float64(float64), cache=True)
+        def const_scale(x):
+            return scale(x) + 1.0
+    '''), encoding="utf-8")
+    probe = tmp_path / "cres_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import warnings
+
+        import cres_binding
+
+        print("ALIAS", cres_binding.scale.jit_alias, flush=True)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            from cres_caller import const_scale
+            print("RESULT", const_scale(5.0), flush=True)
+        hits = sum(const_scale.stats.cache_hits.values())
+        misses = sum(const_scale.stats.cache_misses.values())
+        print("STATS", "served" if hits and not misses else "compiled" if misses else f"{hits}/{misses}")
+        print("WARNINGS", " | ".join(sorted({w.category.__name__ for w in caught})), flush=True)
+        print("DONE ok", flush=True)
+    '''), encoding="utf-8")
+
+    env = _probe_env(tmp_path, "nbcache")
+    cold = _warm(probe, env)
+    assert cold["RESULT"] == "11.0", cold
+    warm = _warm(probe, env)
+    assert warm["STATS"] == "served", f"the `cres` const caller did not cache: {warm}"
+
+    write("3.0")
+    edited = _fields(_run_probe(probe, env))
+    assert edited["ALIAS"] != cold["ALIAS"], "the edited body kept its alias"
+    assert edited["RESULT"] == "16.0", f"the `cres` const caller served a stale body: {edited}"
+    assert edited["STATS"] == "compiled", f"the new number arrived without a recompile: {edited}"
+    assert "StaleProxyCacheWarning" in edited["WARNINGS"], f"the discard was not announced: {edited}"
+
+
+def test_an_upgraded_foreign_wrapper_is_lowered_uncacheable(tmp_path):
+    """``rewrap_derive`` has no body to fingerprint, so its constant callers must not be cached at all.
+
+    A foreign ``CompileResultWAP`` carries a compile result and nothing else. Nothing there names the body in
+    a way that would change when the body does -- ``fndesc`` is blind to it, and a compile result numba
+    restored from its own cache has dropped the Python function entirely -- so no alias can be minted that
+    would re-key a warm caller. The lowering bakes the address instead, which leaves a dynamic global, so
+    numba declines to cache such a caller and says so. That is the safe half of the trade: the caller is
+    recompiled in every process and therefore always runs the current body.
+
+    Deliberately asserted rather than left unpinned: an implementation that started minting an alias out of
+    whatever a compile result happens to expose would pass a cold run and re-key nothing on a warm one.
+    """
+    if not jit_addr_supported():
+        pytest.skip("no `jit_addr` slot, so `rewrap_derive` returns its argument unchanged")
+
+    (tmp_path / "foreign_binding.py").write_text(textwrap.dedent('''
+        """A derive built directly against numba and upgraded by `rewrap_derive`."""
+        from numba import njit
+        from numba.core.types import float64
+        from numba.core.types.function_type import CompileResultWAP
+
+        from numbox.utils.derive_wap import rewrap_derive
+
+        SIG = float64(float64)
+
+
+        @njit(SIG, cache=True)
+        def _body(x):
+            return x * 2.0
+
+
+        derive = rewrap_derive(CompileResultWAP(_body.get_compile_result(SIG)))
+    '''), encoding="utf-8")
+    (tmp_path / "foreign_caller.py").write_text(textwrap.dedent('''
+        """A cached caller reaching the upgraded foreign wrapper as a compile-time constant."""
+        from numba import njit
+        from numba.core.types import float64
+
+        from foreign_binding import derive
+
+
+        @njit(float64(float64), cache=True)
+        def const_foreign(x):
+            return derive(x) + 1.0
+    '''), encoding="utf-8")
+    probe = tmp_path / "foreign_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import warnings
+
+        import foreign_binding
+
+        print("ALIAS", foreign_binding.derive.jit_alias, flush=True)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            from foreign_caller import const_foreign
+            print("RESULT", const_foreign(5.0), flush=True)
+        hits = sum(const_foreign.stats.cache_hits.values())
+        misses = sum(const_foreign.stats.cache_misses.values())
+        print("STATS", "served" if hits and not misses else "compiled" if misses else f"{hits}/{misses}")
+        print("REFUSED", any("dynamic globals" in str(w.message) for w in caught), flush=True)
+        print("DONE ok", flush=True)
+    '''), encoding="utf-8")
+
+    env = _probe_env(tmp_path, "nbcache")
+    cold = _warm(probe, env)
+    assert cold["ALIAS"] == "None", f"an alias was minted for a wrapper with no body to fingerprint: {cold}"
+    assert cold["RESULT"] == "11.0", cold
+
+    warm = _warm(probe, env)
+    assert warm["STATS"] == "compiled", f"the uncacheable caller was served from cache after all: {warm}"
+    assert warm["REFUSED"] == "True", f"numba cached it without announcing anything: {warm}"
+    assert not list((tmp_path / "nbcache").rglob("foreign_caller.const_foreign-*.nbc")), (
+        "a caller numba declined to cache still left a cache file behind"
     )
 
 
@@ -700,27 +915,20 @@ def test_a_binding_that_disappeared_is_discarded_rather_than_called(tmp_path):
     assert "StaleProxyCacheWarning" in fields["WARNINGS"], f"the discard was not announced: {fields['WARNINGS']}"
 
 
-def test_a_const_reference_caller_calls_a_binding_that_disappeared(tmp_path):
-    """Characterization: the const-route counterpart of the invariant above, which the const route does not uphold.
+def test_a_const_reference_caller_discards_a_binding_that_disappeared(tmp_path):
+    """The const-route counterpart of the invariant above, which it must uphold identically.
 
-    Reaching the very same vanished binding as a compile-time constant rather than through its dispatcher links
-    the body's machine code into the caller's own object, so that object names no ``numbox_pxy_`` alias at all,
-    the guard takes its early exit, and the warm entry is served in a process where the binding does not exist.
-    The caller hands back the vanished binding's own number, while the identical source against a cold cache
-    raises the typing error the test above pins. Warm and cold therefore disagree about whether the binding can
-    be called, and the strict knob is no help: the documented way to be told an entry went stale never sees it.
+    Reaching the very same vanished binding as a compile-time constant rather than through its dispatcher
+    emits an extern reference to the derive's callconv alias. Nothing registers that alias in a process where
+    the binding took the absent path, so the guard finds an unresolvable ``numbox_pxy_`` import, discards the
+    entry and recompiles it -- reaching the clean typing error a cold cache gives. Warm and cold must agree
+    about whether the binding can be called, which is the whole point.
 
-    What is recorded here is a known gap, not a wanted outcome, so a green run is not an endorsement of it. The
-    defect is in the constant lowering that links the body in, and closing it is left to separate work. Were that
-    lowering ever changed to discard such a caller, the warm run would raise as the cold one does and the
-    assertions below would fail; that failure is the report that the gap is closed, not a regression.
-
-    The test is worth having because the shape is one a reader adds deliberately, believing it defensive. An
-    unguarded ``scale.as_func`` raises ``AttributeError`` at import where the binding is absent, and keeping the
-    caller's definition inside the ``hasattr`` statement the proxy docstring shows leaves it undefined there, both
-    of them safe. Demoting that guard to a conditional expression is what turns a loud import failure into a silent
-    wrong answer. A body that calls a real C symbol is worse still, dying on a bare segfault with an empty stderr,
-    which is why the body here needs none: the deterministic arm of the same gap is the one a test can assert on.
+    The shape is one a reader adds deliberately, believing it defensive. An unguarded ``scale.as_func`` raises
+    ``AttributeError`` at import where the binding is absent, and keeping the caller's definition inside the
+    ``hasattr`` statement the proxy docstring shows leaves it undefined there, both of them safe. Demoting that
+    guard to a conditional expression is what used to turn a loud import failure into a silent wrong answer,
+    and into a bare segfault with an empty stderr where the body called a real C symbol.
     """
     _write_optional_binding(tmp_path)
     (tmp_path / "const_optional_caller.py").write_text(textwrap.dedent('''
@@ -769,22 +977,19 @@ def test_a_const_reference_caller_calls_a_binding_that_disappeared(tmp_path):
     cold = _fields(_run_probe(probe, cold_env))
     assert cold.get("RAISED") == "TypingError", f"a cold cache did not reach the clean typing error: {cold}"
 
+    assert "RESULT" not in warm, f"the vanished binding was called and returned {warm.get('RESULT')}"
+    assert warm.get("RAISED") == "TypingError", f"the warm run failed in an unexpected way: {warm}"
+    assert warm["STATS"] == "compiled", f"the entry was served rather than discarded: {warm}"
     if not jit_addr_supported():
-        assert warm.get("RAISED") == "TypingError", (
-            "a numba with no `jit_addr` slot cannot cache a const-reference caller at all, so the warm run has "
-            f"to recompile and reach the same error the cold one did: {warm}"
-        )
         return
-
-    assert warm.get("RESULT") == "11.0", f"the warm run stopped serving the vanished binding: {warm}"
-    assert warm["STATS"] == "served", f"that number was recompiled rather than loaded from the cache: {warm}"
-    assert "StaleProxyCacheWarning" not in warm["WARNINGS"], f"the guard saw the const route after all: {warm}"
+    assert "StaleProxyCacheWarning" in warm["WARNINGS"], f"the discard was not announced: {warm}"
 
     strict_env = dict(env)
     strict_env["NUMBOX_PROXY_CACHE_STRICT"] = "1"
-    strict = _run_probe(probe, strict_env)
-    assert strict.returncode == 0, f"strict mode caught the entry the default missed\n{_report(strict)}"
-    assert _fields(strict)["RESULT"] == "11.0", f"strict mode changed the answer without stopping\n{_report(strict)}"
+    strict = _fields(_run_probe(probe, strict_env))
+    assert strict.get("RAISED") == "StaleProxyCacheError", (
+        f"strict mode did not stop at the entry the default heals: {strict}"
+    )
 
 
 def test_the_mach_o_reader_strips_the_leading_underscore(tmp_path):

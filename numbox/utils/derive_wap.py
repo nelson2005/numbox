@@ -61,10 +61,13 @@ The decorators below are numba's public extension API, save for ``lower_constant
 which ``numba.extending`` does not re-export. What they register against is not:
 ``FunctionModel``, ``CompileResultWAP``, ``Conversion``, ``box_function_type`` and
 ``lower_get_wrapper_address`` all sit outside ``numba.extending``, and the constant
-lowering drives ``context.declare_function`` and ``context.active_code_library``
-directly. What does hold is that no numba internals are patched: nothing here
-replaces numba behaviour, it only registers against it.
+lowering reads ``context.call_conv`` and ``context.add_dynamic_addr`` directly. What
+does hold is that no numba internals are patched: nothing here replaces numba
+behaviour, it only registers against it.
 """
+import hashlib
+
+from llvmlite import binding as ll
 from numba.core import cgutils, types
 from numba.core.imputils import lower_cast, lower_constant
 from numba.core.typeconv import Conversion
@@ -75,7 +78,8 @@ from numba.experimental.function_type import (
 )
 from numba.extending import NativeValue, box, register_model, unbox
 
-from numbox.core.configurations import function_struct_has
+from numbox.core.configurations import _ALIAS_PREFIX, function_struct_has
+from numbox.utils.fingerprint import _body_fingerprint
 
 
 __all__ = ["DeriveFunctionType", "DeriveWAP", "jit_addr_supported", "rewrap_derive"]
@@ -130,20 +134,121 @@ def lower_cast_derive_to_function_type(context, builder, fromty, toty, val):
     return val
 
 
+#: Alias name -> the compile result it was published from. Two duties, both required.
+#: ``llvmlite.binding.add_symbol`` records an address, not a reference, so the compiled
+#: body has to be kept alive by something for as long as any caller can jump to that
+#: address, and a `DeriveWAP` is an ordinary object a caller may well drop; and a symbol
+#: a caller was lowered against must keep resolving to the same code for the rest of the
+#: process, so a second `DeriveWAP` over an identically-fingerprinting body reuses the
+#: registration rather than rebinding the name underneath code already compiled.
+_JIT_ALIASES = {}
+
+
+def _stable_jit_alias(func, sig, jit_options=None):
+    """Deterministic, process-stable LLVM symbol name for ``func``'s callconv entry point.
+
+    The sibling of ``numbox.core.proxy.proxy._stable_cfunc_alias``, and deliberately
+    the same construction, for the same reason: ``fndesc.llvm_func_name`` carries a
+    process-local ``v<N>`` abi tag that is no part of numba's cache key, so a cached
+    caller must not reference it by that name. What differs is *which* entry point is
+    published. The cfunc wrapper takes its arguments positionally and cannot carry an
+    exception out; this one is the numba calling convention, returning a status code
+    through a return-value pointer, which is the entry ``jit_addr`` has to hold. They
+    are different functions with different LLVM types, so they need different names --
+    hence the ``cc`` tag, which is folded into the digest as well so that the two can
+    never collide.
+
+    Folding the body fingerprint is what fixes staleness rather than merely relocating
+    it: edit the derive's body and the alias is renamed, so a warm ``cache=True`` caller
+    that baked in the old name references a symbol this process never registered, and
+    the guard in `numbox.core.proxy.proxy` discards that entry and recompiles it. The
+    resolved ``jit_options`` are folded for the same reason they are on the cfunc side:
+    they govern the machine code without appearing in the identity above.
+    """
+    raw = (
+        f"cc.{func.__module__ or ''}.{func.__qualname__}.{sig}."
+        f"{_body_fingerprint(func)}."
+        f"{sorted((jit_options or {}).items(), key=repr)!r}"
+    ).encode("utf-8")
+    safe_name = "".join(c if c.isascii() and c.isalnum() else "_" for c in func.__name__)
+    return f"{_ALIAS_PREFIX}cc_{safe_name}_{hashlib.sha256(raw).hexdigest()[:16]}"
+
+
+def _cache_guard_installed():
+    """Install `numbox.core.proxy.proxy`'s numba cache guard, and say whether it is there.
+
+    An alias is only safe to bake into a cached caller if something notices when it stops
+    resolving. That watcher is the guard `numbox.core.proxy.proxy` installs over numba's
+    cache loads, and until now every alias came from that module, so importing the minter
+    installed the watcher. A derive minted by :func:`numbox.utils.highlevel.cres` breaks
+    that: a process can reach an alias with no ``@proxy`` binding anywhere in it, and an
+    unwatched alias is the worst of both worlds -- a caller cached against a name that,
+    once the body is edited, nothing registers and nothing checks, which is a segfault.
+
+    The import is deferred rather than module-level because `numbox.core.proxy.proxy`
+    imports this module; by the time a wrapper is minted that import has long settled.
+    A failure degrades to ``False``, so the caller falls back to a baked address and an
+    uncacheable caller rather than minting an alias nobody is watching.
+    """
+    try:
+        from numba.core import caching
+        from numbox.core.proxy.proxy import _install_cache_alias_guard
+        _install_cache_alias_guard()
+        return bool(getattr(caching, "_numbox_proxy_alias_guard", False))
+    except Exception:
+        return False
+
+
+def _publish_jit_alias(cres, py_func, jit_options, jit_address):
+    """Publish ``cres``'s callconv entry point under a process-stable alias.
+
+    Returns the alias, or ``None`` when there is no Python function to fingerprint, or when
+    the cache guard could not be installed -- see :class:`DeriveWAP` for what the constant
+    lowering does then.
+
+    Registration happens here, when the wrapper is minted, which is strictly before any
+    caller can be lowered against it: a caller reaches the alias only through this
+    value, and it does not exist yet.
+    """
+    if py_func is None or not _cache_guard_installed():
+        return None
+    alias = _stable_jit_alias(py_func, cres.signature, jit_options)
+    if alias not in _JIT_ALIASES:
+        _JIT_ALIASES[alias] = cres
+        ll.add_symbol(alias, jit_address)
+    return alias
+
+
 class DeriveWAP(CompileResultWAP):
     """``CompileResultWAP`` that also captures the numba-callconv entry point.
 
     ``CompileResultWAP`` records only the cfunc wrapper address, which is the
     entry point that cannot carry an exception out.
+
+    Where the Python function behind the compile result is available it is passed
+    in as `py_func`, together with the `jit_options` it was compiled under, and the
+    callconv entry point is published under a content-addressed alias (see
+    :func:`_stable_jit_alias`). That alias is what a constant reference from jitted
+    code emits, which is what makes such a caller both cacheable and safe to cache.
+
+    Without it -- :func:`rewrap_derive` upgrading a foreign wrapper, which carries
+    the compile result and nothing else -- there is no body to fingerprint, so no
+    alias can be minted that would rename itself when the body changed. The constant
+    lowering bakes the address instead and numba declines to cache the caller, which
+    is the outcome to want: such a caller is recompiled in every process and can
+    never serve a stale body. The choice is made here rather than at lowering, and it
+    comes out the same way in a cold process and in a warm one, so a caller cannot be
+    cached against an alias in one run and lowered without one in the next.
     """
 
-    def __init__(self, cres):
+    def __init__(self, cres, py_func=None, jit_options=None):
         super().__init__(cres)
         self.jit_address = cres.library.get_pointer_to_function(
             cres.fndesc.llvm_func_name)
         if self.jit_address <= 0:
             raise ValueError(
                 f"no callconv entry point for {cres.fndesc.llvm_func_name}")
+        self.jit_alias = _publish_jit_alias(cres, py_func, jit_options, self.jit_address)
 
 
 @typeof_impl.register(DeriveWAP)
@@ -223,32 +328,45 @@ def lower_constant_derive_function_type(context, builder, typ, pyval):
     """Lower a derive reached as a compile-time constant from jitted code.
 
     ``c_addr`` and ``py_addr`` follow numba's own lowering for a
-    ``WrapperAddressProtocol`` value. ``jit_addr`` is declared symbolically and
-    the compile result's library is linked in, which is the pattern numba uses
-    for its ``Dispatcher -> FunctionType`` cast, and which is what makes the
-    entry point resolve as a symbol rather than as a bare pointer.
+    ``WrapperAddressProtocol`` value. ``jit_addr`` holds the callconv entry
+    point, and how it gets there decides everything downstream.
 
-    Resolving it as a symbol is also what makes a constant-lowered derive
-    cacheable at all: the dead ``c_addr``/``py_addr`` globals are eliminated
-    before numba scans the final module, so a caller that only calls the derive
-    reports no dynamic globals and caches. A baked address would leave them live
-    and numba would refuse to cache the caller rather than store an address that
-    is randomized per process.
+    Where the value carries an alias (:func:`_stable_jit_alias`), the entry point
+    is declared as an *external* function of that name and nothing else about the
+    derive enters the caller's module. Three things follow from that one choice.
+    The caller is cacheable, because an extern reference is not a dynamic global,
+    so the dead ``c_addr``/``py_addr`` globals are eliminated before numba scans
+    the final module and the caller reports none. It is safe to cache, because the
+    alias folds a fingerprint of the derive's body: edit the body and the name
+    moves, so the object a warm caller loads imports a symbol nobody registered and
+    the cache guard in `numbox.core.proxy.proxy` discards it and recompiles rather
+    than serving the old numbers -- the same treatment, through the same guard,
+    that a caller of the dispatcher already gets. And which body runs is
+    single-valued, because there is no longer a copy of it in the caller to
+    compete with the definition the alias names.
 
-    That caching is not free: the caller's cached binary binds the derive's
-    code, so an edit to the derive's body in another module is not reliably
-    picked up, and which body such a caller runs is not single-valued. A body
-    small enough to inline leaves no separate definition behind and the caller
-    keeps serving the old one; a larger body is embedded as a weak definition
-    under a mangled name folding numba's per-process compile counter, and the
-    caller serves that embedded copy or whatever currently defines the same
-    name, according to whether the counter has shifted. Clearing the cache is
-    the only remedy and nothing warns.
+    Numba's own ``Dispatcher -> FunctionType`` cast instead declares the mangled
+    name and links the callee's library into the caller. That is what this used to
+    do, and it fails all three: the mangled name folds a per-process compile
+    counter that is no part of numba's cache key, the caller's object carries the
+    body rather than a reference to it, so the guard has no name to check and an
+    edit is served stale indefinitely, and a body too large to inline is embedded
+    as a *weak* definition, leaving the caller running its own copy or whichever
+    definition of that name got there first. Linking it in also gives up exactly
+    what ``@proxy`` exists to avoid, static linking of the callee's LLVM into the
+    caller.
 
-    There is deliberately no fallback to a baked address. A value of this type
-    always takes the propagating call, so a `jit_addr` that failed to resolve
-    would be called unconditionally, and failing the compilation is the only
-    honest outcome.
+    Without an alias -- :func:`rewrap_derive` over a foreign wrapper, which has no
+    Python function to fingerprint -- the address is baked instead. That leaves a
+    live dynamic global, so numba declines to cache the caller and says so; such a
+    caller is recompiled in every process and therefore always runs the current
+    body. Uncacheable is the honest reading of "this body has no name that would
+    change when it does", and it is the safe half of the trade.
+
+    There is deliberately no fallback to the entry point's mangled name. A value
+    of this type always takes the propagating call, so a `jit_addr` that failed to
+    resolve would be called unconditionally, and failing the compilation is the
+    only honest outcome.
     """
     typ = typ.get_precise()
     assert typ.check_signature(pyval.signature())
@@ -257,9 +375,15 @@ def lower_constant_derive_function_type(context, builder, typ, pyval):
         builder, pyval.__wrapper_address__(), info=str(typ))
     sfunc.py_addr = context.add_dynamic_addr(
         builder, id(pyval), info=type(pyval).__name__)
-    fn = context.declare_function(builder.module, pyval.cres.fndesc)
-    sfunc.jit_addr = builder.bitcast(fn, context.get_value_type(types.voidptr))
-    context.active_code_library.add_linking_library(pyval.cres.library)
+    alias = getattr(pyval, "jit_alias", None)
+    if alias is None:
+        sfunc.jit_addr = context.add_dynamic_addr(
+            builder, pyval.jit_address, info=f"{typ} callconv entry point")
+    else:
+        fndesc = pyval.cres.fndesc
+        fnty = context.call_conv.get_function_type(fndesc.restype, fndesc.argtypes)
+        fn = cgutils.get_or_insert_function(builder.module, fnty, alias)
+        sfunc.jit_addr = builder.bitcast(fn, context.get_value_type(types.voidptr))
     return sfunc._getvalue()
 
 

@@ -13,38 +13,14 @@ from numba.extending import intrinsic, overload
 from types import FunctionType as PyFunctionType
 from typing import List, Optional, Tuple
 
-from numbox.core.configurations import _PROXY_CACHE_STRICT_ENV, _strict_cache_mode
+from numbox.core.configurations import _ALIAS_PREFIX, _PROXY_CACHE_STRICT_ENV, _strict_cache_mode
 from numbox.utils.derive_wap import DeriveWAP, jit_addr_supported
-from numbox.utils.fingerprint import (
-    _Unfingerprintable, _fingerprint_function, _fingerprint_function_best_effort,
-)
+from numbox.utils.fingerprint import _body_fingerprint
 from numbox.utils.standard import make_params_strings
-
-
-_ALIAS_PREFIX = "numbox_pxy_"
 
 
 def make_proxy_name(name):
     return f'__{name}'
-
-
-def _body_fingerprint(func):
-    """Content fingerprint of ``func``'s body, for alias disambiguation.
-
-    Reuses the deep walker so bytecode, constants, default arguments, closure
-    cell values and referenced-global values all count. The common numbox
-    binding body references the ``@intrinsic`` ``_call_lib_func``, which has no
-    canonical form, so the strict walker raises; the best-effort walker then
-    still captures the constants/closure/defaults/globals it *can* canonicalize
-    (substituting an opaque type placeholder for the rest). Two bodies that
-    differ only in a captured value -- a factory over per-instance C symbol
-    names, or a literal-only redefinition -- therefore get distinct aliases,
-    not one collapsed to bytecode alone.
-    """
-    try:
-        return _fingerprint_function(func, set())
-    except (_Unfingerprintable, RecursionError):
-        return _fingerprint_function_best_effort(func)
 
 
 def _stable_cfunc_alias(func, main_sig, jit_options=None):
@@ -191,15 +167,15 @@ def proxy(sig, jit_options: Optional[dict] = None):
     discards, which ``DeriveFunctionType.can_convert_to`` documents.
 
     On numba 0.61 and later, reaching ``.as_func`` as a compile-time constant from a
-    ``cache=True`` jitted caller makes that caller cacheable, which it was not before, and its
-    cached binary then binds the proxied body's machine code: after an edit to the body such a
-    caller does not reliably pick it up, and which body it does run is not single-valued, so the
-    numba cache has to be cleared rather than trusted to notice. The stale-alias guard below does
-    not cover that caller, because a constant reference emits no alias for it to check; for the
-    same reason it does not catch a ``proxy_if_available`` binding that has since gone absent,
-    where such a caller returns the vanished binding's value or segfaults. On numba 0.60 the
-    constant reference carries a dynamic global as it always has, so numba declines to cache
-    such a caller and neither the gain nor the hazard applies.
+    ``cache=True`` jitted caller makes that caller cacheable, which it was not before. Such a
+    caller references a second alias, published over the derive's numba-callconv entry point
+    and folding the same body fingerprint as the cfunc alias, so it is covered by the same
+    stale-alias guard: an edit to the proxied body renames that alias and the caller is
+    discarded and recompiled, and a ``proxy_if_available`` binding that has since gone absent
+    reaches the same clean typing error a cold cache gives. The body is referenced rather than
+    linked in, so nothing about the caller depends on whether LLVM was willing to inline it.
+    On numba 0.60 the constant reference carries a dynamic global as it always has, so numba
+    declines to cache such a caller and neither the gain nor the guard applies.
 
     See tests for some examples of the use cases.
     """
@@ -265,7 +241,10 @@ def {func_proxy_name}({func_args_str}):
         code = compile(prefixed, inspect.getfile(func), mode='exec')
         exec(code, ns)  # nosec B102 - JIT codegen of internal source
         dispatcher = ns[func_proxy_name]
-        dispatcher.as_func = DeriveWAP(cres) if jit_addr_supported() else CompileResultWAP(cres)
+        dispatcher.as_func = (
+            DeriveWAP(cres, py_func=func, jit_options=jit_options)
+            if jit_addr_supported() else CompileResultWAP(cres)
+        )
         # Tag the dispatcher with its process-stable alias so the fingerprint
         # walker can identify a @proxy binding by that alias instead of recursing
         # into its wrapper's @intrinsic (which has no canonical form) -- otherwise

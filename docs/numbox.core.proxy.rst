@@ -46,9 +46,9 @@ unifies, failing with a message-less ``AssertionError`` from
 ``numba.core.utils.unified_function_type``. See :doc:`numbox.core.work` for that
 limit and for why making the two types compare equal is not available as a fix.
 
-Referencing ``.as_func`` as a constant carries a caching caveat that passing it
-as a function-type argument does not; read `Cache invalidation`_ below before
-capturing one into a module-level global.
+Referencing ``.as_func`` as a constant makes a ``cache=True`` caller cacheable,
+which passing it as a function-type argument does not; `Cache invalidation`_ below
+covers what that means for a caller capturing one into a module-level global.
 
 Cache-anchor mechanism
 ++++++++++++++++++++++
@@ -105,7 +105,7 @@ entries — the ``.nbc`` / ``.nbi`` files in the ``__pycache__`` beside
 each binding's source, or under ``NUMBA_CACHE_DIR`` — when shipping a
 template change to numbox.
 
-A second staleness shape sits outside the wrapper's anchor entirely. A
+A second caching shape sits outside the wrapper's anchor entirely. A
 ``cache=True`` caller that reaches a binding's ``.as_func`` as a compile-time
 constant is newly cacheable, and none of the stamps above notice when the proxied
 body changes underneath it. Constant-lowering a plain ``CompileResultWAP`` bakes
@@ -113,69 +113,61 @@ the entry point into a dynamic global, and numba refuses to cache a function
 carrying one, so such a caller used to recompile in every process and emit
 ``NumbaWarning: Cannot cache compiled function ... as it uses dynamic globals``.
 ``lower_constant_derive_function_type`` (``numbox/utils/derive_wap.py``) instead
-declares the ``jit_addr`` slot symbolically with ``context.declare_function`` and
-links the proxied body's compile result in with ``add_linking_library``. The call
-site then uses only that slot, so the ``c_addr`` and ``py_addr`` dynamic globals
-are dead and get eliminated before numba scans the final module, and the caller
-caches. This holds from numba 0.61 onward; on 0.60 ``.as_func`` is a plain
-``CompileResultWAP`` and the caller stays uncacheable as before.
+fills the ``jit_addr`` slot with an *external* reference to a second numbox alias
+(``numbox_pxy_cc_<name>_<hash>``), published over the derive's numba-callconv
+entry point. The call site then uses only that slot, so the ``c_addr`` and
+``py_addr`` dynamic globals are dead and get eliminated before numba scans the
+final module, and the caller caches. This holds from numba 0.61 onward; on 0.60
+``.as_func`` is a plain ``CompileResultWAP`` and the caller stays uncacheable as
+before.
 
-What such a caller caches is the proxied body's machine code, linked in: on this
-one path the decorator's static-linking avoidance does not apply, and for an
-ordinary body size LLVM inlines the body outright. Its cached binary binds the
-body as it stood at compile time, while numba's freshness stamp watches only the
-caller's own source file. **After an edit to a proxied body, such a caller does
-not reliably pick the edit up, and clearing the numba cache is mandatory rather
-than merely advisable.**
+What such a caller caches is a *reference* to the proxied body, not its machine
+code. The decorator's static-linking avoidance therefore holds on this path as it
+does on the dispatcher path, and the caller's object comes out the same size
+whether or not LLVM would have been willing to inline the body. That is what
+makes the cached entry safe as well as small: the callconv alias folds the same
+body fingerprint the cfunc alias does, so **editing a proxied body renames it, the
+warm caller's object imports a name this process never registered, and the guard
+described below discards that entry and recompiles it.** It is the same heal,
+through the same guard, that a dispatcher-path caller gets, announced by the same
+:class:`~numbox.core.proxy.proxy.StaleProxyCacheWarning`.
 
-Which body it runs is not single-valued. A body small enough to inline leaves no
-separate definition behind, and the caller keeps serving the old numbers. A
-larger body is embedded in the caller's object as a weak definition, under a
-mangled name that folds numba's per-process compile counter; the caller then
-serves its own embedded copy when that counter has shifted since the entry was
-written, and whatever currently defines the same mangled name when it has not.
-Both outcomes are silent. The two handles disagreeing within one process, a
-dispatcher-path caller returning the new value while the const-referencing caller
-returns the old one, is one symptom but not a dependable one: in the non-inlined
-case the two can agree while the cached caller runs a body it never embedded.
+The guard covers more than a body edit here too. A ``proxy_if_available`` binding
+that was present when the caller was cached but is absent in a later process
+registers no callconv alias in that process, so the warm entry is discarded and
+the caller reaches the same clean typing error a cold cache gives, rather than
+computing on the vanished binding's value or dying on a bare segfault with an
+empty stderr. ``NUMBOX_PROXY_CACHE_STRICT`` sees it as well, and refuses the heal.
 
-The stale-alias guard described below cannot cover this, by construction. It
-scans a cached object's undefined symbols for the ``numbox_pxy_`` prefix, and a
-constant reference emits no such symbol, because the body is linked into the
-object rather than referenced through the alias. The single
-:class:`~numbox.core.proxy.proxy.StaleProxyCacheWarning` such a run emits names
-the dispatcher-path caller that healed correctly, never the const-referencing
-caller serving the stale value, and the run after that is silent. Reverting to a
-numbox that mints a plain ``CompileResultWAP`` is not a remedy either: numba's
-index key is callee-blind, so it loads the entry already on disk. Clearing the
-cache is the remedy.
+Guarding the use with ``hasattr(binding, "as_func")`` is therefore no longer what
+decides whether such a caller is correct, but the shapes still differ in what they
+report. Keeping the jitted caller's *definition* inside that ``if`` means the
+absent process never defines it. Passing ``.as_func`` as a function-type argument
+unboxes the address per call, so the absent process takes the fallback. Capturing
+``.as_func`` with no guard at all fails loudly at import, because the attribute is
+missing. ``binding.as_func if hasattr(...) else fallback`` assigned to a module
+global, with the ``cache=True`` caller defined unconditionally, is the shape that
+used to return the vanished binding's answer; it now recompiles against whatever
+the ``else`` branch supplies.
 
-The blind spot covers more than a body edit. A ``proxy_if_available`` binding
-that was present when the caller was cached but is absent in a later process is
-not caught either: the const-referencing caller cache-hits and calls into a
-binding that is not there, returning a value computed by the vanished binding
-where the body needs no external symbol, and dying on a bare segfault with an
-empty stderr where it does. A cold cache in the same process raises a clean
-typing error instead, so warm and cold disagree. ``NUMBOX_PROXY_CACHE_STRICT``
-does not catch it either, for the same reason the guard does not: there is no
-alias to check.
+One derive shape is deliberately left uncacheable: a foreign ``CompileResultWAP``
+upgraded by :func:`~numbox.utils.derive_wap.rewrap_derive`. It carries a compile
+result and nothing else, and a compile result numba restored from its own cache
+has dropped the Python function, so there is no body to fingerprint and no alias
+that would rename itself when the body changed. The lowering bakes the address
+there, numba declines to cache the caller and says so on every run, and the caller
+therefore always runs the current body. A derive minted by
+:func:`~numbox.utils.highlevel.cres` is not in that position, because ``cres`` has
+the function in hand, and it behaves exactly like a ``@proxy`` binding's
+``.as_func``.
 
-Guarding the use with ``hasattr(binding, "as_func")`` protects only in two
-shapes: when the jitted caller's *definition* sits inside that ``if``, so the
-absent process never defines it; and when ``.as_func`` is passed as a
-function-type argument rather than referenced as a constant, because the address
-is then unboxed per call and the absent process takes the fallback. The shape
-that fails is ``binding.as_func if hasattr(...) else fallback`` assigned to a
-module global while the ``cache=True`` caller is defined unconditionally, since
-numba loads the cache entry before it types anything and the ``else`` branch is
-never consulted. Capturing ``.as_func`` with no guard at all is safe: the
-attribute is missing in the absent process, so the import fails loudly and the
-cache is never reached.
-
-The body-edit case is pinned in ``test/core/test_proxy_cache_stale.py``, by
-``test_a_const_reference_caller_becomes_cacheable`` and
-``test_a_const_reference_caller_serves_a_stale_body_after_an_edit``.
-
+Both routes are pinned in ``test/core/test_proxy_cache_stale.py``, by
+``test_a_const_reference_caller_becomes_cacheable``,
+``test_a_const_reference_caller_heals_after_an_edit``,
+``test_a_const_reference_caller_discards_a_binding_that_disappeared``,
+``test_a_const_reference_caller_carries_no_copy_of_the_body``,
+``test_a_cres_derive_reached_as_a_constant_heals_too`` and
+``test_an_upgraded_foreign_wrapper_is_lowered_uncacheable``.
 Alias content-addressing and cross-file callers
 ------------------------------------------------
 
@@ -219,12 +211,19 @@ loading unchecked.
 fingerprint renames every shipped alias at once, so the first process after the
 upgrade heals every warm caller that reaches a numbox binding through its alias —
 a one-time burst of recompiles and warnings, after which the cache is warm again.
-A caller that reached ``.as_func`` as a compile-time constant is not among them:
-it carries no alias, so it goes on serving the pre-upgrade body on every run
-until its own cache entry is cleared. To clear it by hand instead, the entries
-are the ``.nbc`` / ``.nbi`` files in the ``__pycache__`` directory beside each
+A caller that reached ``.as_func`` as a compile-time constant is among them: it
+references a callconv alias built from the same fingerprint, so it is renamed and
+healed in the same burst. To clear entries by hand instead, they are the
+``.nbc`` / ``.nbi`` files in the ``__pycache__`` directory beside each
 caller's own source (or under ``NUMBA_CACHE_DIR`` if set);
 ``~/.cache/numba`` holds only callers numba cannot anchor to a source file.
+
+One entry the burst cannot reach is a const-reference caller cached by a numbox old
+enough to have linked the body in rather than referenced it. Such an object names
+no alias at all, so the guard passes it as it always did, and it goes on serving
+the body it embedded until numba re-keys the caller for a reason of its own or the
+entry is cleared by hand. Only entries written before the callconv alias existed
+are in that position; everything written since is covered.
 
 The one variant that leaves the alias unchanged — a ``proxy_if_available``
 binding present when the caller was cached but absent on reload — would otherwise
@@ -232,8 +231,9 @@ resolve to a diagnostic trap (a cfunc registered under the alias whose
 ``RuntimeError`` numba swallows at the C boundary, returning zero); the guard
 treats such an alias as stale too, so a caller that reaches the binding through
 its alias gets the same clean typing error a cold cache gives. A caller that
-reached ``.as_func`` as a compile-time constant emits no alias and is not covered;
-see `Cache invalidation`_ above for what it gets instead.
+reached ``.as_func`` as a compile-time constant is covered by the same rule, and
+for a simpler reason: the absent path registers no callconv alias at all, so its
+reference has nothing to resolve to.
 
 Multi-decorator support
 -----------------------

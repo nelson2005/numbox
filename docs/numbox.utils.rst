@@ -71,6 +71,18 @@ unset. :class:`~numbox.utils.derive_wap.DeriveWAP` captures the entry point from
 result and :class:`~numbox.utils.derive_wap.DeriveFunctionType` fills the slot from it, on
 both unboxing and constant lowering.
 
+Unboxing resolves the address per call, so it can simply read it off the wrapper. Constant
+lowering cannot: the address is per-process, and baking one into a ``cache=True`` caller is
+what numba refuses to cache. The entry point is therefore also published under a
+process-stable symbol alias, ``numbox_pxy_cc_<name>_<hash>``, whose hash folds the body's
+content fingerprint alongside the module, qualname, signature and jit options, and the
+lowering emits an external reference to that name. The caller is then cacheable, carries no
+copy of the body, and is validated on load by the same guard that covers a ``@proxy``
+binding's cfunc alias, so editing the body renames the alias and the stale entry is discarded
+and recompiled. :func:`~numbox.utils.derive_wap.rewrap_derive` has no Python function to
+fingerprint, so a wrapper it upgrades gets a baked address and an uncacheable caller instead.
+:doc:`numbox.core.proxy` covers the alias machinery and the guard.
+
 The three slots are directly observable through
 :func:`numbox.utils.lowlevel.get_func_tuple`, which is the clearest way to see what the type
 adds. ``jit_addr`` is populated and matches the entry point the wrapper captured, while

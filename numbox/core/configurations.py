@@ -27,6 +27,14 @@ jit_options = get_jit_options()
 
 _PROXY_CACHE_STRICT_ENV = "NUMBOX_PROXY_CACHE_STRICT"
 
+#: Prefix of every LLVM symbol numbox publishes with ``llvmlite.binding.add_symbol`` so that a
+#: cached caller can reference it by name instead of by a per-process address. The cache guard in
+#: `numbox.core.proxy.proxy` recognises a numbox-owned symbol by this prefix alone, so it lives here
+#: rather than in either of the two modules that mint one: `numbox.core.proxy.proxy` publishes a
+#: proxied body's cfunc wrapper, and `numbox.utils.derive_wap` publishes a derive's numba-callconv
+#: entry point.
+_ALIAS_PREFIX = "numbox_pxy_"
+
 
 def _strict_cache_mode():
     """True when ``NUMBOX_PROXY_CACHE_STRICT`` selects strict validation of ``@proxy`` cache loads.
