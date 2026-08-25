@@ -22,6 +22,7 @@ from numbox.utils.lowlevel import array_data_p, get_unicode_data_p
 from test.auxiliary_utils import (
     assert_njit_cache_survives_subprocess_roundtrip,
     collect_and_run_tests,
+    open_libm,
 )
 
 
@@ -559,7 +560,9 @@ def test_bodies_the_fingerprint_cannot_separate_are_detected_rather_than_rebound
     import ctypes
     from numbox.core.proxy.proxy import AliasCollisionWarning, _ABSENT_ALIASES
 
-    libm = ctypes.CDLL("libm.so.6")
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take two distinct symbol addresses from")
     proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
 
     def make(addr):
