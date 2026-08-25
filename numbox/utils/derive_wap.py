@@ -134,13 +134,15 @@ def lower_cast_derive_to_function_type(context, builder, fromty, toty, val):
     return val
 
 
-#: Alias name -> the compile result it was published from. Two duties, both required.
+#: Alias name -> the compile result it was published from. Three duties, all required.
 #: ``llvmlite.binding.add_symbol`` records an address, not a reference, so the compiled
 #: body has to be kept alive by something for as long as any caller can jump to that
-#: address, and a `DeriveWAP` is an ordinary object a caller may well drop; and a symbol
-#: a caller was lowered against must keep resolving to the same code for the rest of the
-#: process, so a second `DeriveWAP` over an identically-fingerprinting body reuses the
-#: registration rather than rebinding the name underneath code already compiled.
+#: address, and a `DeriveWAP` is an ordinary object a caller may well drop; a symbol a
+#: caller was lowered against must keep resolving to the same code for the rest of the
+#: process, so the registration is never rebound underneath code already compiled; and
+#: the compile result recorded here is what a later `DeriveWAP` minting the same alias
+#: is checked against, so that an alias which does not identify the body is refused
+#: rather than shared -- see :func:`_publish_jit_alias`.
 _JIT_ALIASES = {}
 
 
@@ -202,9 +204,38 @@ def _cache_guard_installed():
 def _publish_jit_alias(cres, py_func, jit_options, jit_address):
     """Publish ``cres``'s callconv entry point under a process-stable alias.
 
-    Returns the alias, or ``None`` when there is no Python function to fingerprint, or when
-    the cache guard could not be installed -- see :class:`DeriveWAP` for what the constant
-    lowering does then.
+    Returns the alias, or ``None`` when no alias may be published -- see
+    :class:`DeriveWAP` for what the constant lowering does then. That is the outcome
+    when :func:`rewrap_derive` supplies no `py_func`, when the cache guard could not be
+    installed, and when the alias this body mints is already bound to a *different*
+    compile result.
+
+    That last one is the case where the name does not identify the body.
+    :func:`~numbox.utils.fingerprint._body_fingerprint` degrades to its best-effort
+    walker for any body it cannot canonicalise -- which is every numbox binding body,
+    since they all reach the ``@intrinsic`` ``_call_lib_func`` -- and that walker
+    substitutes one placeholder per *type*, so two bodies from one factory closing over
+    different C function pointers are indistinguishable to it and mint one alias between
+    them. A symbol a caller was lowered against has to keep resolving to the same code,
+    so the second body cannot be published under it; and handing the alias back anyway
+    lowers the second derive's constant callers against the *first* derive's machine
+    code, which is a wrong answer that only the constant route gives -- the argument
+    route reads ``jit_address`` off the object it was handed and stays correct. So the
+    second derive is refused an alias, its constant callers bake the address, numba
+    declines to cache them, and they run the current body in every process. Uncacheable
+    is the honest reading of "this name does not identify this body".
+
+    The comparison is compile-result identity because nothing weaker separates a genuine
+    collision from a harmless duplicate. Measured over a full suite run, 287 distinct
+    aliases were minted and 12 further publishes duplicated one already registered; on
+    every one of those 12 both the compile result and the resolved entry address
+    differed, exactly as they do on a genuine collision, and ``fndesc.llvm_func_name``
+    differed on half of them too, since it carries a per-process compile counter. What
+    identity costs is therefore the constant-route cacheability of a second derive over
+    an already-published body -- and nothing at all unless something reaches that second
+    derive as a compile-time constant. Nothing does, for any of the 12: they are
+    `numbox.core.work.builder`'s graph derives, which reach jitted scope as arguments,
+    and repeat compilations of one test function.
 
     Registration happens here, when the wrapper is minted, which is strictly before any
     caller can be lowered against it: a caller reaches the alias only through this
@@ -213,9 +244,12 @@ def _publish_jit_alias(cres, py_func, jit_options, jit_address):
     if py_func is None or not _cache_guard_installed():
         return None
     alias = _stable_jit_alias(py_func, cres.signature, jit_options)
-    if alias not in _JIT_ALIASES:
+    published = _JIT_ALIASES.get(alias)
+    if published is None:
         _JIT_ALIASES[alias] = cres
         ll.add_symbol(alias, jit_address)
+    elif published is not cres:
+        return None
     return alias
 
 

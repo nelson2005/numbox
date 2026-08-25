@@ -1,3 +1,4 @@
+import ctypes
 import gc
 import os
 import subprocess
@@ -7,7 +8,7 @@ import weakref
 
 import numpy
 import pytest
-from numba import njit, prange
+from numba import cfunc, njit, prange
 from numba.core.types import FunctionType, float64
 from numba.core.types.function_type import CompileResultWAP
 
@@ -17,6 +18,7 @@ from numbox.core.proxy.proxy import proxy
 from numbox.utils.derive_wap import DeriveFunctionType, DeriveWAP, rewrap_derive
 from numbox.core.work.work import make_work
 from numbox.core.work.work_utils import make_work_helper
+from numbox.utils.fingerprint import _body_fingerprint
 from numbox.utils.highlevel import cres
 
 
@@ -617,3 +619,91 @@ def test_propagation_through_a_multi_level_chain():
     assert level1.data == 0.0 and level1.derived == 1, "a level that succeeded was rolled back"
     assert level2.data == 1.0 and level2.derived == 1, "a level that succeeded was rolled back"
     assert level3.data == 99.0 and level3.derived == 0, "the failing node was poisoned"
+
+
+_DOUBLE_TO_DOUBLE = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+
+
+@cfunc(float64(float64))
+def _c_times_hundred(x):
+    return x * 100.0
+
+
+@cfunc(float64(float64))
+def _c_plus_one(x):
+    return x + 1.0
+
+
+def _recover_body(derive):
+    return derive.cres.type_annotation.func_id.func
+
+
+def _bind_c_function(c_function):
+    """Compile a derive around a C function pointer, the shape numbox is a library for.
+
+    Every body this returns shares one code object, one module and one qualname, and
+    the only thing separating two of them is the captured pointer. That pointer has no
+    canonical form, so ``_body_fingerprint`` renders it as the same placeholder for
+    every pointer, and both bodies mint the same alias.
+    """
+    @cres(float64(float64))
+    def body(x):
+        return c_function(x) + 3.0
+    return body
+
+
+def test_two_derives_over_different_c_pointers_are_not_collapsed_onto_one_alias():
+    """A name that does not identify the body must not be handed to a second body.
+
+    The alias folds ``_body_fingerprint``, which degrades to its best-effort walker for
+    any body it cannot canonicalise -- which is every numbox binding body, since they
+    all reach the ``@intrinsic`` ``_call_lib_func`` -- and that walker substitutes one
+    placeholder per *type*, so two factory-made bodies over different C function
+    pointers are indistinguishable to it and mint one alias between them.
+
+    Publishing the second body's entry point under that alias is not an option: a
+    symbol a caller was lowered against has to keep resolving to the same code. Handing
+    the alias back anyway, which is what first-writer-wins did, lowers the second
+    derive's constant callers against the *first* derive's machine code, and the two
+    call routes then disagree about the value of one object: the argument route unboxes
+    ``jit_address`` per call and stays correct while the constant route silently runs
+    the other body.
+
+    So the second derive is refused an alias, its constant callers bake the address and
+    lose caching, and both routes agree again.
+    """
+    first = _bind_c_function(_DOUBLE_TO_DOUBLE(_c_times_hundred.address))
+    second = _bind_c_function(_DOUBLE_TO_DOUBLE(_c_plus_one.address))
+
+    assert _body_fingerprint(_recover_body(first)) == _body_fingerprint(_recover_body(second)), (
+        "the fingerprint now tells the two bodies apart, so they no longer collide and "
+        "this test pins nothing"
+    )
+    assert first.jit_alias is not None, "the first derive must still publish its alias"
+    assert second.jit_alias is None, (
+        f"the second derive was handed {second.jit_alias!r}, which is already bound to "
+        f"the first derive's compile result"
+    )
+
+    @njit(float64(float64))
+    def const_first(x):
+        return first(x)
+
+    @njit(float64(float64))
+    def const_second(x):
+        return second(x)
+
+    @njit
+    def call_as_argument(f, x):
+        return f(x)
+
+    assert const_first(4.0) == 403.0
+    assert const_second(4.0) == 8.0, (
+        "the constant route ran the other body: 403.0 here is the first derive's code "
+        "reached through the shared alias"
+    )
+    assert call_as_argument(first, 4.0) == 403.0
+    assert call_as_argument(second, 4.0) == 8.0
+    assert const_second(4.0) == call_as_argument(second, 4.0), (
+        "one derive, two answers, decided by call shape"
+    )
