@@ -37,11 +37,20 @@ def collect_and_run_tests(module_name):
 def open_libm():
     """Open the platform's math library and return a fresh handle, or ``None``.
 
+    The handle answers to ``floor`` and ``ceil``, the two symbols the callers need, or
+    the result is ``None`` and there is nothing on this machine to run those tests
+    against. Returning ``None`` rather than raising is the point: a platform with no
+    usable C runtime should skip, the way one where ``find_library`` comes up empty
+    already does, not turn into a failure that reads like a defect in the code under
+    test.
+
     ``find_library("m")`` resolves it on Linux (a soname) and on macOS (a path into
     the dyld shared cache). On Windows the C runtime is not loadable by name --
-    ``find_msvcrt()`` returns ``None`` for every VS2015+ build -- so fall back to
-    ``msvcrt``, the legacy CRT shim :func:`numbox.core.bindings.utils.load_lib`
-    already falls back to there. ``floor`` and ``ceil`` are exported by all three.
+    ``find_msvcrt()`` returns ``None`` for every VS2015+ build -- so try ``msvcrt``,
+    the legacy CRT shim :func:`numbox.core.bindings.utils.load_lib` already falls back
+    to, and then ``ucrtbase``, the CRT the interpreter itself links. The shim exports
+    ``floor`` and ``ceil`` but not all of C99, so preferring it and falling through on
+    what it lacks keeps the coverage a skip would give away.
 
     Each call opens its own handle rather than sharing a cached one, so a caller
     comparing two handles is comparing two.
@@ -51,10 +60,20 @@ def open_libm():
 
     from numbox.core.bindings.utils import load_lib_path, platform_
 
+    def _with_the_symbols(lib):
+        return lib if hasattr(lib, "floor") and hasattr(lib, "ceil") else None
+
     if platform_ == "Windows":
-        return ctypes.CDLL("msvcrt")
+        for name in ("msvcrt", "ucrtbase"):
+            try:
+                lib = ctypes.CDLL(name)
+            except OSError:
+                continue
+            if _with_the_symbols(lib) is not None:
+                return lib
+        return None
     path = find_library("m")
-    return load_lib_path(path) if path is not None else None
+    return _with_the_symbols(load_lib_path(path)) if path is not None else None
 
 
 @intrinsic
