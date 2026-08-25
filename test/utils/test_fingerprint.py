@@ -12,11 +12,13 @@ derive path, forces an address-bearing fallback and unbounded cache growth.
 import textwrap
 
 import numpy as np
+import pytest
 
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _canon_value, _fingerprint_function, _loaded_global_names,
     _referenced_global_names,
 )
+from test.auxiliary_utils import open_libm
 
 
 def _make(src, **globs):
@@ -185,15 +187,21 @@ def test_an_external_function_is_canonicalized_by_symbol_and_signature():
 
 
 def test_a_library_bound_ctypes_pointer_is_canonicalized_by_library_and_symbol():
-    """The same for a pointer reached by attribute access on a loaded library."""
-    import ctypes
+    """The same for a pointer reached by attribute access on a loaded library.
 
-    libm = ctypes.CDLL("libm.so.6")
+    What is folded is the string the library was opened with, not the library the loader
+    resolved it to, so two handles on one library opened under different strings -- a soname
+    and an absolute path -- do canonicalize differently. That is over-discrimination: it
+    costs a recompile the load-time guard heals, never a wrong answer.
+    """
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take two symbols from")
     floor = _canon_value(libm.floor, set())
     ceil = _canon_value(libm.ceil, set())
     assert floor != ceil, "two C functions from one library collapsed onto one canonical form"
-    assert _canon_value(ctypes.CDLL("libm.so.6").floor, set()) == floor, (
-        "the canonical form must not depend on which handle the library was opened through"
+    assert _canon_value(open_libm().floor, set()) == floor, (
+        "the canonical form followed the handle object rather than what it names"
     )
 
 
@@ -206,9 +214,10 @@ def test_a_ctypes_pointer_built_from_an_address_stays_unfingerprintable():
     the honest answer, and it leaves the caller to detect the collision instead of hiding it.
     """
     import ctypes
-    import pytest
 
-    libm = ctypes.CDLL("libm.so.6")
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take a symbol address from")
     proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
     fp = proto(ctypes.cast(libm.floor, ctypes.c_void_p).value)
     with pytest.raises(_Unfingerprintable):

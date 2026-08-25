@@ -34,6 +34,29 @@ def collect_and_run_tests(module_name):
                     val()
 
 
+def open_libm():
+    """Open the platform's math library and return a fresh handle, or ``None``.
+
+    ``find_library("m")`` resolves it on Linux (a soname) and on macOS (a path into
+    the dyld shared cache). On Windows the C runtime is not loadable by name --
+    ``find_msvcrt()`` returns ``None`` for every VS2015+ build -- so fall back to
+    ``msvcrt``, the legacy CRT shim :func:`numbox.core.bindings.utils.load_lib`
+    already falls back to there. ``floor`` and ``ceil`` are exported by all three.
+
+    Each call opens its own handle rather than sharing a cached one, so a caller
+    comparing two handles is comparing two.
+    """
+    import ctypes
+    from ctypes.util import find_library
+
+    from numbox.core.bindings.utils import load_lib_path, platform_
+
+    if platform_ == "Windows":
+        return ctypes.CDLL("msvcrt")
+    path = find_library("m")
+    return load_lib_path(path) if path is not None else None
+
+
 @intrinsic
 def _deref_int64_intp(typingctx, p_int_ty):
     sig = types.int64(types.intp)
