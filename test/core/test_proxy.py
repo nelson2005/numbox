@@ -677,3 +677,22 @@ def test_a_body_over_an_opaque_value_registered_twice_keeps_its_alias():
         return second(x)
 
     assert call(2.5) == 2.0
+
+
+def test_open_libm_hands_back_a_usable_handle():
+    """Pin the helper's contract on whatever platform this is running on.
+
+    Three tests skip when ``open_libm`` returns ``None``, so a platform where it quietly
+    stopped finding a math library would give up the only coverage of the
+    ctypes-pointer fingerprint path there and still report green. Asserting it here
+    makes that a failure instead, and it is the only check on the Windows fall-through
+    from ``msvcrt`` to ``ucrtbase``.
+
+    This lives here rather than beside the helper in ``test/auxiliary_utils.py``,
+    because that filename does not match pytest's ``python_files`` and nothing in it is
+    collected by a plain run.
+    """
+    lib = open_libm()
+    assert lib is not None, "no usable math library on this platform, so three tests skip"
+    assert hasattr(lib, "floor") and hasattr(lib, "ceil")
+    assert open_libm() is not lib, "handles are shared, so a two-handle comparison is vacuous"
