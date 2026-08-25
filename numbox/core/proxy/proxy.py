@@ -120,6 +120,56 @@ _PROXY_TRAP_KEEPALIVE = []
 # there being a body behind it, so presence alone stops meaning "safe to call" -- see _stale_proxy_aliases.
 _ABSENT_ALIASES = set()
 
+# Alias -> the address published under it, so a second body reaching the same alias is
+# detected rather than silently rebinding every caller compiled against the first.
+_PUBLISHED_ALIASES = {}
+
+
+class AliasCollisionWarning(RuntimeWarning):
+    """Two different bodies reached one alias, so the alias stopped identifying a body."""
+
+
+def _publish_cfunc_alias(alias, address):
+    """Publish ``address`` under ``alias``, and return the alias actually to reference.
+
+    ``ll.add_symbol`` is a silent, process-global, last-writer-wins assignment, so a
+    second body reaching an alias the first already holds would rebind every caller
+    compiled against the first: a wrong numeric answer with no diagnostic, decided by
+    which body was constructed first.
+
+    A collision means the fingerprint could not tell the two bodies apart, which happens
+    for values that have no process-stable identity to fold (see ``_ctypes_func_key``).
+    Two things then have to be true at once. The newcomer needs a name of its own, so it
+    is given a process-local one and both bodies stay callable in this process. And the
+    shared name has stopped identifying a body, because the next process may construct
+    them in the other order, so it is retired into ``_ABSENT_ALIASES``: warm callers of
+    either body are discarded and recompiled rather than served against whichever body
+    happens to hold the name today. Both bodies lose cross-process caching, which is the
+    honest price of a name that does not identify what it names.
+    """
+    published = _PUBLISHED_ALIASES.get(alias)
+    if published == address:
+        return alias
+    if published is None:
+        _PUBLISHED_ALIASES[alias] = address
+        _ABSENT_ALIASES.discard(alias)
+        ll.add_symbol(alias, address)
+        return alias
+    _ABSENT_ALIASES.add(alias)
+    distinct = f"{alias}_c{len(_PUBLISHED_ALIASES)}"
+    _PUBLISHED_ALIASES[distinct] = address
+    ll.add_symbol(distinct, address)
+    warnings.warn(
+        f"two @proxy bodies fingerprint alike and both reached the alias {alias}; it names "
+        f"neither of them now, so callers of both recompile in every process. This one is "
+        f"published as {distinct} instead. A body whose only difference is a value with no "
+        f"process-stable identity, such as a ctypes pointer built from a raw address, "
+        f"cannot be told apart by a fingerprint that has to mean the same thing next run.",
+        AliasCollisionWarning,
+        stacklevel=3,
+    )
+    return distinct
+
 
 def _register_absent_alias_trap(func, main_sig, jit_options=None):
     """Register a diagnostic trap under the alias ``proxy(sig)(func)`` would use.
@@ -192,9 +242,10 @@ def proxy(sig, jit_options: Optional[dict] = None):
         cres = func_jit.get_compile_result(main_sig)
         # Register a process-stable alias for the body's cfunc wrapper and reference
         # that instead of numba's process-local ``v<uid>`` name (see _stable_cfunc_alias).
-        cfunc_alias = _stable_cfunc_alias(func, main_sig, jit_options)
-        _ABSENT_ALIASES.discard(cfunc_alias)
-        ll.add_symbol(cfunc_alias, cres.library.get_pointer_to_function(cres.fndesc.llvm_cfunc_wrapper_name))
+        cfunc_alias = _publish_cfunc_alias(
+            _stable_cfunc_alias(func, main_sig, jit_options),
+            cres.library.get_pointer_to_function(cres.fndesc.llvm_cfunc_wrapper_name),
+        )
         func_args_str, func_names_args_str = make_params_strings(func)
         func_proxy_name = make_proxy_name(func.__name__)
         # The alias resolution lives in _call_proxied_alias so this generated
