@@ -1,0 +1,85 @@
+{
+ "tree": "proto",
+ "door": "c2",
+ "hazard": "absent",
+ "steps": [
+  {
+   "step": "cold_present",
+   "rc": 0,
+   "stdout_tail": ".0\", \"plain\": \"12.0\"}, \"stats\": {\"const_scale\": \"compiled\", \"const_stable\": \"compiled\", \"disp_stable\": \"compiled\", \"plain\": \"compiled\"}, \"warnings\": [\"NumbaWarning: Cannot cache compiled function \\\"const_scale\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\"]}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": null,
+   "mangled": "_ZN4bmod6_scaleB2v1B38c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd",
+   "import": "ok",
+   "results": {
+    "const_scale": "11.0",
+    "const_stable": "108.0",
+    "disp_stable": "109.0",
+    "plain": "12.0"
+   },
+   "stats": {
+    "const_scale": "compiled",
+    "const_stable": "compiled",
+    "disp_stable": "compiled",
+    "plain": "compiled"
+   },
+   "warnings": [
+    "NumbaWarning: Cannot cache compiled function \"const_scale\" as it uses dynamic globals (such as ctypes pointers and large global arrays)"
+   ]
+  },
+  {
+   "step": "warm_present",
+   "rc": 0,
+   "stdout_tail": ": \"109.0\", \"plain\": \"12.0\"}, \"stats\": {\"const_scale\": \"compiled\", \"const_stable\": \"served\", \"disp_stable\": \"served\", \"plain\": \"served\"}, \"warnings\": [\"NumbaWarning: Cannot cache compiled function \\\"const_scale\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\"]}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": null,
+   "mangled": "_ZN4bmod6_scaleB2v1B38c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd",
+   "import": "ok",
+   "results": {
+    "const_scale": "11.0",
+    "const_stable": "108.0",
+    "disp_stable": "109.0",
+    "plain": "12.0"
+   },
+   "stats": {
+    "const_scale": "compiled",
+    "const_stable": "served",
+    "disp_stable": "served",
+    "plain": "served"
+   },
+   "warnings": [
+    "NumbaWarning: Cannot cache compiled function \"const_scale\" as it uses dynamic globals (such as ctypes pointers and large global arrays)"
+   ]
+  },
+  {
+   "step": "warm_absent",
+   "rc": 0,
+   "stdout_tail": "valid use of none with parameters (float64)\\nNo type info available for none as a callable.\\nDuring: resolving callee type: none\\nDuring: typing of call at /tmp/cov/runs/proto-c2-absent-csym/cmod.py (12)\\n\\nFile \\\"../../../../../../../tmp/cov/ru\", \"results\": {}, \"stats\": {}, \"warnings\": []}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": null,
+   "mangled": null,
+   "import": "TypingError",
+   "import_msg": "Failed in nopython mode pipeline (step: nopython frontend)\nInvalid use of none with parameters (float64)\nNo type info available for none as a callable.\nDuring: resolving callee type: none\nDuring: typing of call at /tmp/cov/runs/proto-c2-absent-csym/cmod.py (12)\n\nFile \"../../../../../../../tmp/cov/ru",
+   "results": {},
+   "stats": {},
+   "warnings": []
+  },
+  {
+   "step": "cold_absent",
+   "rc": 0,
+   "stdout_tail": "valid use of none with parameters (float64)\\nNo type info available for none as a callable.\\nDuring: resolving callee type: none\\nDuring: typing of call at /tmp/cov/runs/proto-c2-absent-csym-coldabsent/cmod.py (12)\\n\\nFile \\\"../../../../../../..\", \"results\": {}, \"stats\": {}, \"warnings\": []}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": null,
+   "mangled": null,
+   "import": "TypingError",
+   "import_msg": "Failed in nopython mode pipeline (step: nopython frontend)\nInvalid use of none with parameters (float64)\nNo type info available for none as a callable.\nDuring: resolving callee type: none\nDuring: typing of call at /tmp/cov/runs/proto-c2-absent-csym-coldabsent/cmod.py (12)\n\nFile \"../../../../../../..",
+   "results": {},
+   "stats": {},
+   "warnings": []
+  }
+ ]
+}

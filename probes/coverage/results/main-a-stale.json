@@ -1,0 +1,111 @@
+{
+ "tree": "main",
+ "door": "a",
+ "hazard": "stale",
+ "steps": [
+  {
+   "step": "cold_present",
+   "rc": 0,
+   "stdout_tail": "ings\": [\"NumbaWarning: Cannot cache compiled function \\\"const_scale\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\", \"NumbaWarning: Cannot cache compiled function \\\"const_stable\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\"]}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": "numbox_pxy_scale_5f21ca11b1ca8e52",
+   "mangled": "_ZN4bmod5scaleB2v1B38c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd",
+   "import": "ok",
+   "results": {
+    "const_scale": "11.0",
+    "const_stable": "108.0",
+    "disp_stable": "109.0",
+    "plain": "12.0"
+   },
+   "stats": {
+    "const_scale": "compiled",
+    "const_stable": "compiled",
+    "disp_stable": "compiled",
+    "plain": "compiled"
+   },
+   "warnings": [
+    "NumbaWarning: Cannot cache compiled function \"const_scale\" as it uses dynamic globals (such as ctypes pointers and large global arrays)",
+    "NumbaWarning: Cannot cache compiled function \"const_stable\" as it uses dynamic globals (such as ctypes pointers and large global arrays)"
+   ]
+  },
+  {
+   "step": "warm_present",
+   "rc": 0,
+   "stdout_tail": "ings\": [\"NumbaWarning: Cannot cache compiled function \\\"const_scale\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\", \"NumbaWarning: Cannot cache compiled function \\\"const_stable\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\"]}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": "numbox_pxy_scale_5f21ca11b1ca8e52",
+   "mangled": "_ZN4bmod5scaleB2v1B38c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd",
+   "import": "ok",
+   "results": {
+    "const_scale": "11.0",
+    "const_stable": "108.0",
+    "disp_stable": "109.0",
+    "plain": "12.0"
+   },
+   "stats": {
+    "const_scale": "compiled",
+    "const_stable": "compiled",
+    "disp_stable": "served",
+    "plain": "served"
+   },
+   "warnings": [
+    "NumbaWarning: Cannot cache compiled function \"const_scale\" as it uses dynamic globals (such as ctypes pointers and large global arrays)",
+    "NumbaWarning: Cannot cache compiled function \"const_stable\" as it uses dynamic globals (such as ctypes pointers and large global arrays)"
+   ]
+  },
+  {
+   "step": "warm_after_edit",
+   "rc": 0,
+   "stdout_tail": "ings\": [\"NumbaWarning: Cannot cache compiled function \\\"const_scale\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\", \"NumbaWarning: Cannot cache compiled function \\\"const_stable\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\"]}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": "numbox_pxy_scale_0e8e6cee267e8cf7",
+   "mangled": "_ZN4bmod5scaleB2v1B38c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd",
+   "import": "ok",
+   "results": {
+    "const_scale": "16.0",
+    "const_stable": "108.0",
+    "disp_stable": "109.0",
+    "plain": "12.0"
+   },
+   "stats": {
+    "const_scale": "compiled",
+    "const_stable": "compiled",
+    "disp_stable": "served",
+    "plain": "served"
+   },
+   "warnings": [
+    "NumbaWarning: Cannot cache compiled function \"const_scale\" as it uses dynamic globals (such as ctypes pointers and large global arrays)",
+    "NumbaWarning: Cannot cache compiled function \"const_stable\" as it uses dynamic globals (such as ctypes pointers and large global arrays)"
+   ]
+  },
+  {
+   "step": "warm_after_edit_2",
+   "rc": 0,
+   "stdout_tail": "ings\": [\"NumbaWarning: Cannot cache compiled function \\\"const_scale\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\", \"NumbaWarning: Cannot cache compiled function \\\"const_stable\\\" as it uses dynamic globals (such as ctypes pointers and large global arrays)\"]}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": "numbox_pxy_scale_0e8e6cee267e8cf7",
+   "mangled": "_ZN4bmod5scaleB2v1B38c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd",
+   "import": "ok",
+   "results": {
+    "const_scale": "16.0",
+    "const_stable": "108.0",
+    "disp_stable": "109.0",
+    "plain": "12.0"
+   },
+   "stats": {
+    "const_scale": "compiled",
+    "const_stable": "compiled",
+    "disp_stable": "served",
+    "plain": "served"
+   },
+   "warnings": [
+    "NumbaWarning: Cannot cache compiled function \"const_scale\" as it uses dynamic globals (such as ctypes pointers and large global arrays)",
+    "NumbaWarning: Cannot cache compiled function \"const_stable\" as it uses dynamic globals (such as ctypes pointers and large global arrays)"
+   ]
+  }
+ ]
+}

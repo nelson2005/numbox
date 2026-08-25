@@ -1,0 +1,1052 @@
+{
+"numbox.core.bindings.errno.errno_get": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_errno_get_6381fcd2f2849fce"
+},
+"numbox.core.bindings.errno.errno_set": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_errno_set_f10807ba79458a1d"
+},
+"numbox.core.bindings.libc.clearerr": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_clearerr_c0aef9314212784f"
+},
+"numbox.core.bindings.libc.fclose": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fclose_a7e8e31588f52eaf"
+},
+"numbox.core.bindings.libc.feof": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_feof_c8e309ad4faa490d"
+},
+"numbox.core.bindings.libc.ferror": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_ferror_4e043052985940c2"
+},
+"numbox.core.bindings.libc.fflush": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fflush_423c88830bee3d57"
+},
+"numbox.core.bindings.libc.fopen": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fopen_15942930ce5bb057"
+},
+"numbox.core.bindings.libc.fputc": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fputc_cd3e503d438991a9"
+},
+"numbox.core.bindings.libc.fputs": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fputs_dbf7d708b64557e6"
+},
+"numbox.core.bindings.libc.fread": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fread_918f43ef557ffa39"
+},
+"numbox.core.bindings.libc.fwrite": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fwrite_4f432d2c17f48dfe"
+},
+"numbox.core.bindings.libc.getenv": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_getenv_88594c0a85ff78b5"
+},
+"numbox.core.bindings.libc.memchr": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_memchr_666ffacd25b23d42"
+},
+"numbox.core.bindings.libc.memcmp": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_memcmp_bc082e0bc7f92e33"
+},
+"numbox.core.bindings.libc.memcpy": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_memcpy_a5b2b3d6a69e6bb6"
+},
+"numbox.core.bindings.libc.memmove": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_memmove_def05fd14554f363"
+},
+"numbox.core.bindings.libc.memset": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_memset_1b4a050e3c062f6a"
+},
+"numbox.core.bindings.libc.putchar": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_putchar_d8020ad7a1c5f145"
+},
+"numbox.core.bindings.libc.puts": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_puts_e87cdf1989d01864"
+},
+"numbox.core.bindings.libc.rand": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_rand_02f302ea628f4dd6"
+},
+"numbox.core.bindings.libc.srand": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_srand_57c692497fb8132e"
+},
+"numbox.core.bindings.libc.strchr": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_strchr_e2c2e97dcdfb465f"
+},
+"numbox.core.bindings.libc.strcmp": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_strcmp_0104862e6067e787"
+},
+"numbox.core.bindings.libc.strerror": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_strerror_0e59943345a2aee5"
+},
+"numbox.core.bindings.libc.strlen": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_strlen_e653de386ea6678b"
+},
+"numbox.core.bindings.libc.strncmp": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_strncmp_3b48d854838aeb7e"
+},
+"numbox.core.bindings.libc.strncpy": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_strncpy_ec411d01327bd413"
+},
+"numbox.core.bindings.libc.strrchr": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_strrchr_80404c5829c4a524"
+},
+"numbox.core.bindings.libc.strstr": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_strstr_e59c814340826e78"
+},
+"numbox.core.bindings.libm.acos": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_acos_c1c085c27c4a2eb0"
+},
+"numbox.core.bindings.libm.acosh": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_acosh_dad236e0ad58cc59"
+},
+"numbox.core.bindings.libm.asin": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_asin_9a690cf8eb00814f"
+},
+"numbox.core.bindings.libm.asinh": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_asinh_888d6ee011656ff3"
+},
+"numbox.core.bindings.libm.atan": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_atan_bc5a4f471ea72099"
+},
+"numbox.core.bindings.libm.atan2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_atan2_492d49c73e79d49e"
+},
+"numbox.core.bindings.libm.atanh": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_atanh_ec6069324ec46371"
+},
+"numbox.core.bindings.libm.cbrt": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_cbrt_8f3466fab9caae6f"
+},
+"numbox.core.bindings.libm.ceil": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_ceil_9f0689447fd1a2bf"
+},
+"numbox.core.bindings.libm.copysign": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_copysign_810e68ff9a9a1628"
+},
+"numbox.core.bindings.libm.cos": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_cos_38751d6357dd0e0a"
+},
+"numbox.core.bindings.libm.cosh": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_cosh_8c1bd6592da3acfa"
+},
+"numbox.core.bindings.libm.erf": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_erf_7de7d1d5aa7729d3"
+},
+"numbox.core.bindings.libm.erfc": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_erfc_09bf1050aace5194"
+},
+"numbox.core.bindings.libm.exp": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_exp_e7793bdb6540aa90"
+},
+"numbox.core.bindings.libm.exp2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_exp2_745ea5932ce399c7"
+},
+"numbox.core.bindings.libm.expm1": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_expm1_fcf782cc953d181f"
+},
+"numbox.core.bindings.libm.fabs": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fabs_2a54aa1d32f39067"
+},
+"numbox.core.bindings.libm.fdim": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fdim_45df98277c440cdb"
+},
+"numbox.core.bindings.libm.floor": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_floor_312dac75dd401588"
+},
+"numbox.core.bindings.libm.fmax": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fmax_eeae5d2bcaf76cc8"
+},
+"numbox.core.bindings.libm.fmin": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fmin_4e7b08bdbdcece20"
+},
+"numbox.core.bindings.libm.fmod": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_fmod_b8a4b6eb2446e2a1"
+},
+"numbox.core.bindings.libm.hypot": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_hypot_957c39f7c2218d2e"
+},
+"numbox.core.bindings.libm.lgamma": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_lgamma_99d898096387a399"
+},
+"numbox.core.bindings.libm.log": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_log_23070180fdb38d92"
+},
+"numbox.core.bindings.libm.log10": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_log10_93c76b23ea740580"
+},
+"numbox.core.bindings.libm.log1p": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_log1p_0b723fda720328aa"
+},
+"numbox.core.bindings.libm.log2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_log2_65d95d45ee3ea50f"
+},
+"numbox.core.bindings.libm.logb": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_logb_a83883bef434d04c"
+},
+"numbox.core.bindings.libm.nearbyint": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_nearbyint_e74ba4d5c06eb0fa"
+},
+"numbox.core.bindings.libm.pow": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_pow_90bfd5f8e19aa3d2"
+},
+"numbox.core.bindings.libm.remainder": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_remainder_f4a0747803e557e5"
+},
+"numbox.core.bindings.libm.rint": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_rint_fec5f82618056ae4"
+},
+"numbox.core.bindings.libm.round": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_round_bb7c161736556d92"
+},
+"numbox.core.bindings.libm.sin": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sin_fb50bc93050634a2"
+},
+"numbox.core.bindings.libm.sinh": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sinh_9d1f3440d4034b56"
+},
+"numbox.core.bindings.libm.sqrt": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqrt_911cc20be8e807fb"
+},
+"numbox.core.bindings.libm.tan": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_tan_810c4351837259c2"
+},
+"numbox.core.bindings.libm.tanh": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_tanh_a41a27ef133f05de"
+},
+"numbox.core.bindings.libm.tgamma": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_tgamma_2e663faec925f346"
+},
+"numbox.core.bindings.libm.trunc": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_trunc_fb2eab81dbc3f68f"
+},
+"numbox.core.bindings.sqlite.bind.sqlite3_bind_blob": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_bind_blob_bb3828ba59ba2d85"
+},
+"numbox.core.bindings.sqlite.bind.sqlite3_bind_double": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_bind_double_0526fa6d5678bcb5"
+},
+"numbox.core.bindings.sqlite.bind.sqlite3_bind_int": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_bind_int_cd6b580ddf67b405"
+},
+"numbox.core.bindings.sqlite.bind.sqlite3_bind_int64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_bind_int64_3e48c45d08168b0b"
+},
+"numbox.core.bindings.sqlite.bind.sqlite3_bind_null": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_bind_null_db936505f340cbde"
+},
+"numbox.core.bindings.sqlite.bind.sqlite3_bind_parameter_count": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_bind_parameter_count_386e91de8051b866"
+},
+"numbox.core.bindings.sqlite.bind.sqlite3_bind_parameter_index": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_bind_parameter_index_76b5294de516ae5c"
+},
+"numbox.core.bindings.sqlite.bind.sqlite3_bind_parameter_name": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_bind_parameter_name_1e0685c03ee84533"
+},
+"numbox.core.bindings.sqlite.bind.sqlite3_bind_text": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_bind_text_6e1007e1edc7d722"
+},
+"numbox.core.bindings.sqlite.blob.sqlite3_blob_bytes": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_blob_bytes_0c7bdc74cb8fdc27"
+},
+"numbox.core.bindings.sqlite.blob.sqlite3_blob_close": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_blob_close_62e16b73194eb9fe"
+},
+"numbox.core.bindings.sqlite.blob.sqlite3_blob_open": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_blob_open_3668d3be28177d31"
+},
+"numbox.core.bindings.sqlite.blob.sqlite3_blob_read": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_blob_read_06e7a057f5cda0ed"
+},
+"numbox.core.bindings.sqlite.blob.sqlite3_blob_reopen": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_blob_reopen_33b22085e1691818"
+},
+"numbox.core.bindings.sqlite.blob.sqlite3_blob_write": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_blob_write_f84a2496b60f11aa"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_blob": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_blob_1dba597be23310a9"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_bytes": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_bytes_7aff8b0da157ef55"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_count": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_count_c1709342f8be93f2"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_database_name": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_database_name_bf69bb7dbf6c9ae6"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_decltype": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_decltype_bdb9a6ac65719995"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_double": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_double_fb870564f51bc0e2"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_int": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_int_051d686bfaaa32cb"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_int64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_int64_49c9f65a350429ba"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_name": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_name_7c026de5be185e7b"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_origin_name": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_origin_name_50b83c66dbef776f"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_table_name": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_table_name_be2c5265ba30c0ed"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_text": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_text_1b2ecb9cd93bf7ab"
+},
+"numbox.core.bindings.sqlite.column.sqlite3_column_type": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_type_b044e75274c15b0b"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_changes": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_changes_47785a5362875b29"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_changes64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_changes64_0db6bb4f84d98f46"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_close": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_close_000c57b0bb030a8b"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_db_filename": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_db_filename_f57537495bc0f560"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_db_handle": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_db_handle_14675e8cb3264746"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_db_readonly": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_db_readonly_9a8e2223d19ba468"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_errcode": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_errcode_451341850bf89a72"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_errmsg": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_errmsg_4bbcdc6deeb9e15b"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_extended_errcode": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_extended_errcode_1b90e84edcc109e2"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_last_insert_rowid": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_last_insert_rowid_de4949ff890d5fcf"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_libversion": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_libversion_c2e7e188a38cf83b"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_libversion_number": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_libversion_number_915699005f6238f8"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_open": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_open_5f56d573d12a77d6"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_open_v2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_open_v2_bc2631f7cf8c4f4c"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_threadsafe": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_threadsafe_49c0ee116dc4a1fd"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_total_changes": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_total_changes_a66068d7cdebb7b1"
+},
+"numbox.core.bindings.sqlite.conn.sqlite3_total_changes64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_total_changes64_3d6bd232a8e75e07"
+},
+"numbox.core.bindings.sqlite.exec.sqlite3_exec": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_exec_05f4ff0cf862c668"
+},
+"numbox.core.bindings.sqlite.exec.sqlite3_free": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_free_7641cd77319cab03"
+},
+"numbox.core.bindings.sqlite.exec.sqlite3_malloc": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_malloc_076347a31355865a"
+},
+"numbox.core.bindings.sqlite.hooks.sqlite3_busy_handler": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_busy_handler_750f19e230bc5d43"
+},
+"numbox.core.bindings.sqlite.hooks.sqlite3_commit_hook": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_commit_hook_69ad6006b15f7bd9"
+},
+"numbox.core.bindings.sqlite.hooks.sqlite3_progress_handler": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_progress_handler_9de6ef4a2d18e384"
+},
+"numbox.core.bindings.sqlite.hooks.sqlite3_rollback_hook": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_rollback_hook_6f9aa3e83b672140"
+},
+"numbox.core.bindings.sqlite.hooks.sqlite3_trace_v2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_trace_v2_47827604ce66a307"
+},
+"numbox.core.bindings.sqlite.hooks.sqlite3_update_hook": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_update_hook_7b69bb14eb727884"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_column_blob": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_blob_1dba597be23310a9"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_column_bytes": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_bytes_7aff8b0da157ef55"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_column_count": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_count_c1709342f8be93f2"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_column_double": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_double_fb870564f51bc0e2"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_column_int64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_int64_49c9f65a350429ba"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_column_text": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_text_1b2ecb9cd93bf7ab"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_column_type": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_column_type_b044e75274c15b0b"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_errmsg": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_errmsg_4bbcdc6deeb9e15b"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_finalize": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_finalize_e5988bde7b955f31"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_prepare_v2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_prepare_v2_faadab7eb3cef2e4"
+},
+"numbox.core.bindings.sqlite.query.sqlite3_step": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_step_03a5f4d0d3228ae2"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_blob": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_blob_90f0697e56882b2d"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_blob64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_blob64_af437a951d1d9ace"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_double": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_double_d89b7f9d69157823"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_error": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_error_97d31663f4e18a62"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_error_code": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_error_code_de6e5f2e6ad5312d"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_error_nomem": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_error_nomem_d1d4fe90add5cdec"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_error_toobig": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_error_toobig_5d0568bc99073de3"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_int": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_int_52c0c47efe568693"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_int64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_int64_75259c50e3b65b2e"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_null": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_null_ce53d67129dfbd59"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_subtype": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_subtype_fb93459a17ea1541"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_text": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_text_9ed59d24201a3d73"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_text64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_text64_0d14479b163ea178"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_value": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_value_2e22a8ef83555199"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_zeroblob": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_zeroblob_28c2f5b91734e1bb"
+},
+"numbox.core.bindings.sqlite.result.sqlite3_result_zeroblob64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_zeroblob64_da6185226b32a40b"
+},
+"numbox.core.bindings.sqlite.stmt.sqlite3_expanded_sql": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_expanded_sql_ce647bc8de3b69f7"
+},
+"numbox.core.bindings.sqlite.stmt.sqlite3_finalize": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_finalize_e5988bde7b955f31"
+},
+"numbox.core.bindings.sqlite.stmt.sqlite3_prepare_v2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_prepare_v2_faadab7eb3cef2e4"
+},
+"numbox.core.bindings.sqlite.stmt.sqlite3_reset": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_reset_e0bbc6edcd2f6196"
+},
+"numbox.core.bindings.sqlite.stmt.sqlite3_sql": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_sql_74d4cadc0606a7a7"
+},
+"numbox.core.bindings.sqlite.stmt.sqlite3_step": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_step_03a5f4d0d3228ae2"
+},
+"numbox.core.bindings.sqlite.stmt.sqlite3_stmt_busy": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_stmt_busy_ecf401c5d107de3e"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_declare_vtab": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_declare_vtab_b1225032efdc0047"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_free": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_free_7641cd77319cab03"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_malloc": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_malloc_076347a31355865a"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_result_blob": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_blob_90f0697e56882b2d"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_result_double": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_double_d89b7f9d69157823"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_result_error": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_error_97d31663f4e18a62"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_result_int64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_int64_75259c50e3b65b2e"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_result_text": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_text_9ed59d24201a3d73"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_value_double": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_double_2c6854d893abe79d"
+},
+"numbox.core.bindings.sqlite.tvf.sqlite3_value_int64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_int64_1c4c8cfc87358577"
+},
+"numbox.core.bindings.sqlite.udf.sqlite3_aggregate_context": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_aggregate_context_2a19017f0917899b"
+},
+"numbox.core.bindings.sqlite.udf.sqlite3_context_db_handle": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_context_db_handle_e62c1c079330eff3"
+},
+"numbox.core.bindings.sqlite.udf.sqlite3_create_function_v2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_create_function_v2_31cedc8155020ec9"
+},
+"numbox.core.bindings.sqlite.udf.sqlite3_create_window_function": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_create_window_function_5660f1d5eea30f31"
+},
+"numbox.core.bindings.sqlite.udf.sqlite3_user_data": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_user_data_881624ccb66705f6"
+},
+"numbox.core.bindings.sqlite.udf_helpers.sqlite3_aggregate_context": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_aggregate_context_2a19017f0917899b"
+},
+"numbox.core.bindings.sqlite.udf_helpers.sqlite3_create_function_v2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_create_function_v2_31cedc8155020ec9"
+},
+"numbox.core.bindings.sqlite.udf_helpers.sqlite3_create_window_function": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_create_window_function_5660f1d5eea30f31"
+},
+"numbox.core.bindings.sqlite.udf_helpers.sqlite3_errmsg": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_errmsg_4bbcdc6deeb9e15b"
+},
+"numbox.core.bindings.sqlite.udf_helpers.sqlite3_result_error": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_error_97d31663f4e18a62"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_blob": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_blob_19b538c3dda91858"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_bytes": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_bytes_6ed045af1155de5f"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_double": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_double_2c6854d893abe79d"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_dup": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_dup_e3d89c460da6456b"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_free": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_free_426c498536f4f2e0"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_frombind": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_frombind_fd5f50dfa29a9a57"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_int": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_int_f8c92b398a2af9ef"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_int64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_int64_1c4c8cfc87358577"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_nochange": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_nochange_b594e6ec8db03158"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_numeric_type": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_numeric_type_486052ed5910141d"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_subtype": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_subtype_607e4e5aaa65011f"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_text": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_text_1e977ad622d88770"
+},
+"numbox.core.bindings.sqlite.value.sqlite3_value_type": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_type_d4fa8b1458f80494"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_create_module_v2": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_create_module_v2_89d54d894ff778bd"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_declare_vtab": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_declare_vtab_b1225032efdc0047"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_errmsg": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_errmsg_4bbcdc6deeb9e15b"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_free": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_free_7641cd77319cab03"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_malloc": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_malloc_076347a31355865a"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_result_blob": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_blob_90f0697e56882b2d"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_result_double": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_double_d89b7f9d69157823"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_result_error": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_error_97d31663f4e18a62"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_result_int64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_int64_75259c50e3b65b2e"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_result_text": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_result_text_9ed59d24201a3d73"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_value_double": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_double_2c6854d893abe79d"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_value_int64": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_int64_1c4c8cfc87358577"
+},
+"numbox.core.bindings.sqlite.vtable.sqlite3_value_numeric_type": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_sqlite3_value_numeric_type_486052ed5910141d"
+},
+"numbox.core.bindings.stdio.stderr": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_stderr_7393e93aa2a661c9"
+},
+"numbox.core.bindings.stdio.stdin": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_stdin_73147dcded2e98ee"
+},
+"numbox.core.bindings.stdio.stdout": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_stdout_93a30ce3a2416921"
+},
+"numbox.core.bindings.strerror.strerror_safe": {
+"as_func_type": "DeriveWAP",
+"cc": null,
+"cfunc": "numbox_pxy_strerror_safe_239882956d562b05"
+}
+}

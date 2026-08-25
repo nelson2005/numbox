@@ -1,0 +1,83 @@
+{
+ "tree": "proto",
+ "door": "b",
+ "hazard": "absent",
+ "steps": [
+  {
+   "step": "cold_present",
+   "rc": 0,
+   "stdout_tail": "8c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd\", \"import\": \"ok\", \"results\": {\"const_scale\": \"11.0\", \"const_stable\": \"108.0\", \"disp_stable\": \"109.0\", \"plain\": \"12.0\"}, \"stats\": {\"const_scale\": \"compiled\", \"const_stable\": \"compiled\", \"disp_stable\": \"compiled\", \"plain\": \"compiled\"}, \"warnings\": []}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": "numbox_pxy_cc_scale_05b909ebf9f35e1a",
+   "cfunc_alias": null,
+   "mangled": "_ZN4bmod5scaleB2v1B38c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd",
+   "import": "ok",
+   "results": {
+    "const_scale": "11.0",
+    "const_stable": "108.0",
+    "disp_stable": "109.0",
+    "plain": "12.0"
+   },
+   "stats": {
+    "const_scale": "compiled",
+    "const_stable": "compiled",
+    "disp_stable": "compiled",
+    "plain": "compiled"
+   },
+   "warnings": []
+  },
+  {
+   "step": "warm_present",
+   "rc": 0,
+   "stdout_tail": "leB2v1B38c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd\", \"import\": \"ok\", \"results\": {\"const_scale\": \"11.0\", \"const_stable\": \"108.0\", \"disp_stable\": \"109.0\", \"plain\": \"12.0\"}, \"stats\": {\"const_scale\": \"served\", \"const_stable\": \"served\", \"disp_stable\": \"served\", \"plain\": \"served\"}, \"warnings\": []}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": "numbox_pxy_cc_scale_05b909ebf9f35e1a",
+   "cfunc_alias": null,
+   "mangled": "_ZN4bmod5scaleB2v1B38c8tJTIeFIjxB2IKSgI4CrvQClQZ6FczSBAA_3dEd",
+   "import": "ok",
+   "results": {
+    "const_scale": "11.0",
+    "const_stable": "108.0",
+    "disp_stable": "109.0",
+    "plain": "12.0"
+   },
+   "stats": {
+    "const_scale": "served",
+    "const_stable": "served",
+    "disp_stable": "served",
+    "plain": "served"
+   },
+   "warnings": []
+  },
+  {
+   "step": "warm_absent",
+   "rc": 0,
+   "stdout_tail": "\"warnings\": [\"StaleProxyCacheWarning: numbox: discarding a stale numba cache entry and recompiling: cmod.const_scale-10.py312 references @proxy cfunc alias(es) this process cannot call (the proxied body, signature or jit_options changed since the caller was cached, or the binding is no l\"]}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": null,
+   "mangled": null,
+   "import": "TypingError",
+   "import_msg": "Failed in nopython mode pipeline (step: nopython frontend)\nInvalid use of none with parameters (float64)\nNo type info available for none as a callable.\nDuring: resolving callee type: none\nDuring: typing of call at /tmp/cov/runs/proto-b-absent-csym/cmod.py (12)\n\nFile \"../../../../../../../tmp/cov/run",
+   "results": {},
+   "stats": {},
+   "warnings": [
+    "StaleProxyCacheWarning: numbox: discarding a stale numba cache entry and recompiling: cmod.const_scale-10.py312 references @proxy cfunc alias(es) this process cannot call (the proxied body, signature or jit_options changed since the caller was cached, or the binding is no l"
+   ]
+  },
+  {
+   "step": "cold_absent",
+   "rc": 0,
+   "stdout_tail": "valid use of none with parameters (float64)\\nNo type info available for none as a callable.\\nDuring: resolving callee type: none\\nDuring: typing of call at /tmp/cov/runs/proto-b-absent-csym-coldabsent/cmod.py (12)\\n\\nFile \\\"../../../../../../../\", \"results\": {}, \"stats\": {}, \"warnings\": []}\nDONE ok\n",
+   "stderr_tail": "",
+   "alias": null,
+   "cfunc_alias": null,
+   "mangled": null,
+   "import": "TypingError",
+   "import_msg": "Failed in nopython mode pipeline (step: nopython frontend)\nInvalid use of none with parameters (float64)\nNo type info available for none as a callable.\nDuring: resolving callee type: none\nDuring: typing of call at /tmp/cov/runs/proto-b-absent-csym-coldabsent/cmod.py (12)\n\nFile \"../../../../../../../",
+   "results": {},
+   "stats": {},
+   "warnings": []
+  }
+ ]
+}
