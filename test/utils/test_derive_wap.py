@@ -792,3 +792,51 @@ def test_a_warm_const_caller_of_a_collided_derive_still_runs_its_own_body(tmp_pa
         f"warm run: the derive holding the alias must cache-hit and still answer 403.0, "
         f"and the refused one must recompile rather than be served, got {warm!r}"
     )
+
+
+def test_a_wrapper_keyed_to_a_body_it_was_not_compiled_from_is_refused():
+    """`DeriveWAP` is public, and `py_func` is what its alias is content-addressed on.
+
+    Hand it a function the compile result knows nothing about and the alias moves when
+    *that* function is edited and stands still when the compiled body is. The caller is
+    cacheable, and keyed to something that never re-keys: permanent silent staleness,
+    which is the hazard the alias exists to close.
+    """
+    @njit(float64(float64))
+    def compiled(x):
+        return x * 2.0
+
+    def unrelated(x):
+        return x * 3.0
+
+    compile_result = compiled.get_compile_result(compiled.nopython_signatures[0])
+
+    with pytest.raises(ValueError, match="is not the function behind the compile result"):
+        DeriveWAP(compile_result, py_func=unrelated)
+
+    assert DeriveWAP(compile_result, py_func=compiled.py_func).jit_alias is not None, (
+        "the function the compile result really came from must still be accepted"
+    )
+
+
+def test_the_py_func_check_falls_back_to_the_name_on_a_cache_restored_result():
+    """numba drops the function from a compile result it restored from its own cache.
+
+    ``type_annotation`` comes back as a string there, so the identity the check prefers
+    is gone and it has to fall back to what ``fndesc`` records in every compile result.
+    Restoring one takes a second process, so the shape is reproduced here instead --
+    that a warm ``type_annotation`` is a plain string is measured, and the fallback is
+    the branch that decides whether a warm compile result is checked at all.
+    """
+    @njit(float64(float64))
+    def compiled(x):
+        return x * 2.0
+
+    def unrelated(x):
+        return x * 3.0
+
+    warm_like = compiled.get_compile_result(
+        compiled.nopython_signatures[0])._replace(type_annotation="<string annotation>")
+
+    assert derive_wap_module._compiled_from(warm_like, compiled.py_func)
+    assert not derive_wap_module._compiled_from(warm_like, unrelated)

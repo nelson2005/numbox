@@ -253,6 +253,32 @@ def _publish_jit_alias(cres, py_func, jit_options, jit_address):
     return alias
 
 
+def _compiled_from(cres, py_func):
+    """Whether ``py_func`` is the Python function ``cres`` was compiled from.
+
+    The alias is content-addressed on `py_func`, so supplying one the compile result
+    knows nothing about mints a name that moves when the wrong body is edited and
+    stands still when the right one is: a caller cacheable against a key that never
+    re-keys. :class:`DeriveWAP` is public, and it is the one argument that cannot be
+    got wrong safely.
+
+    A freshly compiled result carries the function itself, on
+    ``type_annotation.func_id``, and that identity is what every minter in numbox
+    supplies -- measured over all of them. One numba restored from its own cache
+    replaces ``type_annotation`` with a string, so nothing is left to compare by
+    identity; there the check falls back to the module and qualified name, which
+    ``fndesc`` records in every compile result. That is weaker -- it accepts a
+    different function of the same name -- but the alternative is to accept anything
+    at all on a warm compile result, and a same-name body is the case
+    :func:`_publish_jit_alias` already refuses to share an alias with.
+    """
+    func_id = getattr(cres.type_annotation, "func_id", None)
+    if func_id is not None:
+        return func_id.func is py_func
+    return (cres.fndesc.modname == py_func.__module__
+            and cres.fndesc.qualname == py_func.__qualname__)
+
+
 class DeriveWAP(CompileResultWAP):
     """``CompileResultWAP`` that also captures the numba-callconv entry point.
 
@@ -266,17 +292,38 @@ class DeriveWAP(CompileResultWAP):
     code emits, which is what makes such a caller both cacheable and safe to cache.
 
     Without it -- :func:`rewrap_derive` upgrading a foreign wrapper, which carries
-    the compile result and nothing else -- there is no body to fingerprint, so no
-    alias can be minted that would rename itself when the body changed. The constant
-    lowering bakes the address instead and numba declines to cache the caller, which
-    is the outcome to want: such a caller is recompiled in every process and can
-    never serve a stale body. The choice is made here rather than at lowering, and it
-    comes out the same way in a cold process and in a warm one, so a caller cannot be
-    cached against an alias in one run and lowered without one in the next.
+    the compile result and nothing else -- no alias is minted, the constant lowering
+    bakes the address instead, and numba declines to cache the caller. That is the
+    outcome to want: such a caller is recompiled in every process and can never serve
+    a stale body. The choice is made here rather than at lowering, and it comes out
+    the same way in a cold process and in a warm one, so a caller cannot be cached
+    against an alias in one run and lowered without one in the next.
+
+    A function *of the right name* is in fact reachable from a bare compile result,
+    warm as well as cold: ``fndesc.lookup_module()`` and ``fndesc.qualname`` between
+    them find one, and fingerprinting it mints the same alias in a cold process and a
+    warm one. Reaching it that way is nevertheless a guess rather than a fact. The
+    name may since have been rebound, wrapped or deleted, and the guess cannot be
+    checked against anything the compile result carries. A wrong guess is worse than
+    no alias, not better: the caller becomes cacheable, and the alias it is keyed to
+    is content-addressed on the *other* function, so it never moves when the body the
+    caller actually calls is edited. That is permanent silent staleness, which is the
+    hazard the alias exists to close. `py_func` is therefore supplied by whoever
+    compiled the body and by nobody else.
+
+    `py_func` is checked against the compile result for that reason: a value keyed to
+    the wrong body is exactly as stale as one recovered by guesswork, and the
+    constructor is public.
     """
 
     def __init__(self, cres, py_func=None, jit_options=None):
         super().__init__(cres)
+        if py_func is not None and not _compiled_from(cres, py_func):
+            raise ValueError(
+                f"py_func {py_func.__module__}.{py_func.__qualname__} is not the "
+                f"function behind the compile result for {cres.fndesc.modname}."
+                f"{cres.fndesc.qualname}; the alias would be keyed to a body the "
+                f"caller never calls and would never re-key when that body changed")
         self.jit_address = cres.library.get_pointer_to_function(
             cres.fndesc.llvm_func_name)
         if self.jit_address <= 0:
