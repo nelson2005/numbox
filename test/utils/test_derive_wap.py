@@ -707,3 +707,88 @@ def test_two_derives_over_different_c_pointers_are_not_collapsed_onto_one_alias(
     assert const_second(4.0) == call_as_argument(second, 4.0), (
         "one derive, two answers, decided by call shape"
     )
+
+
+def test_a_warm_const_caller_of_a_collided_derive_still_runs_its_own_body(tmp_path):
+    """The same collision across processes, with a cache in the way.
+
+    The in-process test above would pass on an implementation that simply stopped
+    caching every constant caller, and it says nothing about what a warm cache serves.
+    Here the derive that keeps the alias has a genuinely cached caller -- cold miss then
+    warm hit -- and the derive that was refused one has a caller that recompiles every
+    process, which is what keeps it correct. Both have to answer for their own body on
+    the warm run.
+
+    Construction order is fixed, as it is in any program that builds its bindings at
+    import. Where the order varies between processes a caller cached against the alias
+    in one run is served in a run where the other body holds it, and the alias cannot
+    say so; refusing the second publish does not reach that, and nothing that leaves
+    ``_body_fingerprint`` alone can.
+    """
+    probe = tmp_path / "collision_cache_probe.py"
+    probe.write_text(textwrap.dedent('''
+        import ctypes
+
+        from numba import cfunc, njit
+        from numba.core.types import float64
+        from numbox.utils.highlevel import cres
+
+        PROTO = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+
+
+        @cfunc(float64(float64))
+        def _c_times_hundred(x):
+            return x * 100.0
+
+
+        @cfunc(float64(float64))
+        def _c_plus_one(x):
+            return x + 1.0
+
+
+        def bind(c_function):
+            @cres(float64(float64))
+            def body(x):
+                return c_function(x) + 3.0
+            return body
+
+
+        hundred = bind(PROTO(_c_times_hundred.address))
+        plus_one = bind(PROTO(_c_plus_one.address))
+
+
+        @njit(float64(float64), cache=True)
+        def const_hundred(x):
+            return hundred(x)
+
+
+        @njit(float64(float64), cache=True)
+        def const_plus_one(x):
+            return plus_one(x)
+
+
+        def served(f):
+            hits = sum(f.stats.cache_hits.values())
+            misses = sum(f.stats.cache_misses.values())
+            return "served" if hits and not misses else "compiled" if misses else f"{hits}/{misses}"
+
+
+        values = f"{const_hundred(4.0)} {const_plus_one(4.0)}"
+        print(f"{values} {served(const_hundred)} {served(const_plus_one)}")
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["NUMBA_CACHE_DIR"] = str(tmp_path / "nbcache")
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+
+    cold = _run_derive_probe(probe, env)
+    assert cold == "403.0 8.0 compiled compiled", (
+        f"cold run: each derive must answer for its own body, got {cold!r}. "
+        f"8.0 from the first or 403.0 from the second is the shared alias"
+    )
+
+    warm = _run_derive_probe(probe, env)
+    assert warm == "403.0 8.0 served compiled", (
+        f"warm run: the derive holding the alias must cache-hit and still answer 403.0, "
+        f"and the refused one must recompile rather than be served, got {warm!r}"
+    )
