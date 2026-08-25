@@ -226,16 +226,16 @@ def _publish_jit_alias(cres, py_func, jit_options, jit_address):
     is the honest reading of "this name does not identify this body".
 
     The comparison is compile-result identity because nothing weaker separates a genuine
-    collision from a harmless duplicate. Measured over a full suite run, 287 distinct
-    aliases were minted and 12 further publishes duplicated one already registered; on
-    every one of those 12 both the compile result and the resolved entry address
-    differed, exactly as they do on a genuine collision, and ``fndesc.llvm_func_name``
-    differed on half of them too, since it carries a per-process compile counter. What
-    identity costs is therefore the constant-route cacheability of a second derive over
-    an already-published body -- and nothing at all unless something reaches that second
-    derive as a compile-time constant. Nothing does, for any of the 12: they are
-    `numbox.core.work.builder`'s graph derives, which reach jitted scope as arguments,
-    and repeat compilations of one test function.
+    collision from a harmless duplicate. Across a full run of this repository's suite,
+    every publish that duplicated an already-registered alias differed from it in both
+    the compile result and the resolved entry address -- exactly as a genuine collision
+    does -- and in ``fndesc.llvm_func_name`` on half of them as well, that name carrying
+    a per-process compile counter. What identity costs is therefore the constant-route
+    cacheability of a second derive over an already-published body, and nothing at all
+    unless something reaches that second derive as a compile-time constant. Over the
+    same run nothing does: the duplicates are `numbox.core.work.builder`'s graph
+    derives, which reach jitted scope as arguments rather than as constants, repeat
+    compilations of one test helper, and two textually identical lambdas in one test.
 
     Registration happens here, when the wrapper is minted, which is strictly before any
     caller can be lowered against it: a caller reaches the alias only through this
