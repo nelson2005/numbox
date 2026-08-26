@@ -161,6 +161,12 @@ def _publish_cfunc_alias(alias, address, opaque):
     either body are discarded and recompiled rather than served against whichever body
     happens to hold the name today. Both bodies lose cross-process caching, which is the
     honest price of a name that does not identify what it names.
+
+    A trap is the other holder a body can find here, and it says so rather than reporting a
+    second body that does not exist. It records a witness no body can match, so the body
+    takes a name of its own and the alias stays retired: the process that cached a warm
+    caller of it may be one where the binding is missing, and there the trap's named error
+    is what that caller has to reach.
     """
     published, witness = _PUBLISHED_ALIASES.get(alias, (None, None))
     if published is None or (witness is not None and _opaque_values_match(witness, opaque)):
@@ -172,15 +178,22 @@ def _publish_cfunc_alias(alias, address, opaque):
     distinct = f"{alias}_c{len(_PUBLISHED_ALIASES)}"
     _PUBLISHED_ALIASES[distinct] = (address, tuple(opaque))
     ll.add_symbol(distinct, address)
-    warnings.warn(
-        f"two @proxy bodies fingerprint alike and both reached the alias {alias}; it names "
-        f"neither of them now, so callers of both recompile in every process. This one is "
-        f"published as {distinct} instead. A body whose only difference is a value with no "
-        f"process-stable identity, such as a ctypes pointer built from a raw address, "
-        f"cannot be told apart by a fingerprint that has to mean the same thing next run.",
-        AliasCollisionWarning,
-        stacklevel=3,
-    )
+    if witness is None:
+        reason = (
+            f"an absent-binding trap already answers to the alias {alias}, so this body is "
+            f"published as {distinct} instead and the alias stays retired. A warm caller that "
+            f"reaches that name has to find the trap and its named error, because the process "
+            f"that cached it may be one where the binding is missing."
+        )
+    else:
+        reason = (
+            f"two @proxy bodies fingerprint alike and both reached the alias {alias}; it names "
+            f"neither of them now, so callers of both recompile in every process. This one is "
+            f"published as {distinct} instead. A body whose only difference is a value with no "
+            f"process-stable identity, such as a ctypes pointer built from a raw address, "
+            f"cannot be told apart by a fingerprint that has to mean the same thing next run."
+        )
+    warnings.warn(reason, AliasCollisionWarning, stacklevel=3)
     return distinct
 
 
