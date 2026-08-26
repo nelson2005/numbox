@@ -666,6 +666,61 @@ def test_a_body_over_an_opaque_value_registered_twice_keeps_its_alias():
     assert call(2.5) == 2.0
 
 
+def test_a_trap_keeps_its_hands_off_an_alias_a_present_binding_holds():
+    """The absent-symbol trap must not take an alias a live body already answers to.
+
+    One definition bound over two candidate library handles, the first carrying the symbol
+    and the second not, reaches one alias: ``_stable_cfunc_alias`` keys on the body,
+    signature and jit_options, and not on the handle. Registering the trap there anyway
+    replaced a body that returns the right answer with a cfunc that raises inside its own
+    wrapper, which swallows the exception and hands the caller a zeroed return -- measured
+    as ``6.2e-310`` where ``1.0`` was correct, with no warning of any kind. That is the
+    silent wrong answer this registry exists to stop, reached from the other direction.
+
+    The body wins the alias, because a caller compiled in this process is calling a binding
+    that is present. A process that only ever sees the absent handle registers the trap
+    against an empty name and keeps the diagnostic it was written for.
+    """
+    from llvmlite import binding as ll
+    from numbox.core.proxy.proxy import AliasCollisionWarning, _ABSENT_ALIASES
+
+    lib = open_libm()
+    if lib is None:
+        pytest.skip("No suitable math/C runtime library discoverable")
+
+    class _WithoutTheSymbol:
+        """A second candidate handle, exporting nothing."""
+
+    def bind(handle):
+        @proxy_if_available(handle, float64(float64))
+        def cos(x):
+            return _call_lib_func("cos", (x,))
+        return cos
+
+    present = bind(lib)
+    alias = present._numbox_proxy_alias
+    address_before = ll.address_of_symbol(alias)
+
+    with pytest.warns(AliasCollisionWarning, match="no trap was installed"):
+        bind(_WithoutTheSymbol())
+
+    assert ll.address_of_symbol(alias) == address_before, (
+        "the trap took an alias a present binding already answers to"
+    )
+    assert alias not in _ABSENT_ALIASES, (
+        "the alias was retired even though the body holding it is callable here, so every "
+        "warm caller of a working binding recompiles for nothing"
+    )
+
+    @njit(float64(float64))
+    def call_present(x):
+        return present(x)
+
+    assert abs(call_present(0.5) - math.cos(0.5)) < 1e-15, (
+        "a caller compiled after the absent handle was bound reached the trap, not the body"
+    )
+
+
 def test_open_libm_hands_back_a_usable_handle():
     """Pin the helper's contract on whatever platform this is running on.
 

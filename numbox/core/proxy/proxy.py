@@ -196,8 +196,25 @@ def _register_absent_alias_trap(func, main_sig, jit_options=None):
     the same alias turns that into a clear message on stderr instead. The trap
     matches ``main_sig``'s arity with plain positional parameters (the cfunc
     wrapper the caller invokes is positional, even for ``Omitted`` bindings).
+
+    A body that already answers to this alias in this process keeps it. The trap raises
+    inside a cfunc wrapper, which swallows the exception and hands back a zeroed return, so
+    installing one over a working body would replace a right answer with a silent wrong one
+    -- the failure this registry exists to stop, arrived at from the other direction. A
+    caller reaching the alias here is calling a binding that is present, and a process where
+    it is absent registers the trap against an empty name and is unaffected.
     """
     alias = _stable_cfunc_alias(func, main_sig, jit_options)
+    published, witness = _PUBLISHED_ALIASES.get(alias, (None, None))
+    if published is not None and witness is not None:
+        warnings.warn(
+            f"the @proxy binding {func.__name__!r} is absent from this library but a body is already "
+            f"published under the alias {alias} in this process, so the alias keeps naming that body "
+            f"and no trap was installed. A caller compiled here calls the body that is present.",
+            AliasCollisionWarning,
+            stacklevel=3,
+        )
+        return
     msg = (
         f"numbox @proxy binding {func.__name__!r} is not available in the loaded library "
         f"(C symbol missing), but a cache=True caller compiled when it was present is "
