@@ -224,6 +224,66 @@ def test_a_ctypes_pointer_built_from_an_address_stays_unfingerprintable():
         _canon_value(fp, set())
 
 
+def test_a_proxied_binding_and_a_cres_are_not_canonicalized_alike_as_function_values():
+    """Two first-class function values must not fold onto one canonical form.
+
+    ``CompileResultWAP`` had no branch here, so a body capturing one reached the terminal
+    ``raise`` and collapsed to ``<opaque:{type name}>`` on the best-effort path the alias
+    runs on. That placeholder holds a Python type name and nothing else, so what separated
+    a proxied binding's ``.as_func`` from a :func:`~numbox.utils.highlevel.cres` value was
+    the accident that one was a ``CompileResultWAP`` and the other a ``DeriveWAP``. Two
+    otherwise-identical bodies over those two handles then shared an alias the moment both
+    became the same type, which retires the alias and costs both cross-process caching.
+
+    What is folded instead means the same thing next run: the binding's own content-addressed
+    alias for the first, and the compiled body's fingerprint with its signature for the
+    second. The wrapper itself offers neither -- it carries a compiled address and a mangled
+    name holding a per-process counter -- so numbox tags the two it mints.
+    """
+    from numba import float64
+
+    from numbox.core.proxy.proxy import proxy
+    from numbox.utils.highlevel import cres
+
+    @proxy(float64(float64))
+    def binding(x):
+        return x + 1.0
+
+    @cres(float64(float64))
+    def compiled(x):
+        return x + 1.0
+
+    as_func = _canon_value(binding.as_func, set())
+    derive = _canon_value(compiled, set())
+    assert as_func != derive, "a proxied binding and a cres folded onto one canonical form"
+    assert binding._numbox_proxy_alias in as_func, (
+        "the binding's function value is not keyed by the alias that identifies its body"
+    )
+    assert _canon_value(binding.as_func, set()) == as_func, (
+        "the canonical form has to be the same for an equal value, or it is not a fingerprint"
+    )
+    assert _canon_value(binding, set()) != as_func, (
+        "the dispatcher and its function value fold alike, though they call differently"
+    )
+
+
+def test_a_function_value_numbox_did_not_mint_stays_unfingerprintable():
+    """The residual class here, for the same reason as the raw-address pointer.
+
+    A ``CompileResultWAP`` built directly against numba carries no tag, and the compile
+    result identifies its body only by a compiled address and a mangled name whose abi-tag
+    is a per-process counter. Neither means the same thing next run, so refusing is the
+    honest answer and leaves the collision to be detected rather than hidden.
+    """
+    from numba import float64, njit
+    from numba.core.types.function_type import CompileResultWAP
+
+    compiled = njit(float64(float64))(lambda x: x + 1.0)
+    foreign = CompileResultWAP(compiled.get_compile_result(compiled.nopython_signatures[0]))
+    with pytest.raises(_Unfingerprintable):
+        _canon_value(foreign, set())
+
+
 def test_two_python_callbacks_sharing_a_name_are_not_canonicalized_alike():
     """A Python callback is not a library symbol, and must not be keyed as if it were.
 

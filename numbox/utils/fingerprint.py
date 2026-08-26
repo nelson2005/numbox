@@ -26,6 +26,7 @@ import numpy as np
 from numba.core import config as numba_config
 from numba.core.dispatcher import Dispatcher
 from numba.core.types import ExternalFunction
+from numba.core.types.function_type import CompileResultWAP
 from numba.np.ufunc.dufunc import DUFunc
 
 from numbox.core.configurations import jit_options as _default_jit_options
@@ -103,6 +104,17 @@ def _canon_value(value: Any, seen: set[int]) -> str:
         # so it is the same in the next process and it separates two bindings a
         # factory made over different C symbols.
         return f"externalfunction({value.symbol};{value.sig})"
+    if isinstance(value, CompileResultWAP):
+        # A first-class function value. numbox tags the two it mints with what identifies
+        # them across processes, because the wrapper itself carries only a compiled address
+        # and a mangled name holding a per-process counter. Untagged ones -- built directly
+        # against numba -- keep falling through to the placeholder below.
+        proxy_alias = getattr(value, "_numbox_proxy_alias", None)
+        if proxy_alias is not None:
+            return f"proxyfunc({proxy_alias})"
+        py_func = getattr(value, "_numbox_py_func", None)
+        if py_func is not None:
+            return f"cresfunc({_fingerprint_function(py_func, seen)};{value.cres.signature})"
     if isinstance(value, ctypes._CFuncPtr):
         return f"cfuncptr({_ctypes_func_key(value)})"
     raise _Unfingerprintable(type(value).__name__)
