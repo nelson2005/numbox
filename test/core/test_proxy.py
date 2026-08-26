@@ -721,6 +721,48 @@ def test_a_trap_keeps_its_hands_off_an_alias_a_present_binding_holds():
     )
 
 
+def test_a_body_reaching_a_traps_alias_is_told_it_found_a_trap():
+    """The collision message has to name what actually holds the alias.
+
+    A trap records a witness no body can match, so a body reaching its alias always takes
+    the collision branch. Reporting that as "two @proxy bodies fingerprint alike" describes
+    a second body that does not exist, and sends anyone diagnosing a cold cache looking for
+    a factory that is not there.
+
+    The action is right and does not change. ``_stale_proxy_aliases`` treats membership of
+    ``_ABSENT_ALIASES`` as stale whether or not the symbol still resolves, so keeping the
+    alias retired is what stops a warm ``cache=True`` caller being served the trap's
+    swallowed return in a process where the binding really is missing.
+    """
+    from numbox.core.proxy.proxy import AliasCollisionWarning, _ABSENT_ALIASES
+
+    lib = open_libm()
+    if lib is None:
+        pytest.skip("No suitable math/C runtime library discoverable")
+
+    class _WithoutTheSymbol:
+        """A first candidate handle, exporting nothing."""
+
+    def bind(handle):
+        @proxy_if_available(handle, float64(float64))
+        def cos(x):
+            return _call_lib_func("cos", (x,))
+        return cos
+
+    bind(_WithoutTheSymbol())
+    with pytest.warns(AliasCollisionWarning, match="absent-binding trap") as caught:
+        present = bind(lib)
+
+    assert "fingerprint alike" not in str(caught[0].message), (
+        "the trap case reports a second body that does not exist"
+    )
+    assert present._numbox_proxy_alias.rsplit("_c", 1)[0] in _ABSENT_ALIASES, (
+        "the alias a trap answers to was handed to a body, so a warm caller in a process "
+        "without the binding is served the trap's swallowed return instead of its error"
+    )
+    assert abs(present(0.5) - math.cos(0.5)) < 1e-15
+
+
 def test_open_libm_hands_back_a_usable_handle():
     """Pin the helper's contract on whatever platform this is running on.
 
