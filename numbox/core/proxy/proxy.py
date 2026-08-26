@@ -349,6 +349,12 @@ def {func_proxy_name}({func_args_str}):
         # a callback that calls a proxied binding is un-fingerprintable and its
         # cache digest silently degrades to a coarse fallback.
         dispatcher._numbox_proxy_alias = cfunc_alias
+        # And tag the function value with it too. A body that captures `.as_func` rather
+        # than the dispatcher reaches a wrapper carrying only a compiled address and a
+        # mangled name with a per-process counter in it, so without this the walker has
+        # nothing process-stable to fold and falls back on the type name -- which every
+        # first-class function value in the process shares.
+        dispatcher.as_func._numbox_proxy_alias = cfunc_alias
         return dispatcher
     return wrap
 
