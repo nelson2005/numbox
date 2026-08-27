@@ -18,6 +18,17 @@ Besides being callable, the dispatcher a ``@proxy`` decoration returns exposes
 jitted function that takes the binding as a ``FunctionType`` argument, or to
 reference from jitted scope as a constant.
 
+Passing it as an argument is what keeps the *receiving* function cacheable. Hand a
+``@njit(cache=True)`` function the dispatcher itself and that parameter types as
+``type(CPUDispatcher(...))``, whose name carries the dispatcher's address, so the
+cache index key differs in every process. The receiving function then never matches
+what an earlier run wrote: it recompiles on every run and leaves another overload
+behind in the index. Hand it ``.as_func`` and the parameter types as a function type
+instead, ``FunctionType[float64(float64)]`` on numba 0.60 and
+``DeriveFunctionType[float64(float64)]`` from 0.61, which is structural and identical
+in every process, so the receiving function is compiled once and loaded from the
+cache in every later one.
+
 From numba 0.61 onward ``.as_func`` is a
 :class:`~numbox.utils.derive_wap.DeriveWAP` typed as
 :class:`~numbox.utils.derive_wap.DeriveFunctionType`, so the ``jit_addr`` slot of
