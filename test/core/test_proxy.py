@@ -942,17 +942,63 @@ def test_a_body_reaching_a_traps_alias_is_told_it_found_a_trap():
 def test_open_libm_hands_back_a_usable_handle():
     """Pin the helper's contract on whatever platform this is running on.
 
-    Three tests skip when ``open_libm`` returns ``None``, so a platform where it quietly
-    stopped finding a math library would give up the only coverage of the
-    ctypes-pointer fingerprint path there and still report green. Asserting it here
-    makes that a failure instead, and it is the only check on the Windows fall-through
-    from ``msvcrt`` to ``ucrtbase``.
+    Eleven tests skip when ``open_libm`` returns ``None``, three of them the only
+    coverage of the ctypes-pointer fingerprint path, so a platform where it quietly
+    stopped finding a math library would give that up and still report green.
+    Asserting it here makes that a failure instead, and on Windows it is what notices
+    if neither ``msvcrt`` nor ``ucrtbase`` can supply the symbols.
+
+    This checks the platform, not the gate. Anything reaching these assertions has
+    already satisfied ``open_libm``'s own check, so a gate narrowed to a subset would
+    still pass here on any runtime that exports all three regardless. What the gate
+    admits is pinned by ``test_open_libm_refuses_a_handle_a_caller_would_reach_past``
+    below.
 
     This lives here rather than beside the helper in ``test/auxiliary_utils.py``,
     because that filename does not match pytest's ``python_files`` and nothing in it is
     collected by a plain run.
     """
     lib = open_libm()
-    assert lib is not None, "no usable math library on this platform, so three tests skip"
-    assert hasattr(lib, "floor") and hasattr(lib, "ceil")
+    assert lib is not None, "no usable math library on this platform, so eleven tests skip"
+    assert hasattr(lib, "ceil") and hasattr(lib, "cos") and hasattr(lib, "floor")
     assert open_libm() is not lib, "handles are shared, so a two-handle comparison is vacuous"
+
+
+def test_open_libm_refuses_a_handle_a_caller_would_reach_past(monkeypatch):
+    """A gate narrower than what the callers bind admits a library they then fail on.
+
+    ``open_libm`` returns ``None`` so a platform without a usable C runtime skips
+    rather than fails. That only holds while the gate covers each symbol the callers
+    need: four of them bind ``cos``, so a runtime carrying ``ceil`` and ``floor`` but
+    not ``cos`` has to come back as ``None`` and skip them, rather than come back as a
+    handle and fail them.
+
+    Every runtime in the matrix exports all three, so a narrowed gate would go unnoticed
+    by the rest of the suite. Each symbol is hidden in turn from a handle that is
+    otherwise real, which keeps the check on the gate rather than on the platform.
+    """
+    import ctypes
+
+    from numbox.core.bindings import utils
+
+    class _Hiding:
+        def __init__(self, lib, hidden):
+            self._lib = lib
+            self._hidden = hidden
+
+        def __getattr__(self, name):
+            if name == self._hidden:
+                raise AttributeError(name)
+            return getattr(self._lib, name)
+
+    real = open_libm()
+    if real is None:
+        pytest.skip("No suitable math/C runtime library discoverable")
+
+    for hidden in ("ceil", "cos", "floor"):
+        crippled = _Hiding(real, hidden)
+        if utils.platform_ == "Windows":
+            monkeypatch.setattr(ctypes, "CDLL", lambda name, _h=crippled: _h)
+        else:
+            monkeypatch.setattr(utils, "load_lib_path", lambda path, _h=crippled: _h)
+        assert open_libm() is None, f"a handle without {hidden} was admitted"
