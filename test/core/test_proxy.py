@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import textwrap
+import threading
 import warnings
 
 import numpy as np
@@ -1142,4 +1143,311 @@ def test_one_symbol_reached_through_two_prototypes_is_not_one_body():
 
     assert call_after(2.5) == 2.0, (
         "a caller compiled after the second registration reached the other prototype's body"
+    )
+
+
+def test_a_body_that_lost_a_collision_does_not_serve_a_warm_caller(tmp_path):
+    """The name the losing body is given says nothing about the body, so no warm caller may load on it.
+
+    It is minted from a count of what this process has published, so in a process that builds
+    the colliding pair in the other order that same name belongs to the other body. The two
+    processes here share one numba cache and build the pair in opposite orders. The first
+    caches a caller of the ceil binding, which loses the collision there and is published
+    under the minted name; the second builds ceil first, so ceil keeps the shared alias and
+    the minted name is where floor ended up. numba's cache key is callee-blind, so the warm
+    caller cache-hits, and before the minted name was retired it computed ``floor(2.5)`` and
+    printed 2.0 where 3.0 is right, exit 0, no warning. Retiring the minted name alongside
+    the shared one is what discards that entry.
+
+    The ``STALE`` count is what stops this passing by construction. A second process that
+    never found the cached entry would print 3.0 as well, by recompiling for some reason of
+    numba's own, so it has to report that it found a cached entry and threw it away. The
+    first process reporting none is the other half: a cache that was stale on the way in
+    would make the second run's discard say nothing about the order.
+    """
+    if open_libm() is None:
+        pytest.skip("No math library discoverable to take two distinct symbol addresses from")
+
+    pkg = tmp_path / "order_pkg"
+    pkg.mkdir()
+    (pkg / "colliding_pair.py").write_text(textwrap.dedent('''
+        import ctypes
+        import os
+
+        from numba.core.types import float64
+
+        from numbox.core.proxy.proxy import proxy
+        from test.auxiliary_utils import open_libm
+
+        libm = open_libm()
+        proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+
+        def make(symbol):
+            fp = proto(ctypes.cast(getattr(libm, symbol), ctypes.c_void_p).value)
+
+            @proxy(float64(float64))
+            def body(x):
+                return fp(x)
+            return body
+
+        if os.environ["ORDER"] == "floor_first":
+            floor_binding = make("floor")
+            ceil_binding = make("ceil")
+        else:
+            ceil_binding = make("ceil")
+            floor_binding = make("floor")
+    '''), encoding="utf-8")
+    (pkg / "caller_pair.py").write_text(textwrap.dedent('''
+        from numba import njit
+        from numba.core.types import float64
+
+        from colliding_pair import ceil_binding
+
+        @njit(float64(float64), cache=True)
+        def caller(x):
+            return ceil_binding(x)
+    '''), encoding="utf-8")
+    (pkg / "run_pair.py").write_text(textwrap.dedent('''
+        import warnings
+
+        from numbox.core.proxy.proxy import StaleProxyCacheWarning
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            import caller_pair
+        print("STALE", sum(issubclass(w.category, StaleProxyCacheWarning) for w in caught), flush=True)
+        print("RESULT", caller_pair.caller(2.5), flush=True)
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["NUMBA_CACHE_DIR"] = str(tmp_path / "nbcache")
+    env["PYTHONPATH"] = os.pathsep.join([str(pkg), *sys.path])
+
+    def run(order):
+        env["ORDER"] = order
+        done = subprocess.run(
+            [sys.executable, str(pkg / "run_pair.py")],
+            capture_output=True, text=True, encoding="utf-8", env=env,
+        )
+        assert done.returncode == 0, f"{order} failed:\n{done.stderr}"
+        return done.stdout
+
+    cold = run("floor_first")
+    assert "STALE 0" in cold, f"the cold run discarded a cache entry it should not have:\n{cold}"
+    assert "RESULT 3.0" in cold, f"the caller of the ceil binding did not run ceil:\n{cold}"
+
+    warm = run("ceil_first")
+    assert "RESULT 3.0" in warm, (
+        f"a warm caller of the ceil binding was served against the body the minted name "
+        f"happens to point at in this process:\n{warm}"
+    )
+    assert "STALE 0" not in warm, (
+        f"the warm run reported no discarded entry, so the right answer here says nothing "
+        f"about the order it was cached in -- it can be had by never writing the cache at "
+        f"all:\n{warm}"
+    )
+
+
+class _AliasLockProbe:
+    """Asks, from a second thread, whether the alias registry lock is free at this instant.
+
+    A ``threading.Lock`` is not reentrant and the thread being probed is the one holding it,
+    so the question cannot be asked from there. The timeout is what makes the answer a fact
+    rather than a deadlock, and every probe costs it once when the lock is held as it should
+    be. Disarmed until the publication under test, so that the registrations leading up to it
+    are not paid for.
+    """
+
+    def __init__(self, lock):
+        self.lock = lock
+        self.armed = False
+        self.excluded = {}
+
+    def at(self, where):
+        if not self.armed:
+            return
+        taken = []
+        waiter = threading.Thread(target=lambda: taken.append(self.lock.acquire(timeout=0.25)))
+        waiter.start()
+        waiter.join()
+        if taken[0]:
+            self.lock.release()
+        self.excluded[where] = not taken[0]
+
+
+class _EntryCountingLock:
+    """The alias lock, counting how many times the region it guards was entered.
+
+    Finding the lock held at two instants does not say the two are inside one critical
+    section: a lock taken and released separately around each of them answers a probe
+    identically, and leaves a gap between them wide enough for another thread to mint the
+    same name. The count is what tells those apart, because a publication that releases the
+    lock in the middle enters more than once.
+    """
+
+    def __init__(self, lock):
+        self.lock = lock
+        self.entries = 0
+
+    def __enter__(self):
+        self.lock.acquire()
+        self.entries += 1
+        return self
+
+    def __exit__(self, *exc_info):
+        self.lock.release()
+        return False
+
+
+class _ProbingLl:
+    """``llvmlite.binding`` as ``proxy.py`` reaches it, probing the symbol registration."""
+
+    def __init__(self, real, probe, where):
+        self.real = real
+        self.probe = probe
+        self.where = where
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+    def add_symbol(self, name, address):
+        self.probe.at(self.where)
+        return self.real.add_symbol(name, address)
+
+
+def test_a_colliding_body_takes_its_name_under_the_registry_lock(monkeypatch):
+    """The name a losing body is given is read out of the registry and written back into it.
+
+    ``len(_PUBLISHED_ALIASES)`` decides the name and the store that follows is what takes it,
+    so two threads that both read the count before either stores mint one name for two
+    bodies. ``ll.add_symbol`` keeps whichever wrote last and the other body's own name then
+    resolves to it, which is the silent rebinding the registry exists to stop.
+    ``_publish_cfunc_alias`` is reached from plain Python at decoration time, after numba's
+    compiler lock has been released, so nothing else serializes it.
+
+    The window is narrow and which thread loses it is timing, so what is pinned here is the
+    exclusion rather than a race: while one publisher is inside the region, no other thread
+    can be. That takes two measurements. The region is probed at both ends, before the
+    comparison that decides the branch and at the ``add_symbol`` that follows the mint,
+    because a lock around only the read or only the write leaves the count and the store on
+    opposite sides of it and mints duplicates just the same. And the lock is counted, because
+    both ends being inside *a* critical section is also true of a lock dropped and retaken in
+    between, which reopens the window it was added to close. Those, and taking no lock at all,
+    are what this rules out. The probe runs on a second thread with a timeout, because the
+    lock is not reentrant and the publishing thread is holding it.
+    """
+    import ctypes
+
+    from llvmlite import binding as ll
+
+    import numbox.core.proxy.proxy as proxy_module
+    from numbox.core.proxy.proxy import AliasCollisionWarning, _ALIAS_LOCK
+
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take two distinct symbol addresses from")
+    proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+
+    probe = _AliasLockProbe(_ALIAS_LOCK)
+    real_match = proxy_module._opaque_values_match
+
+    def spy_match(old, new):
+        probe.at("while the branch was being decided")
+        return real_match(old, new)
+
+    monkeypatch.setattr(proxy_module, "_opaque_values_match", spy_match)
+    monkeypatch.setattr(
+        proxy_module, "ll", _ProbingLl(ll, probe, "while the minted name was being registered")
+    )
+
+    def make(addr):
+        fp = proto(addr)
+
+        @proxy(float64(float64))
+        def body(x):
+            return fp(x)
+        return body
+
+    first = make(ctypes.cast(libm.floor, ctypes.c_void_p).value)
+    counted = _EntryCountingLock(_ALIAS_LOCK)
+    monkeypatch.setattr(proxy_module, "_ALIAS_LOCK", counted)
+    probe.armed = True
+    try:
+        with pytest.warns(AliasCollisionWarning):
+            second = make(ctypes.cast(libm.ceil, ctypes.c_void_p).value)
+    finally:
+        probe.armed = False
+
+    assert first._numbox_proxy_alias != second._numbox_proxy_alias, (
+        "the second body did not take a name of its own, so it never minted one"
+    )
+    assert sorted(probe.excluded) == [
+        "while the branch was being decided", "while the minted name was being registered"
+    ], f"the publish region was not reached at both ends: {sorted(probe.excluded)}"
+    for where, held in probe.excluded.items():
+        assert held, f"another thread could enter the publish region {where}"
+    assert counted.entries == 1, (
+        f"the publication entered the alias lock {counted.entries} times, so the read that "
+        f"decides the name and the store that takes it are not held apart by one critical "
+        f"section; another thread can hold the lock in the gap and mint the same name"
+    )
+
+
+def test_each_body_that_loses_a_collision_takes_a_name_no_other_body_holds():
+    """A minted name is only a name if the next body to lose does not take it too.
+
+    The name comes from ``len(_PUBLISHED_ALIASES)`` and is registered with ``ll.add_symbol``,
+    which is last-writer-wins and silent. Two losing bodies handed one name is therefore the
+    same wrong answer as two bodies on one alias, just one level down, and it is the count's
+    growing on every publication that stops it -- a constant, or a per-alias counter that
+    forgot to advance, would read exactly the same at the one collision the other tests
+    exercise. Three bodies on one alias is the smallest arrangement where that shows.
+    """
+    import ctypes
+
+    from llvmlite import binding as ll
+
+    from numbox.core.proxy.proxy import AliasCollisionWarning
+
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take three distinct symbol addresses from")
+    proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+
+    def make(symbol):
+        fp = proto(ctypes.cast(getattr(libm, symbol), ctypes.c_void_p).value)
+
+        @proxy(float64(float64))
+        def three_way(x):
+            return fp(x)
+        return three_way
+
+    first = make("floor")
+    with pytest.warns(AliasCollisionWarning):
+        second = make("ceil")
+    with pytest.warns(AliasCollisionWarning):
+        third = make("cos")
+
+    aliases = [b._numbox_proxy_alias for b in (first, second, third)]
+    assert len(set(aliases)) == 3, (
+        f"two bodies were published under one name, so whichever registered last holds it and "
+        f"the other's callers reach the wrong body: {aliases}"
+    )
+
+    @njit(float64(float64))
+    def call_second(x):
+        return second(x)
+
+    @njit(float64(float64))
+    def call_third(x):
+        return third(x)
+
+    assert abs(call_second(2.5) - 3.0) < 1e-15, (
+        f"the second body's name reached another body: {call_second(2.5)!r}"
+    )
+    assert abs(call_third(2.5) - math.cos(2.5)) < 1e-15, (
+        f"the third body's name reached another body: {call_third(2.5)!r}"
+    )
+    assert len({ll.address_of_symbol(a) for a in aliases}) == 3, (
+        "three names, fewer than three addresses: one of them was overwritten by add_symbol"
     )

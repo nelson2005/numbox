@@ -1,6 +1,7 @@
 import hashlib
 import inspect
 import struct
+import threading
 import warnings
 from llvmlite import binding as ll
 from llvmlite import ir
@@ -134,6 +135,14 @@ _ABSENT_ALIASES = set()
 _PUBLISHED_ALIASES = {}
 
 
+# Serializes _publish_cfunc_alias's read-modify-write over the registries above: the name a
+# colliding body is given is read out of _PUBLISHED_ALIASES and then written back into it, and
+# two threads that both read before either writes mint one name for two bodies.
+# _publish_cfunc_alias runs from plain Python at decoration time, after numba's compiler lock
+# has been released, so nothing else serializes it.
+_ALIAS_LOCK = threading.Lock()
+
+
 class AliasCollisionWarning(RuntimeWarning):
     """Two different bodies reached one alias, so the alias stopped identifying a body."""
 
@@ -163,6 +172,18 @@ def _publish_cfunc_alias(alias, address, opaque):
     happens to hold the name today. Both bodies lose cross-process caching, which is the
     honest price of a name that does not identify what it names.
 
+    The name the newcomer is given is retired too, and for both bodies to pay that price it
+    has to be. It is minted from a count of what this process has published, so it says
+    nothing about the body it names: the same body takes a different one in a process that
+    published a different number of aliases before reaching it, and in a process that builds
+    the pair in the other order that same name belongs to the other body. A name derived from
+    the content instead is not available here by construction, because what put these two
+    bodies on one alias is that no process-stable fingerprint separates them. So it is
+    process-local in the strict sense, good for calls compiled in this process and for
+    nothing else, and a warm caller that references it was compiled somewhere this process
+    cannot speak for. Retiring it discards that caller, which is the same treatment and the
+    same reason as for the name it collided with.
+
     That retirement is permanent for the life of the process. What retired the name is a
     property of the two bodies and not of the order this process happened to build them in, so
     neither of them registering again makes the name identify a body. The one holding it
@@ -180,15 +201,17 @@ def _publish_cfunc_alias(alias, address, opaque):
     caller of it may be one where the binding is missing, and there the trap's named error
     is what that caller has to reach.
     """
-    published, witness = _PUBLISHED_ALIASES.get(alias, (None, None))
-    if published is None or (witness is not None and _opaque_values_match(witness, opaque)):
-        _PUBLISHED_ALIASES[alias] = (address, tuple(opaque))
-        ll.add_symbol(alias, address)
-        return alias
-    _ABSENT_ALIASES.add(alias)
-    distinct = f"{alias}_c{len(_PUBLISHED_ALIASES)}"
-    _PUBLISHED_ALIASES[distinct] = (address, tuple(opaque))
-    ll.add_symbol(distinct, address)
+    with _ALIAS_LOCK:
+        published, witness = _PUBLISHED_ALIASES.get(alias, (None, None))
+        if published is None or (witness is not None and _opaque_values_match(witness, opaque)):
+            _PUBLISHED_ALIASES[alias] = (address, tuple(opaque))
+            ll.add_symbol(alias, address)
+            return alias
+        _ABSENT_ALIASES.add(alias)
+        distinct = f"{alias}_c{len(_PUBLISHED_ALIASES)}"
+        _ABSENT_ALIASES.add(distinct)
+        _PUBLISHED_ALIASES[distinct] = (address, tuple(opaque))
+        ll.add_symbol(distinct, address)
     if witness is None:
         reason = (
             f"an absent-binding trap already answers to the alias {alias}, so this body is "
