@@ -760,6 +760,78 @@ def test_bodies_the_fingerprint_cannot_separate_are_detected_rather_than_rebound
     assert call_second(2.5) == 3.0
 
 
+def test_a_retired_alias_stays_retired_when_its_body_is_registered_again():
+    """Retirement has to outlive the body that lost the name, not just the moment it lost it.
+
+    The collision above retires the shared name because another process may build the two
+    bodies in the other order, and a later registration of either of them does not change
+    that. Taking the alias back out of ``_ABSENT_ALIASES`` there hands a warm ``cache=True``
+    caller back the entry the retirement exists to discard, and which of the two bodies that
+    entry was compiled against is decided by a construction order this process cannot see.
+    Every other retirement assertion in this file reads the set at the moment of publication;
+    this is the one that reads it after the same body comes round a second time.
+
+    The two assertions before the last one are what stop this holding by construction. A
+    re-registration only reaches the branch under test when it is read as the same body: it
+    has to come back under the shared name rather than a ``_c<N>`` one of its own, and it has
+    to warn about nothing. An implementation that instead read it as a fresh collision would
+    also leave the alias retired, and without those two the test would pass while never
+    reaching the branch it is about. What it fails against is the implementation that clears
+    ``_ABSENT_ALIASES`` unconditionally on that branch.
+    """
+    import ctypes
+    from numbox.core.proxy.proxy import AliasCollisionWarning, _ABSENT_ALIASES
+
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take two distinct symbol addresses from")
+    proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+
+    def make(addr):
+        fp = proto(addr)
+
+        @proxy(float64(float64))
+        def body(x):
+            return fp(x)
+        return body
+
+    floor_addr = ctypes.cast(libm.floor, ctypes.c_void_p).value
+    first = make(floor_addr)
+    alias = first._numbox_proxy_alias
+    with pytest.warns(AliasCollisionWarning):
+        second = make(ctypes.cast(libm.ceil, ctypes.c_void_p).value)
+    assert alias in _ABSENT_ALIASES, (
+        "the collision left the shared name identifying a body, so there is nothing here to keep retired"
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", AliasCollisionWarning)
+        again = make(floor_addr)
+
+    assert again._numbox_proxy_alias == alias, (
+        "the body that already holds the shared name was handed a second name, so this never "
+        "reached the branch that reads a registration as the same body"
+    )
+    assert alias in _ABSENT_ALIASES, (
+        "registering the first body again took the shared name back out of _ABSENT_ALIASES; the "
+        "name still does not say which of the two bodies a caller cached in another process was "
+        "compiled against, and that caller now loads instead of recompiling"
+    )
+
+    @njit(float64(float64))
+    def call_again(x):
+        return again(x)
+
+    @njit(float64(float64))
+    def call_the_other(x):
+        return second(x)
+
+    assert call_again(2.5) == 2.0, "the re-registered body ran another body"
+    assert call_the_other(2.5) == 3.0, (
+        "re-pointing the shared name rebound the body that took a name of its own"
+    )
+
+
 def _make_scaling_binding(scale):
     """A factory whose body captures only values the fingerprint canonicalizes."""
     @proxy(float64(float64))
@@ -942,7 +1014,7 @@ def test_a_body_reaching_a_traps_alias_is_told_it_found_a_trap():
 def test_open_libm_hands_back_a_usable_handle():
     """Pin the helper's contract on whatever platform this is running on.
 
-    Eleven tests skip when ``open_libm`` returns ``None``, three of them the only
+    Twelve tests skip when ``open_libm`` returns ``None``, four of them the only
     coverage of the ctypes-pointer fingerprint path, so a platform where it quietly
     stopped finding a math library would give that up and still report green.
     Asserting it here makes that a failure instead, and on Windows it is what notices
@@ -959,7 +1031,7 @@ def test_open_libm_hands_back_a_usable_handle():
     collected by a plain run.
     """
     lib = open_libm()
-    assert lib is not None, "no usable math library on this platform, so eleven tests skip"
+    assert lib is not None, "no usable math library on this platform, so twelve tests skip"
     assert hasattr(lib, "ceil") and hasattr(lib, "cos") and hasattr(lib, "floor")
     assert open_libm() is not lib, "handles are shared, so a two-handle comparison is vacuous"
 
