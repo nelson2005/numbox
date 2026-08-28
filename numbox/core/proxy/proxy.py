@@ -163,6 +163,17 @@ def _publish_cfunc_alias(alias, address, opaque):
     happens to hold the name today. Both bodies lose cross-process caching, which is the
     honest price of a name that does not identify what it names.
 
+    That retirement is permanent for the life of the process. What retired the name is a
+    property of the two bodies and not of the order this process happened to build them in, so
+    neither of them registering again makes the name identify a body. The one holding it
+    re-points the symbol and the other only takes itself another name, and either way another
+    process may still build the two the other way round; the warm caller cached against the
+    name there is the one this is protecting. The re-registration branch above therefore
+    re-points ``_PUBLISHED_ALIASES`` and the symbol and leaves ``_ABSENT_ALIASES`` alone;
+    nothing takes an alias back out of that set. A first publication has nothing to take out
+    anyway, because every membership has a ``_PUBLISHED_ALIASES`` entry already standing, so an
+    alias nobody has published cannot already be retired.
+
     A trap is the other holder a body can find here, and it says so rather than reporting a
     second body that does not exist. It records a witness no body can match, so the body
     takes a name of its own and the alias stays retired: the process that cached a warm
@@ -172,7 +183,6 @@ def _publish_cfunc_alias(alias, address, opaque):
     published, witness = _PUBLISHED_ALIASES.get(alias, (None, None))
     if published is None or (witness is not None and _opaque_values_match(witness, opaque)):
         _PUBLISHED_ALIASES[alias] = (address, tuple(opaque))
-        _ABSENT_ALIASES.discard(alias)
         ll.add_symbol(alias, address)
         return alias
     _ABSENT_ALIASES.add(alias)

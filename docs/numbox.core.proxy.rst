@@ -245,7 +245,10 @@ told apart by the values the fingerprint could not canonicalize: two bodies that
 fingerprint alike are the same body except in those, so comparing them answers
 whether one body was compiled twice or two bodies met on one name. That comparison
 only has to hold inside the current process, which is why it may look at an address
-where the fingerprint may not.
+where the fingerprint may not. A name already retired by a collision stays retired
+through such a re-registration: re-pointing it does not make it identify a body
+again, because another process may still build the two bodies the other way round,
+so nothing takes an alias back out of the absent-alias set.
 
 Because the alias encodes the body, changing a proxied binding's **signature or
 body renames its alias**. numba's cache key for a *caller* is callee-blind, so a
