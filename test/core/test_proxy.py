@@ -1393,6 +1393,111 @@ def test_a_colliding_body_takes_its_name_under_the_registry_lock(monkeypatch):
     )
 
 
+class _TrapCompileHeld:
+    """Stands in for ``cfunc``, holding the absent side inside its trap compile.
+
+    ``proxy.py`` compiles a cfunc only for the trap, so this is enough to stop an absent
+    registration between the read that decides it and the write that acts on it, and to let
+    a body publish there on purpose rather than by luck. The name is checked anyway, so that
+    a future use on the present side cannot block the test against itself.
+    """
+
+    def __init__(self, real_cfunc):
+        self.real_cfunc = real_cfunc
+        self.compiling = threading.Event()
+        self.published = threading.Event()
+
+    def __call__(self, sig):
+        def compile_it(fn):
+            if fn.__name__ == "_trap":
+                self.compiling.set()
+                assert self.published.wait(60), "the present side never published"
+            return self.real_cfunc(sig)(fn)
+        return compile_it
+
+
+def test_a_trap_does_not_take_an_alias_a_body_won_while_the_trap_was_compiling(monkeypatch):
+    """The trap's decision that no body holds the alias has to still be true when it writes.
+
+    ``_register_absent_alias_trap`` reads ``_PUBLISHED_ALIASES`` to decide whether a body
+    already answers, and then compiles a cfunc before it writes. That compile is the widest
+    check-then-act in the module -- around 100 ms against a publication of around 40 ms -- so a
+    body publishing on another thread lands inside it routinely rather than rarely, and lands
+    after the decision that said there was none. The trap raises inside a cfunc wrapper, which
+    swallows the exception and hands back a zeroed return, so the caller gets ``6.2e-310``
+    where the library's answer was right, with no warning of any kind: the same silent wrong
+    answer :func:`_publish_cfunc_alias` exists to stop, reached from the other direction.
+
+    Blocked rather than raced, so this is a witness for the interleaving and not a
+    probability. The absent side is held inside its compile until the present side has
+    published, which is the ordering the stagger produces on its own.
+    """
+    from llvmlite import binding as ll
+
+    import numbox.core.proxy.proxy as proxy_module
+    from numbox.core.proxy.proxy import AliasCollisionWarning, _ABSENT_ALIASES
+
+    lib = open_libm()
+    if lib is None:
+        pytest.skip("No suitable math/C runtime library discoverable")
+
+    class _WithoutTheSymbol:
+        """A second candidate handle, exporting nothing."""
+
+    def bind(handle):
+        @proxy_if_available(handle, float64(float64))
+        def floor(x):
+            return _call_lib_func("floor", (x,))
+        return floor
+
+    held = _TrapCompileHeld(proxy_module.cfunc)
+    monkeypatch.setattr(proxy_module, "cfunc", held)
+    present = {}
+    absent_warnings = []
+
+    def register_present():
+        assert held.compiling.wait(60), "the absent side never reached its compile"
+        present["binding"] = bind(lib)
+        held.published.set()
+
+    def register_absent():
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            bind(_WithoutTheSymbol())
+        absent_warnings.extend(w.category for w in caught)
+
+    absent = threading.Thread(target=register_absent)
+    live = threading.Thread(target=register_present)
+    absent.start()
+    live.start()
+    live.join(120)
+    held.published.set()
+    absent.join(120)
+    assert not (absent.is_alive() or live.is_alive()), "a registration thread did not finish"
+    assert "binding" in present, "the present side did not finish its registration"
+    binding = present["binding"]
+    alias = binding._numbox_proxy_alias
+
+    @njit(float64(float64))
+    def call_present(x):
+        return binding(x)
+
+    assert abs(call_present(2.5) - 2.0) < 1e-15, (
+        f"a caller compiled after the race reached the trap, not the body: "
+        f"{call_present(2.5)!r}"
+    )
+    assert alias not in _ABSENT_ALIASES, (
+        "the alias of a body that is callable here was retired by a trap that lost to it, so "
+        "every warm caller of a working binding recompiles for nothing"
+    )
+    assert ll.address_of_symbol(alias) == proxy_module._PUBLISHED_ALIASES[alias][0], (
+        "the symbol and the registry disagree about what answers to the alias"
+    )
+    assert AliasCollisionWarning in absent_warnings, (
+        f"the trap gave up its alias without saying so: {absent_warnings}"
+    )
+
+
 def test_each_body_that_loses_a_collision_takes_a_name_no_other_body_holds():
     """A minted name is only a name if the next body to lose does not take it too.
 

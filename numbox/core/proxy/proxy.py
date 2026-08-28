@@ -135,12 +135,24 @@ _ABSENT_ALIASES = set()
 _PUBLISHED_ALIASES = {}
 
 
-# Serializes _publish_cfunc_alias's read-modify-write over the registries above: the name a
-# colliding body is given is read out of _PUBLISHED_ALIASES and then written back into it, and
-# two threads that both read before either writes mint one name for two bodies.
-# _publish_cfunc_alias runs from plain Python at decoration time, after numba's compiler lock
-# has been released, so nothing else serializes it.
+# Serializes the read-modify-writes over the registries above, of which there are two.
+# _publish_cfunc_alias reads the count that names a colliding body out of _PUBLISHED_ALIASES
+# and writes the name back into it, so two threads that both read before either writes mint
+# one name for two bodies. _register_absent_alias_trap decides on a read of _PUBLISHED_ALIASES
+# and writes the alias several statements later, so a body publishing in between is silently
+# overwritten by a trap. Both run from plain Python at decoration time, after numba's compiler
+# lock has been released, so nothing else serializes them.
+#
+# The trap compiles a cfunc between its decision and its write, which is why it re-reads under
+# the lock instead of holding one across the compile: the read that decides and the writes that
+# act on it are what have to be atomic, and the compile is not.
 _ALIAS_LOCK = threading.Lock()
+
+
+def _a_body_answers(alias):
+    """Is a proxied body -- and not a trap, and not nothing -- published under ``alias``?"""
+    published, witness = _PUBLISHED_ALIASES.get(alias, (None, None))
+    return published is not None and witness is not None
 
 
 class AliasCollisionWarning(RuntimeWarning):
@@ -250,10 +262,40 @@ def _register_absent_alias_trap(func, main_sig, jit_options=None):
     -- the failure this registry exists to stop, arrived at from the other direction. A
     caller reaching the alias here is calling a binding that is present, and a process where
     it is absent registers the trap against an empty name and is unaffected.
+
+    That question is asked twice, and it is the second answer that decides. Compiling the trap
+    takes long enough that a body publishing on another thread lands inside it routinely rather
+    than rarely, and the first answer was read before the compile began. So the trap is compiled
+    speculatively and the registry is read again under ``_ALIAS_LOCK``, with the writes that act
+    on that reading; a trap whose alias was taken while it compiled is simply dropped.
     """
     alias = _stable_cfunc_alias(func, main_sig, jit_options)
-    published, witness = _PUBLISHED_ALIASES.get(alias, (None, None))
-    if published is not None and witness is not None:
+    # Cheap first answer, only so that the common case does not pay for a compile it discards.
+    yielded_to_body = _a_body_answers(alias)
+    if not yielded_to_body:
+        msg = (
+            f"numbox @proxy binding {func.__name__!r} is not available in the loaded library "
+            f"(C symbol missing), but a cache=True caller compiled when it was present is "
+            f"calling it -- clear the numba cache (NUMBA_CACHE_DIR) and rebuild."
+        )
+        trap_params = ", ".join(f"_a{i}" for i in range(len(main_sig.args)))
+        trap_ns = {"cfunc": cfunc, "main_sig": main_sig, "_trap_msg": msg}
+        exec(  # nosec B102 - internal codegen of a fixed-shape trap body
+            f"def _trap({trap_params}):\n"
+            f"    raise RuntimeError(_trap_msg)\n"
+            f"_trap_cfunc = cfunc(main_sig)(_trap)\n",
+            trap_ns,
+        )
+        with _ALIAS_LOCK:
+            yielded_to_body = _a_body_answers(alias)
+            if not yielded_to_body:
+                _PROXY_TRAP_KEEPALIVE.append(trap_ns["_trap_cfunc"])
+                _ABSENT_ALIASES.add(alias)
+                ll.add_symbol(alias, trap_ns["_trap_cfunc"].address)
+                # Record it under a witness no body can match, so a real body that later reaches
+                # this alias is detected rather than quietly taking a name a trap answers to.
+                _PUBLISHED_ALIASES[alias] = (trap_ns["_trap_cfunc"].address, None)
+    if yielded_to_body:
         warnings.warn(
             f"the @proxy binding {func.__name__!r} is absent from this library but a body is already "
             f"published under the alias {alias} in this process, so the alias keeps naming that body "
@@ -261,26 +303,6 @@ def _register_absent_alias_trap(func, main_sig, jit_options=None):
             AliasCollisionWarning,
             stacklevel=3,
         )
-        return
-    msg = (
-        f"numbox @proxy binding {func.__name__!r} is not available in the loaded library "
-        f"(C symbol missing), but a cache=True caller compiled when it was present is "
-        f"calling it -- clear the numba cache (NUMBA_CACHE_DIR) and rebuild."
-    )
-    trap_params = ", ".join(f"_a{i}" for i in range(len(main_sig.args)))
-    trap_ns = {"cfunc": cfunc, "main_sig": main_sig, "_trap_msg": msg}
-    exec(  # nosec B102 - internal codegen of a fixed-shape trap body
-        f"def _trap({trap_params}):\n"
-        f"    raise RuntimeError(_trap_msg)\n"
-        f"_trap_cfunc = cfunc(main_sig)(_trap)\n",
-        trap_ns,
-    )
-    _PROXY_TRAP_KEEPALIVE.append(trap_ns["_trap_cfunc"])
-    _ABSENT_ALIASES.add(alias)
-    ll.add_symbol(alias, trap_ns["_trap_cfunc"].address)
-    # Record it under a witness no body can match, so a real body that later reaches this
-    # alias is detected rather than quietly taking a name a trap already answers to.
-    _PUBLISHED_ALIASES[alias] = (trap_ns["_trap_cfunc"].address, None)
 
 
 def proxy(sig, jit_options: Optional[dict] = None):
