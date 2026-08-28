@@ -138,10 +138,7 @@ def _ctypes_func_key(value: Any) -> str:
     the process-stability the whole fingerprint exists for, so all three raise and the
     caller decides what to do with a value it cannot tell apart from another.
 
-    The calling convention is folded because numba selects the call's ABI from it on
-    win32: a symbol reached through ``CDLL`` and the same symbol reached through
-    ``WinDLL`` are two different calls, and sharing one alias would pair a caller with a
-    body at the wrong convention.
+    The prototype over the symbol is folded alongside it, by :func:`_ctypes_call_shape`.
     """
     name = getattr(value, "__name__", None)
     objects = getattr(value, "_objects", None)
@@ -152,12 +149,33 @@ def _ctypes_func_key(value: Any) -> str:
     lib_name = getattr(lib, "_name", None)
     if name is None or not isinstance(lib_name, str) or not lib_name:
         raise _Unfingerprintable("ctypes function pointer with no library and symbol name")
+    return f"{lib_name}:{name};{_ctypes_call_shape(value)}"
+
+
+def _ctypes_call_shape(value: Any) -> str:
+    """The call a ctypes function pointer describes, apart from what it points at.
+
+    ``restype``, ``argtypes`` and the calling convention are what numba types the call from
+    and lowers it against, so two pointers agreeing on the symbol or the address but not on
+    these describe two different calls and compile to two different bodies. Every part of it
+    is a type name or a flag word, so it means the same thing in the next process and
+    :func:`_ctypes_func_key` can fold it; a pointer that key refuses for want of a
+    process-stable identity is compared on it by :func:`_opaque_values_match` instead, where
+    an address is admissible and this is what says whether the address is being called the
+    same way.
+
+    An unset ``argtypes`` and an empty one are different: numba rejects a call through the
+    first and accepts the second, so they must not fold together.
+
+    The calling convention is folded because numba selects the call's ABI from it on win32:
+    a symbol reached through ``CDLL`` and the same symbol reached through ``WinDLL`` are two
+    different calls, and sharing one alias would pair a caller with a body at the wrong
+    convention.
+    """
     restype = getattr(getattr(value, "restype", None), "__name__", None)
     argtypes = getattr(value, "argtypes", None)
-    # Unset and empty are different: numba rejects a call through the first and accepts
-    # the second, so they must not fold together.
     args = "<unset>" if argtypes is None else ",".join(getattr(a, "__name__", "?") for a in argtypes)
-    return f"{lib_name}:{name};{restype}({args});flags={getattr(type(value), '_flags_', None)}"
+    return f"{restype}({args});flags={getattr(type(value), '_flags_', None)}"
 
 
 def _fingerprint_codeobj(code: CodeType, seen: set[int]) -> str:
@@ -318,7 +336,12 @@ def _opaque_values_match(old: Sequence[Any], new: Sequence[Any]) -> bool:
     Identity settles the ordinary case: reloading a module rebinds the same
     ``@intrinsic`` object, and a factory called twice closes over the same one.
     Equality is tried next for values that define it. A ctypes function pointer defines
-    neither, so compare the address it holds.
+    neither, so compare the address it holds together with the call the prototype over it
+    describes. The address alone is not the body: one symbol reached through two prototypes
+    is two calls numba types and lowers differently, so reading those as one value hands the
+    second body the alias the first was published under, silently and with no collision to
+    report. :func:`_ctypes_call_shape` is what the fingerprint itself folds for a pointer it
+    can name, so the two paths agree on what makes two pointers two calls.
     """
     if len(old) != len(new):
         return False
@@ -326,7 +349,8 @@ def _opaque_values_match(old: Sequence[Any], new: Sequence[Any]) -> bool:
         if a is b:
             continue
         if isinstance(a, ctypes._CFuncPtr) and isinstance(b, ctypes._CFuncPtr):
-            if ctypes.cast(a, ctypes.c_void_p).value == ctypes.cast(b, ctypes.c_void_p).value:
+            if (ctypes.cast(a, ctypes.c_void_p).value == ctypes.cast(b, ctypes.c_void_p).value
+                    and _ctypes_call_shape(a) == _ctypes_call_shape(b)):
                 continue
             return False
         try:

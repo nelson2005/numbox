@@ -1074,3 +1074,72 @@ def test_open_libm_refuses_a_handle_a_caller_would_reach_past(monkeypatch):
         else:
             monkeypatch.setattr(utils, "load_lib_path", lambda path, _h=crippled: _h)
         assert open_libm() is None, f"a handle without {hidden} was admitted"
+
+
+def test_one_symbol_reached_through_two_prototypes_is_not_one_body():
+    """A ctypes pointer's address is not the body, and reading it as one is silent.
+
+    Two prototypes over one symbol are two calls. numba types and lowers a call from the
+    pointer's ``restype`` and ``argtypes``, so the ``c_double`` prototype compiles a call
+    returning a double and the ``c_float`` one a call returning a float, and the two bodies
+    are different machine code. They fingerprint alike, because a pointer built from a raw
+    address has no process-stable identity to fold and both bodies collapse onto one
+    placeholder, so both reach one alias. Telling the two registrations apart by the address
+    alone reads that as one body registered twice, and that branch re-points the alias and
+    warns about nothing, so the second body silently takes the symbol every caller of the
+    first was compiled against.
+
+    The last assertion is the one that fails against that implementation: a caller compiled
+    after the second registration returned 0.0 where 2.0 is right, exit 0, no warning of any
+    kind. The assertions before it hold the premise it needs. The caller compiled *before*
+    the second registration is right either way, since it was linked before any rebinding,
+    which is what makes the pair of callers a measurement rather than a coincidence; and the
+    registered address is what separates a second name from a re-pointed symbol, so that a
+    fix handing out a name while still re-pointing the old one does not pass.
+    """
+    import ctypes
+
+    from llvmlite import binding as ll
+    from numbox.core.proxy.proxy import AliasCollisionWarning, _ABSENT_ALIASES
+
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take a symbol address from")
+    addr = ctypes.cast(libm.floor, ctypes.c_void_p).value
+
+    def make(fp):
+        @proxy(float64(float64))
+        def body(x):
+            return fp(x)
+        return body
+
+    first = make(ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)(addr))
+    alias = first._numbox_proxy_alias
+    address_before = ll.address_of_symbol(alias)
+
+    @njit(float64(float64))
+    def call_before(x):
+        return first(x)
+
+    assert call_before(2.5) == 2.0, "the first body was not calling floor to begin with"
+
+    with pytest.warns(AliasCollisionWarning, match="fingerprint alike"):
+        second = make(ctypes.CFUNCTYPE(ctypes.c_float, ctypes.c_float)(addr))
+
+    assert second._numbox_proxy_alias != alias, (
+        "the second prototype was handed the name the first is published under"
+    )
+    assert alias in _ABSENT_ALIASES, (
+        "the shared name still identifies a body, so a warm caller can be served the wrong one"
+    )
+    assert ll.address_of_symbol(alias) == address_before, (
+        "the second body re-pointed the symbol the first is published under"
+    )
+
+    @njit(float64(float64))
+    def call_after(x):
+        return first(x)
+
+    assert call_after(2.5) == 2.0, (
+        "a caller compiled after the second registration reached the other prototype's body"
+    )
