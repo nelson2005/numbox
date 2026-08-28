@@ -308,10 +308,18 @@ def test_two_python_callbacks_sharing_a_name_are_not_canonicalized_alike():
 
 
 def test_unset_and_empty_argtypes_are_canonicalized_apart():
-    """``argtypes = None`` and ``argtypes = ()`` are different, and folded to one string.
+    """An unset ``argtypes`` and an empty one must not fold onto one canonical form.
 
     numba refuses a call through a pointer whose ``argtypes`` is unset and accepts one
-    declared to take nothing, so the two cannot share a canonical form.
+    declared to take nothing, so a key folding the two together pairs a caller with a body
+    it cannot call. ``getattr(value, "argtypes", None) or ()`` folds them together, and that
+    is the implementation this rules out: the two pointers below differ in nothing else, so
+    their canonical forms have to differ with that attribute.
+
+    They come off two handles because ``CDLL.__getattr__`` caches the pointer it builds on
+    the instance: one handle asked twice hands back one object, and setting ``argtypes``
+    would set it on both. ``open_libm`` opening a fresh handle per call is what keeps this a
+    two-object comparison, and is pinned by ``test_open_libm_hands_back_a_usable_handle``.
     """
     libm = open_libm()
     if libm is None:
@@ -319,6 +327,7 @@ def test_unset_and_empty_argtypes_are_canonicalized_apart():
     unset = open_libm().floor
     assert unset.argtypes is None, "ctypes stopped leaving argtypes unset by default"
     empty = open_libm().floor
+    assert unset is not empty, "both pointers came off one handle, so setting argtypes sets both"
     empty.argtypes = ()
     assert _canon_value(unset, set()) != _canon_value(empty, set()), (
         "an unset argtypes and an empty one collapsed onto one canonical form"
