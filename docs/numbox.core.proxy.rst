@@ -8,7 +8,9 @@ Implementation of :func:`numbox.core.proxy.proxy` decorator that swaps definitio
 function in-place for a declaration (while delegating the actual implementation
 to a different function that is only accessible indirectly). As a result, statically linking in libraries
 corresponding to proxy-jitted functions called from other jitted functions will
-only paste a declaration rather than the entire LLVM IR code.
+only paste a declaration rather than the entire LLVM IR code. One route is exempt: a jitted caller
+that reaches a binding's ``.as_func`` as a compile-time constant links the body's code in rather than
+a declaration, with the caching consequence described under `Cache invalidation`_ below.
 
 The ``.as_func`` first-class value
 ++++++++++++++++++++++++++++++++++
@@ -131,24 +133,40 @@ are dead and get eliminated before numba scans the final module, and the caller
 caches. This holds from numba 0.61 onward; on 0.60 ``.as_func`` is a plain
 ``CompileResultWAP`` and the caller stays uncacheable as before.
 
-What such a caller caches is the proxied body's machine code, linked in: on this
-one path the decorator's static-linking avoidance does not apply, and for an
-ordinary body size LLVM inlines the body outright. Its cached binary binds the
-body as it stood at compile time, while numba's freshness stamp watches only the
-caller's own source file. **After an edit to a proxied body, such a caller does
-not reliably pick the edit up, and clearing the numba cache is mandatory rather
-than merely advisable.**
+What such a caller caches is the proxied body's machine code, linked in. The
+inline at work on this path is not the ``inline='always'`` the decorator puts on
+the generated wrapper: that one is a numba-IR inline of the wrapper's single
+``@intrinsic`` call, it fires only where a jitted caller calls the dispatcher,
+and what it leaves behind is the alias declaration the static-linking avoidance
+is built on. A constant reference never reaches the wrapper. ``.as_func`` carries
+the *body's* compile result, ``lower_constant_derive_function_type`` links that
+library into the caller, and LLVM then inlines the body itself for an ordinary
+body size, so on this one path the static-linking avoidance does not apply. The
+cached binary binds the body as it stood at compile time, while numba's freshness
+stamp watches only the caller's own source file. **This is the constant-reference
+route alone: a caller reaching the same binding through its dispatcher is healed
+on load by the stale-alias guard described below, and needs no manual clearing.
+For a caller holding the body as a compile-time constant, clearing the numba
+cache after an edit to the proxied body is mandatory rather than merely
+advisable.**
 
 Which body it runs is not single-valued. A body small enough to inline leaves no
-separate definition behind, and the caller keeps serving the old numbers. A
-larger body is embedded in the caller's object as a weak definition, under a
-mangled name that folds numba's per-process compile counter; the caller then
-serves its own embedded copy when that counter has shifted since the entry was
-written, and whatever currently defines the same mangled name when it has not.
-Both outcomes are silent. The two handles disagreeing within one process, a
-dispatcher-path caller returning the new value while the const-referencing caller
-returns the old one, is one symptom but not a dependable one: in the non-inlined
-case the two can agree while the cached caller runs a body it never embedded.
+separate definition behind, and the caller keeps serving the old numbers in
+every later process. A larger body is embedded in the caller's object as a weak
+``linkonce_odr`` definition under a mangled name carrying numba's per-process
+``v<uid>`` abi-tag, which numba's cache key does not cover. Which body that
+caller reaches then turns on the name the proxied body carries in the loading
+process, and that name is minted by whichever process last recompiled the body
+and frozen in the body's own cache entry, so it need not track the loading
+process's own counter. Where it differs from the embedded name, the caller runs
+its embedded copy while the dispatcher path runs the new body; where it matches,
+the caller binds to the definition the already-loaded body registered and both
+handles return the new value while the caller's cached object still holds only
+the old code. The first process to recompile the body after an edit fixes which
+of the two every later process gets. Both outcomes are silent, so the two
+handles disagreeing within one process is one symptom and not a dependable one:
+in the non-inlined case they can agree while the cached caller runs a body it
+never embedded.
 
 The stale-alias guard described below cannot cover this, by construction. It
 scans a cached object's undefined symbols for the ``numbox_pxy_`` prefix, and a
@@ -169,7 +187,10 @@ where the body needs no external symbol, and dying on a bare segfault with an
 empty stderr where it does. A cold cache in the same process raises a clean
 typing error instead, so warm and cold disagree. ``NUMBOX_PROXY_CACHE_STRICT``
 does not catch it either, for the same reason the guard does not: there is no
-alias to check.
+alias to check. The deterministic arm of this, a body that needs no external
+symbol so the warm run hands back the vanished binding's own number instead of
+segfaulting, is pinned in ``test/core/test_proxy_cache_stale.py`` by
+``test_a_const_reference_caller_calls_a_binding_that_disappeared``.
 
 Guarding the use with ``hasattr(binding, "as_func")`` protects only in two
 shapes: when the jitted caller's *definition* sits inside that ``if``, so the
