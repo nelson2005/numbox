@@ -16,7 +16,7 @@ import pytest
 
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _canon_value, _fingerprint_function, _loaded_global_names,
-    _referenced_global_names,
+    _opaque_values_match, _referenced_global_names,
 )
 from test.auxiliary_utils import open_libm
 
@@ -331,4 +331,53 @@ def test_unset_and_empty_argtypes_are_canonicalized_apart():
     empty.argtypes = ()
     assert _canon_value(unset, set()) != _canon_value(empty, set()), (
         "an unset argtypes and an empty one collapsed onto one canonical form"
+    )
+
+
+def test_two_prototypes_over_one_address_are_not_read_as_one_value():
+    """An address is not a call, so it cannot decide on its own that two values are one body.
+
+    ``_opaque_values_match`` answers whether two equal fingerprints stood on the same values,
+    and a raw-address ctypes pointer is what reaches it, because :func:`_ctypes_func_key`
+    refuses one for want of a process-stable identity. Comparing two of them by the address
+    alone is the implementation this rules out. numba types a call from ``restype``,
+    ``argtypes`` and the convention and lowers it against them, so one symbol reached through
+    two prototypes is two calls that compile to two different bodies; reading them as one
+    value hands the second the alias the first was published under, with no collision to
+    report and no warning.
+
+    The three mismatching pairs differ from the first pointer in the return type, in the
+    arguments, and in both, so a fix folding only one half of the prototype still fails one
+    of them. The matching pair is what stops the check reading every module reload and every
+    twice-called factory as a collision, which retires their alias and costs both bodies
+    cross-process caching for nothing. It has to be two objects over one address, or the
+    identity test at the top of the comparison answers before the pointer branch is reached.
+    """
+    import ctypes
+
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take a symbol address from")
+    addr = ctypes.cast(libm.floor, ctypes.c_void_p).value
+    as_double = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)(addr)
+    other_restype = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_double)(addr)
+    other_argtypes = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double, ctypes.c_double)(addr)
+    as_float = ctypes.CFUNCTYPE(ctypes.c_float, ctypes.c_float)(addr)
+    again = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)(addr)
+
+    assert as_double is not again, (
+        "one object compared with itself is answered by the identity test, not by the pointer branch"
+    )
+    for other in (other_restype, other_argtypes, as_float, again):
+        assert ctypes.cast(other, ctypes.c_void_p).value == addr, (
+            "the pointers do not share an address, so nothing here reaches the comparison it is about"
+        )
+    for differing, part in ((other_restype, "return type"), (other_argtypes, "arguments"),
+                            (as_float, "return type and arguments")):
+        assert not _opaque_values_match([as_double], [differing]), (
+            f"two prototypes differing in the {part} over one address read as one body"
+        )
+    assert _opaque_values_match([as_double], [again]), (
+        "one prototype over one address read as two bodies, so a module reload and a factory "
+        "called twice both turn into collisions"
     )
