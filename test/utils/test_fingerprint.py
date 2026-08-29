@@ -212,6 +212,11 @@ def test_a_ctypes_pointer_built_from_an_address_stays_unfingerprintable():
     separating two of them is the address, which ASLR moves, so folding it would buy
     discrimination at the cost of the process-stability the fingerprint exists for. Refusing is
     the honest answer, and it leaves the caller to detect the collision instead of hiding it.
+
+    The refusal has to come from the ctypes branch deciding it, not from the walker never
+    reaching one. A walker with no ctypes handling at all refuses this pointer too, and would
+    satisfy a bare ``pytest.raises``; what separates the two is the message, which the terminal
+    raise fills with the type name and the ctypes branch fills with its own reason.
     """
     import ctypes
 
@@ -220,8 +225,12 @@ def test_a_ctypes_pointer_built_from_an_address_stays_unfingerprintable():
         pytest.skip("No math library discoverable to take a symbol address from")
     proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
     fp = proto(ctypes.cast(libm.floor, ctypes.c_void_p).value)
-    with pytest.raises(_Unfingerprintable):
+    with pytest.raises(_Unfingerprintable) as refusal:
         _canon_value(fp, set())
+    assert str(refusal.value) != type(fp).__name__, (
+        "the refusal is the walker's terminal type-name raise, so the ctypes branch was never "
+        "reached and this passes against a walker that cannot fingerprint any pointer at all"
+    )
 
 
 def test_a_proxied_binding_and_a_cres_are_not_canonicalized_alike_as_function_values():
@@ -274,12 +283,28 @@ def test_a_function_value_numbox_did_not_mint_stays_unfingerprintable():
     result identifies its body only by a compiled address and a mangled name whose abi-tag
     is a per-process counter. Neither means the same thing next run, so refusing is the
     honest answer and leaves the collision to be detected rather than hidden.
+
+    Refusing this one only means something while numbox's own function value of the same shape
+    is accepted. The untagged wrapper falls through to the very terminal raise a walker with no
+    ``CompileResultWAP`` branch at all would give it, so the ``cres`` below is what says the tag
+    is doing the separating rather than the type being unreachable.
     """
     from numba import float64, njit
     from numba.core.types.function_type import CompileResultWAP
 
+    from numbox.utils.highlevel import cres
+
     compiled = njit(float64(float64))(lambda x: x + 1.0)
     foreign = CompileResultWAP(compiled.get_compile_result(compiled.nopython_signatures[0]))
+
+    @cres(float64(float64))
+    def minted(x):
+        return x + 1.0
+
+    assert _canon_value(minted, set()), (
+        "numbox's own function value is unfingerprintable too, so the refusal below is not "
+        "about the missing tag and rules nothing out"
+    )
     with pytest.raises(_Unfingerprintable):
         _canon_value(foreign, set())
 
