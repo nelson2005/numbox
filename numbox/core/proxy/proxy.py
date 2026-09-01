@@ -14,6 +14,7 @@ from types import FunctionType as PyFunctionType
 from typing import List, Optional, Tuple
 
 from numbox.core.configurations import _PROXY_CACHE_STRICT_ENV, _strict_cache_mode
+from numbox.utils.derive_wap import DeriveWAP, jit_addr_supported
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _fingerprint_function, _fingerprint_function_best_effort,
 )
@@ -166,18 +167,39 @@ def proxy(sig, jit_options: Optional[dict] = None):
     to statically link into (potential) caller's LLVM code, which is the main motivation behind
     this decorator.
 
-    Machine code for `func` can be cached when so specified in `jit_options`, in which case its
-    JIT-compilation will load the `func` into the LLVM scope. Caching option is the other major
-    motivation for this decorator, without the need to cache one can avoid static linking
-    of the callee's LLVM code into the caller's by simply ignoring the former.
+    Machine code for `func` can be cached when so specified in `jit_options`, which is the other
+    major motivation for this decorator: without the need to cache one can avoid static linking
+    of the callee's LLVM code into the caller's by simply ignoring the former. What puts `func`
+    within the proxy's reach is not the caching but the explicit `ll.add_symbol` below, which
+    publishes the body's cfunc wrapper under a process-stable alias on every decoration.
 
     In case when more than one signature is provided as the `sig` parameter, it is assumed
     that the first signature is the 'main' one while the other ones are supplied to
     allow for the `Omitted` types with default values for (some of) the parameters.
 
-    The returned dispatcher also exposes ``.as_func``: a ``CompileResultWAP``
+    The returned dispatcher also exposes ``.as_func``: a first-class function value
     for the main signature. Cacheable as a called jitted function (via the
     dispatcher); passable as a function-type argument (via ``.as_func``).
+
+    On numba 0.61 and later ``.as_func`` is a ``DeriveWAP`` typed as ``DeriveFunctionType``,
+    so an exception raised inside the proxied body propagates out of a first-class call made
+    through ``.as_func`` instead of being discarded; see :mod:`numbox.utils.derive_wap`. On
+    numba 0.60, which has no ``jit_addr`` slot to populate, it is a plain ``CompileResultWAP``.
+    Calling the dispatcher itself is unchanged on every version: that path goes through the
+    body's cfunc wrapper, which discards the exception and zero-fills the return value. Handing
+    ``.as_func`` from Python into a parameter *declared* as a plain ``FunctionType`` also still
+    discards, which ``DeriveFunctionType.can_convert_to`` documents.
+
+    On numba 0.61 and later, reaching ``.as_func`` as a compile-time constant from a
+    ``cache=True`` jitted caller makes that caller cacheable, which it was not before, and its
+    cached binary then binds the proxied body's machine code: after an edit to the body such a
+    caller does not reliably pick it up, and which body it does run is not single-valued, so the
+    numba cache has to be cleared rather than trusted to notice. The stale-alias guard below does
+    not cover that caller, because a constant reference emits no alias for it to check; for the
+    same reason it does not catch a ``proxy_if_available`` binding that has since gone absent,
+    where such a caller returns the vanished binding's value or segfaults. On numba 0.60 the
+    constant reference carries a dynamic global as it always has, so numba declines to cache
+    such a caller and neither the gain nor the hazard applies.
 
     See tests for some examples of the use cases.
     """
@@ -243,7 +265,7 @@ def {func_proxy_name}({func_args_str}):
         code = compile(prefixed, inspect.getfile(func), mode='exec')
         exec(code, ns)  # nosec B102 - JIT codegen of internal source
         dispatcher = ns[func_proxy_name]
-        dispatcher.as_func = CompileResultWAP(cres)
+        dispatcher.as_func = DeriveWAP(cres) if jit_addr_supported() else CompileResultWAP(cres)
         # Tag the dispatcher with its process-stable alias so the fingerprint
         # walker can identify a @proxy binding by that alias instead of recursing
         # into its wrapper's @intrinsic (which has no canonical form) -- otherwise
@@ -275,6 +297,9 @@ def proxy_if_available(lib, sig, jit_options: Optional[dict] = None):
 
         if hasattr(my_binding, "as_func"):
             use(my_binding.as_func)
+
+    A present binding's ``.as_func`` follows ``proxy``'s contract above, including the
+    numba-version-dependent type and exception semantics.
     """
     def _(func):
         if hasattr(lib, func.__name__):
