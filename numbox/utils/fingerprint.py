@@ -58,6 +58,31 @@ def _dtype_key(dtype: np.dtype) -> str:
     return dtype.str
 
 
+# Aliases that have stopped identifying the body they were minted for. Written by
+# `numbox.core.proxy.proxy`, which imports this module: the set lives on this side so the
+# walker can consult it without importing that one back. It holds both halves of a
+# collision, the shared name and the process-local one the newcomer is given, and the name
+# an absent-binding trap answers to.
+#
+# `_canon_value` refuses to fold one, and that is what keeps a collision from spreading.
+# Which of two colliding bodies ends up with which name is decided by the order this process
+# built them in, so a third body that captures one and folds `proxy(<alias>)` gets a
+# fingerprint that names the other body in a process that built the pair the other way round.
+# The colliding bodies are themselves protected, because their own names are retired and the
+# cache guard discards a warm caller of a retired name. A body derived from one of them is
+# not: it is published under a fresh name that resolves and sits in no retirement set, so it
+# keeps a cross-process cache that is now wrong, which is how a collision escapes one
+# composition step out. Refusing to fold drops the derived body onto the ordinary walk, where
+# the dispatcher it captured has no canonical form, so it meets `_opaque_values_match` like
+# any other pair the fingerprint cannot separate and its own alias is retired in turn.
+#
+# A derived body fingerprinted before the collision that retires its dependency is not
+# reached: it folded a name that still identified a body and is already published under one
+# of its own. Closing that would mean recording which aliases each fingerprint consumed and
+# retiring dependents transitively.
+_ABSENT_ALIASES: set[str] = set()
+
+
 def _canon_value(value: Any, seen: set[int]) -> str:
     if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
         return repr(value)
@@ -83,10 +108,11 @@ def _canon_value(value: Any, seen: set[int]) -> str:
         return f"module({value.__name__})"
     if isinstance(value, Dispatcher):
         proxy_alias = getattr(value, "_numbox_proxy_alias", None)
-        if proxy_alias is not None:
+        if proxy_alias is not None and proxy_alias not in _ABSENT_ALIASES:
             # A @proxy binding: its content-addressed alias fully identifies the
             # body and signature. Walking its wrapper would recurse into the
-            # @intrinsic it calls, which has no canonical form.
+            # @intrinsic it calls, which has no canonical form. A retired alias
+            # identifies nothing, so it falls through to that walk instead.
             return f"proxy({proxy_alias})"
         topts = _canon_value(dict(getattr(value, "targetoptions", {}) or {}), seen)
         return f"dispatcher({_fingerprint_function(value.py_func, seen)};{topts})"
@@ -110,7 +136,7 @@ def _canon_value(value: Any, seen: set[int]) -> str:
         # and a mangled name holding a per-process counter. Untagged ones -- built directly
         # against numba -- keep falling through to the placeholder below.
         proxy_alias = getattr(value, "_numbox_proxy_alias", None)
-        if proxy_alias is not None:
+        if proxy_alias is not None and proxy_alias not in _ABSENT_ALIASES:
             return f"proxyfunc({proxy_alias})"
         py_func = getattr(value, "_numbox_py_func", None)
         if py_func is not None:

@@ -254,6 +254,27 @@ make it identify a body again, because another process may still build the two
 bodies the other way round, so nothing takes an alias back out of the absent-alias
 set.
 
+Retiring the two names is not the whole of the containment, because a third body can
+capture one of them. A ``@proxy`` body that merely calls a colliding binding closes
+over its dispatcher, and folding that dispatcher by the name it happens to hold would
+make the derived body's own alias a function of the order this process built the pair
+in, so two such derived bodies exchange names between one process and the next.
+Neither derived name is retired, each being freshly minted and resolving normally, so
+unlike the pair it wraps a derived body would keep the cross-process cache that has
+just stopped being right, and the collision would escape one composition step out.
+The walker therefore declines to fold a retired alias at all. A body that captured one
+falls through to the ordinary walk, where a dispatcher has no canonical form, so it
+meets the same comparison every un-canonicalizable value meets and its own alias is
+retired in its turn.
+
+One window stays open. A derived body fingerprinted *before* the collision that
+retires its dependency folded a name that still identified a body, and it is already
+published under a name of its own that nothing revisits. Closing it would mean
+recording which aliases each fingerprint consumed and retiring dependents
+transitively, so what is documented here is the bound: containment reaches a derived
+body built after the collision, and the warning's promise that callers of both
+recompile in every process holds for everything built from that point on.
+
 Because the alias encodes the body, changing a proxied binding's **signature or
 body renames its alias**. numba's cache key for a *caller* is callee-blind, so a
 ``cache=True`` caller in another file cache-hits unchanged after such a change

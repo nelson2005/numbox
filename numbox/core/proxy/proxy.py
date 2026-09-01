@@ -17,7 +17,7 @@ from typing import List, Optional, Tuple
 from numbox.core.configurations import _PROXY_CACHE_STRICT_ENV, _strict_cache_mode
 from numbox.utils.derive_wap import DeriveWAP, jit_addr_supported
 from numbox.utils.fingerprint import (
-    _Unfingerprintable, _fingerprint_function, _fingerprint_function_best_effort,
+    _ABSENT_ALIASES, _Unfingerprintable, _fingerprint_function, _fingerprint_function_best_effort,
     _opaque_values_match,
 )
 from numbox.utils.standard import make_params_strings
@@ -126,7 +126,9 @@ _PROXY_TRAP_KEEPALIVE = []
 
 # Aliases currently standing for an ABSENT binding. A trap registration makes the alias resolve without
 # there being a body behind it, so presence alone stops meaning "safe to call" -- see _stale_proxy_aliases.
-_ABSENT_ALIASES = set()
+# Defined in numbox.utils.fingerprint and imported above, because the walker there has to refuse to fold
+# a retired alias into the fingerprint of a body that captured it, and this module already imports that
+# one. Only ever mutated in place, so both modules see the same set.
 
 # Alias -> (address published under it, the opaque values its fingerprint stood on), so a
 # second body reaching the same alias is detected rather than silently rebinding every
