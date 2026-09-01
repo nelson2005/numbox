@@ -1248,6 +1248,130 @@ def test_a_body_that_lost_a_collision_does_not_serve_a_warm_caller(tmp_path):
     )
 
 
+def test_a_body_deriving_from_a_collision_does_not_serve_a_warm_caller(tmp_path):
+    """Retiring the two colliding names is not enough: what captures one of them inherits the order.
+
+    The sibling test above covers a caller of a colliding body. This is the same failure one
+    composition step out, where the protection used to stop. A second ``@proxy`` body that
+    merely *calls* a colliding binding captures its dispatcher, and folding that dispatcher by
+    the alias it happens to hold makes the derived body's own alias a function of the order the
+    process built the pair in: the wrapper over ceil folds the minted name in a process that
+    built floor first, and the wrapper over floor folds it in a process that built ceil first,
+    so the two wrappers exchange names between the two runs. Neither wrapper name is retired,
+    because each is freshly minted and resolves, so unlike the colliding pair the derived body
+    keeps its cross-process cache. The warm caller then cache-hits, numba's cache key being
+    callee-blind, and computes ``floor(2.5)`` where ``ceil(2.5)`` is right: 2.0, exit 0, and the
+    only warning is the collision one, which says callers of both recompile in every process.
+
+    Refusing to fold a retired alias is what closes it. The two wrappers become
+    indistinguishable to the fingerprint rather than distinguishable by the wrong thing, so they
+    collide with each other, and that collision retires their names the way the first one
+    retired the binding names.
+
+    The ``STALE`` counts carry the same weight as in the sibling: the warm run has to report
+    that it found a cached entry and discarded it, or the right answer is available by never
+    having written the cache at all.
+    """
+    if open_libm() is None:
+        pytest.skip("No math library discoverable to take two distinct symbol addresses from")
+
+    pkg = tmp_path / "derived_pkg"
+    pkg.mkdir()
+    (pkg / "colliding_pair.py").write_text(textwrap.dedent('''
+        import ctypes
+        import os
+
+        from numba.core.types import float64
+
+        from numbox.core.proxy.proxy import proxy
+        from test.auxiliary_utils import open_libm
+
+        libm = open_libm()
+        proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+
+        def make(symbol):
+            fp = proto(ctypes.cast(getattr(libm, symbol), ctypes.c_void_p).value)
+
+            @proxy(float64(float64))
+            def body(x):
+                return fp(x)
+            return body
+
+        if os.environ["ORDER"] == "floor_first":
+            floor_binding = make("floor")
+            ceil_binding = make("ceil")
+        else:
+            ceil_binding = make("ceil")
+            floor_binding = make("floor")
+    '''), encoding="utf-8")
+    (pkg / "wrapped_pair.py").write_text(textwrap.dedent('''
+        from numba.core.types import float64
+
+        from numbox.core.proxy.proxy import proxy
+
+        from colliding_pair import ceil_binding, floor_binding
+
+        def make_caller(binding):
+            @proxy(float64(float64))
+            def caller(x):
+                return binding(x)
+            return caller
+
+        wrapped_floor = make_caller(floor_binding)
+        wrapped_ceil = make_caller(ceil_binding)
+    '''), encoding="utf-8")
+    (pkg / "caller_pair.py").write_text(textwrap.dedent('''
+        from numba import njit
+        from numba.core.types import float64
+
+        from wrapped_pair import wrapped_ceil
+
+        @njit(float64(float64), cache=True)
+        def caller(x):
+            return wrapped_ceil(x)
+    '''), encoding="utf-8")
+    (pkg / "run_pair.py").write_text(textwrap.dedent('''
+        import warnings
+
+        from numbox.core.proxy.proxy import StaleProxyCacheWarning
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            import caller_pair
+        print("STALE", sum(issubclass(w.category, StaleProxyCacheWarning) for w in caught), flush=True)
+        print("RESULT", caller_pair.caller(2.5), flush=True)
+    '''), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["NUMBA_CACHE_DIR"] = str(tmp_path / "nbcache")
+    env["PYTHONPATH"] = os.pathsep.join([str(pkg), *sys.path])
+
+    def run(order):
+        env["ORDER"] = order
+        done = subprocess.run(
+            [sys.executable, str(pkg / "run_pair.py")],
+            capture_output=True, text=True, encoding="utf-8", env=env,
+        )
+        assert done.returncode == 0, f"{order} failed:\n{done.stderr}"
+        return done.stdout
+
+    cold = run("floor_first")
+    assert "STALE 0" in cold, f"the cold run discarded a cache entry it should not have:\n{cold}"
+    assert "RESULT 3.0" in cold, f"the caller of the ceil wrapper did not run ceil:\n{cold}"
+
+    warm = run("ceil_first")
+    assert "RESULT 3.0" in warm, (
+        f"a warm caller of the wrapper around the ceil binding was served against the wrapper "
+        f"around floor, because the wrapper's own alias followed the order its dependency was "
+        f"built in:\n{warm}"
+    )
+    assert "STALE 0" not in warm, (
+        f"the warm run reported no discarded entry, so the right answer here says nothing "
+        f"about the order it was cached in -- it can be had by never writing the cache at "
+        f"all:\n{warm}"
+    )
+
+
 class _AliasLockProbe:
     """Asks, from a second thread, whether the alias registry lock is free at this instant.
 

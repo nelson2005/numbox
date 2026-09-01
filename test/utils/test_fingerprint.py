@@ -406,3 +406,78 @@ def test_two_prototypes_over_one_address_are_not_read_as_one_value():
         "one prototype over one address read as two bodies, so a module reload and a factory "
         "called twice both turn into collisions"
     )
+
+
+def test_a_retired_alias_is_not_folded_into_a_body_that_captured_it():
+    """A name that stopped identifying a body must not go on identifying it to its captors.
+
+    An alias is retired when two bodies reach it, because which of them ends up under the
+    shared name and which under the minted one is decided by the order this process built
+    them in. That reasoning does not stop at the two bodies. A third body capturing one of
+    them and folding ``proxy(<alias>)`` gets a fingerprint that means the other body in a
+    process that built the pair the other way round, and it is published under a fresh name
+    that resolves, so unlike the colliding pair it keeps a cross-process cache that is now
+    wrong.
+
+    Falling through to the ordinary walk is what prevents it. The dispatcher has no canonical
+    form there, so a derived body reaches ``_opaque_values_match`` like any other pair the
+    fingerprint cannot separate, and its own alias is retired in turn.
+    """
+    import ctypes
+
+    from numba import float64
+
+    from numbox.core.proxy.proxy import AliasCollisionWarning, proxy, _ABSENT_ALIASES
+
+    libm = open_libm()
+    if libm is None:
+        pytest.skip("No math library discoverable to take two distinct symbol addresses from")
+    proto = ctypes.CFUNCTYPE(ctypes.c_double, ctypes.c_double)
+
+    def make(symbol):
+        fp = proto(ctypes.cast(getattr(libm, symbol), ctypes.c_void_p).value)
+
+        @proxy(float64(float64))
+        def body(x):
+            return fp(x)
+        return body
+
+    winner = make("floor")
+    with pytest.warns(AliasCollisionWarning):
+        loser = make("ceil")
+
+    assert winner._numbox_proxy_alias != loser._numbox_proxy_alias, (
+        "the two bodies did not collide, so nothing here is about a retired alias"
+    )
+    for binding, which in ((winner, "shared"), (loser, "minted")):
+        alias = binding._numbox_proxy_alias
+        assert alias in _ABSENT_ALIASES, (
+            f"the {which} name was not retired, so this asserts nothing about folding one"
+        )
+        with pytest.raises(_Unfingerprintable):
+            _canon_value(binding, set())
+        with pytest.raises(_Unfingerprintable):
+            _canon_value(binding.as_func, set())
+
+
+def test_a_live_alias_is_still_folded():
+    """The refusal above is keyed on retirement, not on being a proxied binding at all.
+
+    A binding whose alias still identifies it is the ordinary case and has to keep folding by
+    that alias, or every body capturing any proxied binding becomes un-fingerprintable and the
+    cache digests that rest on it degrade.
+    """
+    from numba import float64
+
+    from numbox.core.proxy.proxy import proxy
+
+    @proxy(float64(float64))
+    def uncollided(x):
+        return x * 3.0
+
+    assert _canon_value(uncollided, set()) == f"proxy({uncollided._numbox_proxy_alias})", (
+        "a binding holding a name that identifies it stopped folding by that name"
+    )
+    assert _canon_value(uncollided.as_func, set()) == f"proxyfunc({uncollided._numbox_proxy_alias})", (
+        "the function value of an uncollided binding stopped folding by its alias"
+    )
