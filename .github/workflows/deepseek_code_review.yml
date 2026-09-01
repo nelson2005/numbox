@@ -14,10 +14,23 @@ jobs:
     # no per-request timeout, and its `max-length` input SKIPS the review (exiting success) rather
     # than truncating, which would hide the problem behind a green check.
     # Actions minutes are free on this public repo, so a longer wait costs only wall clock.
+    #
+    # Restricted to same-repo pull requests. `pull_request_target` fires for a pull request from
+    # a fork too, and nothing gates the author: the action's own `allowed-associations` check runs
+    # only on its `issue_comment` path, and its review script has no fork or association check at
+    # all, so a fork pull request would spend the paid CHAT_TOKEN. The action never checks out the
+    # head, so this guards cost and noise rather than code execution.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # `secrets` is not available in a job-level `if`, so the presence check is hoisted here and
+      # applied to the step instead. Without a token the action exits INVALID_PARAMETER and posts
+      # a "provide your token" comment on every pull request; skipping is silent.
+      HAS_CHAT_TOKEN: ${{ secrets.CHAT_TOKEN != '' }}
     steps:
-      - uses: hustcer/deepseek-review@eccde2e9781008d795e366b951e313e37af88dd5 # v1.21
+      - if: env.HAS_CHAT_TOKEN == 'true'
+        uses: hustcer/deepseek-review@eccde2e9781008d795e366b951e313e37af88dd5 # v1.21
         with:
           chat-token: ${{ secrets.CHAT_TOKEN }}
           model: deepseek-v4-pro
