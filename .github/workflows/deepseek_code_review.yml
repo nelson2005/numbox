@@ -14,12 +14,28 @@ on:
     # model is not at fault and there is no empty-diff guard in the action to
     # turn on. Not running is the guard.
     #
-    # Keep this list in step with `exclude-patterns`: `**.md` covers CLAUDE.md
-    # and `docs/**` covers docs/plans. Drift is asymmetric. Too narrow and an
-    # empty diff reaches the model again; too broad and a reviewable pull
-    # request is skipped in silence. A pull request that also touches something
-    # reviewable still runs, and `exclude-patterns` strips the rest from its
-    # diff.
+    # Keeping this "in step with `exclude-patterns`" is not a matter of copying
+    # the list across: the two dialects differ, and the action's is stranger
+    # than it looks. It joins the patterns into ONE awk regex, but the grouping
+    # parentheses in its own source are nushell interpolation and never reach
+    # awk, so the alternation binds at the top level and ONLY THE FIRST PATTERN
+    # carries the `^diff --git a/` anchor. Every later pattern matches at any
+    # depth. Verified against the pinned action by replaying its regex over a
+    # real diff.
+    #
+    # The ORDER of `exclude-patterns` is therefore significant:
+    #   `docs/**` is FIRST, so it stays root-anchored and agrees with the
+    #   root-anchored `docs/**` here. KEEP IT FIRST. Demote it and it starts
+    #   excluding a nested `docs/` that GitHub will not skip, which is an empty
+    #   diff and an invented review.
+    #   `.github/**` is not first, so it matches `.github/` at ANY depth.
+    #   This repository has no nested `.github/`, so the single entry below
+    #   suffices; add `**/.github/**` if one is ever introduced.
+    #
+    # Drift is otherwise asymmetric: too narrow here and an empty diff reaches
+    # the model again; too broad and a reviewable pull request is skipped in
+    # silence. A pull request that also touches something reviewable still
+    # runs, and `exclude-patterns` strips the rest from its diff.
     paths-ignore:
       - 'docs/**'
       - '**.md'
