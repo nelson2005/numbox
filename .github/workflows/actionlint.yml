@@ -1,0 +1,57 @@
+name: actionlint
+
+# A workflow file GitHub rejects does not fail loudly. It produces a run with
+# zero jobs, no log and conclusion `failure`, while every other workflow still
+# reports green, so `gh pr checks` can read CLEAN with the test matrix entirely
+# absent. That is how a duplicate `build-pyarrow-range` key, introduced by a
+# clean merge that git raised no conflict on, removed 30 matrix jobs from a
+# numbarrow pull request: 6 checks passing where the repaired head reported 36.
+#
+# A YAML parse does not catch it. Duplicate keys are valid YAML and a loader
+# silently keeps the last definition, so the file reads as healthy.
+#
+# This job lives in its own file deliberately: when another workflow is the one
+# being rejected, this one stays schedulable and still reports.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+  push:
+    branches: [ "main" ]
+    paths:
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install actionlint
+        # Pinned by version and verified by checksum, the same discipline the
+        # third-party actions here get, rather than taking on another action
+        # dependency to deliver one binary.
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o actionlint.tar.gz "$url"
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+
+      - name: Lint every workflow
+        # Every file, not only the changed ones: a merge can damage a workflow
+        # nobody edited, which is exactly the case this job exists for.
+        #
+        # shellcheck and pyflakes are OFF. Runners ship shellcheck, so leaving
+        # it on would lint every `run:` block here for the first time and could
+        # turn this red on adoption for reasons unrelated to workflow validity.
+        # Turning them on is worth doing as its own change, after a measured
+        # run. The schema check is the one that catches a rejected workflow.
+        run: ./actionlint -color -shellcheck= -pyflakes= .github/workflows/*.yml
