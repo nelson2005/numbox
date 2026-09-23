@@ -35,6 +35,7 @@ from numbox.core.bindings.sqlite._typemap import (
     _TAG_I8, _TAG_I16, _TAG_I32, _TAG_I64, _TAG_U8, _TAG_U16, _TAG_U32, _TAG_U64,
     _TAG_F32, _TAG_F64, _TAG_BOOL, _TAG_S, _TAG_U, _TAG_BLOB,
     _SQL_TYPE, _col_tag, utf32_to_utf8, _nul_trimmed_len, tags_buf_t,
+    _INLINE_JIT_OPTIONS,
 )
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
@@ -401,12 +402,6 @@ def _xclose(cur):
         return SQLITE_OK
     except Exception:
         return SQLITE_ERROR
-
-
-# The per-row helpers below are inlined at the numba IR level: numba does not
-# inline one @njit function into another in LLVM, and an out-of-line call per
-# cell measurably slows xColumn and the xFilter predicate scan.
-_INLINE_JIT_OPTIONS = {**jit_options, "inline": "always"}
 
 
 @njit(**_INLINE_JIT_OPTIONS)
