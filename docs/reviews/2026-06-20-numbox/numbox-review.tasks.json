@@ -1,7 +1,7 @@
 {
   "planFor": "numbox deep review 2026-06-20",
   "sourceReport": "docs/reviews/2026-06-20-numbox/REPORT.md",
-  "lastUpdated": "2026-06-25",
+  "lastUpdated": "2026-09-23",
   "tasks": [
     {
       "id": 1,
@@ -279,7 +279,8 @@
       ],
       "model": "opus",
       "reasoning": "max",
-      "status": "pending"
+      "status": "completed",
+      "note": "Done on fork branch fix/numbox-review-2026-06-20-mediums (2026-09-23), not yet upstream: _typemap._utf8_decode_one (numba inline='always') shared by utf8_to_utf32 and query._put_unicode; the tracked-array emit in _put_unicode is unchanged. Table test pins full output and bytes consumed for malformed input on both paths."
     },
     {
       "id": 14,
@@ -301,7 +302,8 @@
       ],
       "model": "opus",
       "reasoning": "max",
-      "status": "pending"
+      "status": "completed",
+      "note": "Done on fork branch fix/numbox-review-2026-06-20-mediums (2026-09-23), not yet upstream: vtable._emit_cell plus _load_cell_i64/_load_cell_f64/_cell_at (inline='always'), used by both xColumn bodies and by _cell_value_f64/_i64, so the third per-tag copy is gone too. The helpers live in vtable.py, not _typemap.py: _typemap would otherwise import the result bindings into query_to_array. Out-of-line helpers measured +6% on xColumn; inlined is at parity."
     },
     {
       "id": 15,
@@ -322,7 +324,8 @@
       ],
       "model": "opus",
       "reasoning": "max",
-      "status": "pending"
+      "status": "completed",
+      "note": "Done on fork branch fix/numbox-review-2026-06-20-mediums (2026-09-23), not yet upstream: compile_kernel._build_plan. A third copy, _build_cone_plan, had appeared since the review; all three now delegate (liveness, live-in compile type, declared-sig folding and Segment recording are parameters)."
     },
     {
       "id": 16,
@@ -342,7 +345,8 @@
       ],
       "model": "opus",
       "reasoning": "max",
-      "status": "pending"
+      "status": "completed",
+      "note": "Done on fork branch fix/numbox-review-2026-06-20-mediums (2026-09-23), not yet upstream: work._codegen_method; calculate/load still exec into the module dict, combine/inputs_vector into a copy with extras, as before."
     },
     {
       "id": 17,
@@ -362,7 +366,8 @@
       ],
       "model": "opus",
       "reasoning": "max",
-      "status": "pending"
+      "status": "completed",
+      "note": "Done on fork branch fix/numbox-review-2026-06-20-mediums (2026-09-23), not yet upstream. Reframed: removerefctpass strips NRT_incref as well as NRT_decref (by name), so the doc-only option was false. A void(intp) caller had its incref stripped on numba 0.65.1 (refcount 2 -> 2). Fixed by tagging the caller with numba's numba_args_may_always_need_nrt metadata; the pass is gone from numba 0.66."
     },
     {
       "id": 18,
@@ -385,7 +390,8 @@
       ],
       "model": "opus",
       "reasoning": "max",
-      "status": "pending"
+      "status": "completed",
+      "note": "Done on fork branch fix/numbox-review-2026-06-20-mediums (2026-09-23), not yet upstream: no basicConfig, timings at INFO, test/utils/test_timer.py. stress_work_runner.py and benchmark_work.py configure INFO in __main__, since the runner's documented output relies on the timer lines."
     },
     {
       "id": 19,
