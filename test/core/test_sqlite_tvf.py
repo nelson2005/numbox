@@ -1,6 +1,6 @@
 import os
 import pickle
-from ctypes import addressof, c_char_p, c_int64, cast
+from ctypes import addressof, c_char_p, c_int64, cast, string_at
 
 import pytest
 import numpy as np
@@ -8,13 +8,14 @@ from numba import njit
 from numba.core import config
 
 from numbox.utils.cstrings import c_string
+from numbox.utils.lowlevel import array_data_p
 from numbox.core.bindings.sqlite.conn import sqlite3_open, sqlite3_close
 from numbox.core.bindings.sqlite import tvf
 from numbox.core.bindings.sqlite.tvf import register_tvf
 from numbox.core.bindings.sqlite.stmt import sqlite3_prepare_v2, sqlite3_step, sqlite3_finalize
 from numbox.core.bindings.sqlite.column import (
     sqlite3_column_int64, sqlite3_column_double, sqlite3_column_text, sqlite3_column_type,
-    sqlite3_column_count,
+    sqlite3_column_count, sqlite3_column_blob, sqlite3_column_bytes,
 )
 from numbox.core.bindings.sqlite.tvf import _make_xbestindex, _TVF_DESC_DTYPE
 from numbox.core.bindings.sqlite.vtable import (
@@ -431,6 +432,42 @@ _TWO_U_ROWS = np.array([("αβ", "héllo"), ("\U0001F600", "wörld")], dtype=_TW
 @njit
 def _two_u_series(start, stop):
     return _TWO_U_ROWS[start:stop]
+
+
+_ADDR_S_OUT = np.dtype([("addr", "i8"), ("s", "S4")])
+_ADDR_S_ROWS = np.array([(0, b"ab"), (0, b"cd")], dtype=_ADDR_S_OUT)
+
+
+@njit
+def _addr_s_series(start, stop):
+    # A fresh array per call, as a real fn returns; each row carries its address.
+    out = _ADDR_S_ROWS[start:stop].copy()
+    for i in range(out.shape[0]):
+        out[i].addr = array_data_p(out)
+    return out
+
+
+def test_tvf_text_result_is_copied_by_sqlite():
+    # The array behind a tvf result is released on the next xFilter, so an 'S'
+    # cell must reach SQLite as SQLITE_TRANSIENT, which makes SQLite copy it.
+    # sqlite3_column_blob returns the stored pointer as is, so a cell handed
+    # over without a copy would point back into the array fn returned.
+    db = _open()
+    h = register_tvf(db.value, "addrs", (np.int64, np.int64), _ADDR_S_OUT, _addr_s_series)
+    stmt = c_int64(0)
+    with c_string("SELECT addr, s FROM addrs(0, 2)") as p:
+        assert sqlite3_prepare_v2(db.value, p, -1, addressof(stmt), 0) == SQLITE_OK
+    rows = []
+    while sqlite3_step(stmt.value) == SQLITE_ROW:
+        base = sqlite3_column_int64(stmt.value, 0)
+        s_p = sqlite3_column_blob(stmt.value, 1)
+        rows.append((base, s_p, string_at(s_p, sqlite3_column_bytes(stmt.value, 1))))
+    sqlite3_finalize(stmt.value)
+    sqlite3_close(db.value)
+    del h
+    assert [r[2] for r in rows] == [b"ab", b"cd"]
+    for base, s_p, _ in rows:
+        assert not base <= s_p < base + 2 * _ADDR_S_OUT.itemsize
 
 
 def _outer_xfilter_overloads():
