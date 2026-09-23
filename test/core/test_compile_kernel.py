@@ -1507,6 +1507,25 @@ def test_segmented_object_chain_groups_python_run():
     assert ("python", ("calc.b", "calc.c")) in kinds
 
 
+def test_segmented_python_run_inputs_exclude_values_made_inside_the_run():
+    g = Graph(
+        variables_lists={"calc": [
+            {"name": "a", "inputs": {"x": "ext"}, "formula": lambda x: x * 2.0},
+            {"name": "b", "inputs": {"a": "calc"}, "formula": lambda a: _Opaque(a)},
+            {"name": "c", "inputs": {"b": "calc", "x": "ext"}, "formula": lambda b, x: b.v + x},
+            {"name": "d", "inputs": {"c": "calc"}, "formula": lambda c: c * 10.0},
+        ]},
+        external_source_names=["ext"],
+    )
+    ck = compile_kernel(g, "calc.d", cache=False)
+    assert ck.kernel(3.0) == ((3.0 * 2.0 + 3.0) * 10.0,)
+    assert ck.kernel(3.0) == ((3.0 * 2.0 + 3.0) * 10.0,)
+    py = [s for s in ck.partition.segments if s.kind == "python"]
+    assert [(s.nodes, s.inputs, s.outputs) for s in py] == [
+        (("calc.b", "calc.c"), ("calc.a", "ext.x"), ("calc.b", "calc.c")),
+    ]
+
+
 def test_segmented_all_python():
     def f(x):
         json.dumps({"k": 1})
