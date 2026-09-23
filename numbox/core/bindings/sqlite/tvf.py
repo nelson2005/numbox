@@ -34,7 +34,7 @@ from numbox.core.bindings.sqlite._typemap import _col_tag, _SQL_TYPE, tags_buf_t
 from numbox.core.bindings.sqlite.vtable import (
     _Sqlite3Module, _SQLITE3_VTAB_CURSOR_DTYPE, _VTAB_DTYPE, _VTAB_SIZE,
     _IDX_INFO_DTYPE, _CONSTRAINT_DTYPE, _USAGE_DTYPE,
-    _register_with_destroy,
+    _emit_cell, _register_with_destroy,
 )
 from numbox.utils.digest import digest
 from numbox.utils.preprocessing import (
@@ -304,43 +304,11 @@ def _make_xcolumn():
             tags = carray(_cast_int_to_void_p(d[0].col_tags), (ncols,), dtype=tags_buf_t)
             widths = carray(_cast_int_to_void_p(d[0].col_widths), (ncols,), dtype=np.int64)
             addr = data_p + rowid * c[0].row_stride + offsets[j]
-            tag = tags[j]
-            if tag == _TAG_I8:
-                sqlite3_result_int64(ctx, int64(load_unaligned(addr, int8)))
-            elif tag == _TAG_I16:
-                sqlite3_result_int64(ctx, int64(load_unaligned(addr, int16)))
-            elif tag == _TAG_I32:
-                sqlite3_result_int64(ctx, int64(load_unaligned(addr, int32)))
-            elif tag == _TAG_I64:
-                sqlite3_result_int64(ctx, load_unaligned(addr, int64))
-            elif tag == _TAG_U8:
-                sqlite3_result_int64(ctx, int64(load_unaligned(addr, uint8)))
-            elif tag == _TAG_U16:
-                sqlite3_result_int64(ctx, int64(load_unaligned(addr, uint16)))
-            elif tag == _TAG_U32:
-                sqlite3_result_int64(ctx, int64(load_unaligned(addr, uint32)))
-            elif tag == _TAG_U64:
-                sqlite3_result_int64(ctx, int64(load_unaligned(addr, uint64)))
-            elif tag == _TAG_BOOL:
-                sqlite3_result_int64(ctx, int64(1) if load_unaligned(addr, uint8) != 0 else int64(0))
-            elif tag == _TAG_F32:
-                sqlite3_result_double(ctx, float64(load_unaligned(addr, float32)))
-            elif tag == _TAG_F64:
-                sqlite3_result_double(ctx, load_unaligned(addr, float64))
-            elif tag == _TAG_S:
-                # unlike the vtable's STATIC S/BLOB, ALL tvf results stay
-                # TRANSIENT: they point into the per-cursor NRT array (or the
-                # scratch), which is released and replaced on the next xFilter,
-                # so a STATIC pointer here would dangle.
-                n = _nul_trimmed_len(addr, widths[j])
-                sqlite3_result_text(ctx, addr, int32(n), _SQLITE_TRANSIENT)
-            elif tag == _TAG_BLOB:
-                n = _nul_trimmed_len(addr, widths[j])
-                sqlite3_result_blob(ctx, addr, int32(n), _SQLITE_TRANSIENT)
-            elif tag == _TAG_U:
-                scratch = c[0].scratch_p
-                n = utf32_to_utf8(addr, widths[j] // 4, scratch)
-                sqlite3_result_text(ctx, scratch, int32(n), _SQLITE_TRANSIENT)
+            # unlike the vtable's STATIC S/BLOB, ALL tvf results stay
+            # TRANSIENT: they point into the per-cursor NRT array (or the
+            # scratch), which is released and replaced on the next xFilter,
+            # so a STATIC pointer here would dangle.
+            _emit_cell(ctx, addr, tags[j], widths[j], c[0].scratch_p, _SQLITE_TRANSIENT)
             return SQLITE_OK
         except Exception:
             sqlite3_result_error(ctx, get_unicode_data_p("error reading tvf column"), -1)

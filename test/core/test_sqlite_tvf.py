@@ -22,7 +22,7 @@ from numbox.core.bindings.sqlite.vtable import (
 )
 from numbox.core.bindings.sqlite.constants import (
     SQLITE_OK, SQLITE_CONSTRAINT, SQLITE_INDEX_CONSTRAINT_EQ, SQLITE_ROW,
-    SQLITE_ERROR, SQLITE_DONE, SQLITE_INTEGER, SQLITE_TEXT,
+    SQLITE_ERROR, SQLITE_DONE, SQLITE_INTEGER, SQLITE_TEXT, SQLITE_FLOAT,
 )
 
 _OUT = np.dtype([("n", "i8")])
@@ -381,6 +381,47 @@ def test_tvf_two_unicode_columns_share_cursor_scratch():
     assert rows == [("αβ", "héllo"), ("😀", "wörld")]
     sqlite3_close(db.value)
     del h
+
+
+_NUM_OUT = np.dtype([("i1", "i1"), ("i2", "i2"), ("i4", "i4"), ("i8", "i8"),
+                     ("u1", "u1"), ("u2", "u2"), ("u4", "u4"), ("u8", "u8"),
+                     ("f4", "f4"), ("f8", "f8"), ("b", "?")])
+_NUM_ROWS = np.array([
+    (-128, -32768, -2 ** 31, -2 ** 63, 255, 65535, 2 ** 32 - 1, 2 ** 64 - 1, 1.5, -2.25, True),
+    (127, 32767, 2 ** 31 - 1, 2 ** 63 - 1, 0, 1, 2, 3, -0.5, 1e300, False),
+], dtype=_NUM_OUT)
+
+
+@njit
+def _num_series(start, stop):
+    return _NUM_ROWS[start:stop]
+
+
+def test_tvf_every_numeric_and_bool_output_column():
+    # Drives every integer, float and bool tag through _tvf_xcolumn. SQLite
+    # holds integers as int64, so uint64 max comes back wrapped to -1, and bool
+    # is INTEGER 0/1. The storage class is checked too: -128.0 == -128 in Python.
+    db = _open()
+    h = register_tvf(db.value, "nums", (np.int64, np.int64), _NUM_OUT, _num_series)
+    stmt = c_int64(0)
+    with c_string("SELECT i1, i2, i4, i8, u1, u2, u4, u8, f4, f8, b FROM nums(0, 2)") as p:
+        assert sqlite3_prepare_v2(db.value, p, -1, addressof(stmt), 0) == SQLITE_OK
+    rows, kinds = [], []
+    while sqlite3_step(stmt.value) == SQLITE_ROW:
+        n = sqlite3_column_count(stmt.value)
+        kinds.append([sqlite3_column_type(stmt.value, i) for i in range(n)])
+        rows.append(tuple(
+            sqlite3_column_double(stmt.value, i) if kinds[-1][i] == SQLITE_FLOAT
+            else sqlite3_column_int64(stmt.value, i) for i in range(n)
+        ))
+    sqlite3_finalize(stmt.value)
+    sqlite3_close(db.value)
+    del h
+    assert kinds == [[SQLITE_INTEGER] * 8 + [SQLITE_FLOAT, SQLITE_FLOAT, SQLITE_INTEGER]] * 2
+    assert rows == [
+        (-128, -32768, -2 ** 31, -2 ** 63, 255, 65535, 2 ** 32 - 1, -1, 1.5, -2.25, 1),
+        (127, 32767, 2 ** 31 - 1, 2 ** 63 - 1, 0, 1, 2, 3, -0.5, 1e300, 0),
+    ]
 
 
 _TWO_U_OUT = np.dtype([("a", "U6"), ("b", "U6")])
