@@ -105,5 +105,26 @@ def test_bridge_intrinsics_reject_non_intp():
         njit(int32(int32))(caller)
 
 
+def test_incref_survives_refcount_pruning():
+    """A ``void(intp)`` caller passes the legality check of numba's
+    ``removerefctpass`` (numba <= 0.65), which strips NRT_incref by name; the
+    incref must survive it."""
+    from numbox.utils.meminfo import _incref_meminfo, export_meminfo, get_nrt_refcount, release_meminfo
+    from test.common_structrefs import S1
+
+    @numba.njit
+    def pin(p_):
+        _incref_meminfo(p_)
+
+    s = S1(1, 2, 3.0)
+    p = export_meminfo(s)
+    assert get_nrt_refcount(s) == 2
+    pin(p)
+    assert get_nrt_refcount(s) == 3
+    release_meminfo(p)
+    release_meminfo(p)
+    assert get_nrt_refcount(s) == 1
+
+
 if __name__ == "__main__":
     collect_and_run_tests(__name__)
