@@ -404,9 +404,11 @@ def test_text_and_blob_cells_point_into_the_registered_array(text_as_blob):
     assert pointers == [array_data_p(a), array_data_p(a) + a.itemsize]
 
 
-def test_a_column_tag_without_a_branch_fails_the_query():
+@pytest.mark.parametrize("tag", [99, -1])
+def test_a_column_tag_without_a_branch_fails_the_query(tag):
     # Every tag _col_tag produces has a branch in _emit_cell. If one ever does
-    # not, the query must fail rather than read the cell back as a silent NULL.
+    # not, above that range or below it, the query must fail rather than read the
+    # cell back as a silent NULL or as some other type.
     from numbox.core.bindings.sqlite import vtable as v
     from numbox.core.bindings.sqlite.conn import sqlite3_errmsg
     from numbox.core.bindings.sqlite.constants import SQLITE_ERROR
@@ -414,7 +416,7 @@ def test_a_column_tag_without_a_branch_fails_the_query():
     keys0 = set(v._DATA_ANCHOR)
     register_table(db, "t", np.array([[1], [2]], dtype=np.int64), columns=["a"])
     (key,) = set(v._DATA_ANCHOR) - keys0
-    v._DATA_ANCHOR[key]._keep[0].tags[0] = 99
+    v._DATA_ANCHOR[key]._keep[0].tags[0] = tag
     stmt_p = c_int64(0)
     with c_string("SELECT a FROM t") as sql_p:
         assert sqlite3_prepare_v2(db, sql_p, -1, addressof(stmt_p), 0) == 0
