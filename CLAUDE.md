@@ -14,7 +14,7 @@ numbox — a toolbox of low-level utilities for working with numba. Provides typ
 - Lint: `flake8` (config in `.flake8`: max-line-length=127, default rules)
 - Docs: `cd docs && make html` (Sphinx)
 - Python: >=3.10 (CI tests 3.10–3.14; local venv pinned to 3.12)
-- Key dependency: `numba>=0.60.0,<0.67.0` (matches `pyproject.toml`; local venv has `numba==0.65.1`)
+- Key dependency: `numba>=0.60.0,<0.68.0` (matches `pyproject.toml`; local venv has `numba==0.65.1`)
 
 ## Architecture
 
