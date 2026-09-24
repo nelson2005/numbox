@@ -404,6 +404,27 @@ def test_text_and_blob_cells_point_into_the_registered_array(text_as_blob):
     assert pointers == [array_data_p(a), array_data_p(a) + a.itemsize]
 
 
+def test_a_column_tag_without_a_branch_fails_the_query():
+    # Every tag _col_tag produces has a branch in _emit_cell. If one ever does
+    # not, the query must fail rather than read the cell back as a silent NULL.
+    from numbox.core.bindings.sqlite import vtable as v
+    from numbox.core.bindings.sqlite.conn import sqlite3_errmsg
+    from numbox.core.bindings.sqlite.constants import SQLITE_ERROR
+    db = _open_memory()
+    keys0 = set(v._DATA_ANCHOR)
+    register_table(db, "t", np.array([[1], [2]], dtype=np.int64), columns=["a"])
+    (key,) = set(v._DATA_ANCHOR) - keys0
+    v._DATA_ANCHOR[key]._keep[0].tags[0] = 99
+    stmt_p = c_int64(0)
+    with c_string("SELECT a FROM t") as sql_p:
+        assert sqlite3_prepare_v2(db, sql_p, -1, addressof(stmt_p), 0) == 0
+    rc = sqlite3_step(stmt_p.value)
+    msg = cast(sqlite3_errmsg(db), c_char_p).value
+    sqlite3_finalize(stmt_p.value)
+    sqlite3_close(db)
+    assert (rc, msg) == (SQLITE_ERROR, b"unsupported column tag")
+
+
 def test_fortran_order_matches_c():
     db = _open_memory()
     a = np.asfortranarray(np.array([[1, 2], [3, 4], [5, 6]], dtype=np.int64))

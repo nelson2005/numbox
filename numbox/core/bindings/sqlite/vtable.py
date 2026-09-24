@@ -648,12 +648,12 @@ def _xrowid(cur, p_rowid):
 
 @njit(**_INLINE_JIT_OPTIONS)
 def _emit_cell(ctx, addr, tag, width, scratch_p, s_blob_destructor):
-    """Hand the cell at ``addr`` to SQLite as the xColumn result on ``ctx``.
+    """Hand the cell at ``addr`` to SQLite as the xColumn result on ``ctx`` and return the code xColumn returns.
 
-    S and BLOB results point straight at ``addr``, so the caller passes the
-    destructor sentinel that matches how long ``addr`` lives. U results are
-    transcoded into ``scratch_p``, which the next xColumn overwrites, so they
-    are always TRANSIENT.
+    S and BLOB results point straight at ``addr``, so the caller passes the destructor sentinel that matches how long
+    ``addr`` lives. U results are transcoded into ``scratch_p``, which the next xColumn overwrites, so they are always
+    TRANSIENT. Every tag ``_col_tag`` produces has a branch; any other tag fails the query with an error rather than
+    reading back as a silent NULL.
     """
     if tag <= _TAG_U64 or tag == _TAG_BOOL:
         sqlite3_result_int64(ctx, _load_cell_i64(addr, tag))
@@ -668,6 +668,10 @@ def _emit_cell(ctx, addr, tag, width, scratch_p, s_blob_destructor):
     elif tag == _TAG_U:
         n = utf32_to_utf8(addr, width // 4, scratch_p)
         sqlite3_result_text(ctx, scratch_p, int32(n), SQLITE_TRANSIENT)
+    else:
+        sqlite3_result_error(ctx, get_unicode_data_p("unsupported column tag"), -1)
+        return SQLITE_ERROR
+    return SQLITE_OK
 
 
 @cfunc(types.int32(types.intp, types.intp, types.int32), cache=_CACHE)
@@ -685,8 +689,7 @@ def _xcolumn(cur, ctx, j):
         # S/BLOB results point into the registered array, which outlives the
         # statement (_DATA_ANCHOR + the no-mutation contract), so STATIC hands
         # SQLite the pointer zero-copy.
-        _emit_cell(ctx, addr, tags[j], widths[j], c[0].scratch_p, SQLITE_STATIC)
-        return SQLITE_OK
+        return _emit_cell(ctx, addr, tags[j], widths[j], c[0].scratch_p, SQLITE_STATIC)
     except Exception:
         sqlite3_result_error(ctx, get_unicode_data_p("error reading vtable column"), -1)
         return SQLITE_ERROR

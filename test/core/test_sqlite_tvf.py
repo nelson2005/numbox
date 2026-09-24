@@ -1,6 +1,6 @@
 import os
 import pickle
-from ctypes import addressof, c_char_p, c_int64, cast, string_at
+from ctypes import addressof, c_char_p, c_int32, c_int64, cast, string_at
 
 import pytest
 import numpy as np
@@ -142,6 +142,21 @@ def test_tvf_hidden_columns_read_back_their_arguments():
     sqlite3_close(db.value)
     del h
     assert got == [(i, SQLITE_INTEGER, 0, SQLITE_INTEGER, 3, SQLITE_FLOAT, 2.5) for i in range(3)]
+
+
+def test_tvf_column_tag_without_a_branch_fails_the_query():
+    # The tvf xColumn hands visible cells to the vtable's _emit_cell, so a tag
+    # with no branch there must fail the query here as well.
+    from numbox.core.bindings.sqlite import vtable as v
+    db = _open()
+    keys0 = set(v._DATA_ANCHOR)
+    register_tvf(db.value, "series", (np.int64, np.int64), _OUT, _series)
+    (key,) = set(v._DATA_ANCHOR) - keys0
+    desc = next(o for o in v._DATA_ANCHOR[key]._keep if isinstance(o, np.ndarray) and o.dtype == _TVF_DESC_DTYPE)
+    c_int32.from_address(int(desc["col_tags"][0])).value = 99
+    rc = _step_rc(db, "SELECT n FROM series(2, 5)")
+    sqlite3_close(db.value)
+    assert rc == SQLITE_ERROR
 
 
 def test_tvf_missing_hidden_arg():
