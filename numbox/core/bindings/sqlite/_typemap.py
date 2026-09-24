@@ -63,9 +63,9 @@ def utf32_to_utf8(src, n_codepoints, dst):
     return k
 
 
-# Per-element helpers (here and in vtable.py) are inlined at the numba IR level:
-# numba does not inline one @njit function into another in LLVM, and an
-# out-of-line call per code point or per cell measurably slows their loops.
+# Per-element helpers (here and in vtable.py) are inlined at the numba IR level.
+# Left to LLVM's inliner, the larger ones (_utf8_decode_one, _emit_cell) stay
+# out of line, and a call per code point or per cell measurably slows their loops.
 _INLINE_JIT_OPTIONS = {**jit_options, "inline": "always"}
 
 
