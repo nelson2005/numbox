@@ -385,6 +385,25 @@ def test_blob_preserves_interior_nul():
     sqlite3_close(db)
 
 
+@pytest.mark.parametrize("text_as_blob", [False, True])
+def test_text_and_blob_cells_point_into_the_registered_array(text_as_blob):
+    # The registered array outlives every query, so 'S' cells reach SQLite as
+    # SQLITE_STATIC, without a copy. sqlite3_column_blob returns the stored
+    # pointer as is, so each cell points at its own bytes in the array.
+    db = _open_memory()
+    a = np.array([(b"xy",), (b"zw",)], dtype=np.dtype([("s", "S3")]))
+    h = register_table(db, "t", a, text_as_blob=text_as_blob)  # noqa: F841
+    stmt_p = c_int64(0)
+    with c_string("SELECT s FROM t") as sql_p:
+        assert sqlite3_prepare_v2(db, sql_p, -1, addressof(stmt_p), 0) == 0
+    pointers = []
+    while sqlite3_step(stmt_p.value) == _SQLITE_ROW:
+        pointers.append(sqlite3_column_blob(stmt_p.value, 0))
+    sqlite3_finalize(stmt_p.value)
+    sqlite3_close(db)
+    assert pointers == [array_data_p(a), array_data_p(a) + a.itemsize]
+
+
 def test_fortran_order_matches_c():
     db = _open_memory()
     a = np.asfortranarray(np.array([[1, 2], [3, 4], [5, 6]], dtype=np.int64))
