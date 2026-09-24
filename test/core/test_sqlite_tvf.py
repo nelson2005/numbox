@@ -154,6 +154,18 @@ def test_tvf_hidden_columns_read_back_their_arguments():
     assert got == [(i, SQLITE_INTEGER, 0, SQLITE_INTEGER, 3, SQLITE_FLOAT, 2.5) for i in range(3)]
 
 
+def test_tvf_where_on_an_argument_column_is_checked_against_the_argument():
+    # The call already binds arg0 and arg1, so an '=' on either in WHERE is a
+    # second EQ on that arg, which SQLite checks against the hidden column.
+    db = _open()
+    h = register_tvf(db.value, "series", (np.int64, np.int64), _OUT, _series)
+    assert _select_int(db, "SELECT n FROM series(2, 5) WHERE arg0 = 2") == (SQLITE_OK, [(2,), (3,), (4,)])
+    assert _select_int(db, "SELECT n FROM series(2, 5) WHERE arg1 = 5") == (SQLITE_OK, [(2,), (3,), (4,)])
+    assert _select_int(db, "SELECT n FROM series(2, 5) WHERE arg0 = 3") == (SQLITE_OK, [])
+    sqlite3_close(db.value)
+    del h
+
+
 def test_tvf_column_tag_without_a_branch_fails_the_query():
     # The tvf xColumn hands visible cells to the vtable's _emit_cell, so a tag
     # with no branch there must fail the query here as well.
@@ -352,8 +364,8 @@ def test_tvf_xbestindex_rejects_unbound_arg_despite_duplicate_eq():
     # 2 visible cols, 3 hidden (cols 2,3,4). Duplicate usable EQ on arg0 (col 2)
     # plus a usable EQ on arg2 (col 4), with arg1 (col 3) left unbound. A naive
     # usable-EQ count reaches 3 == n_hidden and wrongly accepts the plan even
-    # though one hidden arg is unbound. SQLite coalesces such constraints before
-    # xBestIndex so this never arrives via SQL, but the contract is to reject it.
+    # though one hidden arg is unbound. SQL sends duplicates whenever a query
+    # filters an argument the call binds, as in f(1) WHERE arg0 = 1.
     EQ = SQLITE_INDEX_CONSTRAINT_EQ
     rc, _ = _call_xbestindex(2, 3, [(2, EQ, 1), (2, EQ, 1), (4, EQ, 1)])
     assert rc == SQLITE_CONSTRAINT, rc
@@ -361,12 +373,13 @@ def test_tvf_xbestindex_rejects_unbound_arg_despite_duplicate_eq():
 
 def test_tvf_xbestindex_accepts_all_args_bound_with_duplicate_eq():
     # Every hidden arg (cols 2,3,4) has a usable EQ, with a redundant duplicate on
-    # arg0: the plan must still be accepted (the duplicate must not change the
-    # all-bound verdict).
+    # arg0: the plan must still be accepted. SQLite refuses a plan in which two
+    # constraints share an argvIndex, so the duplicate gets none and is not
+    # omitted, which leaves it for SQLite to check.
     EQ = SQLITE_INDEX_CONSTRAINT_EQ
     rc, usage = _call_xbestindex(2, 3, [(2, EQ, 1), (2, EQ, 1), (3, EQ, 1), (4, EQ, 1)])
     assert rc == SQLITE_OK, rc
-    assert [int(usage[i]["argvIndex"]) for i in range(4)] == [1, 1, 2, 3]
+    assert [(int(u["argvIndex"]), int(u["omit"])) for u in usage] == [(1, 1), (0, 0), (2, 1), (3, 1)]
 
 
 def test_tvf_xbestindex_checks_every_arg_past_64():
