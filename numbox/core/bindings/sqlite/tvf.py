@@ -197,6 +197,9 @@ def _make_xbestindex():
         # at 63. A second EQ on the same arg, as in f(1) WHERE arg0 = 1, gets no
         # argvIndex, since SQLite refuses a plan in which two constraints share one,
         # and is not omitted, so SQLite checks it against the hidden column.
+        # The scan is O(n_hidden * n_constraint): microseconds for a handful of
+        # args, about a millisecond at SQLite's default 2000-column cap, and it
+        # runs only when a query is planned.
         for h in range(n_hidden):
             bound = False
             for i in range(n_constraint):
