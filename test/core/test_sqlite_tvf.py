@@ -124,6 +124,26 @@ def test_tvf_multi_column_and_float_arg():
     del h
 
 
+def test_tvf_hidden_columns_read_back_their_arguments():
+    # The arguments are HIDDEN columns of the schema, so a query may name them;
+    # SQLite's own table-valued functions answer such a column with its argument.
+    db = _open()
+    h = register_tvf(db.value, "scaled", (np.int64, np.int64, np.float64), _OUT2, _scaled)
+    stmt = c_int64(0)
+    with c_string("SELECT n, arg0, arg1, arg2 FROM scaled(0, 3, 2.5)") as p:
+        assert sqlite3_prepare_v2(db.value, p, -1, addressof(stmt), 0) == SQLITE_OK
+    got = []
+    while sqlite3_step(stmt.value) == SQLITE_ROW:
+        got.append((sqlite3_column_int64(stmt.value, 0),
+                    sqlite3_column_type(stmt.value, 1), sqlite3_column_int64(stmt.value, 1),
+                    sqlite3_column_type(stmt.value, 2), sqlite3_column_int64(stmt.value, 2),
+                    sqlite3_column_type(stmt.value, 3), sqlite3_column_double(stmt.value, 3)))
+    sqlite3_finalize(stmt.value)
+    sqlite3_close(db.value)
+    del h
+    assert got == [(i, SQLITE_INTEGER, 0, SQLITE_INTEGER, 3, SQLITE_FLOAT, 2.5) for i in range(3)]
+
+
 def test_tvf_missing_hidden_arg():
     db = _open()
     h = register_tvf(db.value, "series", (np.int64, np.int64), _OUT, _series)
