@@ -106,9 +106,10 @@ def test_bridge_intrinsics_reject_non_intp():
 
 
 def test_incref_survives_refcount_pruning():
-    """A ``void(intp)`` caller passes the legality check of numba's
-    ``removerefctpass`` (numba <= 0.65), which strips NRT_incref by name; the
-    incref must survive it."""
+    """A ``void(intp)`` caller passes the legality check of numba's ``removerefctpass`` (numba <= 0.65), which strips
+    NRT_incref by name; the incref must survive it. The refcounts can only fail where that pass exists, so the test
+    also looks for the ``numba_args_may_always_need_nrt`` tag that keeps the pass off, which the IR carries on every
+    numba."""
     from numbox.utils.meminfo import _incref_meminfo, export_meminfo, get_nrt_refcount, release_meminfo
     from test.common_structrefs import S1
 
@@ -124,6 +125,7 @@ def test_incref_survives_refcount_pruning():
     release_meminfo(p)
     release_meminfo(p)
     assert get_nrt_refcount(s) == 1
+    assert "!numba_args_may_always_need_nrt" in pin.inspect_llvm(pin.signatures[0])
 
 
 if __name__ == "__main__":
