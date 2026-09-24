@@ -431,25 +431,10 @@ def _load_cell_i64(addr, tag):
 
 @njit(**_INLINE_JIT_OPTIONS)
 def _load_cell_f64(addr, tag):
-    """Load the numeric cell at ``addr`` as float64. uint64 converts from its
-    unsigned value, not the int64 wrap. The string/blob tags read as 0."""
-    if tag == _TAG_I8:
-        return float64(load_unaligned(addr, int8))
-    elif tag == _TAG_I16:
-        return float64(load_unaligned(addr, int16))
-    elif tag == _TAG_I32:
-        return float64(load_unaligned(addr, int32))
-    elif tag == _TAG_I64:
-        return float64(load_unaligned(addr, int64))
-    elif tag == _TAG_U8:
-        return float64(load_unaligned(addr, uint8))
-    elif tag == _TAG_U16:
-        return float64(load_unaligned(addr, uint16))
-    elif tag == _TAG_U32:
-        return float64(load_unaligned(addr, uint32))
-    elif tag == _TAG_U64:
-        return float64(load_unaligned(addr, uint64))
-    elif tag == _TAG_BOOL:
+    """Load the float or bool cell at ``addr`` as float64. No other numeric tag reaches it: ``_emit_cell`` sends the
+    float tags only, and the predicate scan compares every integer column as int64 (``_cell_value_i64``). Any other tag
+    reads as 0."""
+    if tag == _TAG_BOOL:
         return float64(1) if load_unaligned(addr, uint8) != 0 else float64(0)
     elif tag == _TAG_F32:
         return float64(load_unaligned(addr, float32))
