@@ -83,7 +83,7 @@ if __name__ == "__main__":
     compiled.recompute({"ext": {"a": 2}, "vars_": {"b": 999}}, values)
     got_b, got_c = values.get(b).value, values.get(c).value
     print(f"after recompute(a=2, b:=999): b={got_b}  c={got_c}")
-    print(f"contract (docstring):         b=999  c=1000  (explicit Variables-source override honored)")
+    print("contract (docstring):         b=999  c=1000  (explicit Variables-source override honored)")
     if got_b == 999:
         print("RESULT: PASS — override honored (COR-2 is fixed)")
     else:
