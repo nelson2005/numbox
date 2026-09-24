@@ -92,6 +92,9 @@ _TVF_CUR_DTYPE = np.dtype([
     ("args_p", "i8"),
 ], align=True)
 _TVF_CUR_SIZE = _TVF_CUR_DTYPE.itemsize
+# bytes per hidden argument in the cursor's args_p buffer: each is kept as the
+# int64 or float64 xFilter decoded it to
+_ARG_SLOT = 8
 
 _INT_TAGS = frozenset((_TAG_I8, _TAG_I16, _TAG_I32, _TAG_I64,
                        _TAG_U8, _TAG_U16, _TAG_U32, _TAG_U64, _TAG_BOOL))
@@ -140,7 +143,7 @@ def _gen_arg_decode(arg_tags):
         else:
             lines.append("    a%d = sqlite3_value_double(vals[%d])" % (i, i))
         # kept in the cursor for xColumn, which answers the hidden column with it
-        lines.append("    store_at(c[0].args_p + %d, a%d)" % (8 * i, i))
+        lines.append("    store_at(c[0].args_p + %d, a%d)" % (_ARG_SLOT * i, i))
     return "\n".join(lines)
 
 
@@ -239,7 +242,7 @@ def _make_static_cfuncs():
                     sqlite3_free(cur)
                     return SQLITE_NOMEM
             if n_hidden > 0:
-                args_p = sqlite3_malloc(int32(8 * n_hidden))
+                args_p = sqlite3_malloc(int32(_ARG_SLOT * n_hidden))
                 if args_p == 0:
                     sqlite3_free(scratch_p)
                     sqlite3_free(cur)
@@ -317,7 +320,7 @@ def _make_xcolumn():
             if j >= ncols:
                 # a hidden arg column: answer with the argument xFilter decoded
                 # for fn, as SQLite's own table-valued functions do
-                arg_p = c[0].args_p + 8 * (j - ncols)
+                arg_p = c[0].args_p + _ARG_SLOT * (j - ncols)
                 if tags[j] == _TAG_F32 or tags[j] == _TAG_F64:
                     sqlite3_result_double(ctx, load_unaligned(arg_p, float64))
                 else:
