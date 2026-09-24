@@ -1,0 +1,21 @@
+{
+  "target": "abi",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-abi-1",
+      "severity": "low",
+      "title": "_classify_eightbytes docstring attributes the orchestration to the wrong caller",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed by reading abi.py:155-160 and call.py:212-233 and 115/160. The docstring at abi.py:155-157 states 'Used by ``_call_lib_func`` together with ``_is_canonical_int64_pair_layout``'. However, call.py:212-233 shows that `_needs_int_int_eightbyte_repack` is the function that directly composes both `_is_canonical_int64_pair_layout` (call.py:229) and `_classify_eightbytes` (call.py:231). `_call_lib_func` calls only `_needs_int_int_eightbyte_repack` at call.py:115 (`_needs_int_int_eightbyte_repack(ret_ty, plat)`) and call.py:160 (`_needs_int_int_eightbyte_repack(arg_ty, plat)`). The docstring wrongly attributes the direct compositional role to `_call_lib_func` when it belongs to `_needs_int_int_eightbyte_repack`."
+    },
+    {
+      "id": "DES-abi-2",
+      "severity": "low",
+      "title": "Loop variable `size` shadows the outer `size` in _classify_eightbytes",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed by reading abi.py:165-184. Line 165 binds `size = _struct_bytes(ty, '_classify_eightbytes')` (total struct size). Line 166 uses it: `if size != 16:`. Then line 173 rebinds `size` as the per-field size in `for offset, size, is_float in _iter_struct_fields(...)`. Line 183 uses the loop-bound `size`: `if offset + size > 8:`. The outer `size` is never read after line 166, so there is no runtime bug, but the name collision is a latent readability hazard as the finding states — a future post-loop read of `size` expecting the total struct bytes would silently get the last field's size."
+    }
+  ]
+}

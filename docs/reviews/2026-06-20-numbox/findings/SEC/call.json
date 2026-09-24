@@ -1,0 +1,12 @@
+{
+  "target": "call",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/abi.py",
+    "numbox/core/bindings/utils.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the SEC dimension. call.py is a pure compile-time codegen intrinsic with no runtime/untrusted-input surface: the only string input (func_name) is required to be a Python-source literal and must resolve in the trusted signatures dict, and every size/offset feeding an alloca, bitcast, or pointer-pass is derived from compile-time numba types (never caller-supplied or C-returned lengths). The SEC-relevant surfaces named in the notes (extern-ref resolution rather than literal addresses; the presence-only address_of_symbol check) are the documented-correct patterns. No bounds-validation gap, format string, SQL, path loading, C-string copy, or attacker-influenced integer arithmetic exists in this file.",
+  "findings": []
+}

@@ -1,0 +1,63 @@
+{
+  "target": "tst_variable_work",
+  "dimension": "TST",
+  "files_reviewed": [
+    "numbox/core/variable/compile_kernel.py",
+    "numbox/core/variable/_kernel_partition.py",
+    "numbox/core/variable/variable.py",
+    "numbox/core/variable/utils.py",
+    "numbox/core/variable/node.py",
+    "numbox/core/work/work.py",
+    "numbox/core/work/node.py",
+    "numbox/core/work/combine_utils.py",
+    "test/core/test_compile_kernel.py",
+    "test/core/test_params_jitability.py",
+    "test/core/test_variable.py",
+    "test/core/test_work.py",
+    "test/core/test_work_as_node.py",
+    "test/core/test_work_utils.py",
+    "test/core/test_lowlevel_work_utils.py",
+    "test/core/test_caching_work.py",
+    "docs/numbox.core.variable.rst",
+    "docs/numbox.core.work.rst",
+    ".github/workflows/doc-codeblock-flake8.yml",
+    ".github/scripts/extract_codeblocks.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The compile_kernel / _kernel_partition / params-jitability suites are exceptionally thorough: discovery/demotion, fusion-minimality (brute-force optimality check), diamond/fan-out/reconvergent boundary, recompute cones (LRU cache, eviction, type-change flush-and-reseed, interior override, cross-process cache), declared eager Case A/B/C, return-type validation across plain/dispatcher/cres/cfunc/dufunc, and fingerprint collision/uncacheability are all covered. The genuine gaps are doc/API drift, not code-path coverage: the variable docs show a nonexistent `.variables` attribute on the `Variables` namespace, and two declared-kernel recompute paths (interior-override on a declared kernel; the `_evaluate`-seeded declared array/contract interplay) have no direct test. None are silent-wrong-result hazards.",
+  "findings": [
+    {
+      "id": "TST-tst_variable_work-1",
+      "severity": "low",
+      "title": "variable docs reference a nonexistent `.variables` attribute on the Variables namespace",
+      "file": "docs/numbox.core.variable.rst",
+      "lines": "129-133",
+      "claim": "The docs registry example accesses `variables1.variables.keys()` / `variables2.variables.keys()` and `variables1.variables[\"x\"]`. The `Variables`/`Namespace` class has no public `variables` attribute -- the dict is stored as the private `_variables` and exposed via `keys()` / `__getitem__`. A user copy-pasting this snippet gets an `AttributeError`. The matching test (test_variable.py:54,57) uses the correct `variables1.keys()` / `variables1[\"x\"]`, so the docs have drifted from the real API.",
+      "evidence": "variable.py line 14 `_variables: dict[str, 'Variable']`, line 216 `self._variables = {variable[\"name\"]: ...}`, line 17 `def keys(self): return self._variables.keys()`, line 218 `def __getitem__(self, variable_name: str)`. A grep for a public `.variables` member returns nothing (only `_variables`). The docs block (rst literal block opened by the trailing `::` on line 118) reads `assert list(variables1.variables.keys()) == [\"x\", \"a\"]` and `assert isinstance(variables1.variables[\"x\"], Variable)`. test/core/test_variable.py:54 asserts `list(variables1.keys()) == [\"x\", \"a\"]` and line 57 `isinstance(variables1[\"x\"], Variable)` -- the correct surface.",
+      "recommendation": "Change the doc snippet to `variables1.keys()` / `variables1[\"x\"]` (matching test_variable.py and the `Namespace.keys`/`__getitem__` API). Note this block is an rst `::` literal block, which doc-codeblock-flake8 does NOT extract (extract_codeblocks.py only matches `.. code-block:: python` / `.. code:: python`), so CI will not catch it -- fix manually.",
+      "confidence": "high"
+    },
+    {
+      "id": "TST-tst_variable_work-2",
+      "severity": "low",
+      "title": "No test for recompute interior-override on a declared (eager) kernel",
+      "file": "test/core/test_params_jitability.py",
+      "lines": "_apply_changes / recompute interior-override path (compile_kernel.py 520-561, 652-730)",
+      "claim": "`CompiledKernel._apply_changes` has a declared-kernel branch that runs the `can_convert` contract check on interior overrides too (an interior name resolving via ordered_nodes), and `_expand_sources` rebuilds the boundary / clears the cone cache. The undeclared interior-override path is well tested (test_compile_kernel.py test_recompute_interior_override_matches_interpreted / _expands_sources_and_flushes / _yield_distinct_keys), but no test overrides an INTERIOR node on a declared (is_declared True) kernel. The declared branches `self.is_declared and _is_typed(var)` in _apply_changes are only exercised for EXTERNAL changes (test_declared_recompute_off_contract_type_raises_crisp, test_case_a/b_recompute). A regression that mis-resolved an interior override under the declared contract (e.g. wrongly type-checking against a declared interior type, or skipping source expansion) would pass CI.",
+      "evidence": "compile_kernel.py lines 534-549: `var = next((n.variable for n in compiled.ordered_nodes if n.variable.qual_name() == qual), None)` then `if self.is_declared and _is_typed(var): ... can_convert(...)`. The declared interior-override case is reachable but untested: declared recompute tests in test_params_jitability.py (lines 172-175, 253-258, 305-315, 318-331, 366-369) all change `{\"e\": {\"x\": ...}}` (an external), never an interior node such as `{\"c\": {\"a\": ...}}`.",
+      "recommendation": "Add a declared-kernel recompute test that overrides an interior node (e.g. `ck.recompute({\"c\": {\"a\": <val>}})` on `_graph_all_jittable`), asserting the value matches the interpreted oracle and that an off-contract interior value raises the crisp `declared type` error.",
+      "confidence": "medium"
+    },
+    {
+      "id": "TST-tst_variable_work-3",
+      "severity": "low",
+      "title": "_evaluate seeding for a declared kernel with a demoted (Case B) node is not directly exercised by recompute",
+      "file": "test/core/test_params_jitability.py",
+      "lines": "_ensure_store declared branch (compile_kernel.py 512-515); _evaluate (._kernel_partition.py 310-340)",
+      "claim": "`_ensure_store` for a declared kernel calls `_evaluate(..., self._demoted)` instead of `discover`, seeding interior values from the frozen declared demotion set. test_case_b_recompute (test_params_jitability.py 253-258) does drive a Case-B (declared, demoted middle node) recompute, so the demoted branch of `_evaluate` (line 336 `elif var in demoted`) IS hit. But test_evaluate_honors_fixed_demotion_set (148-162) calls `_evaluate` directly with a Dispatcher-only binding set and never exercises the exotic-binding branch (line 333 `if not isinstance(binding, Dispatcher): ... _call_exotic`) under a declared recompute. A declared graph that mixes a cres/cfunc/dufunc node with a demoted node, then recomputes, would route through `_evaluate`'s exotic branch on the seeding pass -- a path with no test.",
+      "evidence": "_kernel_partition.py _evaluate lines 327-340: three branches -- exotic (`not isinstance(binding, Dispatcher)` -> `_call_exotic`), demoted-py (`elif var in demoted`), else Dispatcher. test_evaluate_honors_fixed_demotion_set builds `bindings = {a: _njit_t3(a.formula), b: _njit_t3(b.formula)}` (both Dispatchers), so the exotic branch is never taken; test_declared_exotic_node_end_to_end (426-438) builds a fused (Case A, no demotion) cres kernel and calls `kernel`, not `recompute`, so `_evaluate` is never invoked with both an exotic binding AND a demoted node.",
+      "recommendation": "Add a declared-mix test combining a cres/cfunc node and a declared `jitable=False` node, seed via a full call, then `recompute` an external -- asserting the result matches the interpreted oracle. This exercises `_evaluate`'s exotic branch on the declared seeding path.",
+      "confidence": "medium"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "target": "work_combine_loader_lowlevel",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/work/combine_utils.py",
+    "numbox/core/work/loader_utils.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/core/work/work_utils.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/highlevel.py",
+    "numbox/core/any/any_type.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Largely clean, well-factored helpers that correctly compose the canonical lowlevel primitives (_new, populate_structref, determine_field_index, _make_any/get_as) rather than reinventing them. The only DES issues are minor: a misleading/copy-pasted overload name in combine_utils whose registered stub and generated function do the opposite of what the name says, and two unused enumerate index variables in the two codegen builders.",
+  "findings": [
+    {
+      "id": "DES-work_combine_loader_lowlevel-1",
+      "severity": "low",
+      "title": "Overload function name in combine_utils contradicts what it does (copy-paste from loader_utils)",
+      "file": "numbox/core/work/combine_utils.py",
+      "lines": "57-66",
+      "claim": "The @overload in combine_utils.py is named `ol_load_array_row_into_dict` and is decorated with `@overload(_load_dict_into_array, ...)`. The name describes loading an array row INTO a dict, but this overload registers `_load_dict_into_array` and emits `_load_to_array_(array_, sheaf_)` which does the opposite: it copies sheaf (dict) values INTO the array (`array_[0].{field} = sheaf_[...].get_as(...)`). The name is a verbatim copy of the genuinely-named overload in loader_utils.py:33 (`ol_load_array_row_into_dict`, which really does load an array row into a dict). A future maintainer grepping `ol_load_array_row_into_dict` gets two hits with opposite semantics; the misnamed one will mislead.",
+      "evidence": "combine_utils.py:57-58 `@overload(_load_dict_into_array, strict=False, jit_options=jit_options)` / `def ol_load_array_row_into_dict(array_ty, sheaf_ty):` registering the dict->array path, whose generated body (lines 50-51) is `array_[0].{field_name} = sheaf_[\"{field_name}\"].get_as(...)`. Compare loader_utils.py:32-33 `@overload(load_array_row_into_dict, ...)` / `def ol_load_array_row_into_dict(array_ty, row_ind_ty, loader_dict_ty):` whose body (loader_utils.py:24-25) is `val = row.{field_name}` / `loader_dict_[\"{field_name}\"] = _make_any(val)` (array->dict). The combine_utils stub it registers is named `_load_dict_into_array` (combine_utils.py:36), confirming the intended direction is dict->array, so the `ol_load_array_row_into_dict` name is wrong for that module.",
+      "recommendation": "Rename the combine_utils overload to match its registered stub, e.g. `def ol_load_dict_into_array(array_ty, sheaf_ty):`. Purely local; the overload function's identifier is never referenced elsewhere (numba keys off the @overload target `_load_dict_into_array`, not the function name), so the rename is zero-risk.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-work_combine_loader_lowlevel-2",
+      "severity": "low",
+      "title": "Unused `field_ind` enumerate index in both codegen builders",
+      "file": "numbox/core/work/combine_utils.py",
+      "lines": "42-51",
+      "claim": "`_make_load_to_array_code` (combine_utils.py) iterates `for field_ind, field_name in enumerate(fields_names):` twice (lines 43 and 49) but never uses `field_ind`; the generated source addresses fields by name only. The same pattern appears in loader_utils.py:22 `for field_ind, field_name in enumerate(fields_names):` where `field_ind` is also unused. Dead loop variable; the `enumerate` adds nothing.",
+      "evidence": "combine_utils.py:43 `for field_ind, field_name in enumerate(fields_names):` then line 44-46 uses only `{field_name}`; combine_utils.py:49 same; the only consumer is the f-string referencing `field_name`. loader_utils.py:22 `for field_ind, field_name in enumerate(fields_names):` and the body (lines 24-26) references only `field_name`. No use of `field_ind` in either loop body.",
+      "recommendation": "Drop `enumerate` and iterate `for field_name in fields_names:` in both `_make_load_to_array_code` (combine_utils.py:43, 49) and `_make_load_to_dict_code` (loader_utils.py:22). Trivial, local.",
+      "confidence": "high"
+    }
+  ]
+}

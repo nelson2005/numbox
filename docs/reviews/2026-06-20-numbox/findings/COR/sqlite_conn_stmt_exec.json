@@ -1,0 +1,15 @@
+{
+  "target": "sqlite_conn_stmt_exec",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_conn.py",
+    "numbox/core/bindings/_sqlite_stmt.py",
+    "numbox/core/bindings/_sqlite_exec.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/proxy/proxy.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on COR. All three modules are pure pass-through @proxy wrappers that forward their arguments verbatim to _call_lib_func; they introduce no logic, no edge-case handling, and no arithmetic of their own. Every signature in signatures_sqlite for these functions matches the real SQLite C prototype, and none touches a platform-variable C type (sqlite3_int64 is always 64-bit, C int always 32-bit on supported platforms), so no LP64/LLP64 register-corruption risk. The lifecycle hazards called out in the target notes (sqlite3_errmsg validity window, sqlite3_expanded_sql must be sqlite3_free'd, sqlite3_exec callback return-code signaling) are caller contracts documented in the module docstrings, not miscoded behavior in these files.",
+  "findings": []
+}

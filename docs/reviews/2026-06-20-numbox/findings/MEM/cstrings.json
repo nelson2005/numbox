@@ -1,0 +1,8 @@
+{
+  "target": "cstrings",
+  "dimension": "MEM",
+  "files_reviewed": ["numbox/utils/cstrings.py"],
+  "reviewer_model": "opus",
+  "summary": "Clean on MEM. This is a pure-Python helper (no @njit/@cfunc, no NRT refcounts, no struct-by-value ABI). The only memory-relevant surface is the lifetime of the ctypes buffer behind the yielded pointer, and that is handled correctly: the create_string_buffer is held by the suspended @contextmanager generator frame for the duration of the with block and freed on exit, exactly as documented. The interior-NUL guard correctly prevents silent C-string truncation. No findings.",
+  "findings": []
+}

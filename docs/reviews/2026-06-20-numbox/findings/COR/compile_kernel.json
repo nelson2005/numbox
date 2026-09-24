@@ -1,0 +1,15 @@
+{
+  "target": "compile_kernel",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/variable/compile_kernel.py",
+    "numbox/core/variable/_kernel_partition.py",
+    "numbox/core/variable/utils.py",
+    "numbox/core/variable/variable.py",
+    "numbox/utils/fingerprint.py",
+    "numbox/utils/preprocessing.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on COR. I traced every wrong-result avenue the dimension lens flags for compile_kernel: the three-way _classify, eager fused/segmented (Case A/B) builds, discovery-time demotion/probe, the fusion-maximizing linearize/build_runs and segment/cone liveness, the incremental recompute cone (diamond/fan-out), the LRU cone-plan cache + type-change flush/reseed, the content-addressed digest, and generated-identifier safety. Each invariant holds; I found no silent-wrong-result, edge-case, or contract-drift defect grounded in code I could point to. No findings.",
+  "findings": []
+}

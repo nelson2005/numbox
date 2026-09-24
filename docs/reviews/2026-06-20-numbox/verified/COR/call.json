@@ -1,0 +1,7 @@
+{
+  "target": "call",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "summary": "no findings to verify",
+  "verdicts": []
+}

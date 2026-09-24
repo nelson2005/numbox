@@ -1,0 +1,15 @@
+{
+  "target": "any",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/any/any_type.py",
+    "numbox/core/any/content_wrap.py",
+    "numbox/core/any/erased_type.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/meminfo.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on MEM. The Any type-erasure path is refcount-balanced and memory-safe: the meminfo's destructor is baked in at allocation time by the wrapped type (`_Content`), so it travels with the erased pointer and correctly decrefs the contained payload at finalization even though `ErasedType` has zero fields. No `@cfunc` exception boundary, no raw-pointer stores, and no dependence on numba's `removerefctpass`. The balance is independently confirmed by dedicated refcount tests (test_5/test_7/test_10).",
+  "findings": []
+}

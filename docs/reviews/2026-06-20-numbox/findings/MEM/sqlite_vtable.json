@@ -1,0 +1,15 @@
+{
+  "target": "sqlite_vtable",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_vtable.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/cstrings.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/_sqlite_constants.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. Every cfunc handed to SQLite guards its NRT-bearing body with a bare try/except (no try/finally), and every sqlite3_malloc has a matched sqlite3_free on the success, NOMEM, and exception paths with the post-handoff free-suppression (idx_p=0 after needToFreeIdxStr) done correctly. The sqlite3_vtab base is left for the SQLite core to memset (known-correct pattern, not a bug), the _VTableHandle/_DATA_ANCHOR keep-alive is genuinely load-bearing data ownership (correctly retained, released only by the create_module_v2 xDestroy callback), STATIC-vs-TRANSIENT for string/BLOB results matches the buffer lifetime (registered-array pointers STATIC, per-cursor scratch TRANSIENT), all packed-dtype loads use align-1 load_unaligned, and the int/float predicate comparison avoids the >2**53 widening hazard. No refcount imbalance, double-free, use-after-free, leak, or ABI mismatch found.",
+  "findings": []
+}

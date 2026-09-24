@@ -1,0 +1,14 @@
+{
+  "target": "bindings_utils",
+  "dimension": "SEC",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "SEC-bindings_utils-1",
+      "severity": "low",
+      "title": "Generic Windows fallback loads find_library() result with winmode=0 (default DLL search order)",
+      "verdict": "confirmed",
+      "reasoning": "Code verified at lines 109-163. Line 111 (`return find_library(name)`) is indeed the fallback when neither 'c'/'m' nor a bundled DLL is found on Windows. `ctypes.util.find_library` on Windows does return a bare filename (e.g. 'foo.dll') rather than an absolute path when the library is not found in the bundled locations. Line 163 (`return CDLL(path, winmode=0)`) passes winmode=0, which maps to flags=0 in LoadLibraryEx — i.e., default search order with no LOAD_LIBRARY_SEARCH_* restrictions. A bare DLL name under this flag set is resolved through the default DLL search order (application dir, System32, etc.), which an attacker with write access to any directory earlier in that order could exploit. The finding is correctly scoped as latent: the sqlite3 branch (lines 102-108) is hardened with the absolute bundled path and the comment 'Never fall back to find_library', and 'c'/'m' are handled by find_msvcrt()/ctypes.cdll.msvcrt — so no library numbox currently loads reaches the find_library fallback on line 111. The evidence quotes are accurate against the live source. Severity 'low' is appropriate for a latent/future-risk finding with no present attack surface."
+    }
+  ]
+}

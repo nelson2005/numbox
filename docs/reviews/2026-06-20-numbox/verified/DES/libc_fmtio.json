@@ -1,0 +1,28 @@
+{
+  "target": "libc_fmtio",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-libc_fmtio-1",
+      "severity": "low",
+      "title": "%n-rejection logic duplicated across _reject_percent_n_or_raise and _reject_percent_n_in_python",
+      "verdict": "confirmed",
+      "reasoning": "Read both functions in _fmtio.py. _reject_percent_n_or_raise (line 252): `stripped = fmt_str.replace('%%', '\\x00\\x00')` then `if _PERCENT_N_RE.search(stripped):` raising TypingError. _reject_percent_n_in_python (line 511): `stripped = fmt.replace('%%', '\\x00\\x00')` then `if _PERCENT_N_RE.search(stripped):` raising ValueError. The detection half (the replace+search expression) is byte-for-byte identical across both functions. The only difference is the exception type — TypingError vs ValueError — which is intentional for the dual-mode split. The recommendation to extract a `_has_percent_n` predicate is sound: it would single-source the grammar check while preserving the distinct exception types."
+    },
+    {
+      "id": "DES-libc_fmtio-2",
+      "severity": "low",
+      "title": "sscanf arg-type check (ty != intp) inlined in four places instead of a shared validator",
+      "verdict": "confirmed",
+      "reasoning": "Read both sscanf layers. _sscanf_intrinsic (lines 401-405): `for i, ty in enumerate(tuple(args_ty)): if ty != intp: raise TypingError(f\"sscanf: args[{i}] must be intp (output pointer), got {ty!r}\")`. _overload_sscanf (lines 677-681): `for i, ty in enumerate(args): if ty != intp: raise TypingError(f\"sscanf: args[{i}] must be intp (output pointer), got {ty!r}\")`. The loop body and message string are identical. By contrast, the writer family uses `_validate_writer_arg_type(name, i, ty)` from both the intrinsic (line 316-317 for printf) and the overload (line 547-548). The asymmetry with the writer family is real. A `_validate_scanf_arg_type` helper mirroring `_validate_writer_arg_type` would close the inconsistency."
+    },
+    {
+      "id": "DES-libc_fmtio-3",
+      "severity": "low",
+      "title": "sscanf overload threads a get_unicode_data_p argument that the generated impl never references",
+      "verdict": "confirmed",
+      "reasoning": "Read _overload_sscanf (lines 682-685): `impl = _build_overload_impl(\"sscanf\", [\"buf\", \"fmt\"], args, _sscanf_intrinsic, _get_unicode_data_p_lazy(),  # unused (no UnicodeType in args))`. Read _build_overload_impl (lines 452-467): `ns = {\"_intr\": intrinsic_callable, \"get_unicode_data_p\": get_unicode_data_p}` — the name is bound into the exec namespace. But _build_args_tuple_expr_from_starargs (lines 438-448) only emits `get_unicode_data_p(args[{i}])` when `isinstance(unliteral(ty), UnicodeType)` — which can never be true for sscanf args since they are all validated to be intp above (lines 677-681). So `get_unicode_data_p` is always bound into `ns` but never referenced in the generated `src`. The code even self-documents this with the `# unused (no UnicodeType in args)` comment. The finding and its recommendation to make the parameter optional (default None) are correct."
+    }
+  ]
+}

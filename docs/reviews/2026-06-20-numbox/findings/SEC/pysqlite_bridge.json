@@ -1,0 +1,12 @@
+{
+  "target": "pysqlite_bridge",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/utils/pysqlite_bridge.py",
+    "numbox/core/bindings/_sqlite_conn.py",
+    "numbox/core/bindings/signatures.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the SEC dimension. The module reads a raw sqlite3* out of a Python sqlite3.Connection and is gated by a strict isinstance type check, a version-coordination guard (libraries_coordinated), a null check, and a runtime validation call. The only inputs are a trusted sqlite3.Connection object and a sqlite version string that both originate from CPython's own stdlib, not from untrusted/attacker-controlled data, so there is no reachable bounds/format/SQL/path injection surface. No SEC findings.",
+  "findings": []
+}

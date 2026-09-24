@@ -1,0 +1,15 @@
+{
+  "target": "sqlite_udf",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_udf.py",
+    "numbox/core/bindings/_sqlite_udf_helpers.py",
+    "numbox/utils/meminfo.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/cstrings.py",
+    "numbox/core/bindings/signatures.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. The aggregate/window UDAF state lifecycle (export_meminfo +1 on init, borrow_structref net-zero per step/inverse/value, release_meminfo exactly once in xFinal and never in xValue) is balanced on every path, and the @cfunc exception boundary uses bare try/except (not try/finally) with sqlite3_result_error signalling -- the documented cure for numba's swallow + cross-call NRT leak. No refcount imbalance, double-free, use-after-free, or ABI mismatch found.",
+  "findings": []
+}

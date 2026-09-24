@@ -1,0 +1,35 @@
+{
+  "target": "variable",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/variable/variable.py",
+    "numbox/core/variable/compile_kernel.py",
+    "numbox/core/variable/_kernel_partition.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "numbox/core/variable/variable.py is a clean, well-factored pure-Python graph module (dataclasses + ABC; no structref/refcount surface despite the target notes — those live in compile_kernel.py). Two minor, low-severity design nits only: a piece of dead defensive code and an O(N)-per-key linear scan where a Variable-keyed lookup already exists. No duplication or over-complexity worth reworking.",
+  "findings": [
+    {
+      "id": "DES-variable-1",
+      "severity": "low",
+      "title": "Dead defensive branch in _topological_order (string normalization already done by sole caller)",
+      "file": "numbox/core/variable/variable.py",
+      "lines": "478-479",
+      "claim": "_topological_order re-runs `if isinstance(required, str): required = [required]`, but its only caller, Graph.compile, already normalizes `required` to a list at lines 441-442 before passing it in. The branch can never execute, contradicting both the `required: list[str]` annotation and the comment that this is an internal helper. Harmless, but it is dead code that suggests the helper has a second, untrusted entry point that does not exist.",
+      "evidence": "Caller compile (lines 441-447): `if isinstance(required, str):\\n    required = [required]\\n...\\nordered_variables, used_external_vars = self._topological_order(required)`. Helper signature (line 473): `def _topological_order(self, required: list[str])`. Helper body (lines 478-479): `if isinstance(required, str):\\n    required = [required]`. grep confirms compile is the only caller of _topological_order in numbox and test.",
+      "recommendation": "Drop the duplicate isinstance/normalization at lines 478-479; the contract is already `list[str]`. Surgical, zero behavior change.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-variable-2",
+      "severity": "low",
+      "title": "recompute resolves intra-graph changed variables by O(N) linear scan over ordered_nodes",
+      "file": "numbox/core/variable/variable.py",
+      "lines": "391-396",
+      "claim": "For each changed variable that is not an external, recompute does `next(n.variable for n in self.ordered_nodes if n.variable.qual_name() == qual_name)`, an O(N) scan (and a qual_name() string build per node) for every such changed name, i.e. O(N*k) per recompute call. CompiledGraph already holds Variable-keyed structures (self.dependents is keyed by Variable, ordered_nodes is enumerable once), so a name->Variable index built alongside dependents in __post_init__ would make this O(1) per key. Purely a maintainability/efficiency nit; results are correct.",
+      "evidence": "Lines 391-396: `if variable is None:\\n    try:\\n        variable = next(n.variable for n in self.ordered_nodes if n.variable.qual_name() == qual_name)\\n    except StopIteration:\\n        warnings.warn(...)`. __post_init__ (lines 280-283) already iterates ordered_nodes to build `self.dependents` keyed by Variable, so the data to build a qual_name->Variable map is present at construction time.",
+      "recommendation": "In __post_init__, build a `self._by_qual_name: dict[str, Variable]` (or dict[str, CompiledNode]) alongside dependents and look up directly in recompute. Local, low risk; aligns with the affected_cache/dependents precomputation already in this class.",
+      "confidence": "high"
+    }
+  ]
+}

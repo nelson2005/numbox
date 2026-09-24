@@ -1,0 +1,47 @@
+{
+  "target": "highlevel",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/utils/highlevel.py",
+    "numbox/utils/preprocessing.py",
+    "numbox/utils/standard.py",
+    "docs/numbox.utils.rst"
+  ],
+  "reviewer_model": "opus",
+  "summary": "highlevel.py is mostly well-factored (cres / make_structref / the codegen helper). DES issues are minor: two public functions (hash_type, prune_type) have no callers anywhere in numbox or test/ yet are exposed as public API via the automodule :members: :undoc-members: directive; a redundant identity list-comprehension; and six redundant namespace re-injections in make_structref that are already present via the module-dict spread. No structural or duplication problems.",
+  "findings": [
+    {
+      "id": "DES-highlevel-1",
+      "severity": "low",
+      "title": "hash_type and prune_type are unused public surface",
+      "file": "numbox/utils/highlevel.py",
+      "lines": "68-70, 242-247",
+      "claim": "hash_type (lines 68-70) and prune_type (lines 242-247) have no callers anywhere in the repository (numbox/ or test/), yet because they lack a leading underscore and docs/numbox.utils.rst:55-58 documents the module with '.. automodule:: numbox.utils.highlevel / :members: / :undoc-members:', both are rendered as public API. This is dead/unused public surface: it widens the maintained API contract with no consumer and shows up undocumented in the generated docs.",
+      "evidence": "grep across the whole repo for 'hash_type' and 'prune_type' (excluding their own def lines and the generated docs/_build/html/ output) returns no matches in numbox/, test/, or any .rst source. The definitions: 'def hash_type(ty: Type): / mangled_ty = mangle_type_or_value(ty) / return hashlib.sha256(...).hexdigest()' and 'def prune_type(ty): / if isinstance(ty, Dispatcher): ... ty = FunctionType(sigs[0]) / return ty'. By contrast determine_field_index (line 61) IS used (numbox/utils/lowlevel.py:196, numbox/core/work/lowlevel_work_utils.py:134-137). docs/numbox.utils.rst:55-58 confirms automodule with :members: :undoc-members:, so all non-underscore members are exposed.",
+      "recommendation": "Either remove hash_type and prune_type if they are genuinely dead (mention to the owner rather than deleting, per repo policy), or if they are intended as a downstream-consumer API, give them a docstring so they are not undoc-members. As they are unreferenced even in tests, the simpler form is to drop them.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-highlevel-2",
+      "severity": "low",
+      "title": "Six redundant namespace entries in make_structref exec ns",
+      "file": "numbox/utils/highlevel.py",
+      "lines": "219-234",
+      "claim": "In make_structref, the exec namespace is built as { **ns, **getmodule(_file_anchor).__dict__, **{ ... } }. getmodule(_file_anchor) is this same module, whose globals already contain define_boxing, new, njit, overload, overload_method, and StructRefProxy (imported at lines 5-13). Re-listing those six names in the explicit override dict (lines 225, 227-231) is pure redundancy and obscures which entries are actually load-bearing (fields, fields_types, the local jit_options param distinct from module-level jit_options_, and struct_type_class.__name__).",
+      "evidence": "Line 221 spreads getmodule(_file_anchor).__dict__ (this module's globals). Top-level imports: line 5 'from numba import njit'; line 12 'from numba.experimental.structref import define_boxing, new, StructRefProxy'; line 13 'from numba.extending import overload, overload_method'. So define_boxing/new/njit/overload/overload_method/StructRefProxy are already in the spread dict and the explicit re-entries on lines 225,227,228,229,230,231 set them to the identical objects.",
+      "recommendation": "Drop the six redundant keys (define_boxing, new, njit, overload, overload_method, StructRefProxy) from the explicit dict, keeping only fields, fields_types, jit_options (the local), and struct_type_class.__name__ -- the entries that are not already in the module globals. Low risk, purely local.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-highlevel-3",
+      "severity": "low",
+      "title": "Identity list-comprehension in struct_fields_str join",
+      "file": "numbox/utils/highlevel.py",
+      "lines": "84",
+      "claim": "struct_fields_str is built as ', '.join([field for field in struct_fields]) -- an identity comprehension that materializes a throwaway list and adds no transformation. It is inconsistent with the sibling joins in the same function (lines 87, 138, 150) which apply a real transformation, so this one reads as if it does something it does not.",
+      "evidence": "Line 84: 'struct_fields_str = \", \".join([field for field in struct_fields])'. The comprehension [field for field in struct_fields] is exactly struct_fields. Compare line 138 ', '.join([f\"{field}_ty\" for field in struct_fields]) and line 150 '\\n'.join([f\"        struct_.{field} = {field}\" for field in struct_fields]), which genuinely transform.",
+      "recommendation": "Replace with ', '.join(struct_fields). Trivial, no behavior change.",
+      "confidence": "high"
+    }
+  ]
+}

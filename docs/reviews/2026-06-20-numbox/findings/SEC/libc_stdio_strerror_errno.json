@@ -1,0 +1,15 @@
+{
+  "target": "libc_stdio_strerror_errno",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_stdio.py",
+    "numbox/core/bindings/_strerror.py",
+    "numbox/core/bindings/_errno.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on SEC. All three modules are thin extern-ref wrappers over libc symbols that perform no numbox-side buffer length arithmetic, format-string parsing, SQL, path loading, or NUL handling. The only buffer-writing surface, strerror_safe(errnum, buf, buflen), hands the caller-owned buffer pointer and the caller-supplied length straight to a bounds-respecting libc routine (strerror_r / __xpg_strerror_r / strerror_s, all of which cap their write at buflen); buf/buflen are trusted by the documented raw-pointer contract. No findings.",
+  "findings": []
+}

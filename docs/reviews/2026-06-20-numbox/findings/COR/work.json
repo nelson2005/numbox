@@ -1,0 +1,27 @@
+{
+  "target": "work",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/work/work.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/core/work/node.py",
+    "numbox/core/work/node_base.py",
+    "numbox/core/any/erased_type.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "work.py is largely correct on the COR dimension. The code-generation machinery (_make_calculate_code/_make_loader_code/_make_combine_code/_make_inputs_vector_code and the num_sources-keyed registries) is sound: the generated functions are type-generic over source types and only depend on the source count, the calculate/load/combine recursions correctly guard against diamond re-traversal (derived flag, harvested dict), and as_node/make_inputs_vector caching does not recurse or go stale. The only genuine defect found is a missing negative-index guard in get_input, which silently returns a wrong input instead of raising.",
+  "findings": [
+    {
+      "id": "COR-work-1",
+      "severity": "low",
+      "title": "get_input bounds check omits negative index",
+      "file": "numbox/core/work/work.py",
+      "lines": "356-364",
+      "claim": "ol_get_input only rejects i >= num_inputs, not negative i. A negative argument (e.g. -1) is passed straight into the reflected-list-backed inputs_vector via inputs_vector[i], which performs Python-style negative-index wraparound and returns a different input than requested, silently producing a wrong result instead of raising the intended out-of-range error.",
+      "evidence": "ol_get_input body: `num_inputs = len(self.inputs); if i >= num_inputs: raise NumbaError(...); inputs_vector = self.make_inputs_vector(); return _cast(inputs_vector[i], NodeType)`. There is no `i < 0` check. inputs_vector is a `List.empty_list(NodeBaseType)` (see _make_inputs_vector_code, work.py:377-396), and numba typed/reflected lists honor negative indexing. node.py:81-88 ol_get_input has the identical gap, so the two are consistent, but both miss the lower bound.",
+      "recommendation": "Tighten the guard to `if i < 0 or i >= num_inputs:` in both ol_get_input bodies (work.py:356-364 and node.py:81-88) so an out-of-range request raises NumbaError rather than wrapping around.",
+      "confidence": "medium"
+    }
+  ]
+}

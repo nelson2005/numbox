@@ -1,0 +1,13 @@
+{
+  "target": "compile_kernel",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/variable/compile_kernel.py",
+    "numbox/core/variable/_kernel_partition.py",
+    "numbox/core/variable/utils.py",
+    "numbox/utils/meminfo.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. compile_kernel.py and its partition/utils helpers are pure Python-level orchestration and source codegen: they operate on dicts/sets of Variable objects and emit straight-line @njit kernel source. They never manipulate raw pointers, NRT meminfo refcounts, struct-by-value ABI classification, or @cfunc-as-C-callback bodies, so the failure modes this dimension hunts (incref/decref imbalance, cfunc exception-swallow/leak, sret/eightbyte misclassification, unaligned loads, ASLR-baked addresses) have no surface here. Refcount safety of the generated kernels and of values flowing through the value store is delegated entirely to numba's NRT (inside the generated @njit code) and to CPython refcounting (for the Python-level store/plan dicts).",
+  "findings": []
+}

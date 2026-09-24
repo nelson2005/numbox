@@ -1,0 +1,14 @@
+{
+  "target": "sqlite_typemap_constants",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/bindings/_sqlite_vtable.py",
+    "numbox/core/bindings/_sqlite_tvf.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the SEC dimension. The UTF-32<->UTF-8 transcoders bound every destination write against the carray view they allocate (4*n_codepoints+1 for utf32_to_utf8, width_cp for utf8_to_utf32), guard every UTF-8 continuation-byte read against nbytes, and sanitize surrogates / out-of-range / overlong sequences to U+FFFD so no malformed or over-long bytes are ever written through. The transcoder scratch buffer at the only U-column caller (_sqlite_vtable xColumn) is sized to widths[j]+1 = 4*(widths[j]//4)+1, exactly the documented requirement, so there is no overflow. The unaligned loads/stores correctly use align=1 ops (load_unaligned/store_unaligned) on potentially-misaligned packed cells, avoiding the aligned-op UB hazard. The SQLITE_* constants (result/type codes, open/blob/trace flags, function flags incl. SUBTYPE/RESULT_SUBTYPE, index-constraint op-codes, and the STATIC=0 / TRANSIENT=-1 destructor sentinels) all match the documented sqlite3.h values for the supported 3.34+ matrix.",
+  "findings": []
+}

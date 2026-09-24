@@ -1,0 +1,14 @@
+{
+  "target": "any",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-any-1",
+      "severity": "low",
+      "title": "Type discriminant is str(numba_type); a str()-collision across layout-incompatible types would reinterpret bytes",
+      "verdict": "refuted",
+      "reasoning": "The finding's own evidence is thin by the reviewer's admission: 'I could not exhibit a concrete colliding pair.' The cited code is accurate — ol_get_as (any_type.py:50-55) does use `ty_code = str(ty_ref.instance_type)` as the sole gate before `_deref_payload`, and ol_reset/ol_make_any (lines 61, 75) store `str(x_ty)`. However, the finding is a theoretical hazard without a concrete triggering case. Numba's type system is designed so that `str()` is a faithful discriminant: scalar types produce unique strings by construction (e.g. 'int32', 'float64'), and structrefs are interned by field signatures so identical `str()` implies structurally identical types and thus compatible layout. The reviewer correctly noted this in the summary: 'structref types are interned by their fields so identical str() implies the same type.' No collision path was demonstrated, and the low-confidence self-assessment confirms the evidence is insufficient to sustain the finding. Per the default rule ('a finding you merely cannot disprove, if its own evidence is thin, is refuted'), this is refuted."
+    }
+  ]
+}

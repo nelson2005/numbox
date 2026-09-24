@@ -1,0 +1,17 @@
+{
+  "target": "sqlite_conn_stmt_exec",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_conn.py",
+    "numbox/core/bindings/_sqlite_stmt.py",
+    "numbox/core/bindings/_sqlite_exec.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/core/configurations.py",
+    "numbox/core/proxy/proxy.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on SEC. The three modules are thin @proxy wrappers that forward arguments verbatim to _call_lib_func; they introduce no caller-controlled buffer reads/writes, no string copies, no length arithmetic, no format strings, and no path handling. SQL passed to sqlite3_exec / sqlite3_prepare_v2 is caller-owned by documented contract and numbox performs zero interpolation, so no injection surface is introduced here. The signature widths examined match the C API (prepare_v2 nByte and sqlite3_malloc size are C int -> int32; sqlite3_free(void*) -> void(intp); exec errmsg out-param is a pointer). The errmsg / expanded_sql / exec-errmsg lifetime-and-free contracts that could otherwise cause use-after-free or leaks are caller responsibilities and are documented at the binding sites.",
+  "findings": []
+}

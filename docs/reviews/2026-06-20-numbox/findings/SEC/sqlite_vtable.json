@@ -1,0 +1,14 @@
+{
+  "target": "sqlite_vtable",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_vtable.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/cstrings.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the SEC dimension. Every buffer read/write is bounded by a fixed numpy dtype itemsize (widths[j]) or by a column count the code itself validated (0 <= col < ncols in _xbestindex before serialising into idxStr, which _xfilter then reads back); the UTF-32->UTF-8 path validates codepoints and rejects surrogates/over-range to U+FFFD with a scratch buffer sized exactly 4*width_cp+1; NUL handling trims trailing only and preserves interior; SQLITE_STATIC on 'S'/BLOB results is correct because the data is anchored in _DATA_ANCHOR with a documented no-mutation contract while 'U' correctly uses TRANSIENT for per-cursor scratch. SQL identifiers are caller-trusted by contract and quote-escaped. No reachable bounds, format-string, injection, NUL-truncation, or use-after-free hazard found.",
+  "findings": []
+}

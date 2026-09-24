@@ -1,0 +1,24 @@
+{
+  "target": "abi",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/abi.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/signatures.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "abi.py is largely correct on platform detection, Win64 register-passability, and eightbyte SSE classification. The one real COR concern is the BaseTuple size/offset model: _struct_bytes and _iter_struct_fields bit-pack tuple fields with no alignment padding, which diverges from numba's actual aligned StructModel/LLVM layout for mixed-width tuples (e.g. {i32, i64}). This mis-sizes such tuples and reports wrong field offsets, which can mis-drive both the SMALL/LARGE threshold and the 16-byte INT/INT repack gate. Only currently-shipped tuple signature is Tuple((int64,int64)) (unaffected), so the defect is latent until a mixed-width tuple signature is added.",
+  "findings": [
+    {
+      "id": "COR-abi-1",
+      "severity": "high",
+      "title": "BaseTuple size/offset model omits alignment padding, diverging from numba's actual LLVM StructModel layout",
+      "file": "numbox/core/bindings/abi.py",
+      "lines": "95-96, 120-126",
+      "claim": "_struct_bytes and _iter_struct_fields compute the size and field offsets of a BaseTuple as a bit-packed sequence with no inter-field padding. numba lowers a Tuple to a non-packed LLVM LiteralStructType via StructModel, and call.py's codegen uses exactly that lowering (context.get_value_type(arg_ty)). For a tuple with mixed-width fields the two layouts disagree: e.g. Tuple((int32, int64)) is modeled here as 12 bytes with the int64 at offset 4, but the LLVM value type {i32, i64} that is actually passed/returned is 16 bytes with the int64 at offset 8. Because the abi.py size feeds (a) the SMALL/LARGE classification threshold (_classify, line 80) and (b) the exactly-16-byte gate of _needs_int_int_eightbyte_repack (call.py:227), a tuple that is really 16 bytes in LLVM but computed as < 16 here is never repacked. That is the very INT/INT field-dropping hazard the repack path exists to fix (call.py:212-233), so on SysV-x86-64 / AAPCS64 such a by-value tuple arg or return can silently drop a field and produce a wrong result.",
+      "evidence": "abi.py:95-96 `if isinstance(ty, nb_types.BaseTuple): return sum(t.bitwidth for t in ty.types) // 8` — pure bit-pack, no padding. abi.py:120-126 mirrors this: `offset = 0; for ft in ty.types: size = ft.bitwidth // 8; yield offset, size, ...; offset += size` — fields placed back-to-back. call.py:131/145 use `context.get_value_type(ret_ty)` / `get_value_type(arg_ty)` for the real LLVM type, and the repack gate at call.py:227 is `if _struct_bytes(ty, ...) != 16: return False`. So a tuple whose true LLVM size is 16 but whose packed size is < 16 bypasses the repack. The Record branch is unaffected — Record carries real C offsets (abi.py:128-133 use fld.offset) and ty.size (abi.py:94), which already account for padding.",
+      "recommendation": "Derive tuple field offsets and total size from numba's actual data model rather than a hand-rolled bit-pack — e.g. query the StructModel / LLVM struct layout used by call.py's get_value_type so abi.py and codegen agree, applying each field's natural alignment and the trailing pad to a multiple of the max field alignment. At minimum, restrict supported tuple signatures to uniform-width or canonical {i64,i64} shapes and reject mixed-width tuples with a clear TypingError until the aligned layout is implemented.",
+      "confidence": "medium"
+    }
+  ]
+}

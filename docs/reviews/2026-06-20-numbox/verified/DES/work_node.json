@@ -1,0 +1,14 @@
+{
+  "target": "work_node",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-work_node-1",
+      "severity": "low",
+      "title": "all_inputs_names / all_end_nodes traversal body duplicated between module helper and overload",
+      "verdict": "confirmed",
+      "reasoning": "Independently read node.py lines 101-148. The duplication is real and exactly as described. `_all_input_names` (lines 101-109) begins `node = _cast(node_, NodeType)` then iterates `node.inputs` with the dedup-append-recurse pattern. `ol_all_inputs_names` (lines 112-123) re-implements the same loop verbatim against `self.inputs` before delegating to `_all_input_names(input_node, names)` for the recursive call. The deciding line is line 116-121: `for i in range(len(self.inputs)): input_node = self.get_input(i); name_ = input_node.name; if name_ not in names: names.append(name_); _all_input_names(input_node, names)` — this is the helper's own body (lines 104-109) inlined. The same structure holds for `_all_end_nodes` / `ol_all_end_nodes` (lines 126-148), including the duplicated leaf test `len(_cast(input_, NodeType).inputs) == 0` at both line 132 and line 144. The recommendation is sound: since `_all_input_names` casts on entry (line 103), passing `self` (already a NodeType) is safe and the overload body reduces to two lines. Severity low is correct — no current bug, only a drift risk."
+    }
+  ]
+}

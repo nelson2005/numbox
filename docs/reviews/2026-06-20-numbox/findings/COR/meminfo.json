@@ -1,0 +1,12 @@
+{
+  "target": "meminfo",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/utils/meminfo.py",
+    "numba/core/runtime/context.py (get_meminfos)",
+    "numba/core/datamodel/models.py (MemInfoModel)"
+  ],
+  "reviewer_model": "opus",
+  "summary": "numbox/utils/meminfo.py is correct on the COR dimension. The pointer/refcount intrinsics extract the right meminfo, use matched incref/decref operations, guard pointer widths, and the documented borrow/own/net-zero semantics match the emitted code. No wrong-result, edge-case, or invariant-breaking defects found; clean.",
+  "findings": []
+}

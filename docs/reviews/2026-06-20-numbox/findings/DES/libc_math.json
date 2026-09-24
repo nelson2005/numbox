@@ -1,0 +1,27 @@
+{
+  "target": "libc_math",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_math.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/__init__.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/core/configurations.py",
+    "numbox/core/bindings/_c.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Largely clean on the design dimension. The 42 near-identical 3-line wrappers look like copy-paste duplication, but that exact @proxy/_call_lib_func form is the repo's documented binding convention (CLAUDE.md 'Adding a New Binding') and a factory/loop would break both the @proxy cache anchor (which keys on the decorated function's inspect.getfile/co_firstlineno) and the per-function automodule docs, so it is intentional and not reported as a defect. Signatures, argument names (incl. atan2(y, x)), and __all__ are all consistent. One genuine low-severity design hazard: the public star-imported surface re-exports wrappers named after the Python builtins round and pow, shadowing them in numbox.core.bindings.",
+  "findings": [
+    {
+      "id": "DES-libc_math-1",
+      "severity": "low",
+      "title": "Wrappers named 'round' and 'pow' shadow Python builtins in the star-imported public namespace",
+      "file": "numbox/core/bindings/_math.py",
+      "lines": "8-22, 152-154, 197-199",
+      "claim": "_math.__all__ lists 'round' and 'pow', and numbox/core/bindings/__init__.py does 'from numbox.core.bindings._math import *'. So 'from numbox.core.bindings import *' (or attribute access on the package) rebinds the names round and pow to the libm wrappers, shadowing the Python builtins. A caller who does the star-import and then writes round(x) / pow(a, b) at module scope silently gets the libm-semantics single/two-arg float64 wrappers (e.g. round half-away-from-zero, pow with no 3-arg modular form) instead of the builtins, and pow/round on non-float arguments will now hit the wrapper's float64 signature. This is a maintenance/misuse hazard rather than a correctness bug in the wrappers themselves.",
+      "evidence": "_math.py line 14: '\"ceil\", \"floor\", \"trunc\", \"round\", \"rint\", \"nearbyint\",' and line 18: '\"pow\", \"fmod\", \"remainder\",' place both names in __all__. Definitions at lines 152-154 ('def round(x): return _call_lib_func(\"round\", (x,))') and 197-199 ('def pow(x, y): return _call_lib_func(\"pow\", (x, y))'). __init__.py line 2: 'from numbox.core.bindings._math import * # noqa: F401, F403'. Per CLAUDE.md, 'Anything at top level without a leading underscore is part of the public API.'",
+      "recommendation": "This is in tension with the documented rule 'Function names must match the C library names exactly,' so renaming the wrappers is not warranted. Lowest-risk mitigation: document the shadowing explicitly (a note in docs/numbox.core.bindings.rst and/or a comment near __all__) so consumers know that star-importing the bindings package overrides round/pow, and prefer 'import numbox.core.bindings as nbm; nbm.round(...)' over star-import. No code change to the wrappers is recommended.",
+      "confidence": "high"
+    }
+  ]
+}

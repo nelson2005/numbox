@@ -1,0 +1,28 @@
+{
+  "target": "tst_variable_work",
+  "dimension": "TST",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "TST-tst_variable_work-1",
+      "severity": "low",
+      "title": "variable docs reference a nonexistent `.variables` attribute on the Variables namespace",
+      "verdict": "confirmed",
+      "reasoning": "Verified against the live source. docs/numbox.core.variable.rst lines 129 and 130 read `assert list(variables1.variables.keys()) == [\"x\", \"a\"]` and `assert list(variables2.variables.keys()) == [\"u\"]`, and line 133 reads `assert isinstance(variables1.variables[\"x\"], Variable)`. The `Namespace` class in numbox/core/variable/variable.py has no public `variables` attribute: line 14 declares `_variables: dict[str, 'Variable']` (private), line 17 exposes `def keys(self): return self._variables.keys()`, and line 37 declares `def __getitem__(self, key: str) -> 'Variable'`. The correct surface is `variables1.keys()` / `variables1[\"x\"]`, exactly as test/core/test_variable.py lines 54 and 57 use. The doc block is an rst `::` literal block that doc-codeblock-flake8 does not extract, so CI will not catch it."
+    },
+    {
+      "id": "TST-tst_variable_work-2",
+      "severity": "low",
+      "title": "No test for recompute interior-override on a declared (eager) kernel",
+      "verdict": "confirmed",
+      "reasoning": "Verified the _apply_changes interior-override branch at compile_kernel.py lines 534-549: when `var` is resolved via `ordered_nodes` (interior path) and `self.is_declared and _is_typed(var)` is True, the `can_convert` contract check runs. Checked all recompute tests in test_params_jitability.py: test_case_a_recompute_after_fused_call (line 175), test_case_b_recompute (line 257), test_declared_array_recompute_accepts_c_contiguous (line 314), test_declared_recompute_off_contract_type_raises_crisp (line 322), test_declared_recompute_non_typeable_value_raises_crisp (line 331), test_case_a_fused_recompute_still_works (line 369), and test_case_c_declared_node_skips_contract_check (line 389) all pass `{\"e\": {\"x\": ...}}` (an external), never `{\"c\": {\"a\": ...}}` (an interior on a declared graph). The interior-override tests in test_compile_kernel.py (test_recompute_interior_override_matches_interpreted, test_recompute_interior_override_expands_sources_and_flushes) use an undeclared graph (_diamond_graph with no Params declarations). The declared declared-branch for interior overrides in _apply_changes is unreachable from any existing test."
+    },
+    {
+      "id": "TST-tst_variable_work-3",
+      "severity": "low",
+      "title": "_evaluate seeding for a declared kernel with a demoted (Case B) node is not directly exercised by recompute",
+      "verdict": "confirmed",
+      "reasoning": "Verified _evaluate at _kernel_partition.py lines 327-340. Three branches: (1) exotic (`not isinstance(binding, Dispatcher)` -> `_call_exotic`, line 333-335), (2) demoted-py (`elif var in demoted`, line 336-338), (3) Dispatcher (line 340). test_evaluate_honors_fixed_demotion_set (line 148-162) builds `bindings = {a: _njit_t3(a.formula), b: _njit_t3(b.formula)}` -- both plain Dispatchers -- and forces only branch (2) for b; branch (1) is never entered. test_declared_exotic_node_end_to_end (line 426-438) uses a cres node but it is Case A (fused, `ck.partition.mode == \"fused\"`, line 437), so _evaluate is invoked from _ensure_store (compile_kernel.py line 515) with the fused-partition `_demoted`, which is an empty set for a pure-fused kernel -- the exotic branch (1) runs, but the demoted branch (2) cannot run simultaneously. No test constructs a declared graph mixing a cres/cfunc formula node with a `jitable=False` (STATIC_PY / demoted) node and then calls recompute, which would exercise both branch (1) and branch (2) in the same _evaluate invocation."
+    }
+  ]
+}

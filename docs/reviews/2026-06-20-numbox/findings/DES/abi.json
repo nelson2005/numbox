@@ -1,0 +1,34 @@
+{
+  "target": "abi",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/abi.py",
+    "numbox/core/bindings/call.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "abi.py is a clean, well-factored module: every public-ish helper (_current_platform, _classify, _struct_bytes, _iter_struct_fields, _classify_eightbytes, _is_canonical_int64_pair_layout, _is_windows_register_passable) is consumed by call.py and exercised by test/core/test_abi.py, with no dead code, no duplication, and consistent private-underscore naming. Two low-severity items only: a docstring that points at the wrong caller (design drift), and a loop variable that shadows an outer variable.",
+  "findings": [
+    {
+      "id": "DES-abi-1",
+      "severity": "low",
+      "title": "_classify_eightbytes docstring attributes the orchestration to the wrong caller",
+      "file": "numbox/core/bindings/abi.py",
+      "lines": "155-160",
+      "claim": "The docstring states the helper is 'Used by _call_lib_func together with _is_canonical_int64_pair_layout to decide when a 16-byte by-value arg needs repacking'. In the actual code the repack decision is made by the helper _needs_int_int_eightbyte_repack in call.py (call.py:212-233), which is what composes _struct_bytes, _is_canonical_int64_pair_layout, and _classify_eightbytes; _call_lib_func only calls _needs_int_int_eightbyte_repack (call.py:115, 160). The doc describes a structure that no longer matches the code, which can mislead a maintainer tracing the repack path.",
+      "evidence": "abi.py:155-160 docstring: 'Used by ``_call_lib_func`` together with ``_is_canonical_int64_pair_layout`` to decide when a 16-byte by-value arg needs repacking via memory bitcast'. But in call.py:212 the predicate is `_needs_int_int_eightbyte_repack(ty, plat)`, which at lines 229 and 231 calls `_is_canonical_int64_pair_layout(ty)` and `_classify_eightbytes(ty)`; `_call_lib_func` itself only references the result at call.py:115 (`_needs_int_int_eightbyte_repack(ret_ty, plat)`) and call.py:160 (`_needs_int_int_eightbyte_repack(arg_ty, plat)`).",
+      "recommendation": "Reword the docstring to say the helper is composed by `_needs_int_int_eightbyte_repack` (in call.py) together with `_is_canonical_int64_pair_layout`, rather than directly by `_call_lib_func`. Pure doc change, zero behavioral risk.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-abi-2",
+      "severity": "low",
+      "title": "Loop variable `size` shadows the outer `size` in _classify_eightbytes",
+      "file": "numbox/core/bindings/abi.py",
+      "lines": "165-184",
+      "claim": "`size` is bound at line 165 (the total struct size, used only by the `if size != 16` guard on line 166), then re-bound as the per-field size inside the `for offset, size, is_float in ...` loop at line 173. The outer value is never read after the guard, so there is no bug, but reusing the same name for two unrelated quantities is a readability hazard: a future edit that adds a post-loop reference to the struct size would silently pick up the last field's size instead.",
+      "evidence": "abi.py:165 `size = _struct_bytes(ty, \"_classify_eightbytes\")`; abi.py:166 `if size != 16:`; abi.py:173-174 `for offset, size, is_float in _iter_struct_fields(ty, \"_classify_eightbytes\"):` rebinds the same name to the per-field byte size used at line 183 `if offset + size > 8:`.",
+      "recommendation": "Rename the outer binding (e.g. `total_bytes = _struct_bytes(...)`) so the per-field loop variable `size` no longer shadows it. Local, low risk.",
+      "confidence": "high"
+    }
+  ]
+}

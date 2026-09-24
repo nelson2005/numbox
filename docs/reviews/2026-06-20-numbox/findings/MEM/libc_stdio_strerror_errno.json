@@ -1,0 +1,15 @@
+{
+  "target": "libc_stdio_strerror_errno",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_stdio.py",
+    "numbox/core/bindings/_strerror.py",
+    "numbox/core/bindings/_errno.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. All three modules return plain scalars (intp/int32) or void, hold no NRT/meminfo objects, and cross no @cfunc boundary, so there are no refcount, leak, or exception-swallow surfaces. Symbol resolution uses extern declarations (get_or_insert_function / external GlobalVariable) rather than literal addresses, keeping cache=True correct under ASLR; per-platform symbol selection, errno-pointer alignment, the size_t/intp argument widths, and the deliberate non-readnone errno-accessor declaration are all correct.",
+  "findings": []
+}

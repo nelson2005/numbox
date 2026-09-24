@@ -1,0 +1,16 @@
+{
+  "target": "sqlite_bind_column_value_result_blob",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_bind.py",
+    "numbox/core/bindings/_sqlite_column.py",
+    "numbox/core/bindings/_sqlite_value.py",
+    "numbox/core/bindings/_sqlite_result.py",
+    "numbox/core/bindings/_sqlite_blob.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM/ABI dimension. All five files are thin one-line @proxy wrappers that forward scalar (pointer-sized intp / int32 / int64 / uint64 / uint8 / float64) args straight to _call_lib_func; there are no @cfunc bodies, no NRT incref/decref, no struct-by-value passing, and no Python-side pointer ownership in this surface, so the classic numbox MEM hazards (cfunc exception swallow/leak, refcount imbalance, sret/Record-large, eightbyte repack, keep-alive lifetime) do not arise here. The signatures the wrappers resolve are faithful to the SQLite C API for every reviewed function (byte-length widths, the pointer-sized destructor sentinel, the uint64 _64-variant lengths, and the uint8 encoding arg all match), and the only lifetime contracts (SQLITE_TRANSIENT vs SQLITE_STATIC for bind/result text/blob; caller-owned column/value data pointers) are correctly the caller's responsibility and are documented in the module docstrings. No findings.",
+  "findings": []
+}

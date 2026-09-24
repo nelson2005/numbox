@@ -1,0 +1,50 @@
+{
+  "target": "tst_bindings_abi_libc",
+  "dimension": "TST",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "TST-tst_bindings_abi_libc-1",
+      "severity": "medium",
+      "title": "_strerror docstring asserts a CI canary (musl_symbol_check) that does not exist",
+      "verdict": "confirmed",
+      "reasoning": "_strerror.py line 24-25: 'unreachable on every libc currently supported (verified by the Alpine ``musl_symbol_check`` CI canary).' Verified numbox_ci.yml: arch matrix is ubuntu-latest / ubuntu-24.04-arm / windows-latest / macos-latest only (line 25). grep -rn 'musl|alpine|container' over .github/ returns nothing. The docstring presents the canary as an existing check; the rst (lines 148-150) correctly frames it as a proposed future check ('is a straightforward way to verify it'). The two are contradictory and the docstring overclaims."
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-2",
+      "severity": "medium",
+      "title": "Windows DLL search-order resolution (_resolve_lib_path / _windows_bundled_dll_path) has no test",
+      "verdict": "confirmed",
+      "reasoning": "utils.py lines 97-111: the Windows sqlite3 branch returns bundled path and explicitly never falls back to find_library ('Never fall back to find_library'). grep -rn '_resolve_lib_path|_windows_bundled_dll_path' over test/ returns nothing. test_bindings.py imports only load_lib_path and load_lib, never the private resolution helpers. The branch is pure path logic mockable without Windows but has no unit test. A regression re-enabling the find_library fallback for sqlite3 on Windows would pass all tests."
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-3",
+      "severity": "low",
+      "title": "Public _c.py wrappers puts/fputc/putchar/feof/ferror/clearerr have no test",
+      "verdict": "confirmed",
+      "reasoning": "_c.py __all__ (lines 14-23) includes puts, fputc, putchar, feof, ferror, clearerr. grep -rn of these names in test/core/ returns nothing. test_bindings.py exercises rand/srand, strlen, str*/mem* families, getenv, fopen/fwrite/fread/fclose, strerror. The test_fmtio.py exercise() probe (lines 844-895) covers errno/stdio/strerror_safe/strcmp/strchr/mem/getenv/snprintf/printf — none of the six listed functions. A wrong signature or typo'd symbol name in any of these would not be caught."
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-4",
+      "severity": "medium",
+      "title": "No musl runner — strerror_safe musl runtime path covered only by a glibc IR probe",
+      "verdict": "confirmed",
+      "reasoning": "numbox_ci.yml line 25: arch list is ubuntu-latest / ubuntu-24.04-arm / windows-latest / macos-latest; no alpine/musl container anywhere (grep confirmed). test_strerror_safe.py line 151 test_strerror_safe_ir_uses_strerror_r_when_xpg_absent is @skipif platform_ != 'Linux' and only inspects IR text (asserts symbol name in rendered IR, not a live call). Runtime tests (lines 33-129) run on glibc exercising __xpg_strerror_r, never musl's strerror_r alias. The documented musl invariant is never exercised end-to-end."
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-5",
+      "severity": "low",
+      "title": "Documented %ld Win64 truncation footgun has no asserting test",
+      "verdict": "confirmed",
+      "reasoning": "_fmtio.py lines 81-84: caveat (4) explicitly documents that '%ld' against int64 truncates on Win64 LLP64. grep for '%ld' in test_fmtio.py returns nothing. The int64-widening test (test_dual_mode_int32_promotes_to_int64_for_lld, lines 663-673) only uses '%lld'. The documented footgun is a load-bearing platform-divergence contract but no test anchors the behavior on either side. Severity is low because it is purely a gap in test coverage of documented behavior; no runtime bug is present.",
+      "adjusted_severity": "low"
+    },
+    {
+      "id": "TST-tst_bindings_abi_libc-6",
+      "severity": "low",
+      "title": "intp_ll_type / extract_literal_str helper edge cases untested directly",
+      "verdict": "confirmed",
+      "reasoning": "utils.py lines 27-29: the 'Literal but non-str value' branch of extract_literal_str raises 'must be a Python str'. grep of test/ for 'intp_ll_type|extract_literal_str' returns nothing. The non-Literal branch IS exercised indirectly (test_printf_non_literal_format_raises hits line 21-23), but the Literal[non-str] branch (lines 27-29) has no test. The intp_ll_type(None) contextless path is indirectly exercised by test_strerror_safe_ir_uses_strerror_r_when_xpg_absent on Linux, but that test asserts symbol names not type widths. The finding's concern about the contextless path is mild; the untested Literal-non-str branch is the more real gap. Low severity is appropriate."
+    }
+  ]
+}

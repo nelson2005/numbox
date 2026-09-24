@@ -1,0 +1,24 @@
+{
+  "target": "libc_c",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_c.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "_c.py is a clean, uniformly-factored set of 28 thin libc wrappers that follow the documented @proxy + _call_lib_func convention exactly: no logic duplication beyond the intentional one-line-body pattern, no dead code in the file, correct public/private discipline (__all__ lists exactly the 28 non-underscore wrappers defined), and the platform-variable-type hazard is handled correctly by omission (no long/time_t/size_t-returning functions like fseek/ftell/time/strtol are present). One minor design observation: the signatures dict carries an orphan 'lldiv' entry with no wrapper or consumer anywhere in numbox.",
+  "findings": [
+    {
+      "id": "DES-libc_c-1",
+      "severity": "low",
+      "title": "Orphan 'lldiv' signature with no wrapper or any consumer",
+      "file": "numbox/core/bindings/signatures.py",
+      "lines": "6,13",
+      "claim": "signatures_c defines lldiv_t = Tuple((int64, int64)) and \"lldiv\": lldiv_t(int64, int64), but no lldiv wrapper exists in _c.py (its __all__ and its @proxy defs never mention lldiv) and a repo-wide grep finds no other reference. This is dead surface: a signature entry (and the lldiv_t alias that exists only to express it) that nothing in the codebase ever consumes, the kind of leftover scaffolding the DES lens flags. It also returns a by-value 16-byte struct, which is exactly the ABI-fragile shape the binding layer otherwise carefully avoids; shipping the signature with no exercised wrapper leaves an untested struct-return path lurking in the public signatures dict.",
+      "evidence": "signatures.py line 6: `lldiv_t = Tuple((int64, int64))` and line 13: `    \"lldiv\": lldiv_t(int64, int64),`. _c.py __all__ (lines 14-23) lists rand..getenv with no lldiv, and there is no `def lldiv` anywhere in _c.py. Bash grep `grep -rn lldiv numbox/` returns only the two signatures.py lines (line 6 and line 13) and nothing else — no wrapper, no test, no _call_lib_func(\"lldiv\", ...).",
+      "recommendation": "Either add a public lldiv wrapper to _c.py (with a test) following the documented pattern, or drop the \"lldiv\" entry and the lldiv_t alias from signatures.py until a consumer exists. Given the repo's 'omit platform-fragile functions until done right' stance (CLAUDE.md, and the deliberate absence of long-based functions here), removing the unexercised struct-return entry is the lower-risk choice.",
+      "confidence": "high"
+    }
+  ]
+}

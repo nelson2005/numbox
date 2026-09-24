@@ -1,0 +1,21 @@
+{
+  "target": "proxy",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-proxy-1",
+      "severity": "medium",
+      "title": "Cache-anchor prepend mis-lands for functions in the first 12 lines of a file",
+      "verdict": "confirmed",
+      "reasoning": "Independently verified by reconstructing code_txt and running the same generator: njit_lineno_in_txt = 13 (the '@njit(' line is at split index 12, so i+1=13). The code at line 91 is `prepend = max(0, func.__code__.co_firstlineno - njit_lineno_in_txt)`, which clamps to 0 for any co_firstlineno in 1..12. The earliest real @proxy usage in-repo (not a comment) is line 23 in _sqlite_blob.py, confirming no in-repo callers are affected today. The hazard is real but latent — requires a @proxy-decorated function placed at or before line 12 of a module file. The 'medium' severity is defensible given the silent mis-anchoring and hard-to-diagnose TokenError that would result in affected downstream consumers (numbduck, numbarrow) if they placed a @proxy near the top of a module. Docs at numbox.core.proxy.rst lines 30-35 state explicitly that 'the wrapper's @njit decorator ... lands at func.__code__.co_firstlineno'; the clamp-to-zero violates this documented invariant."
+    },
+    {
+      "id": "COR-proxy-2",
+      "severity": "low",
+      "title": "Reserved-name guard checks the wrapper name but not the intrinsic name it also defines",
+      "verdict": "confirmed",
+      "reasoning": "Verified from the source: line 59 defines `def _{func_proxy_name}(...)` (the intrinsic) and line 70 defines `def {func_proxy_name}(...)` (the wrapper). The guard at lines 80-81 is `if ns.get(func_proxy_name) is not None: raise ValueError(...)` — only tests the wrapper name. If the user's module has a name like `___cos` already, it would be in `ns` (built at line 73-79 from `inspect.getmodule(func).__dict__`), silently overwritten by exec, without triggering ValueError. The finding correctly characterises the containment: `exec(code, ns)` writes only to the fresh `ns` dict, not to `inspect.getmodule(func).__dict__`, so the user's module is not mutated and `dispatcher = ns[func_proxy_name]` still returns the correct wrapper. The impact is solely a missing diagnostic — the severity 'low' is accurate."
+    }
+  ]
+}

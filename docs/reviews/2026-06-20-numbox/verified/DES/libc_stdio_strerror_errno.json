@@ -1,0 +1,21 @@
+{
+  "target": "libc_stdio_strerror_errno",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-libc_stdio_strerror_errno-1",
+      "severity": "low",
+      "title": "Inconsistent size_t/intp LLVM-type construction: shared helper used in one sibling, inlined in the other two",
+      "verdict": "confirmed",
+      "reasoning": "_errno.py line 34 reads `intp_ll = context.get_value_type(intp)` and _stdio.py line 58 reads `intp_ll = context.get_value_type(intp)`, both inlining the type derivation. _strerror.py line 83 reads `size_t_ll = intp_ll_type(context)`, using the shared helper. utils.py lines 33-46 define `intp_ll_type(context=None)` which delegates to `context.get_value_type(intp)` when a context is provided. The two idioms are semantically identical — confirmed as a low-severity consistency nit only, not a correctness issue."
+    },
+    {
+      "id": "DES-libc_stdio_strerror_errno-2",
+      "severity": "low",
+      "title": "Test-only IR-probe helper lives in production module and re-derives codegen's function type",
+      "verdict": "confirmed",
+      "reasoning": "_strerror.py lines 95-114 define `_render_ir_for_probe` whose docstring states it is 'Used by the IR-inspection test (test_strerror_safe.py)'. Line 112 constructs `func_ty = llir.FunctionType(i32, [i32, i8p, intp_ll_type()])`, independently replicating the same POSIX strerror_r type that the real codegen builds at line 89 (`func_ty = llir.FunctionType(i32, [i32, i8p, size_t_ll])`). Both are real and neither is dead — the duplication is mild but the claim of two parallel constructions and the module-organization smell holds. Severity low is appropriate."
+    }
+  ]
+}

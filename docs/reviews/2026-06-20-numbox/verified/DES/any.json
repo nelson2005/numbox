@@ -1,0 +1,14 @@
+{
+  "target": "any",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-any-1",
+      "severity": "low",
+      "title": "Payload-wrap idiom duplicated between ol_reset and ol_make_any",
+      "verdict": "confirmed",
+      "reasoning": "Read any_type.py lines 59-82. ol_reset closure at lines 64-65: `self.p = _cast(_Content(x), ErasedType)` / `self.t = ty_code`. ol_make_any closure at lines 79-80: `any.p = _cast(_Content(x), ErasedType)` / `any.t = ty_code`. Both derive ty_code identically as `str(x_ty)` (lines 61 and 75). The two-line erasure idiom is written verbatim twice. The maintenance hazard is real: a change to the _Content wrapping, cast target type, or type-code derivation must be applied at both sites or the payload and .t tag will disagree, causing ol_get_as to either reject or misdecode the value. This is not a known-correct pattern, not guarded elsewhere, and the severity 'low' is appropriate since it is currently non-buggy."
+    }
+  ]
+}

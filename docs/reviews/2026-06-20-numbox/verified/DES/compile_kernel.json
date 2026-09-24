@@ -1,0 +1,35 @@
+{
+  "target": "compile_kernel",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-compile_kernel-1",
+      "severity": "medium",
+      "title": "Case-B eager segment loop duplicates _discover_and_run's run-orchestration",
+      "verdict": "confirmed",
+      "reasoning": "Code confirmed: lines 906-934 contain `for kind, run_nodes in runs:` mirroring lines 450-485 in `_discover_and_run`. Both branches build `_PyStep` + python `Segment` for python runs, and call `segment_liveness` -> `_generate_segment_body` -> `_compile` -> `disp.compile(...)` -> `_JitStep` + jit `Segment` for jit runs. The author's own comment at line 907 reads 'Same segment structure as _discover_and_run, but with declared types and a static demotion set (no probing).' The differences are real but narrow: declared types (`v.params.type`) vs runtime `typeof(values[v])`, and `seg_sigs` folded into `_compile`. A 30-line non-trivial orchestration loop maintained in two places is a genuine lockstep-maintenance hazard."
+    },
+    {
+      "id": "DES-compile_kernel-2",
+      "severity": "low",
+      "title": "Python-run live-in computation written two different ways for the same result",
+      "verdict": "confirmed",
+      "reasoning": "Code confirmed: `_discover_and_run` at lines 453-457 uses a running `produced` set (`ins.update(i for i in n.inputs if i not in produced); produced.add(n.variable)`), while Case-B at lines 917-919 uses a one-shot comprehension (`{i for n in run_nodes for i in n.inputs if i not in {x.variable for x in run_nodes}}`). Both feed `Segment(inputs=tuple(sorted(...)))`. Since python runs are topologically ordered and all members are demoted, 'not produced earlier in the run' and 'not a member of the run' select the same inputs — the results are equivalent. The inner `{x.variable for x in run_nodes}` is also recomputed on every outer `n` iteration, which is needless O(N) work per node. The functional equivalence obscures the intent and a divergence would be silent."
+    },
+    {
+      "id": "DES-compile_kernel-3",
+      "severity": "low",
+      "title": "in_names in _emit_lines is computed only to embed in a source comment",
+      "verdict": "confirmed",
+      "reasoning": "Code confirmed: compile_kernel.py line 195 `in_names = \", \".join(repr(inp.qual_name()) for inp in node.inputs)` and line 196 uses it only in the trailing comment `# {var.qual_name()!r} = f({in_names})` of the generated source. The assembled `source` is hashed verbatim at line 284 (`\"ck-digest-v3\\n\" + source`), so this comment is load-bearing for cache identity. The observation is accurate: an inert reformatting of `in_names` would invalidate every kernel anchor. Recommendation to leave as-is is appropriate; severity 'low' is correct for an intentional pattern worth flagging."
+    },
+    {
+      "id": "DES-compile_kernel-4",
+      "severity": "low",
+      "title": "Identical inline qual_name sort-key lambda duplicated across helpers",
+      "verdict": "confirmed",
+      "reasoning": "Code confirmed: three identical lambdas exist: compile_kernel.py:464 `key = lambda v: v.qual_name()   # noqa: E731 - tiny local sort key`, _kernel_partition.py:196 same, _kernel_partition.py:227 same. The existing `_qual` at _kernel_partition.py:104 is `_qual(node: CompiledNode) -> str: return node.variable.qual_name()` — it takes a `CompiledNode`, not a `Variable`, so it is genuinely distinct from the sort-key lambda. Three copies plus three noqa pragmas is confirmed minor duplication."
+    }
+  ]
+}

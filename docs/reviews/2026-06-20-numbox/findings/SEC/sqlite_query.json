@@ -1,0 +1,12 @@
+{
+  "target": "sqlite_query",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_query.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/bindings/_sqlite_typemap.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "query_to_array is clean on the SEC dimension. Every C-buffer read is bounded by the sqlite3_column_bytes length, every write into the output buffer is capped at the destination field width (min(nbytes, width) for text/blob; k < width_cp = width//4 for UTF-8->UTF-32), the SQL text is trusted-by-contract (caller owns sql_p), and the errmsg pointer is decoded immediately before any further API call. No injection surface, no unbounded copy, no out-of-bounds store, no UAF found.",
+  "findings": []
+}

@@ -1,0 +1,15 @@
+{
+  "target": "sqlite_vtable",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_vtable.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/cstrings.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on COR. The read-only vtable handles the classic wrong-result hazards correctly: int-vs-REAL constraint comparison is done exactly (separate int64/_int_float_cmp/f64 call sites in _xfilter pick mode 1/2/0 by RHS numeric type, never widening an int64 cell to f64 above 2**53), the omit=0 default leaves SQLite re-checking every surfaced row as a correctness net, NaN->NULL and uint64>=2**63 wrap-to-negative are documented and consistent between read and comparison paths, trailing-only NUL trimming preserves interior NULs, the U-column UTF-32->UTF-8 scratch buffer is sized to the 4*cp+1 contract, and the sqlite3_vtab base is intentionally left for SQLite to memset (a known-correct pattern). No incorrect-result, edge-case, or invariant-break defect found.",
+  "findings": []
+}

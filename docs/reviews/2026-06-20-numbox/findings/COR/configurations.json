@@ -1,0 +1,23 @@
+{
+  "target": "configurations",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/configurations.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Nearly clean. MAX_STR_LENGTH = 2**31-1 is correct and its sole consumer (get_str_from_p_as_int) uses the documented intentional carray-bounded/first-NUL-exit pattern, so it is not a defect. One genuine but low-severity correctness gap: get_jit_options() validates only that NUMBOX_JIT_OPTIONS is parseable JSON, not that it parses to a mapping, so a non-object value yields a non-dict jit_options that fails confusingly at the first @njit(**jit_options) import-time splat.",
+  "findings": [
+    {
+      "id": "COR-configurations-1",
+      "severity": "low",
+      "title": "get_jit_options accepts any valid JSON, not just a JSON object",
+      "file": "numbox/core/configurations.py",
+      "lines": "5-19",
+      "claim": "If NUMBOX_JIT_OPTIONS is set to a value that is valid JSON but not an object (e.g. 'null', 'true', '42', '[]', or '\"cache\"'), json.loads succeeds and get_jit_options returns a non-dict (None / bool / int / list / str). The returned value is bound to module-level `jit_options` and then dict-splatted via `@njit(**jit_options)` at import time across dozens of call sites (e.g. numbox/core/work/work.py:62 `@njit(**jit_options)`). Splatting a non-mapping raises `TypeError: ... argument after ** must be a mapping` at import, far from the env-var source, with no hint that the env var is the cause. The docstring contract implies a JSON object ('{\"cache\": false}') but the body does not enforce object-ness.",
+      "evidence": "configurations.py:9-16 — `as_str = os.environ.get(\"NUMBOX_JIT_OPTIONS\"); ... as_json = json.loads(as_str); return as_json` with `except json.JSONDecodeError: raise ValueError(...)`. The only guarded failure is a JSON parse error; a successfully-parsed non-object is returned verbatim. configurations.py:19 `jit_options = get_jit_options()` then makes it module-global, consumed as `@njit(**jit_options)` (confirmed e.g. numbox/core/work/work.py:62-131 and numbox/utils/highlevel.py:100 `@njit(**jit_options)`).",
+      "recommendation": "After `as_json = json.loads(as_str)`, validate `isinstance(as_json, dict)` and raise ValueError (matching the existing JSONDecodeError -> ValueError style, e.g. 'NUMBOX_JIT_OPTIONS must be a JSON object') so the misuse fails at config-parse time with an actionable message instead of at a remote import-time `**` splat.",
+      "confidence": "high"
+    }
+  ]
+}

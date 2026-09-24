@@ -1,0 +1,21 @@
+{
+  "target": "abi",
+  "dimension": "MEM",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "MEM-abi-1",
+      "severity": "high",
+      "title": "BaseTuple size/offset model ignores alignment padding, disagreeing with numba's padded LLVM tuple layout",
+      "verdict": "confirmed",
+      "reasoning": "Verified independently. `abi.py:96` computes `sum(t.bitwidth for t in ty.types) // 8` (bit-packed), while numba lowers `BaseTuple` to `llvmlite.ir.LiteralStructType` with `packed=False`. Confirmed via runtime check: `default_manager.lookup(Tuple([int32, float64, int32])).get_value_type()` returns `{i32, double, i32}` with `packed=False`. Under LLVM natural alignment this struct is 24 bytes (i32@0, double@8, i32@16 + 4B tail padding), but `_struct_bytes` returns 16 (`(32+64+32)//8`), causing `_classify` to return `_CLASS_STRUCT_SMALL` instead of `_CLASS_STRUCT_LARGE`. On SysV x86-64 / AAPCS64, a 24-byte aggregate cannot legally be passed by value in two eightbyte registers; the mismatch causes ABI corruption. The `_iter_struct_fields` docstring at line 115 explicitly documents the bit-packed assumption: 'For `BaseTuple` the fields are bit-packed sequentially with no padding'. A secondary misclassification: `NamedTuple([int32, int64])` gives `_struct_bytes` = 12 but real LLVM size = 16 (`{i32, i64}` with 4B of padding before i64), so `_classify_eightbytes` raises 'expected 16-byte struct' on a type that is actually a valid 16-byte ABI case. Both misclassifications are latent (no current binding uses mixed-width tuple args), but the defect is genuine and the test at `test_abi.py:227` (`_struct_bytes(NamedTuple([int32, int64], MyNT)) == 12`) pins the incorrect behavior rather than the correct one. The `test_call_lib_func_large_return_round_trip_varint_shaped` test uses `_pack_=1` on the ctypes side precisely because `Tuple([intp, uint64, int8])` is classified as LARGE (17 > 16 even bit-packed) and goes via sret pointer; this obscures the bug — it only survives because LARGE path uses a pointer (field offsets agree regardless of padding), not because the size computation is correct."
+    },
+    {
+      "id": "MEM-abi-2",
+      "severity": "low",
+      "title": "_struct_bytes / _iter_struct_fields raise AttributeError on a nested-tuple field instead of a clean TypingError",
+      "verdict": "confirmed",
+      "reasoning": "Verified directly in source. `abi.py:96` calls `t.bitwidth` unconditionally for every element in `ty.types`. `abi.py:123` calls `ft.bitwidth // 8` unconditionally. A `BaseTuple` element that is itself a `BaseTuple` or `Record` has no `.bitwidth` attribute, so both lines raise a raw `AttributeError`. The surrounding code explicitly goes out of its way to emit clean `TypingError` messages (lines 97-100 for the outer type, lines 135-138 for `_iter_struct_fields`), making the gap in the inner guard inconsistent. The finding correctly notes this is a robustness issue (low severity) since nested-aggregate tuple bindings are not a currently supported shape, but the inconsistency is genuine."
+    }
+  ]
+}

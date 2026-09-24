@@ -1,0 +1,12 @@
+{
+  "target": "kernel_partition",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/variable/_kernel_partition.py",
+    "numbox/core/variable/variable.py",
+    "numbox/core/variable/compile_kernel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on COR. The segment-partitioning machinery (linearization, run/liveness splitting, dominator-based recompute boundary, demotion discovery) was traced end-to-end against its only caller (compile_kernel.py) and the Variable/CompiledNode model it operates over. The fusion-maximizing linearization, the two distinct liveness functions, and the diamond-aware boundary computation all preserve value correctness; no wrong-result, edge-case, or invariant-break defect found.",
+  "findings": []
+}

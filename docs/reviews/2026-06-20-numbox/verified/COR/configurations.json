@@ -1,0 +1,14 @@
+{
+  "target": "configurations",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-configurations-1",
+      "severity": "low",
+      "title": "get_jit_options accepts any valid JSON, not just a JSON object",
+      "verdict": "confirmed",
+      "reasoning": "configurations.py lines 12-14 show `as_json = json.loads(as_str); return as_json` with the only guard being `except json.JSONDecodeError`. No `isinstance(as_json, dict)` check exists. The deciding line is line 14: `return as_json` — any JSON value (null, bool, int, list, string) is returned verbatim. Confirmed downstream: work.py line 62 uses `@njit(**jit_options)`, which will raise `TypeError: argument after ** must be a mapping` at import time if jit_options is not a dict. The evidence quote is accurate and the reasoning holds. Severity low is appropriate: only triggered by explicit misconfiguration of the env var."
+    }
+  ]
+}

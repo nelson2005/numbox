@@ -1,0 +1,14 @@
+{
+  "target": "bindings_utils",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-bindings_utils-1",
+      "severity": "low",
+      "title": "Duplicated per-platform CDLL-loading block in _load_lib_with_handle and load_lib_path",
+      "verdict": "confirmed",
+      "reasoning": "Read both functions in numbox/core/bindings/utils.py. Lines 159-164 (_load_lib_with_handle) and lines 178-183 (load_lib_path) are character-for-character identical: both test `platform_ in (\"Darwin\", \"Linux\")` and return `CDLL(path, mode=RTLD_GLOBAL)`, both test `platform_ == \"Windows\"` and return `CDLL(path, winmode=0)`, and both raise `RuntimeError(f\"Platform {platform_} is not supported, yet.\")`. The variable name passed to CDLL is `path` in both cases (no difference). The claim that a future platform or RTLD flag change must be applied in two places is accurate. The duplication is real and the desync hazard is genuine, though low-severity given the code's current stability."
+    }
+  ]
+}

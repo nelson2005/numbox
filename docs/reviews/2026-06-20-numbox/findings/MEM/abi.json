@@ -1,0 +1,35 @@
+{
+  "target": "abi",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/bindings/abi.py",
+    "numbox/core/bindings/call.py",
+    "test/core/test_abi.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The Record path of the ABI classifier is sound (uses real .size / .offset, so padding is honoured). The BaseTuple path is not: _struct_bytes and _iter_struct_fields model a tuple as bit-packed with no alignment padding, while numba actually lowers Tuple/UniTuple/NamedTuple to an LLVM LiteralStructType that LLVM pads to natural alignment. The size and field offsets the classifier computes can therefore disagree with the layout the by-value call site in call.py operates on, which can pick the wrong ABI class (SMALL vs LARGE) and the wrong eightbyte SSE/INTEGER classification for tuple-typed signatures. Latent today (current signatures are scalar; the duckdb 16-byte consumers use Records, which are immune), but it is a genuine ABI-correctness defect in a general-purpose classifier.",
+  "findings": [
+    {
+      "id": "MEM-abi-1",
+      "severity": "high",
+      "title": "BaseTuple size/offset model ignores alignment padding, disagreeing with numba's padded LLVM tuple layout",
+      "file": "numbox/core/bindings/abi.py",
+      "lines": "95-96, 120-126",
+      "claim": "For BaseTuple types _struct_bytes returns sum(t.bitwidth)//8 (line 96) and _iter_struct_fields assigns offsets by walking fields with no inter-field padding (lines 121-126). numba lowers Tuple/UniTuple/NamedTuple via StructModel.get_value_type -> ir.LiteralStructType([...]) (numba/core/datamodel/models.py:533-537), and an LLVM literal struct is laid out with natural alignment (padding inserted). So the classifier's size and offsets can differ from the layout the call.py codegen actually passes. Concrete trigger: a tuple (int32, double, int32) has bit-packed sum 4+8+4 = 16 -> _classify returns _CLASS_STRUCT_SMALL and the small-struct by-value path in _call_lib_func is taken, but the real LLVM struct {i32, double, i32} aligns the double to offset 8 and totals 24 bytes -> it should be _CLASS_STRUCT_LARGE and passed by pointer/sret. Passing a 24-byte aggregate through the <=16-byte register-coercion path on SysV x86-64 / AAPCS64 is an ABI mismatch: a silent wrong result or stack corruption on that call. The same padding error shifts which eightbyte a float field occupies in _iter_struct_fields, so even within genuinely-16-byte tuples the SSE/INTEGER eightbyte classification (and hence the INT/INT repack decision in _needs_int_int_eightbyte_repack -> _classify_eightbytes) can be wrong; e.g. (int32, double) is modelled as int32@0 + double@4 (cls_lo and cls_hi both SSE), but numba's {i32, double} places the double at offset 8 (lo INTEGER, hi SSE).",
+      "evidence": "abi.py:96 `return sum(t.bitwidth for t in ty.types) // 8`; abi.py:121-126 BaseTuple branch advances `offset += size` with no alignment rounding. The Record branch by contrast uses the dtype's real layout: abi.py:93-94 `ty.size` and abi.py:128-133 `fld.offset`. numba/core/datamodel/models.py:533-537 `StructModel.get_value_type` returns `ir.LiteralStructType([...])` (no `packed=True`), so tuple layout = LLVM natural-alignment layout, which pads. call.py:131/145 use `context.get_value_type(ret_ty)`/`(arg_ty)` (that same padded LiteralStructType) for the alloca/store/by-value coercion, so the 24-byte reality and the 16-byte classifier estimate diverge at the call boundary. test/core/test_abi.py:226-227 even pins this: `_struct_bytes(NamedTuple([int32, int64], MyNT)) == 12`, but `{i32, i64}` is 16 bytes under natural alignment.",
+      "recommendation": "Make the tuple path use the same layout LLVM/numba uses instead of bit-packing. Either compute size/offsets from the target data layout of `context.get_value_type(ty)` (e.g. via the LLVM struct's element offsets / ABI size), or replicate natural-alignment layout in _struct_bytes/_iter_struct_fields (align each field offset up to its size, pad total to max field alignment) so tuples match Records. Add regression cases for (int32, double, int32) [should classify LARGE], (int32, int64) tuple [size 16 not 12], and (int32, double) [eightbytes (INTEGER, SSE) not (SSE, SSE)].",
+      "confidence": "medium"
+    },
+    {
+      "id": "MEM-abi-2",
+      "severity": "low",
+      "title": "_struct_bytes / _iter_struct_fields raise AttributeError on a nested-tuple field instead of a clean TypingError",
+      "file": "numbox/core/bindings/abi.py",
+      "lines": "96, 122-124",
+      "claim": "The BaseTuple branches assume every field exposes `.bitwidth` (line 96 and lines 123). A BaseTuple containing a nested struct-shaped field (e.g. a Tuple of Tuples or Tuple of Record) has a field with no `.bitwidth`, so `sum(t.bitwidth ...)` / `ft.bitwidth // 8` raises a raw AttributeError rather than the clean, caller-naming TypingError the surrounding code goes out of its way to emit (lines 97-100, 135-138) for the not-struct-shaped case. Low impact: nested-aggregate tuple signatures are not currently a supported binding shape, so this is robustness, not a live failure.",
+      "evidence": "abi.py:96 `sum(t.bitwidth for t in ty.types)` and abi.py:123 `size = ft.bitwidth // 8` both dereference `.bitwidth` unconditionally on each tuple element; nothing restricts the element type to a scalar. The intent to surface clean errors is explicit in abi.py:97-100 and abi.py:135-138.",
+      "recommendation": "If hardening is desired, guard the tuple-element loop to raise the same TypingError (naming the caller) when a field lacks `.bitwidth` / is itself struct-shaped; otherwise document that tuple bindings must be flat scalar tuples.",
+      "confidence": "high"
+    }
+  ]
+}

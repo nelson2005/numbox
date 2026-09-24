@@ -1,0 +1,15 @@
+{
+  "target": "abi",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-abi-1",
+      "severity": "high",
+      "title": "BaseTuple size/offset model omits alignment padding, diverging from numba's actual LLVM StructModel layout",
+      "verdict": "confirmed",
+      "reasoning": "abi.py:95-96 `return sum(t.bitwidth for t in ty.types) // 8` is a pure bit-pack. For Tuple((int32, int64)), this yields (32+64)//8 = 12. The actual LLVM LiteralStructType {i32, i64} has 4-byte padding after the i32 field to align i64 to 8 bytes, making the true layout 16 bytes. call.py:227 `if _struct_bytes(ty, ...) != 16: return False` short-circuits _needs_int_int_eightbyte_repack when the packed size is 12, even though the LLVM struct is 16 bytes and its two eightbytes are both pure-INTEGER (not canonical {i64,i64}). The repack that would prevent llvmlite from dropping the second eightbyte's field is therefore skipped for such tuples. The same divergence affects _classify_eightbytes (called only when _struct_bytes == 16, so it would never be reached for the 12-byte mismatch case). The defect is latent: signatures.py line 6 shows `lldiv_t = Tuple((int64, int64))` as the only Tuple return type in the shipped signatures, and Tuple((int64,int64)) is unaffected (both fields are 64-bit, no padding; _is_canonical_int64_pair_layout returns True and skips repack correctly). The finding's reasoning holds exactly. Severity adjusted to medium because the defect is latent — no shipped signature triggers it.",
+      "adjusted_severity": "medium"
+    }
+  ]
+}

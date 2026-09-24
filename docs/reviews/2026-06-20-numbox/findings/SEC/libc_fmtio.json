@@ -1,0 +1,35 @@
+{
+  "target": "libc_fmtio",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_fmtio.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The %n-rejection layer is solid: _PERCENT_N_RE covers positional ($), flags, width/precision, and all length modifiers including BSD 'q' and Microsoft I32/I64, with correct %%-escape handling, applied in both @njit and pure-Python paths. The real SEC gap is that arg validation only checks each arg is a scalar TYPE; it never parses the format's conversion specifiers, so the count and per-specifier type are unchecked despite the module docstring advertising C-compiler-grade format checking — undersupplied args and %s-vs-int mismatches read garbage variadic slots / dereference an integer as a pointer (disclosure/crash). sscanf additionally enforces no field-width on %s/%[ (classic unbounded overflow when parsing untrusted text).",
+  "findings": [
+    {
+      "id": "SEC-libc_fmtio-1",
+      "severity": "medium",
+      "title": "Format conversion specifiers never checked against arg count or per-arg type",
+      "file": "numbox/core/bindings/_fmtio.py",
+      "lines": "210-227, 316-317, 547-548",
+      "claim": "printf/fprintf/snprintf validate only that EACH variadic arg is some scalar type (Float/Integer/Boolean/Unicode); they never parse the format string's conversion specifiers, so neither the number of %-conversions nor their kinds are matched to the args. printf(\"%d %d\", x) (one arg, two conversions) makes libc read a second variadic slot that was never pushed -> garbage register/stack value formatted out (information disclosure) or a crash; printf(\"%s\", 5) passes the type check (Integer is allowed) but libc treats the int value 5 as a char* and dereferences it (crash/out-of-bounds disclosure). The format string is a compile-time literal and the arg types are known at typing time, so this is statically detectable yet undetected.",
+      "evidence": "The only typing-time validation is per-arg type, in a loop with no awareness of the format: `for i, ty in enumerate(tuple(args_ty)): _validate_writer_arg_type(\"printf\", i, ty)` (lines 316-317) where `_validate_writer_arg_type` (210-227) just does `if isinstance(unliteral(ty), (Float, Integer, Boolean, UnicodeType)): return`. The format string `fmt_str` is in hand at typing time (`fmt_str = extract_literal_str(...)`, line 312) but is only passed to `_reject_percent_n_or_raise`; no code counts `%`-conversions or maps a `%s`/`%d`/`%f` specifier to the corresponding arg type. Contrast the module docstring's claim, lines 35-37: \"the same constraint a C compiler operates under when emitting a format-checked printf call\" — a C compiler's -Wformat does check count and per-specifier type; this binding does not.",
+      "recommendation": "Parse the literal format's conversion specifiers at typing time (a small regex over the non-%% directives) and (a) require the specifier count equals len(args_ty), and (b) check each specifier class against its arg's numba type (%d/%i/%x/%u -> Integer/Boolean; %f/%e/%g -> Float; %s -> UnicodeType or intp; %p -> intp). This delivers the C-compiler-grade checking the docstring already promises and closes the garbage-read / pointer-deref hazards. The format and arg types are both available where `_reject_percent_n_or_raise` is already called.",
+      "confidence": "high"
+    },
+    {
+      "id": "SEC-libc_fmtio-2",
+      "severity": "low",
+      "title": "sscanf permits unbounded %s / %[ conversions into caller buffers",
+      "file": "numbox/core/bindings/_fmtio.py",
+      "lines": "387-415, 667-686",
+      "claim": "sscanf accepts any literal format and validates only that the output args are intp pointers; it does not require a maximum field width on %s or %[ conversions. sscanf(buf_p, \"%s\", array_data_p(out)) over an attacker-influenced input buffer writes every non-whitespace byte (plus a NUL) into `out` with no length cap, overflowing the caller's buffer (memory corruption). This is the classic C sscanf overflow; it is reachable whenever the parsed text is untrusted.",
+      "evidence": "`_sscanf_intrinsic` (387-415) validates `buf_ty != intp` and that every arg `ty != intp`, then emits the call via `_emit_variadic_call(builder, \"sscanf\", fmt_str, [buf_ptr], ...)`. There is no inspection of `fmt_str` for width-less `%s`/`%[` (and unlike the writer family, sscanf is deliberately NOT passed through `_reject_percent_n_or_raise` — its %n is the documented legitimate use, per the printf rejection message at lines 256-258). Nothing bounds the destination write size against the caller's buffer.",
+      "recommendation": "Downgraded to low because the format is a developer-written compile-time literal (the developer can write \"%63s\") and the binding is an intentionally thin C-ABI surface where the caller owns both buffer and format. As defense-in-depth, reject width-less %s/%[ in the sscanf typing function (or at least document the overflow hazard in the sscanf docstring and recommend an explicit max field width), since the existing docstring warns about pointers but not about unbounded writes.",
+      "confidence": "high"
+    }
+  ]
+}

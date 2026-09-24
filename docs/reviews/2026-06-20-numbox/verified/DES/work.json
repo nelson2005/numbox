@@ -1,0 +1,42 @@
+{
+  "target": "work",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-work-1",
+      "severity": "low",
+      "title": "_source_getter_registry is write-only dead state",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed by direct inspection. Line 169 declares `_source_getter_registry = {}`. In `ensure_presence_of_source_getters_in_ns` (lines 211-216), the loop body is: `exec(source_getter_code, ns_); _source_getter_registry[source_i] = True`. The registry is written unconditionally every call and never read before deciding whether to exec. There is no `if source_i in _source_getter_registry: continue` guard. The dict's values are never consumed anywhere else in the file. The finding's claim that it misleads the reader into thinking this is a memoization guard is accurate."
+    },
+    {
+      "id": "DES-work-2",
+      "severity": "low",
+      "title": "Redundant ns overrides re-inject already-module-level names (new, boolean, Dict)",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed. Line 9: `from numba.experimental.structref import define_boxing, new` — `new` is already in the module dict. Line 6: `boolean` imported from `numba.core.types`. Line 11: `from numba.typed.typeddict import Dict`. Both are in the module dict. Line 346 `ns = {**getmodule(_file_anchor).__dict__, **{\"boolean\": boolean, \"Dict\": Dict}}` re-binds the same objects. Line 414 `ns = {**getmodule(_file_anchor).__dict__, **{\"new\": new}}` likewise. The generated code for `_make_inputs_vector_code` (lines 377-396) does not reference `new` at all — it uses `List.empty_list`, `is_not_null`, `_cast`, `_get_source_*`, `NodeBaseType`. The override is redundant. The generated combine code does reference `Dict` and `boolean`, but they are already present in the module dict, so the override still yields the same objects. Both overrides add noise without effect."
+    },
+    {
+      "id": "DES-work-3",
+      "severity": "medium",
+      "title": "Four-way duplication of the registry-cached codegen skeleton",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed. Comparing the four overload methods: ol_calculate (219-239), ol_load (287-304), ol_combine (336-353), ol_make_inputs_vector (402-421) all follow the identical skeleton: read `sources_ty`/`num_sources` from `field_dict`, look up per-method registry with `.get(num_sources, None)`, return on hit, build `ns`, call `ensure_presence_of_source_getters_in_ns`, call per-method `_make_*_code`, `compile`, `exec`, cache in registry, return. The only variation is the code-builder, the registry name, the exec'd function name, and optional `ns` extras. The four registries `_calculate_registry`/`_loader_registry`/`_combine_registry`/`_inputs_vector_registry` (lines 208, 284, 333, 399) exist solely to serve this duplicated skeleton. The drift in finding DES-work-2 is a direct consequence of this duplication (two of the four sites added ns extras, two did not)."
+    },
+    {
+      "id": "DES-work-4",
+      "severity": "low",
+      "title": "get_inputs_names and depends_on copy-pasted between Work and Node",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed with the confidence downgraded to low (consistent with original 'medium' confidence). work.py lines 367-374 and node.py lines 91-98 have byte-identical overload bodies: `names_ = List.empty_list(unicode_type); for s in self.inputs: names_.append(s.name); return names_`. For `ol_depends_on`: work.py 454-465 and node.py 151-161 share the same branching structure. The Work variant adds an `as_node()` hop before operating, which makes full unification across the StructRef boundary awkward. The finding's recommendation to factor the inner names-collection loop into a shared njit helper is reasonable but the structural difference is real. The drift risk is real."
+    },
+    {
+      "id": "DES-work-5",
+      "severity": "low",
+      "title": "assert-after-def placement inconsistent with Node sibling",
+      "verdict": "confirmed",
+      "reasoning": "Confirmed. In work.py lines 460-465, the `else` branch reads: `def _(self, obj_): ... return obj_.name in node.all_inputs_names()` followed by `assert isinstance(obj_ty, WorkTypeClass), ...`. In node.py lines 156-161, the `else` branch reads: `assert isinstance(obj_ty, NodeTypeClass), ...` first, then `def _(self, obj_): ...`. The ordering difference is exactly as described. The assert does not affect behavior in the Work case (the assert fires after the function object is built but before it is returned, so an assertion failure still prevents returning an unsupported `_`), but it is a consistency drift from the Node sibling. Severity 'low' is appropriate."
+    }
+  ]
+}

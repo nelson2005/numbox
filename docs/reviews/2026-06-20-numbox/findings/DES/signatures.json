@@ -1,0 +1,11 @@
+{
+  "target": "signatures",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the design/simplification dimension. signatures.py is a flat data table built by merging three logically-grouped sub-dicts (signatures_c/_m/_sqlite) with a single named type alias (lldiv_t). No duplication, no over-complexity, no dead entries, consistent typing, and signatures accurate to the C headers. Every defined entry is reachable (either through a _*.py wrapper or directly via _call_lib_func name lookup) and every wrapper/_call_lib_func-requested name is defined; no orphans either way. The platform-variable-type hazard (long/time_t/size_t) is deliberately avoided by omitting the affected functions, matching the documented policy. No findings.",
+  "findings": []
+}

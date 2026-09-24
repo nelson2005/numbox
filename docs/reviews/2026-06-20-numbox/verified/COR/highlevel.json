@@ -1,0 +1,28 @@
+{
+  "target": "highlevel",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-highlevel-1",
+      "severity": "medium",
+      "title": "Method param assertion rejects legitimate defaults whose repr() differs from source spelling",
+      "verdict": "confirmed",
+      "reasoning": "Verified independently. highlevel.py line 109 calls make_params_strings(method) which, per standard.py line 46, renders defaults via repr(): `k if v.default == inspect._empty else f'{k}={v.default!r}'`. Line 123 captures params_str_ from raw source text via regex. Line 126 asserts `params_str == params_str_`. For a default like n=1_000, repr(1000) produces '1000' while the source token is '1_000'; the two strings are not equal and the assert fires. The failure path is real: a user-written valid method is rejected with an opaque AssertionError."
+    },
+    {
+      "id": "COR-highlevel-2",
+      "severity": "medium",
+      "title": "Header regex [^)]* cannot match a method signature containing ')' in a default or annotation",
+      "verdict": "confirmed",
+      "reasoning": "Verified independently. highlevel.py line 123: `re.findall(r\"^\\s*def\\s+[a-zA-Z_]\\w*\\s*\\(([^)]*)\\)\\s*:[^\\n]*\", method_source, re.MULTILINE)`. The capture group `([^)]*)` is a negated character class that stops at the first `)`. For `def m(self, x=factory())`, the group captures `self, x=factory(` (stopping at the inner `)` of `factory()`), then the literal `\\)` in the regex matches that inner `)`, leaving the closing `)` of the def header unmatched. re.findall still returns one match (from a partial parse), but `params_str_` is the truncated string, causing the assertion at line 126 to fire. The finding is correct."
+    },
+    {
+      "id": "COR-highlevel-3",
+      "severity": "low",
+      "title": "Default-emptiness test uses == against inspect._empty sentinel",
+      "verdict": "confirmed",
+      "reasoning": "Verified at standard.py line 46: `k if v.default == inspect._empty else f'{k}={v.default!r}'`. Using `==` instead of `is` is incorrect: `inspect._empty` is a sentinel designed for identity comparison (as documented in Python's inspect module). For a parameter with a numpy-array default, `v.default == inspect._empty` returns an array, and the surrounding boolean context in the list comprehension raises `ValueError: The truth value of an array is ambiguous`. The canonical fix is `v.default is inspect._empty`. Severity low is appropriate: such a default is unusual, the failure is a crash not a silent wrong result, and the docstring does not acknowledge this specific issue (only repr round-tripping limitations)."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "target": "fingerprint_digest",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/utils/fingerprint.py",
+    "numbox/utils/digest.py",
+    "numbox/core/configurations.py",
+    "numbox/core/variable/compile_kernel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the DES dimension. fingerprint.py is the single shared closure/global/const-aware walker, and both consumers (utils/digest.py and core/variable/compile_kernel.py) correctly compose its private primitives (_fingerprint_function, _canon_value, _Unfingerprintable, _safe_repr) rather than reinventing a second fingerprint/digest path -- exactly the factoring the DES lens hopes to find. No duplication, no executable dead code, no over-complexity, and public/private discipline is consistent (only digest() is public; everything in fingerprint.py is underscore-prefixed). Version/jit_options folding is intentionally kept at each consumer level rather than in the shared walker, which is the correct separation of concerns. No findings.",
+  "findings": []
+}

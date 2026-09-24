@@ -1,0 +1,46 @@
+{
+  "target": "sqlite_query",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_query.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "query_to_array is mostly well-factored and reuses the canonical typemap tags and lowlevel pointer cast. The notable design hazard is a second, byte-for-byte copy of the UTF-8 decode state machine (_put_unicode) duplicating _sqlite_typemap.utf8_to_utf32; they differ only in the output write path. Two smaller items: the TEXT and BLOB copy branches are near-identical, and the _copy_bytes byte loop could be a tracked slice assignment.",
+  "findings": [
+    {
+      "id": "DES-sqlite_query-1",
+      "severity": "medium",
+      "title": "UTF-8 decode state machine duplicated between _put_unicode and utf8_to_utf32",
+      "file": "numbox/core/bindings/_sqlite_query.py",
+      "lines": "32-71",
+      "claim": "_put_unicode reimplements the entire UTF-8 validation/decode state machine that already exists in _sqlite_typemap.utf8_to_utf32. The decode branches are byte-for-byte identical (1/2/3/4-byte forms, overlong checks, surrogate rejection, range checks, U+FFFD fallback). The two copies differ ONLY in how a decoded code point is emitted: _put_unicode writes into a tracked uint8 array via scratch8 + _copy_bytes (the macOS-arm64 DCE workaround), whereas utf8_to_utf32 calls store_unaligned to a raw pointer. Maintaining two copies of a security-sensitive decoder is a latent-bug source: any fix to one (e.g. a continuation-byte bounds tweak) must be hand-mirrored to the other or the two paths silently diverge.",
+      "evidence": "_sqlite_query.py:36-39 the docstring itself states 'Mirrors ``_sqlite_typemap.utf8_to_utf32`` but writes natively into ``buf``'. Compare the decode bodies: _sqlite_query.py:49-65 `elif b0 >> 5 == 0x6 and i + 1 < nbytes and (inp[i + 1] >> 6) == 0x2: cp = ((b0 & 0x1F) << 6) | (uint32(inp[i + 1]) & 0x3F); if cp < 0x80: cp = 0xFFFD; i += 2` ... `elif b0 >> 4 == 0xE ...` ... `elif (b0 >> 3 == 0x1E ...` is identical to _sqlite_typemap.py:83-104. Only the emit differs: _sqlite_query.py:69-70 `cps[0] = cp; _copy_bytes(buf, off + 4 * k, scratch8, 4)` vs _sqlite_typemap.py:103 `store_unaligned(dst + 4 * k, uint32(cp))`.",
+      "recommendation": "Factor the decode loop so the emit step is the only variable. Either (a) parameterize a single decoder with a write callback / pass a per-codepoint sink, or (b) decode once into a small tracked uint32 scratch and reuse one shared helper for both the raw-pointer (typemap) and tracked-array (query) writers. Lowest-risk surgical form: have _put_unicode call the shared decoder for the cp computation and keep only its tracked-array write local. Cite the canonical decoder at _sqlite_typemap.utf8_to_utf32 (lines 66-105).",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-sqlite_query-2",
+      "severity": "low",
+      "title": "_TAG_S and _TAG_BLOB branches are near-identical, differing only in the accessor",
+      "file": "numbox/core/bindings/_sqlite_query.py",
+      "lines": "113-126",
+      "claim": "The TEXT (_TAG_S) and BLOB (_TAG_BLOB) branches in _store_cell are the same six lines of pointer-cast + truncating byte copy; the only difference is sqlite3_column_text vs sqlite3_column_blob. This is small copy-paste that a single helper (or fetching the source pointer once based on tag, then sharing the copy loop) would collapse.",
+      "evidence": "_sqlite_query.py:113-119 `src_p = sqlite3_column_text(stmt, j); nbytes = sqlite3_column_bytes(stmt, j); src = carray(_cast_int_to_void_p(src_p), (nbytes,), dtype=np.uint8); nn = nbytes if nbytes < width else width; for b in range(nn): buf[off + b] = src[b]` is duplicated verbatim at lines 120-126 with only `sqlite3_column_text` replaced by `sqlite3_column_blob`.",
+      "recommendation": "Compute `src_p = sqlite3_column_text(stmt, j) if tag == _TAG_S else sqlite3_column_blob(stmt, j)` once, then run the single shared truncating-copy loop. Low risk, purely local.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-sqlite_query-3",
+      "severity": "low",
+      "title": "_copy_bytes hand-rolls a byte loop where a tracked slice assignment would do",
+      "file": "numbox/core/bindings/_sqlite_query.py",
+      "lines": "25-29",
+      "claim": "_copy_bytes is an explicit element-by-element loop copying scratch bytes into the output buffer. A numba slice assignment `dst[off:off+nbytes] = src[:nbytes]` is also a tracked array write (so it preserves the macOS-arm64 DCE-avoidance property the whole module is built around) and is simpler. This is a micro-simplification, not a correctness issue.",
+      "evidence": "_sqlite_query.py:28-29 `for k in range(nbytes): dst[off + k] = src[k]`. The macOS DCE workaround documented at lines 36-39 and 78-82 only requires the write to go through a numba-tracked array (not a raw pointer); a slice-assign satisfies that.",
+      "recommendation": "Optional: replace the loop body with `dst[off:off + nbytes] = src[:nbytes]`. Keep the loop if a reviewer prefers explicitness; flag only as a simplification, and verify the slice-assign survives the macOS-arm64 optimizer before relying on it for the DCE-sensitive path.",
+      "confidence": "medium"
+    }
+  ]
+}

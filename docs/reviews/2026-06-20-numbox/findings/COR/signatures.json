@@ -1,0 +1,12 @@
+{
+  "target": "signatures",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/_c.py",
+    "numbox/core/bindings/_sqlite_result.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the COR dimension. Every signature in signatures_c / signatures_m / signatures_sqlite matches its real C prototype in arity, argument order, and width on all supported 64-bit platforms; arities also match the corresponding _*.py wrapper bodies that consume each entry. No wrong-result, edge-case, or platform-variable-type defect found. The platform-variable-type hazard the lens warns about (long/time_t/size_t) is avoided: the historically-affected functions (fseek/ftell/fsetpos/fgetpos/time/clock/strtol/strtoul) are deliberately ABSENT, and the only size_t-typed args present (the n/size args of strlen, fwrite, fread, memcpy/memmove/memset/memcmp/memchr, strncpy, strncmp and the size_t returns) are typed intp, which is 64-bit on every supported 64-bit platform, so the register width is correct (the only theoretical wrong-result case, a size >= 2^63, is unreachable). Note (DES, not COR): the lldiv entry on line 13 is an orphan with no wrapper anywhere in numbox; its signature lldiv_t(int64, int64) with lldiv_t = Tuple((int64, int64)) is itself correct (quot then rem field order), so it is not a COR defect.",
+  "findings": []
+}

@@ -1,0 +1,13 @@
+{
+  "target": "sqlite_hooks",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_hooks.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/utils.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on SEC. _sqlite_hooks.py is a thin forwarding shim: each of the six wrappers (update_hook / progress_handler / busy_handler / commit_hook / rollback_hook / trace_v2) passes only caller-trusted pointers (db_p, cb_p, ctx_p) and integers (n_ops, mask) straight to _call_lib_func, with no buffer reads, C-string copies, length arithmetic, SQL-text interpolation, format strings, or path/library loading performed in this module. There is no untrusted-input attack surface here: the connection pointer, the @cfunc address, and the context pointer are all produced by the caller's own trusted @njit code (library-API-controlled by contract). The supporting load_lib('sqlite3') path routes through the already-hardened _resolve_lib_path / _windows_bundled_dll_path (prefers CPython's bundled DLL over PATH, explicitly avoiding the AWS-CLI sqlite3.dll hazard), and _call_lib_func uses the extern-ref symbol pattern (presence-only ll.address_of_symbol, never a baked literal address), so no SEC defects were found.",
+  "findings": []
+}

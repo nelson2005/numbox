@@ -1,0 +1,21 @@
+{
+  "target": "work_builder",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-work_builder-1",
+      "severity": "low",
+      "title": "Dead `registry` parameter threaded through _infer_end_and_derived_nodes",
+      "verdict": "confirmed",
+      "reasoning": "Verified in builder.py lines 124-132. The function signature `def _infer_end_and_derived_nodes(spec, all_inputs_, all_derived_, registry):` accepts `registry` but the body only touches `spec.name`, `all_inputs_`, `all_derived_`, `get_ty(spec)`, and `spec.sources`. The single reference to `registry` in the body is the verbatim forward at line 131: `_infer_end_and_derived_nodes(source, all_inputs_, all_derived_, registry)`. The actual consumption occurs at lines 140-141 in the outer `infer_end_and_derived_nodes`: `all_inputs_lst = [registry[name] for name in all_inputs_.keys()]`. The parameter is genuinely dead within the recursive helper."
+    },
+    {
+      "id": "DES-work_builder-2",
+      "severity": "low",
+      "title": "`registry` field on End/Derived NamedTuples is stored but never read off the instance",
+      "verdict": "confirmed",
+      "reasoning": "Verified in builder.py. `_End` line 25 and `_Derived` line 52 both declare `registry: dict = None`. In `_new` (lines 29-37), `registry = kwargs.get('registry', _specs_registry)` picks the dict, uses it to check/insert (lines 33-36), and the namedtuple is created with that value baked into the `registry` field. A grep of `.registry` across all of numbox/core/work/ and test/ shows zero reads of `spec.registry`, `input_.registry`, or `derived_.registry`; all `.registry` hits are `Graph.registry` from the unrelated variable subsystem (variable.py lines 420-580, compile_kernel.py lines 870-873). explain.py also does not read `.registry` from any spec. The stored field is confirmed dead state."
+    }
+  ]
+}

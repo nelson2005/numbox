@@ -1,0 +1,21 @@
+{
+  "target": "utils_misc",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-utils_misc-1",
+      "severity": "low",
+      "title": "Default-vs-empty test uses == instead of is against inspect._empty",
+      "verdict": "confirmed",
+      "reasoning": "Line 46 of numbox/utils/standard.py reads: `[k if v.default == inspect._empty else f'{k}={v.default!r}' for k, v in func_params.items()]`. The `==` comparison against the `inspect._empty` sentinel is confirmed. For a numpy array default (e.g. `def f(x, y=np.zeros(3))`), `np.zeros(3) == inspect._empty` returns a numpy boolean array (element-wise comparison), and the ternary `k if <array>` then raises `ValueError: The truth value of an array is ambiguous`. CPython's own inspect module tests this sentinel with `is`. The fix is straightforward: use `v.default is inspect._empty`."
+    },
+    {
+      "id": "COR-utils_misc-2",
+      "severity": "low",
+      "title": "clock_gettime return value ignored; failure yields silent 0 ns",
+      "verdict": "confirmed",
+      "reasoning": "Line 101 of numbox/utils/clock.py reads: `builder.call(fn, [_CLK_ID, ts_ptr])` — the return value is not captured or checked. Lines 95-97 pre-zero the timespec: `zero_ts = ir.Constant(_timespec_ty, [ir.Constant(_i64, 0), ir.Constant(_i64, 0)])` followed by `builder.store(zero_ts, ts_ptr)`. On a clock failure, `sec=0` and `nsec=0` so the function silently returns 0. This is a real (if highly theoretical) correctness gap. CLOCK_MONOTONIC does not fail in practice on supported platforms, so severity 'low' is appropriate."
+    }
+  ]
+}

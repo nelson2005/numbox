@@ -1,0 +1,21 @@
+{
+  "target": "sqlite_tvf",
+  "dimension": "MEM",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "MEM-sqlite_tvf-1",
+      "severity": "high",
+      "title": "User fn exception swallowed at xFilter cfunc boundary -> silent empty result instead of SQL error",
+      "verdict": "confirmed",
+      "reasoning": "Reading lines 456-463 directly confirms the claim. `_tvf_xfilter` is a `@cfunc` that calls `xfilter_impl(cur, argc, argv)` with no try/except wrapper and unconditionally returns `SQLITE_OK` (line 463). The inline comment at lines 458-461 explicitly acknowledges the swallow, asserting 'there is no handle to call sqlite3_result_error'. That assertion is technically correct for sqlite3_result_error, but the finding's rebuttal is also correct: xFilter signals failure via its own return code, and returning non-SQLITE_OK aborts the SQL statement with an error. Every other cfunc in the file (xConnect line 166, xOpen line 249, xDisconnect line 217, xColumn line 345) wraps its body in `try/except Exception: return SQLITE_ERROR`. The _tvf_xfilter cfunc is the sole exception and is the only one where a user-supplied function is called. The code is structured exactly as the finding describes: `xfilter_impl(cur, argc, argv)` / `return SQLITE_OK` with no exception guard, making user fn exceptions produce silent empty result sets rather than surfaced SQL errors."
+    },
+    {
+      "id": "MEM-sqlite_tvf-2",
+      "severity": "low",
+      "title": "xBestIndex bound_mask uses a 64-bit shift that is undefined for n_hidden >= 64",
+      "verdict": "confirmed",
+      "reasoning": "Reading lines 192-203 in `_make_xbestindex()` confirms the bitmask logic. `bound_mask = uint64(0)` (line 192), with per-constraint accumulation `bound_mask |= uint64(1) << uint64(h)` (line 200), and the all-bound check `if bound_mask != (uint64(1) << uint64(n_hidden)) - uint64(1)` (line 202). For n_hidden == 64, the shift `uint64(1) << uint64(64)` is undefined at the LLVM level (64-bit shift-by-bit-width is UB; LLVM typically yields 0, making the expression `0 - 1 == UINT64_MAX`, which accidentally works for n_hidden==64). For n_hidden >= 65 the per-arg bit `uint64(1) << uint64(h)` for h>=64 also shifts out of range, so hidden args can never set their bit. `_build_tvf_descriptor` at lines 384-389 validates tag kinds but imposes no upper bound on `len(arg_tags)`. However, the finding correctly assesses this as low severity: a TVF with >= 64 hidden scalar arguments is unreachable in practice."
+    }
+  ]
+}

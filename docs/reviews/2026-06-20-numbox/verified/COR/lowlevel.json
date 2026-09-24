@@ -1,0 +1,14 @@
+{
+  "target": "lowlevel",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-lowlevel-1",
+      "severity": "high",
+      "title": "get_str_from_p_as_int crashes on non-ASCII C strings (signed char -> chr() out of range)",
+      "verdict": "confirmed",
+      "reasoning": "Line 10 imports `char` from `numba.core.types`; verified at runtime that `numba.core.types.char` has repr `int8` and `.signed == True`. Line 255: `mem_view = carray(void_p, shape=(MAX_STR_LENGTH,), dtype=char)` — so each element is a signed int8. Line 259: `s += chr(char_as_code_p)` — any byte in 0x80..0xFF reads back as a negative value (e.g. 0xC3 -> -61), and `chr(-61)` raises `ValueError: chr() arg not in range(0x110000)` (confirmed by direct Python evaluation). The NUL-terminator check `== 0` on line 257 is unaffected since only 0x00 is zero; every continuation byte of a UTF-8 multi-byte sequence triggers the crash path. The finding's claim is accurate: the function is documented in CLAUDE.md as the canonical C-string reader (including for `sqlite3_errmsg`), making this a real correctness defect for any non-ASCII string data."
+    }
+  ]
+}

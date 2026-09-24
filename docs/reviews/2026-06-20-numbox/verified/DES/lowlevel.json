@@ -1,0 +1,21 @@
+{
+  "target": "lowlevel",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-lowlevel-1",
+      "severity": "low",
+      "title": "Verbatim pointer-type TypingError guard duplicated across four load/store intrinsics",
+      "verdict": "confirmed",
+      "reasoning": "Read lowlevel.py lines 58-61, 84-87, 111-114, 134-137 directly. All four intrinsics contain byte-for-byte identical guard logic: `if unliteral(p_ty) not in (intp, uintp): raise TypingError(f\"<name>: pointer argument must be intp or uintp, got {p_ty}\")`. The only difference is the function-name prefix string ('load_at', 'store_at', 'store_unaligned', 'load_unaligned'). The duplication is real and the maintenance-drift risk is accurately described. Four independent sites must be updated if the accepted pointer types or message wording changes."
+    },
+    {
+      "id": "DES-lowlevel-2",
+      "severity": "low",
+      "title": "Aligned/unaligned load+store intrinsics duplicate codegen, differing only by align=1",
+      "verdict": "confirmed",
+      "reasoning": "Read lowlevel.py lines 56-152. _load_at codegen (lines 65-68): `ptr = builder.inttoptr(args[0], ty_ll.as_pointer())` then `return builder.load(ptr)`. _load_unaligned codegen (lines 141-144) is identical except `return builder.load(ptr, align=1)`. _store_at codegen (lines 90-94): `builder.store(v, ptr)`. _store_unaligned codegen (lines 117-121): `builder.store(v, ptr, align=1)`. The sole functional difference between aligned and unaligned variants is the `align=1` keyword argument. The four intrinsics plus four @njit wrappers are accurately described as eight functions encoding two operations parameterized by one boolean. The finding correctly notes the public API split is load-bearing (packed structured-dtype fields) and should not be collapsed."
+    }
+  ]
+}

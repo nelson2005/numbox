@@ -1,0 +1,14 @@
+{
+  "target": "variable_node_utils",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-variable_node_utils-1",
+      "severity": "low",
+      "title": "make_node recurses before memoizing, so a cyclic registry yields RecursionError instead of a clean cycle error",
+      "verdict": "confirmed",
+      "reasoning": "Read node.py lines 22-31. The code is exactly as described: `made[key] = node_` (line 30) is written only AFTER `inputs_ = [_make(inp_name, inp_source) for ...]` (line 28) completes. For a cycle A->B->A, `_make(A)` starts, recurses into `_make(B)`, which recurses into `_make(A)` again; at that point `made.get(('A', source))` returns None because the first `_make(A)` call never reached line 30 yet. Python recursion continues until `RecursionError`. Contrast with variable.py lines 487-503: `visit` adds `qual_name` to `visiting` BEFORE recursing (line 493) and raises `RuntimeError(f'Cycle detected at {qual_name}')` on re-entry (line 491-492). The two code paths handling the same underlying graph data give incompatible error behaviour on a cyclic input. Severity low is appropriate — make_node is a helper intended for DAGs, not a user-facing API path, but the inconsistency is a real latent footgun."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "target": "work_node",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/work/node.py",
+    "numbox/core/work/node_base.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/meminfo.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. The Node/NodeBase structrefs use numba's standard incref-on-return intrinsics (_cast/cast at lowlevel.py:28-45, _uniformize_tuple_of_structs at lowlevel.py:369-390) whose explicit context.nrt.incref pairs exactly with numba's automatic decref-on-scope-exit; every traced path (node_constructor, get_input/_get_input, the recursive _all_input_names/_all_end_nodes name-collectors) is refcount-balanced. There is no @cfunc boundary, no raw pointer/buffer arithmetic, no struct-by-value ABI, no symbol resolution, and no NUL/fixed-width bridge in this target, so the high-risk MEM failure modes do not apply here.",
+  "findings": []
+}

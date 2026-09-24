@@ -1,0 +1,35 @@
+{
+  "target": "lowlevel",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/highlevel.py",
+    "numbox/core/configurations.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "numbox/utils/lowlevel.py is a well-factored set of canonical low-level primitives that the rest of the codebase composes (verified by grep: load/store, cast, deref_payload, populate_structref, _new, tuple-uniformize are all reused, not reimplemented). The only DES issues are minor and local: a verbatim pointer-type TypingError guard copy-pasted across the four load/store intrinsics, and the aligned/unaligned load+store quartet that differs only by align=1. No dead code (the few helpers referenced only from tests are public, tested API). Findings are low severity.",
+  "findings": [
+    {
+      "id": "DES-lowlevel-1",
+      "severity": "low",
+      "title": "Verbatim pointer-type TypingError guard duplicated across four load/store intrinsics",
+      "file": "numbox/utils/lowlevel.py",
+      "lines": "58-61,84-87,111-114,134-137",
+      "claim": "The identical guard `if unliteral(p_ty) not in (intp, uintp): raise TypingError(...)` is copy-pasted in `_load_at`, `_store_at`, `_store_unaligned`, and `_load_unaligned`, differing only by the leading function-name string in the message. Four maintenance sites must stay in sync; a future change to the accepted pointer types (e.g. adding `voidptr`) or message wording risks drift across the copies.",
+      "evidence": "_load_at lines 58-61: `if unliteral(p_ty) not in (intp, uintp):` / `raise TypingError(f\"load_at: pointer argument must be intp or uintp, got {p_ty}\")`. _store_at lines 84-87, _store_unaligned lines 111-114, _load_unaligned lines 134-137 are byte-for-byte identical except the `load_at`/`store_at`/`store_unaligned`/`load_unaligned` prefix in the f-string. All four pass through `unliteral(p_ty)` against the same `(intp, uintp)` tuple.",
+      "recommendation": "Extract a module-private helper, e.g. `def _require_intp_pointer(p_ty, name): if unliteral(p_ty) not in (intp, uintp): raise TypingError(f\"{name}: pointer argument must be intp or uintp, got {p_ty}\")`, and call it from each of the four typing functions. Local, low-risk, removes the four-way drift hazard.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-lowlevel-2",
+      "severity": "low",
+      "title": "Aligned/unaligned load+store intrinsics duplicate codegen, differing only by align=1",
+      "file": "numbox/utils/lowlevel.py",
+      "lines": "56-152",
+      "claim": "`_load_at`/`_load_unaligned` and `_store_at`/`_store_unaligned` each have near-identical typing and codegen bodies; the only functional difference is that the unaligned variants pass `align=1` to `builder.load`/`builder.store`. The four intrinsics plus their four `@njit` wrappers are eight functions encoding two operations parameterized by one boolean.",
+      "evidence": "_load_at codegen (lines 65-68): `ptr = builder.inttoptr(args[0], ty_ll.as_pointer())` then `return builder.load(ptr)`. _load_unaligned codegen (lines 141-144) is identical except `return builder.load(ptr, align=1)`. Same relationship between _store_at (lines 90-94, `builder.store(v, ptr)`) and _store_unaligned (lines 117-121, `builder.store(v, ptr, align=1)`).",
+      "recommendation": "Optional consolidation: factor the shared pointer-cast + load/store into a parameterized codegen taking an `align` argument, keeping the four public `@njit` wrappers (`load_at`/`load_unaligned`/`store_at`/`store_unaligned`) as the documented API surface. The aligned-vs-unaligned public split is intentional and load-bearing (packed structured-dtype fields), so do NOT collapse the public API — only the internal codegen. Lower priority than DES-lowlevel-1; weigh against the readability of keeping each intrinsic self-contained.",
+      "confidence": "high"
+    }
+  ]
+}

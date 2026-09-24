@@ -1,0 +1,24 @@
+{
+  "target": "lowlevel",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/utils/lowlevel.py",
+    "numbox/core/configurations.py",
+    "numbox/utils/highlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Refcount discipline in lowlevel.py is sound: the cast/uniformize/deref/populate intrinsics each pair every NRT incref with a balancing owned reference handed to numba, the raw-pointer-as-int extractor is documented as the unsafe variant, and the align-1 vs aligned load/store split is correct. One real buffer-bridge defect: get_str_from_p_as_int reads bytes as numba `char` (signed int8), so any C string containing a byte >= 0x80 (non-ASCII UTF-8/Latin-1) makes chr() receive a negative value and raise ValueError inside njit instead of decoding.",
+  "findings": [
+    {
+      "id": "MEM-lowlevel-1",
+      "severity": "high",
+      "title": "get_str_from_p_as_int reads bytes as signed char; non-ASCII C strings raise ValueError instead of decoding",
+      "file": "numbox/utils/lowlevel.py",
+      "lines": "249-260",
+      "claim": "The canonical C-string reader interprets each byte through numba's `char` type, which is signed int8 (verified: numba.core.types.char is int8, signed, bitwidth 8). A buffer view is built with `carray(void_p, shape=(MAX_STR_LENGTH,), dtype=char)` and each element is passed to `chr(char_as_code_p)`. For any byte with value 0x80-0xFF the int8 element is negative (-128..-1), and `chr` of a negative value raises `ValueError: chr() arg not in range(0x10ffff)` under njit. So reading any C string that contains a non-ASCII byte (UTF-8 multibyte sequences, Latin-1 high bytes) does not mis-decode quietly -- it throws from inside @njit code. This is the documented canonical primitive used to decode sqlite3_errmsg, file paths, environ values, strerror buffers, and exec error messages; a non-ASCII error message or path therefore turns a normal C-API read into an njit exception.",
+      "evidence": "Line 255-259: `mem_view = carray(void_p, shape=(MAX_STR_LENGTH,), dtype=char)` then `for char_as_code_p in mem_view: if char_as_code_p == 0: return s` and `s += chr(char_as_code_p)`. Import line 9-12 brings `char` from numba.core.types. Confirmed this session via venv python: `numba.core.types.char` reports `int8 signed True bitwidth 8`. Confirmed via njit: `chr(-1)` raises `ValueError: chr() arg not in range(0x10ffff)` and an int8 value cannot even hold 200 (`OverflowError`). The NUL exit `if char_as_code_p == 0` still works (0 is representable), so only bytes >= 0x80 are affected. The only test (test/utils/test_lowlevel.py:165-171) and the round-trip in test/core/test_bindings.py:125 use pure-ASCII strings, so this path is untested.",
+      "recommendation": "Read the buffer through an unsigned byte view so each element is 0..255 before calling chr(). E.g. build the carray with an unsigned 8-bit dtype (numba.core.types.uchar / uint8) instead of `char`, or mask to the low 8 bits (`code & 0xFF`) before `chr`. Note that even with the sign fixed, byte-at-a-time `chr` over a UTF-8 stream produces Latin-1-style per-byte codepoints, not the decoded UTF-8 string; if faithful UTF-8 decoding is intended, the contract/docstring should say it yields raw bytes-as-codepoints, or the bytes should be collected and decoded. At minimum, fix the signedness so high bytes don't raise.",
+      "confidence": "high"
+    }
+  ]
+}

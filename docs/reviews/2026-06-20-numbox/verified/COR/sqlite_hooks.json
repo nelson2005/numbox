@@ -1,0 +1,14 @@
+{
+  "target": "sqlite_hooks",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-sqlite_hooks-1",
+      "severity": "low",
+      "title": "sqlite3_trace_v2 uMask declared int32 for a C `unsigned int` parameter",
+      "verdict": "confirmed",
+      "reasoning": "signatures.py line 173 reads exactly `\"sqlite3_trace_v2\": int32(intp, int32, intp, intp)` — the second argument (C `unsigned uMask`) is typed int32. uint32 is imported at line 2 and is used for sibling unsigned-int parameters: line 185 `\"sqlite3_value_subtype\": uint32(intp)` and line 201 (sqlite3_result_subtype) use uint32. The trace mask constants in _sqlite_constants.py lines 95-98 (0x01, 0x02, 0x04, 0x08) all fit in positive int32, so there is no functional bug for any documented mask. The finding is a real type-fidelity inconsistency, not a hallucinated API or impossible condition. Severity low is appropriate — only a latent hazard if bit 31 is ever set."
+    }
+  ]
+}

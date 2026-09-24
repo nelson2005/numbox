@@ -1,0 +1,16 @@
+{
+  "target": "sqlite_conn_stmt_exec",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_conn.py",
+    "numbox/core/bindings/_sqlite_stmt.py",
+    "numbox/core/bindings/_sqlite_exec.py",
+    "numbox/core/proxy/proxy.py",
+    "numbox/core/bindings/utils.py",
+    "numbox/core/bindings/_sqlite_column.py",
+    "numbox/core/bindings/signatures.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the DES dimension. All three modules are thin, uniform @proxy/_call_lib_func wrappers exactly matching the documented 'Adding a New Binding' convention (CLAUDE.md); the cross-file repetition is the intended pattern, not duplication to collapse. __all__ lists match the defined wrappers, imports are all used, and the load_lib usage is consistently differentiated (conn binds _sqlite3_lib because proxy_if_available consumes it; stmt/exec call load_lib for side-effect only since they have no version-gated symbols). No dead code, no reinvented primitives, no over-complexity, no API-consistency or comment/code-drift issues found.",
+  "findings": []
+}

@@ -1,0 +1,25 @@
+{
+  "target": "variable_node_utils",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/variable/node.py",
+    "numbox/core/variable/utils.py",
+    "numbox/utils/fingerprint.py",
+    "numbox/core/variable/compile_kernel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Both files are small and well-factored. node.py is a clean memoized recursive node builder; utils.py is five single-purpose private helpers, each genuinely consumed by compile_kernel.py. The notes' duplication concern (vs utils/fingerprint.py) does NOT hold: the sha256 in _assign_identifiers is identifier-collision disambiguation, a different concern from content fingerprinting, and compile_kernel.py correctly imports the real fingerprint helpers from utils/fingerprint.py rather than re-implementing them. One low-severity docstring/code drift in utils.py.",
+  "findings": [
+    {
+      "id": "DES-variable_node_utils-1",
+      "severity": "low",
+      "title": "utils.py module docstring enumerates only 3 of the helper concerns; omits declared-return validation",
+      "file": "numbox/core/variable/utils.py",
+      "lines": "1-7",
+      "claim": "The module docstring lists the file's contents as 'identifier assignment for generated kernel source, formula njit-wrapping, and formula arity validation' but the module also contains _validate_declared_return (declared return-type validation) and its helper _strip_cache, which are arguably the most substantial logic in the file. A reader scanning the docstring would not expect the return-type validation machinery to live here. Minor doc/code drift; no runtime effect.",
+      "evidence": "Lines 1-7 docstring: 'Shared utilities used by `numbox.core.variable.compile_kernel`: identifier assignment for generated kernel source, formula njit-wrapping, and formula arity validation.' But the file also defines `_validate_declared_return` (line 84, 'Raise if the formula's NATURAL return type at `input_types` differs from `declared`') and `_strip_cache` (line 76), neither covered by the three-item enumeration. compile_kernel.py line 863 calls `_validate_declared_return(...)`, so it is live, central logic.",
+      "recommendation": "Add 'declared return-type validation' to the docstring's enumeration (line 4-5), e.g. '... formula njit-wrapping, formula arity validation, and declared-return validation.' Local, taste-adjacent but keeps the docstring an accurate index of the module.",
+      "confidence": "high"
+    }
+  ]
+}

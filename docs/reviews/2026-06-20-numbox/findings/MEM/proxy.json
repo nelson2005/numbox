@@ -1,0 +1,12 @@
+{
+  "target": "proxy",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/proxy/proxy.py",
+    "numbox/utils/standard.py",
+    "numbox/utils/highlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. proxy.py is pure-Python metaprogramming that emits numba source for an @intrinsic + @njit wrapper; it performs no NRT incref/decref, holds no raw pointers, defines no @cfunc, and does no struct-by-value ABI work. The single codegen op is builder.call(f, args) where f is an extern function resolved by symbol name (llvm_cfunc_wrapper_name), i.e. the cache-safe extern-ref-by-name pattern with no literal address baked in. The .as_func / CompileResultWAP handle and the absence of a func_jit keep-alive reference are the documented known-correct lifetime pattern (numba pins compiled code globally; dispatcher GC does not reclaim the JIT'd symbol), so they are not memory defects.",
+  "findings": []
+}

@@ -1,0 +1,37 @@
+{
+  "target": "fingerprint_digest",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/utils/fingerprint.py",
+    "numbox/utils/digest.py",
+    "numbox/core/configurations.py",
+    "numbox/core/variable/compile_kernel.py",
+    "numbox/core/bindings/_sqlite_udf_helpers.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Essentially clean on correctness. The fingerprint walker is deterministic cross-process (no id() in output; recursion sentinel is qualname-based; globals/dict/set are sorted) and explicitly compensates for numba's co_consts cache-key collision by canonicalizing co_consts inside _fingerprint_codeobj. Two low-severity edge notes recorded below: a self-referential plain container can drive _canon_value into RecursionError (caught by callers, so it degrades to uncached rather than returning a wrong result), and digest() concatenates successive function fingerprints into one hash stream without a delimiter (a theoretical, practically-implausible cross-arity collision).",
+  "findings": [
+    {
+      "id": "COR-fingerprint_digest-1",
+      "severity": "low",
+      "title": "_canon_value lacks a cycle key for self-referential plain containers (degrades, never wrong)",
+      "file": "numbox/utils/fingerprint.py",
+      "lines": "55-61",
+      "claim": "A self-referential built-in container reachable from a default arg, closure cell, or referenced global (e.g. lst=[]; lst.append(lst), or a dict/set that contains itself) drives _canon_value into unbounded recursion, ending in RecursionError. This is not a wrong-result bug: both consumers (compile_kernel._formula_fingerprint at numbox/core/variable/compile_kernel.py:116 and digest at numbox/utils/digest.py:48) catch RecursionError and degrade to an uncacheable / cloudpickle fallback, so behavior stays correct. Worth noting only as a robustness edge.",
+      "evidence": "The seen set is added to ONLY in _fingerprint_function (line 94: `seen = seen | {id(func)}`). _canon_value recurses into tuple/list (line 56), set/frozenset (line 58), and dict (line 60) passing `seen` through unchanged and never inserting the container's own id, so a container that (transitively) contains itself recurses forever. Caller guards: compile_kernel.py:116 `except (_Unfingerprintable, RecursionError):` and digest.py:48 `except (_Unfingerprintable, RecursionError):`.",
+      "recommendation": "If hardening is desired, add an id-based cycle guard for containers in _canon_value (insert id(value) into seen on entry for tuple/list/set/dict and short-circuit on re-entry), mirroring the function guard at fingerprint.py:92-94. No fix is strictly required since callers already degrade safely.",
+      "confidence": "high"
+    },
+    {
+      "id": "COR-fingerprint_digest-2",
+      "severity": "low",
+      "title": "digest() concatenates per-function fingerprints with no delimiter between them",
+      "file": "numbox/utils/digest.py",
+      "lines": "42-52",
+      "claim": "digest() folds each fn's fingerprint string into the same sha256 stream back-to-back with no separator or length prefix. In principle two distinct (subject, fns) inputs whose concatenated fingerprint bytes are identical would collide on the cache key, yielding a stale cached UDAF/TVF kernel and a wrong result. In practice this is implausible: each fingerprint begins with `func(<module>:<qualname>;...` and the consumers pass a fixed-arity, role-ordered fn list (_sqlite_udf_helpers.py:226 `digest(state_type, list(fns.values()))`), so a boundary-shifting collision would require the structured prefixes to line up exactly.",
+      "evidence": "Loop at digest.py:42-52 does `h.update(_fingerprint_function(py, set()).encode(...))` (line 47) or `h.update(cloudpickle.dumps(...))` (line 52) once per fn with no delimiter emitted between iterations; the only separators are the `subject` repr (line 33) and version/jit_options folds (lines 34-41) that precede the whole loop. _fingerprint_function output format is `func(module:qualname;code(...);defaults=...;...;globals=[...])` (fingerprint.py:107-112), which is structured but not self-delimiting across two concatenated functions.",
+      "recommendation": "Fold a fixed delimiter and a count, e.g. h.update(f\"fn{i}\\x00\".encode()) before each fn (or h.update(len(fns) ...)), so the boundary between successive fingerprints is unambiguous. Low priority given the realistic collision risk.",
+      "confidence": "low"
+    }
+  ]
+}

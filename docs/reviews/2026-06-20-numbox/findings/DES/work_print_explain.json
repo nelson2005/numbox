@@ -1,0 +1,38 @@
+{
+  "target": "work_print_explain",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/work/print_tree.py",
+    "numbox/core/work/explain.py",
+    "numbox/core/work/work.py",
+    "numbox/core/work/builder.py",
+    "numbox/core/work/node.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Both modules are small, focused, and well-factored; the traversals in print_tree._build_graph and explain._explain serve distinct purposes (ASCII layout vs. source-code emission) and do not duplicate node.py's name-dedup traversals, so reuse is not apt. The only DES issues are minor public/private-discipline drift: print_tree exposes two purely-internal helpers without a leading underscore (one of which shadows the unrelated public builder.make_graph), and explain.py reaches into work.derive via a bare magic index [1].",
+  "findings": [
+    {
+      "id": "DES-work_print_explain-1",
+      "severity": "low",
+      "title": "Internal print_tree helpers (make_graph, calculate_col_widths) lack leading underscore and the name shadows public builder.make_graph",
+      "file": "numbox/core/work/print_tree.py",
+      "lines": "15-55",
+      "claim": "make_graph and calculate_col_widths are used only inside make_image / make_graph yet carry no leading underscore, so they read as public API. Per the repo's public/private convention (non-underscore top-level name = public surface), they advertise an internal layout detail as supported. make_graph additionally collides by name with the genuinely public numbox.core.work.builder.make_graph (a completely different function: graph constructor taking *access_nodes), inviting confusion when both are imported.",
+      "evidence": "print_tree.py: `def calculate_col_widths(graph):` (L15) is called only at `col_widths = calculate_col_widths(graph)` (L44); `def make_graph(node):` (L41) is called only at `graph, num_rows, num_columns, col_widths = make_graph(node)` (L59) inside make_image. grep across numbox/ and test/ shows calculate_col_widths appears nowhere but print_tree.py, and the only imported/tested print_tree entry point is make_image (test/core/test_print_tree.py L3, test/core/test_variable.py L7, etc.). builder.py L145 defines the unrelated public `def make_graph(*access_nodes...)` which IS imported by tests (test/core/test_builder_utils.py L1). The intra-file helper _build_graph (L22) is already underscore-prefixed, so the missing underscore on its siblings is an internal inconsistency.",
+      "recommendation": "Rename the two print_tree internals to _make_graph and _calculate_col_widths (and update the two internal call sites). make_image stays the sole public entry point and the name no longer shadows builder.make_graph. Local, low-risk; no external caller exists.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-work_print_explain-2",
+      "severity": "low",
+      "title": "explain.py indexes work.derive with a bare magic [1] to recover the _derive_funcs lookup key",
+      "file": "numbox/core/work/explain.py",
+      "lines": "24-25",
+      "claim": "_explain pulls the derive function source via `derive_func_ptrs = work.derive` then `get_func_code(derive_func_ptrs[1])`. work.derive returns a UniTuple(intp, function_struct_size) of the function-struct pointer fields (work.py L78-79 -> lowlevel._get_func_tuple L222-233), and _derive_funcs is keyed by id(derive_cres) (builder.py L95). The fact that struct slot [1] equals that id is an undocumented coupling spread across three modules; the literal 1 has no name and no comment, so a future change to the function-struct layout or to the _derive_funcs key would silently break explain() with no signal at the call site.",
+      "evidence": "explain.py L24-25: `derive_func_ptrs = work.derive` / `derive_func_name, derive_func_code = get_func_code(derive_func_ptrs[1])`. work.py L77-79: the `derive` property returns `_get_func_tuple(self.derive)`. lowlevel.py L222-233: `_get_func_tuple` builds `UniTuple(intp, function_struct_size)` by ptrtoint of each struct field. builder.py L95: `_derive_funcs[id(derive_cres)] = derive`. get_func_code (explain.py L8-10) does `_derive_funcs.get(derive_func_p_)` and unconditionally dereferences the result's __name__, so a key miss raises AttributeError rather than a clear error.",
+      "recommendation": "Introduce a named constant (or a small helper on lowlevel, e.g. a function-struct slot index alongside _get_func_tuple) for the function-pointer slot used as the _derive_funcs key, and have get_func_code raise a clear error (or return a sentinel) when the lookup misses. Keeps the coupling explicit and discoverable. Local, low-risk.",
+      "confidence": "medium"
+    }
+  ]
+}

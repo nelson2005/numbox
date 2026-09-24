@@ -1,0 +1,301 @@
+{
+  "review": "numbox deep project-wide review 2026-06-20",
+  "branch": "review/numbox-2026-06-20",
+  "source_root": "/home/erik/projects/numbox",
+  "dimensions": {
+    "MEM": "Memory / ABI / refcount safety (highest value)",
+    "COR": "Correctness — logic / edge-case / wrong-result bugs",
+    "DES": "Design & simplification — duplication, dead code, over-complexity, API consistency",
+    "SEC": "Security & input validation — bounds, format strings, SQL, paths, C-string buffers",
+    "TST": "Tests & docs — coverage gaps, doc/API drift, sphinx build health, CI parity"
+  },
+  "targets": [
+    {
+      "name": "sqlite_vtable",
+      "group": "sqlite",
+      "files": ["numbox/core/bindings/_sqlite_vtable.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "Read-only vtables over numpy arrays. Salient surface: sqlite3_vtab base-field ownership (core sets pModule/nRef/zErrMsg; impl must zero base, never set them); _VTableHandle data-ownership lifetime (owns descriptor + arrays read at query time — genuinely load-bearing, NOT a removable cfunc keep-alive); SQLITE_STATIC vs TRANSIENT for string/BLOB results; xBestIndex eq/range constraint pushdown incl bool columns; create_module_v2 deferred xDestroy; sret over Record rejection; BLOB/TEXT NUL handling (trim trailing only, preserve interior); sqlite3_result_double NaN->NULL (cannot uphold no-NULL on float cols)."
+    },
+    {
+      "name": "sqlite_tvf",
+      "group": "sqlite",
+      "files": ["numbox/core/bindings/_sqlite_tvf.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "Table-valued functions backed by @cfunc kernels. Salient: @cfunc exception swallowing (returns zero default, no unwind -> silent wrong result) + NRT leak across a raising call; numeric-arg validation; per-arg argvIndex bitmask in xBestIndex; cfunc lifetime (JIT code outlives GC, but data handles must persist)."
+    },
+    {
+      "name": "sqlite_udf",
+      "group": "sqlite",
+      "files": ["numbox/core/bindings/_sqlite_udf.py", "numbox/core/bindings/_sqlite_udf_helpers.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "Scalar/aggregate/window UDFs. Salient: aggregate state in sqlite3_aggregate_context slot, meminfo released in xFinal (never xValue); structref-backed vs array-backed idioms; _incref_meminfo so removerefctpass cannot strip; @cfunc exception swallow/leak in xStep/xInverse/xValue/xFinal; signal errors via sqlite3_result_error[_code]."
+    },
+    {
+      "name": "sqlite_query",
+      "group": "sqlite",
+      "files": ["numbox/core/bindings/_sqlite_query.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "query_to_array: run SQL from @njit, materialize 2-D float64. Salient: macOS-arm64 dead-code-elimination of raw-pointer result stores (must write through out.view(np.uint8)); raises on mid-step errors; slack/trim bounds; pointer arithmetic into numpy buffer."
+    },
+    {
+      "name": "sqlite_conn_stmt_exec",
+      "group": "sqlite",
+      "files": ["numbox/core/bindings/_sqlite_conn.py", "numbox/core/bindings/_sqlite_stmt.py", "numbox/core/bindings/_sqlite_exec.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "Connection + statement lifecycle + exec/free. Salient: sqlite3_errmsg lifetime (valid only until next API call — decode immediately); sqlite3_expanded_sql must be freed with sqlite3_free; exec row-callback @cfunc return-code signaling; module-level sqlite3_lib init."
+    },
+    {
+      "name": "sqlite_bind_column_value_result_blob",
+      "group": "sqlite",
+      "files": ["numbox/core/bindings/_sqlite_bind.py", "numbox/core/bindings/_sqlite_column.py", "numbox/core/bindings/_sqlite_value.py", "numbox/core/bindings/_sqlite_result.py", "numbox/core/bindings/_sqlite_blob.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "Parameter bind / column read / value read / result set / BLOB I/O. Salient: bind_text/bind_blob destructor (SQLITE_TRANSIENT=-1 to copy; SQLITE_STATIC=0 assumes buffer outlives stmt); BLOB/TEXT exact byte length, never NUL-truncate; result_double NaN->NULL; column-data pointer lifetime."
+    },
+    {
+      "name": "sqlite_typemap_constants",
+      "group": "sqlite",
+      "files": ["numbox/core/bindings/_sqlite_typemap.py", "numbox/core/bindings/_sqlite_constants.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "Packed-cell tag/spec map + unaligned UTF-32 stores with UTF-8 validation; result codes/type codes/flags/destructor sentinels. Salient: align-1 stores (UB on misaligned via aligned ops); UTF-8 validation bounds; sentinel constant correctness vs SQLite headers."
+    },
+    {
+      "name": "sqlite_hooks",
+      "group": "sqlite",
+      "files": ["numbox/core/bindings/_sqlite_hooks.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "Callback hooks (commit/rollback/update/etc.). Salient: @cfunc must outlive registration; exception swallow/leak; per-channel error signaling (abort/veto return code vs nothing-for-void)."
+    },
+    {
+      "name": "libc_fmtio",
+      "group": "libc",
+      "files": ["numbox/core/bindings/_fmtio.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "printf/fprintf/snprintf/sscanf as dual-mode @overload + @intrinsic. Salient (SEC-heavy): %n rejection at typing time incl BSD 'q' and Microsoft I32/I64 modifiers; format-string/argument-type mismatch; snprintf buffer-size handling; varargs ABI."
+    },
+    {
+      "name": "libc_math",
+      "group": "libc",
+      "files": ["numbox/core/bindings/_math.py"],
+      "dimensions": ["COR", "DES"],
+      "notes": "33 single-arg + 9 two-arg float64 libm wrappers. Salient: signature correctness, domain edge cases, duplication/consistency across wrappers."
+    },
+    {
+      "name": "libc_stdio_strerror_errno",
+      "group": "libc",
+      "files": ["numbox/core/bindings/_stdio.py", "numbox/core/bindings/_strerror.py", "numbox/core/bindings/_errno.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "stdio handles + buffered I/O; thread-safe errno (__errno_location/__error/_errno); thread-safe strerror (__xpg_strerror_r vs strerror_r per platform). Salient: per-platform symbol selection correctness; strerror_r buffer sizing/ownership; accessor-function (per-thread) extern-ref pattern."
+    },
+    {
+      "name": "libc_c",
+      "group": "libc",
+      "files": ["numbox/core/bindings/_c.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "libc wrappers. Salient: platform-variable C types (long 64b POSIX vs 32b Win64; time_t; size_t) — a uniform int64 signature corrupts registers on Windows; pointer/buffer handling; bounds."
+    },
+    {
+      "name": "abi",
+      "group": "abi",
+      "files": ["numbox/core/bindings/abi.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "Struct-by-value ABI classification. Salient: _classify scalar/small/large; _classify_eightbytes (SSE-wins per eightbyte, boundary-spanning fields); _is_canonical_int64_pair_layout; Win64 register-vs-pointer vs SysV x86-64 vs AAPCS64; 16B INT/INT repack workaround for llvmlite#300."
+    },
+    {
+      "name": "call",
+      "group": "abi",
+      "files": ["numbox/core/bindings/call.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "_call_lib_func intrinsic: generates LLVM IR to call native funcs. Salient: extern-ref resolution (not literal addresses — cache=True correctness across ASLR); use_sret for >16B returns; pointer casts; the literal-address check is presence-only, never consumed by codegen."
+    },
+    {
+      "name": "signatures",
+      "group": "abi",
+      "files": ["numbox/core/bindings/signatures.py"],
+      "dimensions": ["COR", "DES"],
+      "notes": "Flat dict of C function name -> numba signature. Salient: platform-variable C type correctness (long/time_t/size_t), signature accuracy vs C headers, organization/duplication across signatures_c/_m/_sqlite."
+    },
+    {
+      "name": "bindings_utils",
+      "group": "abi",
+      "files": ["numbox/core/bindings/utils.py"],
+      "dimensions": ["COR", "DES", "SEC"],
+      "notes": "Library loading + path resolution. Salient: RTLD_GLOBAL load; _resolve_lib_path / load_lib_with_handle; _windows_bundled_dll_path fallback (CPython DLLs/, conda Library/bin); SEC: untrusted path handling, search order."
+    },
+    {
+      "name": "compile_kernel",
+      "group": "variable",
+      "files": ["numbox/core/variable/compile_kernel.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "Variable graph -> fused @njit kernel(s). Salient: three-way _classify (eager-fused/eager-segmented/lazy #24 fallback); v2 segmented orchestration (probe demotion); incremental recompute cone logic + LRU cone-plan cache + type-change flush/reseed; content-addressed cache anchors; correctness of generated identifiers (keyword/newline-safe)."
+    },
+    {
+      "name": "kernel_partition",
+      "group": "variable",
+      "files": ["numbox/core/variable/_kernel_partition.py"],
+      "dimensions": ["COR", "DES"],
+      "notes": "Segment partitioning. Salient: provably-minimal segment count (1 + max jit/Python alternations along any dependency path); per-node demotion-reason reporting; partition correctness on diamonds/fan-out."
+    },
+    {
+      "name": "variable",
+      "group": "variable",
+      "files": ["numbox/core/variable/variable.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "Variable graph + Params(jitable, type). Salient: structref/refcount paths; Graph.compile topological order + external-variable discovery; build-time declared-return validation (memoized); frozen Params semantics."
+    },
+    {
+      "name": "variable_node_utils",
+      "group": "variable",
+      "files": ["numbox/core/variable/node.py", "numbox/core/variable/utils.py"],
+      "dimensions": ["COR", "DES"],
+      "notes": "Variable node + shared utils (fingerprint helpers moved here). Salient: helper correctness, duplication vs utils/fingerprint."
+    },
+    {
+      "name": "work",
+      "group": "work",
+      "files": ["numbox/core/work/work.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "Units of calculation with deps. Salient: reflected List for uniformly-cast inputs (refcount); Work lifecycle; execute() dict-in/out; potential Vector-vs-List perf (flagged follow-up)."
+    },
+    {
+      "name": "work_builder",
+      "group": "work",
+      "files": ["numbox/core/work/builder.py", "numbox/core/work/builder_utils.py"],
+      "dimensions": ["COR", "DES"],
+      "notes": "Work graph builder. Salient: construction correctness, duplication."
+    },
+    {
+      "name": "work_node",
+      "group": "work",
+      "files": ["numbox/core/work/node.py", "numbox/core/work/node_base.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "Work node + base. Salient: reflected List refcount; node identity; base/derived structure."
+    },
+    {
+      "name": "work_combine_loader_lowlevel",
+      "group": "work",
+      "files": ["numbox/core/work/combine_utils.py", "numbox/core/work/loader_utils.py", "numbox/core/work/lowlevel_work_utils.py", "numbox/core/work/work_utils.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "Combine / load / low-level work helpers. Salient: node-identity load/combine; pointer/refcount handling in lowlevel work utils."
+    },
+    {
+      "name": "work_print_explain",
+      "group": "work",
+      "files": ["numbox/core/work/print_tree.py", "numbox/core/work/explain.py"],
+      "dimensions": ["COR", "DES"],
+      "notes": "Tree printing + explain. Salient: traversal correctness, output formatting, duplication."
+    },
+    {
+      "name": "any",
+      "group": "core_misc",
+      "files": ["numbox/core/any/any_type.py", "numbox/core/any/content_wrap.py", "numbox/core/any/erased_type.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "Type erasure (Any). Salient: MemInfo lifetime of erased content; wrap/unwrap correctness; refcount on stored payloads."
+    },
+    {
+      "name": "proxy",
+      "group": "core_misc",
+      "files": ["numbox/core/proxy/proxy.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "@proxy function proxies for JIT caching. Salient: .as_func / CompileResultWAP lifetime; cache anchor (blank-line-prepend at inspect.getfile to dodge CPython #122981); co_firstlineno landing on decorator line."
+    },
+    {
+      "name": "vector",
+      "group": "core_misc",
+      "files": ["numbox/core/vector/vector.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "Contiguous-storage vector with geometric growth. Salient: realloc/growth correctness; refcount of stored elements; bounds; capacity vs size invariants."
+    },
+    {
+      "name": "configurations",
+      "group": "core_misc",
+      "files": ["numbox/core/configurations.py"],
+      "dimensions": ["COR", "DES"],
+      "notes": "Config constants (MAX_STR_LENGTH etc.). Salient: constant values/bounds correctness; usage consistency."
+    },
+    {
+      "name": "lowlevel",
+      "group": "utils",
+      "files": ["numbox/utils/lowlevel.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "Low-level numba helpers (canonical C-string/pointer primitives). Salient: array_data_p, get_str_from_p_as_int (MAX_STR_LENGTH cap, first-NUL exit), get_unicode_data_p, load_at/store_at (generalized via get_data_type), load_unaligned/store_unaligned (align-1; UB on misaligned with aligned ops); buffer bounds; pointer signedness."
+    },
+    {
+      "name": "highlevel",
+      "group": "utils",
+      "files": ["numbox/utils/highlevel.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "cres decorator -> CompileResultWAP with explicit signature. Salient: CompileResultWAP lifetime; signature handling; cres_if_available gating."
+    },
+    {
+      "name": "meminfo",
+      "group": "utils",
+      "files": ["numbox/utils/meminfo.py"],
+      "dimensions": ["MEM", "COR", "DES"],
+      "notes": "Bridge intrinsics (export_meminfo/borrow_structref/release_meminfo; _incref_meminfo/_deref_structref_raw_ptr). Salient (MEM core): incref/decref balance; borrow vs own semantics; meminfo lifetime across the bridge; removerefctpass interaction."
+    },
+    {
+      "name": "fingerprint_digest",
+      "group": "utils",
+      "files": ["numbox/utils/fingerprint.py", "numbox/utils/digest.py"],
+      "dimensions": ["COR", "DES"],
+      "notes": "Structured fingerprint (code/consts/defaults/closure/globals/module/jit flags) backing cache anchors + digest. Salient: collision-resistance vs numba co_consts cache-key collisions; determinism cross-process; coverage of mutable inputs."
+    },
+    {
+      "name": "pysqlite_bridge",
+      "group": "utils",
+      "files": ["numbox/utils/pysqlite_bridge.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "macOS symbol resolution: read correct sqlite addresses from _sqlite3.so handle, register via add_symbol (LLVM checks ExplicitSymbols before shared-cache dlsym). Salient: libraries_coordinated() guard shared across tests; handle lifetime; address correctness; SEC: trusting the right library handle."
+    },
+    {
+      "name": "cstrings",
+      "group": "utils",
+      "files": ["numbox/utils/cstrings.py"],
+      "dimensions": ["MEM", "COR", "DES", "SEC"],
+      "notes": "C-string helpers. Salient: NUL handling (trailing vs interior); buffer bounds; encoding; pointer lifetime."
+    },
+    {
+      "name": "utils_misc",
+      "group": "utils",
+      "files": ["numbox/utils/clock.py", "numbox/utils/preprocessing.py", "numbox/utils/standard.py", "numbox/utils/timer.py", "numbox/utils/void_type.py"],
+      "dimensions": ["COR", "DES"],
+      "notes": "monotonic_ns clock intrinsic; content-addressed anchor materialization + orphan sweep (60s age filter); standard/timer/void helpers. Salient: cross-platform clock correctness; anchor orphan-sweep race/age logic; duplication."
+    },
+    {
+      "name": "tst_sqlite",
+      "group": "tests",
+      "files": ["test/core"],
+      "dimensions": ["TST"],
+      "notes": "Assess test coverage/quality for ALL sqlite bindings (vtable, tvf, udf, query, conn/stmt/exec, bind/column/value/result/blob, typemap/constants, hooks) and doc/API drift in docs/numbox.core.bindings.rst. Glob test/core/test_sqlite*.py and related. Report untested code paths (esp. error/edge/NUL/NaN/lifetime paths), missing platform coverage, and doc drift. Do NOT run tests; reason about coverage from reading."
+    },
+    {
+      "name": "tst_bindings_abi_libc",
+      "group": "tests",
+      "files": ["test/core"],
+      "dimensions": ["TST"],
+      "notes": "Assess test coverage/quality for abi/call/signatures/bindings-utils + libc (_c/_math/_fmtio/_stdio/_strerror/_errno). Glob test/core/test_bindings*.py and related. Report ABI-path coverage gaps (Win64/SysV/AAPCS64, large sret, repack), %n rejection tests, platform-variable-type tests, doc drift."
+    },
+    {
+      "name": "tst_variable_work",
+      "group": "tests",
+      "files": ["test/core"],
+      "dimensions": ["TST"],
+      "notes": "Assess test coverage/quality for variable (compile_kernel, _kernel_partition, variable, params) + work graphs. Report coverage of segmentation/demotion, recompute cones, diamond/fan-out, declared-return validation; doc drift in variable/work docs."
+    },
+    {
+      "name": "tst_utils_core",
+      "group": "tests",
+      "files": ["test/utils"],
+      "dimensions": ["TST"],
+      "notes": "Assess test coverage/quality for utils (lowlevel, highlevel, meminfo, fingerprint/digest, pysqlite_bridge, cstrings, clock, preprocessing, standard, timer) + core any/proxy/vector/configurations. Report refcount-leak tests, align-1 regression tests, fingerprint-collision tests, vector growth tests, doc drift."
+    },
+    {
+      "name": "tst_docs_build",
+      "group": "tests",
+      "files": ["docs", ".github/workflows"],
+      "dimensions": ["TST"],
+      "notes": "Assess sphinx build health + doc/API drift + CI parity. Read docs/*.rst, docs/conf.py, .github/workflows/{numbox_ci,doc-codeblock-flake8,docs,link-check,security_scan}.yml. Report: automodule directives missing for modules, public API not in docs, code-blocks that would fail doc-codeblock-flake8, broken doc links (reason, don't fetch), CI-gap risks. Do NOT run sphinx; reason from reading."
+    }
+  ]
+}

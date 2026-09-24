@@ -1,0 +1,19 @@
+{
+  "target": "work_combine_loader_lowlevel",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/work/combine_utils.py",
+    "numbox/core/work/loader_utils.py",
+    "numbox/core/work/lowlevel_work_utils.py",
+    "numbox/core/work/work_utils.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/highlevel.py",
+    "numbox/core/any/any_type.py",
+    "numbox/core/work/node.py",
+    "numbox/core/work/node_base.py",
+    "numbox/core/work/work.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the COR dimension. The combine/load/low-level work helpers are correct: make_sheaf_dict dispatches single Node/str/Work vs. collection correctly via the union isinstance, the generated single-row array-load code (combine_utils) and the row-indexed dict-load code (loader_utils) match their callers' usage (load_dict_into_array collects one combined row into a shape-(1,) array; load_array_row_into_dict reads an arbitrary row), ll_make_work initializes inputs/derived/node correctly via determine_field_index over the same _fields list used to build the type (and the zero-source path correctly stores nothing into the empty UniTuple), _verify_signature compares the derive signature against the data/sources-implied signature accurately, the data_ty_ref override path is type-coherent (the returned signature's data arg is the overridden instance type so numba coerces the argument before codegen), and make_work_helper builds the derive signature from typeof(source.data) consistently. No silent-wrong-result, edge-case, or invariant-break defect found. Minor non-COR observations (a duplicated generated-function/overload name 'ol_load_array_row_into_dict' across combine_utils and loader_utils, and an unused enumerate index 'field_ind' in _make_load_to_array_code / _make_load_to_dict_code) are DES/style, out of scope here.",
+  "findings": []
+}

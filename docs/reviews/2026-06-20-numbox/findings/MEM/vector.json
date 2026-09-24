@@ -1,0 +1,13 @@
+{
+  "target": "vector",
+  "dimension": "MEM",
+  "files_reviewed": [
+    "numbox/core/vector/vector.py",
+    "numbox/core/vector/__init__.py",
+    "numbox/core/configurations.py",
+    "test/core/test_vector.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. The vector is a pure-numba structref over a 1-D numpy array with geometric growth; it contains no raw pointers, no @cfunc, no ABI crossing, and no manual incref/decref. All memory lifetime is delegated to numba's structref-field-assignment (decref-old/incref-new of the backing array on v.buf = new_buf) and numpy array machinery. The only supported element types are scalar numpy-compatible dtypes (numpy.dtype(str(elem_type)) at build time rejects reference-counted types), so there is no element-level NRT refcount obligation. Capacity/size invariants hold and growth bounds are correct. No findings.",
+  "findings": []
+}

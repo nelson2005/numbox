@@ -1,0 +1,14 @@
+{
+  "target": "sqlite_typemap_constants",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-sqlite_typemap_constants-1",
+      "severity": "low",
+      "title": "Public utf8_to_utf32 decoder has no production caller; only its duplicate twin in _sqlite_query is live",
+      "verdict": "confirmed",
+      "reasoning": "Verified by grep. In production code (numbox/), utf8_to_utf32 appears only at its definition site (_sqlite_typemap.py:67) and in a docstring in _sqlite_query.py:37 ('Mirrors ``_sqlite_typemap.utf8_to_utf32`` but writes natively into ``buf``') -- never as a call. All test-side references are in test/core/test_sqlite_query.py. The encode counterpart utf32_to_utf8 IS called in production at _sqlite_vtable.py:695 and _sqlite_tvf.py:342. The decode state machines in _sqlite_typemap.py:78-104 and _sqlite_query.py:44-71 are structurally identical (same 1/2/3/4-byte forms, same overlong/surrogate/range rejection, same U+FFFD fallback); only the emit step differs (store_unaligned at _sqlite_typemap.py:103 vs cps[0]=cp + _copy_bytes at _sqlite_query.py:69-70). The macOS-arm64 DCE constraint that necessitated the duplicate is documented in the _put_unicode docstring itself, confirming the duplication is real and deliberate. The divergence risk is genuine: a future fix to decoder logic must be applied to both copies or one can silently rot. Severity is appropriately low -- the decoder is correct in both copies today and the DCE rationale is documented."
+    }
+  ]
+}

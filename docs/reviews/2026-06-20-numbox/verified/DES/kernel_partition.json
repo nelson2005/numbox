@@ -1,0 +1,21 @@
+{
+  "target": "kernel_partition",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-kernel_partition-1",
+      "severity": "low",
+      "title": "Dead `external` parameter on segment_liveness, threaded through both call sites",
+      "verdict": "confirmed",
+      "reasoning": "Verified in _kernel_partition.py. Line 170 declares `external: set[Variable]` as the second parameter of segment_liveness. The function body (lines 180-197) references only `run_nodes`, `produced`, `n.inputs`, `order`, and `required_vars` — `external` never appears. A grep of the file confirms `external` appears at: line 170 (parameter declaration), line 176 (docstring only), and lines 312/329/345/359 which belong to `_evaluate` and `discover` — entirely separate functions where `external` IS used. The call sites in compile_kernel.py at lines 471-472 and 924 both pass `external` as the second positional argument. The live_in computation (lines 181-185) correctly captures external inputs implicitly: any input not in `produced` is live_in, which is correct regardless of whether those inputs are external. The parameter is dead and its removal is strictly safe."
+    },
+    {
+      "id": "DES-kernel_partition-2",
+      "severity": "low",
+      "title": "segment_liveness and cone_liveness duplicate the live_in / scan-for-later-consumers logic",
+      "verdict": "confirmed",
+      "reasoning": "Verified by reading lines 168-228. The live_in blocks (lines 180-185 and 210-215) are identical: `produced = {n.variable for n in run_nodes}`, then the loop `for n in run_nodes: for inp in n.inputs: if inp not in produced: live_in.add(inp)`. The scan-for-later-consumers blocks (lines 186-194 and 216-224) use different variable names (`after`/`seen_any` vs `later`/`seen`) but are structurally identical loops. The only real difference is in live_out: line 195 `{v for v in produced if v in after or v in set(required_vars)}` vs line 226 `{v for v in produced if v in later or v in req or v in boundary}`. The final sort lines (196-197 and 227-228) are byte-for-byte identical. The duplication hazard is real: a future fix to the live_in logic or the scan loop would need to be applied in both places."
+    }
+  ]
+}

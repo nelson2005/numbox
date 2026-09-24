@@ -1,0 +1,19 @@
+{
+  "target": "sqlite_udf",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_udf.py",
+    "numbox/core/bindings/_sqlite_udf_helpers.py",
+    "numbox/utils/meminfo.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/cstrings.py",
+    "numbox/utils/digest.py",
+    "numbox/utils/preprocessing.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/_sqlite_result.py",
+    "test/core/test_sqlite_udf_helpers.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on COR. The thin UDF-registration/context wrappers in _sqlite_udf.py forward arguments verbatim to _call_lib_func and match their C prototypes in signatures.py. The structref-backed UDAF/window state machine in _sqlite_udf_helpers.py is correct: xStep is the only callback that requests allocation (sqlite3_aggregate_context(ctx, 8)); xFinal/xInverse/xValue pass 0 (retrieve-or-NULL); the meminfo is exported on first step and released ONLY in xFinal; xValue/xInverse borrow without releasing (correct running-result semantics); the empty-group / NULL-context branch finalizes a fresh _init() state without exporting it, matching SQLite's empty-aggregate contract and verified by test_aggregate_empty_group. The error path passes ASCII literals via get_unicode_data_p with n_bytes=-1, which SQLite reads as a NUL-terminated string (numba unicode buffers are NUL-terminated; ASCII is valid UTF-8). Cache anchors are content-addressed on a digest that folds state_type repr plus a closure/global-aware fingerprint of each callback, so name-sanitization stem collisions and pure-literal body edits re-key correctly. No wrong-result, edge-case, or lifecycle-ordering defect found.",
+  "findings": []
+}

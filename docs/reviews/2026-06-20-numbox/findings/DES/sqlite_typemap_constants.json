@@ -1,0 +1,27 @@
+{
+  "target": "sqlite_typemap_constants",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/core/bindings/_sqlite_query.py",
+    "numbox/core/bindings/_sqlite_vtable.py (usage sites)",
+    "numbox/core/bindings/_sqlite_tvf.py (usage sites)"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The typemap/constants pair is well-factored on the DES dimension: the dtype tag set, _SQL_TYPE map, _col_tag classifier and tags_buf_t alias form a clean single source of truth genuinely shared by vtable/tvf/query, and the constants module is a flat, fully-__all__'d, documented public surface. One real DES item: the public utf8_to_utf32 decoder has no production caller (only tests reference it) because _sqlite_query._put_unicode reimplements the same UTF-8 state machine for the macOS-arm64 DCE workaround, so the 'canonical' typemap decoder is the dead one while a byte-identical twin is the live one. (The duplication itself is already filed against sqlite_query; this is the complementary typemap-side observation.)",
+  "findings": [
+    {
+      "id": "DES-sqlite_typemap_constants-1",
+      "severity": "low",
+      "title": "Public utf8_to_utf32 decoder has no production caller; only its duplicate twin in _sqlite_query is live",
+      "file": "numbox/core/bindings/_sqlite_typemap.py",
+      "lines": "66-105",
+      "claim": "utf8_to_utf32 is a public (@njit, non-underscore) helper but no production code path calls it. A repo-wide grep finds references only in test/core/test_sqlite_query.py and inside the docstring of _sqlite_query._put_unicode, which is the function that actually does UTF-8->UTF-32 decoding at query time. _put_unicode (_sqlite_query.py:32-71) reimplements the identical decode state machine byte-for-byte (1/2/3/4-byte forms, overlong/surrogate/range rejection, U+FFFD fallback) and differs only in the emit step (tracked-array write via scratch8 + _copy_bytes vs utf8_to_utf32's store_unaligned to a raw pointer) because the raw-pointer store is dead-code-eliminated on macOS-arm64. Net effect: the version named/placed as the shared canonical decoder is the one nobody runs in production, while a near-identical copy is the live one. Any future fix to the decoder (e.g. a continuation-byte bounds tweak) must be hand-mirrored across both or they silently diverge; whichever copy the tests do not exercise can rot.",
+      "evidence": "Grep over numbox/ shows utf8_to_utf32 defined at _sqlite_typemap.py:67 and referenced nowhere under numbox/ except the docstring at _sqlite_query.py:37 ('Mirrors ``_sqlite_typemap.utf8_to_utf32`` but writes natively into ``buf``'); the only call sites are in test/core/test_sqlite_query.py:14. By contrast utf32_to_utf8 (the encode direction) IS called in production at _sqlite_vtable.py:695 and _sqlite_tvf.py:342. Compare the decode bodies: _sqlite_typemap.py:83-104 (`elif b0 >> 5 == 0x6 and i + 1 < nbytes and (inp[i + 1] >> 6) == 0x2: cp = ((b0 & 0x1F) << 6) | (uint32(inp[i + 1]) & 0x3F); if cp < 0x80: cp = 0xFFFD; i += 2` ... 3-byte ... 4-byte) are identical to _sqlite_query.py:49-65; only the emit differs (_sqlite_typemap.py:103 `store_unaligned(dst + 4 * k, uint32(cp))` vs _sqlite_query.py:69-70 `cps[0] = cp; _copy_bytes(buf, off + 4 * k, scratch8, 4)`).",
+      "recommendation": "Treat the typemap copy as the canonical decoder and have the query-side writer reuse its cp-computation rather than carrying a full second state machine: factor the decode loop so the per-codepoint emit is the only variable (decode once into a small tracked uint32 scratch, then let each caller choose store_unaligned vs the tracked-array write). If keeping two copies is preferred for the macOS-arm64 DCE constraint, add a code comment at both sites making the must-mirror contract explicit. This is the typemap-side mirror of DES-sqlite_query-1 (filed against _sqlite_query.py); fixing either resolves both. Low risk, but pick one home for the decoder.",
+      "confidence": "high"
+    }
+  ]
+}

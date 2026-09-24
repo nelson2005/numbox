@@ -1,0 +1,21 @@
+{
+  "target": "sqlite_tvf",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "COR-sqlite_tvf-1",
+      "severity": "medium",
+      "title": "A raising user fn yields a silently-successful empty result set, indistinguishable from a legitimately-empty TVF",
+      "verdict": "confirmed",
+      "reasoning": "The @cfunc at lines 456-463 is confirmed to call `xfilter_impl(cur, argc, argv)` and then unconditionally `return SQLITE_OK`. The generated template (_XFILTER_SRC, lines 113-131) zeroes the cursor fields mi_p/data_p/n_rows/row_stride (lines 114-119) BEFORE `result = {fn_call}` (line 125). A raise at line 125 leaves data_p == 0. _tvf_xeof (lines 276-281) returns 1 when `c[0].data_p == 0 or c[0].rowid >= c[0].n_rows`, so SQLite sees an immediately-exhausted cursor. The cfunc comment itself states: \"If the user fn raises inside xfilter_impl, the @cfunc boundary swallows the exception and returns the zero default (SQLITE_OK), so SQLite sees a successful query with no rows rather than an error.\" (lines 458-461). The finding is genuine: a raising fn and a legitimately-empty fn are indistinguishable to the caller."
+    },
+    {
+      "id": "COR-sqlite_tvf-2",
+      "severity": "low",
+      "title": "uint64 bound_mask in xBestIndex is undefined / wrong for a TVF with 64 or more hidden args",
+      "verdict": "confirmed",
+      "reasoning": "Lines 192-203 use `bound_mask = uint64(0)`, `bound_mask |= uint64(1) << uint64(h)`, and `if bound_mask != (uint64(1) << uint64(n_hidden)) - uint64(1)`. For n_hidden == 64, `uint64(1) << uint64(64)` is a left-shift-by-bitwidth — undefined behavior in LLVM IR (poison), and the comparison `bound_mask != 0 - uint64(1)` (i.e., != UINT64_MAX) would require all 64 bits set, but bit 63 can only be reached if h reaches 63, so the logic would silently accept a plan missing bit 63. For n_hidden > 64 the shift is definitively UB. `_build_tvf_descriptor` at line 402 sets `c[\"n_hidden\"] = len(arg_tags)` with no upper-bound guard anywhere in the function or in `register_tvf`. The finding is correct. The severity (low) is appropriate since TVFs with 64+ hidden args are extreme edge cases in practice."
+    }
+  ]
+}

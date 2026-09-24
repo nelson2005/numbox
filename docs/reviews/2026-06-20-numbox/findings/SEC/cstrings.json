@@ -1,0 +1,8 @@
+{
+  "target": "cstrings",
+  "dimension": "SEC",
+  "files_reviewed": ["numbox/utils/cstrings.py"],
+  "reviewer_model": "opus",
+  "summary": "Clean on the SEC dimension. The single helper c_string() is a Python-only context manager that encodes the input to UTF-8, rejects embedded NUL bytes, allocates a correctly-sized NUL-terminated buffer via ctypes.create_string_buffer, and yields its address with documented with-block lifetime. No bounds, format-string, SQL, encoding, or pointer-lifetime defect found.",
+  "findings": []
+}

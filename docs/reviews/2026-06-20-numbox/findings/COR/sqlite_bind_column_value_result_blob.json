@@ -1,0 +1,18 @@
+{
+  "target": "sqlite_bind_column_value_result_blob",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_bind.py",
+    "numbox/core/bindings/_sqlite_column.py",
+    "numbox/core/bindings/_sqlite_value.py",
+    "numbox/core/bindings/_sqlite_result.py",
+    "numbox/core/bindings/_sqlite_blob.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/core/proxy/proxy.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on COR. All five modules are thin passthroughs: each wrapper forwards its scalar args verbatim to _call_lib_func, which (for these all-scalar signatures) lowers them directly with no struct/ABI repack path engaged. Every wrapper's signature in signatures.py matches the real SQLite C prototype (return types, arg widths, signed/unsigned), the int32 length params for bind_text/bind_blob/result_text/result_blob/result_error correctly mirror C's `int` and are paired with uint64 *64 variants for >2GB payloads, destructor sentinels (SQLITE_STATIC=0, SQLITE_TRANSIENT=-1) are correct and pass cleanly through the intp param, and docstring arg-order/contract claims match the actual wrapper arities. No wrong-result, edge-case, truncation, or contract-drift defect found.",
+  "findings": []
+}

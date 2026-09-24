@@ -1,0 +1,25 @@
+{
+  "target": "sqlite_hooks",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_hooks.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/core/bindings/call.py",
+    "numbox/core/bindings/_sqlite_constants.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Essentially clean on correctness. _sqlite_hooks.py is a thin set of @proxy wrappers that forward args verbatim to _call_lib_func; all six signatures match the real SQLite C prototypes in arity, argument order, and return type (update_hook/commit_hook/rollback_hook return void* as intp; progress_handler returns void; busy_handler/trace_v2 return int as int32). The only nit is signed/unsigned type fidelity for trace_v2's uMask (low).",
+  "findings": [
+    {
+      "id": "COR-sqlite_hooks-1",
+      "severity": "low",
+      "title": "sqlite3_trace_v2 uMask declared int32 for a C `unsigned int` parameter",
+      "file": "numbox/core/bindings/signatures.py",
+      "lines": "173",
+      "claim": "The C prototype is `int sqlite3_trace_v2(sqlite3*, unsigned uMask, int(*)(unsigned,void*,void*,void*), void*)`; the signature declares uMask as int32 rather than uint32. This is a signedness/type-fidelity inconsistency, not a wrong-result bug: the defined trace masks (SQLITE_TRACE_STMT=0x01, _PROFILE=0x02, _ROW=0x04, _CLOSE=0x08, max OR = 0x0F) all fit in positive int32, and a 32-bit register argument carries an identical bit pattern whether typed int32 or uint32, so the call passes the correct value. It is only a latent hazard if a future caller passes a mask with bit 31 set as a Python int via the int32 path.",
+      "evidence": "signatures.py:173 `\"sqlite3_trace_v2\": int32(intp, int32, intp, intp),` — the second arg models C `unsigned uMask`. Sibling unsigned-int parameters in the same dict use uint32: signatures.py:185 `\"sqlite3_value_subtype\": uint32(intp),` and signatures.py:201 `\"sqlite3_result_subtype\": void(intp, uint32),`. The trace mask constants are all small positive values: _sqlite_constants.py:95-98 `SQLITE_TRACE_STMT = 0x01 ... SQLITE_TRACE_CLOSE = 0x08`. uint32 is already imported (signatures.py:2). _call_lib_func passes scalar args directly with the declared LLVM type (call.py:146-148), so for these in-range mask values int32 and uint32 produce the same 32-bit argument.",
+      "recommendation": "For type fidelity and consistency with sqlite3_value_subtype/sqlite3_result_subtype, change the uMask parameter to uint32: `\"sqlite3_trace_v2\": int32(intp, uint32, intp, intp)`. No behavioral change for the documented masks; eliminates the high-bit edge case and matches the C `unsigned` declaration.",
+      "confidence": "high"
+    }
+  ]
+}

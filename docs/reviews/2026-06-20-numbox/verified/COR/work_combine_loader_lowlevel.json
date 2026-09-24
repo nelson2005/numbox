@@ -1,0 +1,7 @@
+{
+  "target": "work_combine_loader_lowlevel",
+  "dimension": "COR",
+  "verifier_model": "sonnet",
+  "summary": "no findings to verify",
+  "verdicts": []
+}

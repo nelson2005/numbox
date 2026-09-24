@@ -1,0 +1,14 @@
+{
+  "target": "sqlite_tvf",
+  "dimension": "SEC",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_tvf.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/meminfo.py",
+    "numbox/core/bindings/_sqlite_vtable.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Clean on the SEC dimension. The table-valued-function path has no reachable memory-safety hazard from untrusted input: the only externally-influenced values (hidden-arg literals from the SQL query) flow solely into sqlite3_value_int64/double and then to fn as numbers, never indexing a buffer; the scratch buffer for UTF-32->UTF-8 is sized to (max U-column width + 1) and allocated whenever any U column exists, which covers each per-column requirement of width+1 bytes; result_text/result_blob lengths come from the fixed column width trimmed by _nul_trimmed_len (trailing-only, interior NUL preserved, no truncation/disclosure); and the cell address is bounded by the xEof rowid<n_rows guard. Array data/dtype come from the user's fn under a documented trusted-by-contract producer relationship. No SQL injection surface (no untrusted interpolation), no format strings, no library-path loading in this module.",
+  "findings": []
+}

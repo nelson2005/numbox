@@ -1,0 +1,39 @@
+{
+  "target": "sqlite_tvf",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_tvf.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_vtable.py",
+    "numbox/utils/meminfo.py",
+    "numbox/utils/lowlevel.py",
+    "numbox/utils/digest.py",
+    "numbox/utils/preprocessing.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "The table-valued-function path is largely correct on the COR dimension: xBestIndex's per-arg bound_mask correctly rejects plans that leave any hidden arg unbound (including the duplicate-EQ-masking-an-unbound-arg trap), argv ordering matches argvIndex (h+1) and the xFilter arg-decode indexing, strided/offset return arrays are honoured via array_data_p + result.strides[0], the per-cursor NRT meminfo is released+rezeroed before each re-filter so no stale rows or double-free occur, and scratch sizing for UTF-32->UTF-8 columns (w+1) matches utf32_to_utf8's required 4*n_codepoints+1. Two genuine issues remain: the xFilter @cfunc boundary swallows a raising user fn into a silently-successful empty result set (documented as an intentional tradeoff, but still a wrong-result hazard for the caller), and the uint64 bound_mask breaks for >64 hidden arguments.",
+  "findings": [
+    {
+      "id": "COR-sqlite_tvf-1",
+      "severity": "medium",
+      "title": "A raising user fn yields a silently-successful empty result set, indistinguishable from a legitimately-empty TVF",
+      "file": "numbox/core/bindings/_sqlite_tvf.py",
+      "lines": "456-463",
+      "claim": "When the user's fn raises inside xfilter_impl, the @cfunc boundary of _tvf_xfilter swallows the exception and returns the zero default (0 == SQLITE_OK). Because _tvf_xfilter_impl zeroes the cursor's mi_p/data_p/n_rows/row_stride at the top (lines 114-119) BEFORE calling _fn (line 125), a raise leaves the cursor empty, so _tvf_xeof returns 1 immediately and SQLite reports a successful query that returns zero rows. The caller cannot distinguish a fn that errored from a fn that legitimately produced an empty array -- a silent wrong result (no error surfaced, no rows).",
+      "evidence": "The cfunc comment itself states the behavior: \"If the user fn raises inside xfilter_impl, the @cfunc boundary swallows the exception and returns the zero default (SQLITE_OK), so SQLite sees a successful query with no rows rather than an error. Unlike a UDF, xFilter gets no sqlite3_context, so there is no handle to call sqlite3_result_error.\" (lines 458-461). Body: `xfilter_impl(cur, argc, argv); return SQLITE_OK` (lines 462-463). The top-of-impl reset (`if c[0].mi_p != 0: release_meminfo(...); c[0].mi_p = 0; c[0].data_p = 0; c[0].n_rows = 0; ...`, lines 114-119) runs before `result = {fn_call}` (line 125), and the only raising operation is `_fn(...)`; the subsequent field stores (mi_p/data_p/n_rows/row_stride, lines 128-132) do not raise -- so the failure mode is exactly 'empty result', never garbage rows. _tvf_xeof (lines 276-281) returns 1 when `data_p == 0`. This matches the documented reference note that a numba @cfunc swallows exceptions and returns the zero default with no unwind to C.",
+      "recommendation": "Surface the error rather than swallowing it silently. xFilter cannot call sqlite3_result_error (no sqlite3_context), but it CAN store an error string on the vtab's zErrMsg (sqlite3_vtab.zErrMsg, freed by SQLite) and return a non-zero rc from _tvf_xfilter, which SQLite propagates as a query error. Wrap xfilter_impl in a bare try/except inside the cfunc (per the documented exception-curing pattern), set zErrMsg via sqlite3_malloc/sqlite3_mprintf, and return SQLITE_ERROR; at minimum document the limitation in register_tvf's docstring (it currently documents only the unbound-arg rejection and NaN->NULL, not the swallowed-fn-error case).",
+      "confidence": "high"
+    },
+    {
+      "id": "COR-sqlite_tvf-2",
+      "severity": "low",
+      "title": "uint64 bound_mask in xBestIndex is undefined / wrong for a TVF with 64 or more hidden args",
+      "file": "numbox/core/bindings/_sqlite_tvf.py",
+      "lines": "192-203",
+      "claim": "The per-arg binding tracker is a 64-bit `bound_mask = uint64(0)`, set via `bound_mask |= uint64(1) << uint64(h)` and checked against `(uint64(1) << uint64(n_hidden)) - uint64(1)`. For h >= 64 the shift `uint64(1) << uint64(h)` is an LLVM shl by >= bit width (poison/undefined), and `uint64(1) << uint64(n_hidden)` with n_hidden == 64 likewise overflows the type rather than yielding 2**64. The full-mask comparison then never matches, so every query against a TVF declared with 64+ hidden arguments is rejected with SQLITE_CONSTRAINT (or produces an undefined mask), even when all args are supplied.",
+      "evidence": "Lines 192, 200, 202: `bound_mask = uint64(0)` ... `bound_mask |= uint64(1) << uint64(h)` ... `if bound_mask != (uint64(1) << uint64(n_hidden)) - uint64(1): return SQLITE_CONSTRAINT`. n_hidden = d[0].n_hidden, which comes from len(arg_tags) = len(arg_types) (set in _build_tvf_descriptor, lines 384-385, 401: `c[\"n_hidden\"] = len(arg_tags)`), i.e. user-controlled with no upper bound. There is no validation that len(arg_types) <= 64 anywhere in _build_tvf_descriptor or register_tvf.",
+      "recommendation": "Add an explicit guard in _build_tvf_descriptor (or register_tvf) rejecting arg_types longer than 64 with a clear TypeError/ValueError, e.g. `if len(arg_tags) > 64: raise ValueError(\"register_tvf supports at most 64 hidden arguments\")`. This keeps the fast uint64-bitmask path and converts an undefined-behaviour edge into a clean, documented limit.",
+      "confidence": "medium"
+    }
+  ]
+}

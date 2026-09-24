@@ -1,0 +1,21 @@
+{
+  "target": "variable",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-variable-1",
+      "severity": "low",
+      "title": "Dead defensive branch in _topological_order (string normalization already done by sole caller)",
+      "verdict": "confirmed",
+      "reasoning": "Verified directly in the source. Line 441-442 of compile: `if isinstance(required, str): required = [required]` normalizes the input before passing it to `_topological_order` at line 447. The helper at lines 478-479 repeats the identical check: `if isinstance(required, str): required = [required]`. grep confirms `_topological_order` has exactly one definition (line 473) and exactly one call site (line 447, inside compile). The type annotation at line 473 also declares `required: list[str]`. The branch at 478-479 is unreachable dead code."
+    },
+    {
+      "id": "DES-variable-2",
+      "severity": "low",
+      "title": "recompute resolves intra-graph changed variables by O(N) linear scan over ordered_nodes",
+      "verdict": "confirmed",
+      "reasoning": "Verified at lines 391-396: `variable = next(n.variable for n in self.ordered_nodes if n.variable.qual_name() == qual_name)` is an O(N) scan with a `qual_name()` string build per node. `__post_init__` (lines 280-283) iterates `ordered_nodes` to populate `self.dependents` keyed by Variable, but does not build a `qual_name -> Variable` index. The O(N) scan per changed key is real. The finding's severity (low) is correct — results are correct and recompute is not on a hot path for typical graph sizes, but the O(1) fix via `__post_init__` is trivially available given the existing iteration."
+    }
+  ]
+}

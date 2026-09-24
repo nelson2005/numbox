@@ -1,0 +1,8 @@
+{
+  "target": "variable",
+  "dimension": "MEM",
+  "files_reviewed": ["numbox/core/variable/variable.py"],
+  "reviewer_model": "opus",
+  "summary": "Clean on the MEM dimension. variable.py is a pure-Python graph-orchestration layer (Namespace/Variable/Values/CompiledGraph/Graph) built entirely from stdlib (sys, warnings, abc, dataclasses, typing); it imports no numba, no numbox.utils.lowlevel/meminfo, and contains no @njit/@cfunc bodies, no NRT incref/decref, no raw pointers, no struct-by-value ABI, and no JIT-code-vs-data lifetime concerns. The memory/refcount/ABI surface the MEM lens targets lives in the sibling compile_kernel.py target, not here. No findings.",
+  "findings": []
+}

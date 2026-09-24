@@ -1,0 +1,14 @@
+{
+  "target": "vector",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-vector-1",
+      "severity": "low",
+      "title": "Reallocation grow-and-copy block duplicated between vector_push and vector_extend",
+      "verdict": "confirmed",
+      "reasoning": "Verified against numbox/core/vector/vector.py lines 120-141. Both functions contain a structurally parallel 'allocate new buffer / copy prefix / assign buf' block: vector_push lines 123-125 use `new_buf = numpy.empty(v.buf.shape[0] * 2, v.buf.dtype)` / `new_buf[:v.size] = v.buf[:v.size]` / `v.buf = new_buf`, and vector_extend lines 137-139 use `new_buf = numpy.empty(cap, dst.buf.dtype)` / `new_buf[:dst.size] = dst.buf[:dst.size]` / `dst.buf = new_buf`. The evidence quotes match the live source exactly. The maintenance risk is real: a change to the copy strategy (e.g. switching to numpy.resize or a typed view) must be applied in two places and could drift. The finding's caveat that leaving it as-is is defensible for two short call sites is also accurate. Severity 'low' is appropriate — this is a design observation, not a runtime defect."
+    }
+  ]
+}

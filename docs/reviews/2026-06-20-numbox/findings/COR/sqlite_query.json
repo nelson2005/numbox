@@ -1,0 +1,15 @@
+{
+  "target": "sqlite_query",
+  "dimension": "COR",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_query.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_constants.py",
+    "numbox/core/bindings/_sqlite_column.py",
+    "numbox/core/bindings/signatures.py",
+    "numbox/utils/lowlevel.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "query_to_array is correct on the COR dimension. The pointer-accessor-before-column_bytes ordering, native-byte-order scalar serialization through scratch8, pre-zeroed NULL handling (NaN for float, 0/empty otherwise -- documented in the public docstring), UTF-8->UTF-32 decode with U+FFFD substitution, fixed-width truncation matching numpy 'S'/'U'/'V' assignment semantics, geometric-growth buffer with exact trim, and mid-step error raising are all sound. No wrong-result, edge-case, or invariant-breaking defect found.",
+  "findings": []
+}

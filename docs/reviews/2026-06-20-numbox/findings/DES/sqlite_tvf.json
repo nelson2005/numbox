@@ -1,0 +1,49 @@
+{
+  "target": "sqlite_tvf",
+  "dimension": "DES",
+  "files_reviewed": [
+    "numbox/core/bindings/_sqlite_tvf.py",
+    "numbox/core/bindings/_sqlite_vtable.py",
+    "numbox/core/bindings/_sqlite_typemap.py",
+    "numbox/core/bindings/_sqlite_udf_helpers.py",
+    "numbox/utils/meminfo.py",
+    "numbox/utils/preprocessing.py"
+  ],
+  "reviewer_model": "opus",
+  "summary": "Largely well-factored: the per-registration codegen, anchor reuse, and keep-alive handle mirror the established UDAF helper pattern. The notable design hazard is heavy copy-paste of the SQLite-result tag ladder and the boilerplate vtable cfuncs (xConnect/xDisconnect/xRowid/xEof) between _sqlite_tvf.py and _sqlite_vtable.py, where a shared typemap helper already exists as the natural home. One genuinely dead descriptor field (itemsize) is written but never read.",
+  "findings": [
+    {
+      "id": "DES-sqlite_tvf-1",
+      "severity": "medium",
+      "title": "14-branch tag->sqlite3_result ladder duplicated across three cfunc bodies",
+      "file": "numbox/core/bindings/_sqlite_tvf.py",
+      "lines": "308-343",
+      "claim": "The full numeric/string/blob/unicode dispatch in _tvf_xcolumn (lines 308-343) is a near-verbatim copy of _xcolumn in _sqlite_vtable.py (lines 661-696): same 14 tag branches, same load_unaligned widths, same int64()/float64() casts, same _nul_trimmed_len + utf32_to_utf8 string handling. The only intentional difference is _SQLITE_TRANSIENT here vs SQLITE_STATIC there for the _TAG_S/_TAG_BLOB branches (lines 330-339 vs 683-692). The same per-tag load logic is duplicated a THIRD time in _sqlite_vtable._cell_value_f64/_cell_value_i64. Adding a numpy dtype tag, fixing a width, or changing the NUL/UTF handling requires editing all copies in lockstep; the established failure mode is silent skew between the read-only vtable and the tvf paths.",
+      "evidence": "_sqlite_tvf.py lines 308-329 (`if tag == _TAG_I8: sqlite3_result_int64(ctx, int64(load_unaligned(addr, int8))) ... elif tag == _TAG_F64: sqlite3_result_double(ctx, load_unaligned(addr, float64))`) are byte-identical to _sqlite_vtable.py lines 661-682. The S/BLOB/U branches at 330-343 differ from vtable's 683-696 only in the destructor sentinel. _sqlite_typemap.py already owns the cross-module fixed-width helpers (_nul_trimmed_len line 25, utf32_to_utf8 line 34) that both ladders call, so it is the natural home for a shared emitter.",
+      "recommendation": "Factor a single @njit helper into _sqlite_typemap.py, e.g. `_emit_cell(ctx, addr, tag, width, scratch, str_destructor)` taking the destructor sentinel as an argument (SQLITE_STATIC for the vtable, _SQLITE_TRANSIENT for the tvf), and call it from both _xcolumn bodies. Low risk (pure mechanical extraction; the addr/width inputs are already computed identically at both call sites) and removes the lockstep-edit hazard the dimension brief flags as the primary tvf/vtable duplication.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-sqlite_tvf-2",
+      "severity": "low",
+      "title": "_TVF_DESC_DTYPE.itemsize field written but never read",
+      "file": "numbox/core/bindings/_sqlite_tvf.py",
+      "lines": "85, 403",
+      "claim": "The descriptor carries an `itemsize` i8 field (declared line 85, populated `c[\"itemsize\"] = int(out_dtype.itemsize)` line 403) that no cfunc ever reads. _tvf_xcolumn computes its row address from c[0].row_stride (set per-query in xFilter from result.strides[0], line 131) and offsets[j], never from a descriptor itemsize; xBestIndex/xConnect/xOpen read only ncols/n_hidden/schema_ptr/col_*/scratch_bytes. The field is dead descriptor surface (it widens the struct and invites a future reader to use a stale baked itemsize instead of the live per-query row_stride).",
+      "evidence": "grep over _sqlite_tvf.py shows `itemsize` only at line 85 (dtype decl) and line 403 (write); there is no `d[0].itemsize` read anywhere. By contrast scratch_bytes (line 88) is read in _tvf_xopen line 230, and row_stride (the value an itemsize reader would want) is written live per query at line 131 `c[0].row_stride = result.strides[0]` and consumed at line 306.",
+      "recommendation": "Drop the `itemsize` member from _TVF_DESC_DTYPE (line 85) and the corresponding write (line 403). Pure removal of unreferenced state; no behavioral change. If a future use is genuinely anticipated, leave a one-line comment, but the repo's bias is against speculative fields.",
+      "confidence": "high"
+    },
+    {
+      "id": "DES-sqlite_tvf-3",
+      "severity": "low",
+      "title": "xConnect / xDisconnect / xRowid / xEof boilerplate re-implemented instead of shared with the vtable module",
+      "file": "numbox/core/bindings/_sqlite_tvf.py",
+      "lines": "146-289",
+      "claim": "_tvf_xconnect (146-169), _tvf_xdisconnect (212-218), _tvf_xrowid (283-287) and the rowid-increment in _tvf_xnext (270-274) reproduce _sqlite_vtable's _xconnect (257-277), _xdisconnect (353-359), _xrowid (639-645) almost verbatim -- same sqlite3_declare_vtab + sqlite3_malloc(_VTAB_SIZE) + slot-store sequence, same try/except sqlite3_free fallback, same `# no zeroing needed: SQLite memsets the sqlite3_vtab base` comment (line 159 vs vtable 268). Because the tvf builds its module from per-registration cfunc factories while the vtable uses one module-level set, the two cannot literally share addresses, but the bodies that differ only by descriptor dtype could be generated from one template/factory parameterized on the descriptor dtype, the way the codebase already parameterizes UDAF callbacks in _sqlite_udf_helpers.py.",
+      "evidence": "_tvf_xconnect lines 152-165 mirror _xconnect lines 261-274 line-for-line modulo `_TVF_DESC_DTYPE` vs `_DESC_DTYPE`; _tvf_xdisconnect 212-218 is identical to _xdisconnect 353-359; _tvf_xrowid 283-287 identical to _xrowid 639-645. The duplicated comment text at 159 and vtable:268 confirms copy-paste origin.",
+      "recommendation": "Lower priority than finding 1 (the per-registration factory requirement is a real constraint, so a literal merge is not possible). Consider a shared cfunc-factory helper parameterized on the descriptor dtype + vtab dtype so the connect/disconnect/rowid/eof boilerplate lives in one place; or at minimum cross-reference the vtable originals in a comment so the lockstep is visible. Defer if the factory refactor is judged higher-risk than the duplication it removes.",
+      "confidence": "high"
+    }
+  ]
+}

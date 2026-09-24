@@ -1,0 +1,14 @@
+{
+  "target": "libc_math",
+  "dimension": "DES",
+  "verifier_model": "sonnet",
+  "verdicts": [
+    {
+      "id": "DES-libc_math-1",
+      "severity": "low",
+      "title": "Wrappers named 'round' and 'pow' shadow Python builtins in the star-imported public namespace",
+      "verdict": "confirmed",
+      "reasoning": "Independently verified all evidence. _math.py line 14: '\"ceil\", \"floor\", \"trunc\", \"round\", \"rint\", \"nearbyint\",' and line 18: '\"pow\", \"fmod\", \"remainder\",' both place those names in __all__. Wrapper definitions confirmed at lines 152-154 ('def round(x): return _call_lib_func(\"round\", (x,))') and 197-199 ('def pow(x, y): return _call_lib_func(\"pow\", (x, y))'). __init__.py line 2: 'from numbox.core.bindings._math import *  # noqa: F401, F403' confirms the star-import chain. The shadowing is therefore real and observable. The renaming-is-not-warranted constraint is correctly identified (CLAUDE.md: 'Function names must match the C library names exactly'). Low severity stands: this is a misuse hazard, not a correctness defect in the wrappers themselves."
+    }
+  ]
+}
