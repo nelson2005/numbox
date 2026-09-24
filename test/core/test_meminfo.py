@@ -128,5 +128,24 @@ def test_incref_survives_refcount_pruning():
     assert "!numba_args_may_always_need_nrt" in pin.inspect_llvm(pin.signatures[0])
 
 
+def test_export_meminfo_keeps_its_incref_for_an_array():
+    """An array argument is legal for numba's ``removerefctpass`` (numba <= 0.65), so without the
+    ``numba_args_may_always_need_nrt`` tag the pass strips the +1 from ``export_meminfo`` compiled for an array, and
+    the pointer it returns names a MemInfo already freed. Unboxing wraps the array in a MemInfo that holds a Python
+    reference to it, and that is the MemInfo exported, so the +1 shows on the array's Python refcount."""
+    import sys
+
+    from numbox.utils.meminfo import export_meminfo, release_meminfo
+
+    a = numpy.zeros(4)
+    before = sys.getrefcount(a)
+    p = export_meminfo(a)
+    assert sys.getrefcount(a) == before + 1
+    release_meminfo(p)
+    assert sys.getrefcount(a) == before
+    sig = next(s for s in export_meminfo.signatures if isinstance(s[0], numba.types.Array))
+    assert "!numba_args_may_always_need_nrt" in export_meminfo.inspect_llvm(sig)
+
+
 if __name__ == "__main__":
     collect_and_run_tests(__name__)
