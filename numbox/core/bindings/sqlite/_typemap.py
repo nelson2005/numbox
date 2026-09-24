@@ -76,6 +76,9 @@ def _utf8_decode_one(inp, i, nbytes):
     form that still parses (surrogate, overlong encoding, out-of-range) decodes
     to U+FFFD and is consumed whole; a byte that starts no complete form (bad
     continuation byte, truncation) decodes to U+FFFD and is consumed alone."""
+    # RFC 3629 forms: a lead byte 0xxxxxxx (b0 < 0x80), 110xxxxx (b0 >> 5 == 0x6),
+    # 1110xxxx (b0 >> 4 == 0xE) or 11110xxx (b0 >> 3 == 0x1E), then continuation
+    # bytes 10xxxxxx (>> 6 == 0x2) that carry 6 bits each (& 0x3F).
     b0 = uint32(inp[i])
     if b0 < 0x80:
         cp = b0
