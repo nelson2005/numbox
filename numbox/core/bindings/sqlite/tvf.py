@@ -330,8 +330,7 @@ def _make_xcolumn():
             # TRANSIENT: they point into the per-cursor NRT array (or the
             # scratch), which is released and replaced on the next xFilter,
             # so a STATIC pointer here would dangle.
-            _emit_cell(ctx, addr, tags[j], widths[j], c[0].scratch_p, _SQLITE_TRANSIENT)
-            return SQLITE_OK
+            return _emit_cell(ctx, addr, tags[j], widths[j], c[0].scratch_p, _SQLITE_TRANSIENT)
         except Exception:
             sqlite3_result_error(ctx, get_unicode_data_p("error reading tvf column"), -1)
             return SQLITE_ERROR
