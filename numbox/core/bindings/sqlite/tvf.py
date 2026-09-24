@@ -42,7 +42,7 @@ from numbox.utils.preprocessing import (
 # this module's __dict__, which seeds the exec namespace below.
 from numba import carray, njit  # noqa: F401
 from numba.core.types import (  # noqa: F401
-    int8, int16, int32, int64, uint8, uint16, uint32, float32, float64,
+    int32, int64, float64,
 )
 from numbox.core.bindings.sqlite.vtable import sqlite3_declare_vtab  # noqa: F401
 from numbox.core.bindings.sqlite.exec import sqlite3_malloc, sqlite3_free  # noqa: F401
