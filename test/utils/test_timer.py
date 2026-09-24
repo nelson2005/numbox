@@ -23,18 +23,37 @@ def test_timer_records_duration_and_returns_result():
     assert Timer.times["_timer_test_add"] >= 0.0
 
 
-def test_timer_logs_at_info(caplog):
+class _Records(logging.Handler):
+    """Keeps every record it is handed. A plain handler rather than pytest's ``caplog`` fixture, so the file also runs
+    through its own ``collect_and_run_tests`` block, which calls each test with no arguments."""
+
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+def test_timer_logs_at_info():
     t = Timer(precision=2)
 
     def _timer_test_noop():
         return None
 
-    with caplog.at_level(logging.INFO, logger="numbox.utils.timer"):
+    timer_logger = logging.getLogger("numbox.utils.timer")
+    handler = _Records()
+    level = timer_logger.level
+    timer_logger.addHandler(handler)
+    timer_logger.setLevel(logging.INFO)
+    try:
         t(_timer_test_noop)()
-    records = [r for r in caplog.records if r.name == "numbox.utils.timer"]
-    assert len(records) == 1
-    assert records[0].levelno == logging.INFO
-    assert records[0].getMessage().startswith("Execution of _timer_test_noop took ")
+    finally:
+        timer_logger.removeHandler(handler)
+        timer_logger.setLevel(level)
+    assert len(handler.records) == 1
+    assert handler.records[0].levelno == logging.INFO
+    assert handler.records[0].getMessage().startswith("Execution of _timer_test_noop took ")
 
 
 def test_import_leaves_root_logger_unconfigured():
