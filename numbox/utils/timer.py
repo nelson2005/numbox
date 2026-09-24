@@ -1,3 +1,10 @@
+"""Wall-clock timing of function calls made from Python.
+
+Decorating a function with ``timer`` records each call's duration in ``Timer.times`` under the function's name and
+logs it at INFO on the ``numbox.utils.timer`` logger. Importing this module configures no logging, so the timings
+are silent until the application enables INFO for that logger, for instance with
+``logging.basicConfig(level=logging.INFO)``.
+"""
 import logging
 from time import perf_counter
 
