@@ -655,7 +655,7 @@ def _emit_cell(ctx, addr, tag, width, scratch_p, s_blob_destructor):
     TRANSIENT. Every tag ``_col_tag`` produces has a branch; any other tag fails the query with an error rather than
     reading back as a silent NULL.
     """
-    if tag <= _TAG_U64 or tag == _TAG_BOOL:
+    if _is_int_tag(tag) or tag == _TAG_BOOL:
         sqlite3_result_int64(ctx, _load_cell_i64(addr, tag))
     elif tag == _TAG_F32 or tag == _TAG_F64:
         sqlite3_result_double(ctx, _load_cell_f64(addr, tag))
