@@ -107,8 +107,8 @@ These are the canonical primitives for C-string interop. New bindings should com
 
 Cross-project preferences live in the user's MEMORY.md. Only numbox-specific workflow rules are kept here.
 
-- Always exclude CLAUDE.md, `docs/plans/**`, and fork-only `numbox_ci.yml` matrix expansions from upstream PRs (use a dedicated branch based on `upstream/main`)
-- Never merge local feature branches into main — main must always match `upstream/main` (exception: CLAUDE.md and the fork-only CI matrix additions)
+- Always exclude CLAUDE.md, `docs/plans/**`, `docs/reviews/**`, `docs/superpowers/**`, and fork-only `numbox_ci.yml` matrix expansions from upstream PRs (use a dedicated branch based on `upstream/main`)
+- Never merge local feature branches into main — main must always match `upstream/main` (exception: CLAUDE.md, the fork-only CI matrix additions, and the planning and review records under `docs/plans/`, `docs/reviews/` and `docs/superpowers/`, which reach main only through `ci/*` PRs)
 - Feature branches: base off `origin/main` (has CLAUDE.md + fork CI); upstream PR branches: base off `upstream/main` (no CLAUDE.md, stock CI)
 - Do all coding work on the feature branch (has CLAUDE.md + fork CI), then cherry-pick to the upstream PR branch when ready
 
