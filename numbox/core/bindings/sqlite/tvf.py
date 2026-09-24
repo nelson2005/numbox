@@ -383,6 +383,8 @@ def _build_tvf_descriptor(name, arg_types, out_dtype):
             "string/bytes hidden args are not supported")
 
     offsets_buf = np.array(offs, dtype=np.int64)
+    # one tag per schema column, in the order the schema below declares them: the
+    # visible columns, then the hidden args
     tags_buf = np.array(vis_tags + arg_tags, dtype=tags_buf_t)
     widths_buf = np.array(vis_widths, dtype=np.int64)
     scratch = max([w + 1 for w, t in zip(vis_widths, vis_tags) if t == _TAG_U], default=0)
