@@ -284,7 +284,7 @@ def _is_numeric_tag(tag):
 
 @njit(**jit_options)
 def _is_int_tag(tag):
-    return tag <= _TAG_U64
+    return _TAG_I8 <= tag <= _TAG_U64
 
 
 @njit(**jit_options)
