@@ -47,6 +47,16 @@ def _scaled(start, stop, scale):
     return out
 
 
+@njit
+def _sum_args(*args):
+    out = np.empty(1, _OUT)
+    total = 0
+    for a in args:
+        total += a
+    out[0].n = total
+    return out
+
+
 def _open():
     db = c_int64(0)
     with c_string(":memory:") as p:
@@ -357,6 +367,29 @@ def test_tvf_xbestindex_accepts_all_args_bound_with_duplicate_eq():
     rc, usage = _call_xbestindex(2, 3, [(2, EQ, 1), (2, EQ, 1), (3, EQ, 1), (4, EQ, 1)])
     assert rc == SQLITE_OK, rc
     assert [int(usage[i]["argvIndex"]) for i in range(4)] == [1, 1, 2, 3]
+
+
+def test_tvf_xbestindex_checks_every_arg_past_64():
+    # 1 visible col, then n hidden. The all-bound check must not be capped at a
+    # machine word: with 64 or more args every one must still be bound, and one
+    # left unbound, at either end, must still reject the plan.
+    EQ = SQLITE_INDEX_CONSTRAINT_EQ
+    for n in (64, 65):
+        rc, usage = _call_xbestindex(1, n, [(1 + h, EQ, 1) for h in range(n)])
+        assert rc == SQLITE_OK, (n, rc)
+        assert [int(usage[i]["argvIndex"]) for i in range(n)] == list(range(1, n + 1))
+        for unbound in (0, n - 1):
+            rc, _ = _call_xbestindex(1, n, [(1 + h, EQ, 1) for h in range(n) if h != unbound])
+            assert rc == SQLITE_CONSTRAINT, (n, unbound, rc)
+
+
+def test_tvf_with_64_args_returns_its_row():
+    db = _open()
+    h = register_tvf(db.value, "sum64", (np.int64,) * 64, _OUT, _sum_args)
+    sql = "SELECT n FROM sum64(%s)" % ", ".join(str(i) for i in range(64))
+    assert _select_int(db, sql) == (SQLITE_OK, [(64 * 63 // 2,)])
+    sqlite3_close(db.value)
+    del h
 
 
 def _fetchall_text(db, sql):
