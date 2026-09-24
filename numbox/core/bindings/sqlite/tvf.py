@@ -191,22 +191,19 @@ def _make_xbestindex():
         cons = carray(_cast_int_to_void_p(ii[0].aConstraint), (n_constraint,), dtype=_CONSTRAINT_DTYPE)
         usage = carray(_cast_int_to_void_p(ii[0].aConstraintUsage), (n_constraint,), dtype=_USAGE_DTYPE)
 
-        # Check each hidden arg's binding on its own. Not a running count: a
-        # duplicate usable EQ on one arg must not mask another arg being unbound.
-        # Not a bitmask either: a 64-bit mask would cap the args at 63.
-        # argvIndex is position-based (h + 1), so duplicates overwrite one slot.
-        for i in range(n_constraint):
-            col = cons[i].iColumn
-            op = cons[i].op
-            h = col - ncols
-            if cons[i].usable != 0 and op == SQLITE_INDEX_CONSTRAINT_EQ and 0 <= h < n_hidden:
-                usage[i].argvIndex = int32(h + 1)
-                usage[i].omit = 1
-
+        # Bind each hidden arg on its own, to the first usable EQ on its column. Not
+        # a running count: a duplicate usable EQ on one arg must not mask another
+        # arg being unbound. Not a bitmask either: a 64-bit mask would cap the args
+        # at 63. A second EQ on the same arg, as in f(1) WHERE arg0 = 1, gets no
+        # argvIndex, since SQLite refuses a plan in which two constraints share one,
+        # and is not omitted, so SQLite checks it against the hidden column.
         for h in range(n_hidden):
             bound = False
             for i in range(n_constraint):
-                if usage[i].argvIndex == h + 1:
+                if (cons[i].usable != 0 and cons[i].op == SQLITE_INDEX_CONSTRAINT_EQ
+                        and cons[i].iColumn - ncols == h):
+                    usage[i].argvIndex = int32(h + 1)
+                    usage[i].omit = 1
                     bound = True
                     break
             if not bound:
