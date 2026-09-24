@@ -42,7 +42,7 @@ from numbox.utils.preprocessing import (
 # this module's __dict__, which seeds the exec namespace below.
 from numba import carray, njit  # noqa: F401
 from numba.core.types import (  # noqa: F401
-    int8, int16, int32, int64, uint8, uint16, uint32, uint64, float32, float64,
+    int8, int16, int32, int64, uint8, uint16, uint32, float32, float64,
 )
 from numbox.core.bindings.sqlite.vtable import sqlite3_declare_vtab  # noqa: F401
 from numbox.core.bindings.sqlite.exec import sqlite3_malloc, sqlite3_free  # noqa: F401
@@ -191,10 +191,10 @@ def _make_xbestindex():
         cons = carray(_cast_int_to_void_p(ii[0].aConstraint), (n_constraint,), dtype=_CONSTRAINT_DTYPE)
         usage = carray(_cast_int_to_void_p(ii[0].aConstraintUsage), (n_constraint,), dtype=_USAGE_DTYPE)
 
-        # Track each hidden arg's binding as its own bit, not a running count: a
+        # Check each hidden arg's binding on its own. Not a running count: a
         # duplicate usable EQ on one arg must not mask another arg being unbound.
+        # Not a bitmask either: a 64-bit mask would cap the args at 63.
         # argvIndex is position-based (h + 1), so duplicates overwrite one slot.
-        bound_mask = uint64(0)
         for i in range(n_constraint):
             col = cons[i].iColumn
             op = cons[i].op
@@ -202,10 +202,15 @@ def _make_xbestindex():
             if cons[i].usable != 0 and op == SQLITE_INDEX_CONSTRAINT_EQ and 0 <= h < n_hidden:
                 usage[i].argvIndex = int32(h + 1)
                 usage[i].omit = 1
-                bound_mask |= uint64(1) << uint64(h)
 
-        if bound_mask != (uint64(1) << uint64(n_hidden)) - uint64(1):
-            return SQLITE_CONSTRAINT
+        for h in range(n_hidden):
+            bound = False
+            for i in range(n_constraint):
+                if usage[i].argvIndex == h + 1:
+                    bound = True
+                    break
+            if not bound:
+                return SQLITE_CONSTRAINT
         ii[0].idxNum = int32(1)
         ii[0].estimatedCost = float64(1)
         ii[0].estimatedRows = 16
