@@ -3,7 +3,7 @@
 - **Date:** 2026-06-20
 - **Branch:** `review/numbox-2026-06-20`
 - **Commit under review:** `ece98cec16f27c6d0e8ea5d985e591252e2d7c89`
-- **Review units:** 119 targets × dimension lenses → 119 reviews + 119 verifies (119/119 each)
+- **Review units:** 41 targets × dimension lenses → 119 reviews + 119 verifies (119/119 each)
 - **Findings:** 124 raised → **118 confirmed**, **1 uncertain**, **5 refuted** (verification culled the false positives)
 
 ## Tally (confirmed)

@@ -71,7 +71,7 @@ for tgt in t["targets"]:
 print("targets:", len(t["targets"]), "review units:", units)
 PY
 ```
-Expected: prints `targets: 29 review units: 89` (no AssertionError).
+Expected: prints `targets: 41 review units: 119` (no AssertionError).
 
 **Steps:**
 
