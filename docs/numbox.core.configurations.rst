@@ -27,7 +27,8 @@ decorates under the one ``jit_options``, numbox puts the question once, when thi
 answers it for the package: for a probe in each directory of the package that holds a module, since numba's
 in-tree cache is a ``__pycache__`` beside each source, it runs the cache set-up numba runs at decoration and
 the writability check numba runs at the first save, compiling nothing, and where either fails for any
-directory numbox compiles without a cache and one ``RuntimeWarning`` names the remedy.
+directory numbox compiles without a cache and one ``RuntimeWarning`` names the remedy. Every directory
+counts, whether or not its modules cache anything, so the answer errs toward uncached, which is never wrong.
 
 - For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory.
 - For a ``.zip`` it is the user's cache directory made writable: a ``.zip`` is the one archive numba caches,

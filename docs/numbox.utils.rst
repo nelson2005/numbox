@@ -165,10 +165,13 @@ constant edit.
 The anchor exists to be cached from, so it is written only when the
 options say ``cache``, and numba is then asked whether it can cache a
 function of that file, the question the package puts for its own
-modules; where the write fails or the answer is no, an unwritable user
-cache directory or ``NUMBA_CACHE_DIR`` with no other location left,
-the generated code compiles without a cache after one warning naming
-the remedy, instead of dying at the write or at numba's set-up.
+modules; where the write fails, for whatever reason, or the answer is
+no, an unwritable user cache directory or ``NUMBA_CACHE_DIR`` with no
+other location left, the generated code compiles without a cache after
+one warning naming the remedy, instead of dying at the write or at
+numba's set-up. A path too long for the file system is one such
+failure, and the warning says so, whether ``NUMBA_CACHE_DIR`` or the
+name the anchor takes from a struct or a function is the long part.
 ``compile_kernel``, the work builder's derives and the sqlite
 aggregate, window and table-valued function registrations anchor their
 generated code the same way and fall back the same way, the derive

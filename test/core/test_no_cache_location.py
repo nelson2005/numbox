@@ -7,12 +7,10 @@ subprocess with its own tree and cache directory, so the placement under test
 is the one the subprocess sees and nothing else.
 """
 import compileall
-import errno
 import os
 import shutil
 import subprocess
 import sys
-import warnings
 import zipfile
 from pathlib import Path
 
@@ -461,27 +459,31 @@ def test_generated_code_compiles_uncached_under_a_numba_cache_dir_numba_cannot_u
     # NUMBA_CACHE_DIR pointing into a file, or with a component longer than the
     # file system allows: the package's own functions cache beside their
     # sources, numba passing such a location over, and the anchor's directory
-    # cannot be made. Any error of the directory is the location's, so the code
-    # compiles without a cache, as it did before the anchors asked numba.
+    # cannot be made. Any error there means no cache here, so the code compiles
+    # without one, as it did before the anchors asked numba, and the warning's
+    # remedy is the error's: a directory numba can use, or a shorter path.
     if placement == "a file":
         cache_dir = tmp_path / "file"
         cache_dir.write_text("not a directory\n")
+        remedy = "Set NUMBA_CACHE_DIR to a writable directory"
     else:
         cache_dir = tmp_path / ("c" * 300)
+        remedy = "too long for the file system: a shorter NUMBA_CACHE_DIR"
     env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(cache_dir))
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True, env=env,
                          cwd=str(tmp_path))
     assert run.returncode == 0 and word in run.stdout, run.stderr
     if warns:
-        assert "compiles without a cache" in run.stderr and "Set NUMBA_CACHE_DIR" in run.stderr, run.stderr
+        assert "compiles without a cache" in run.stderr and remedy in run.stderr, run.stderr
 
 
-def test_an_error_of_another_kind_at_the_anchor_write_is_raised_as_it_was():
-    # A location that cannot be written refuses with permission denied or a
-    # read-only file system, and the fallback answers those. A name too long
-    # for the file system is about the name, and was swallowed with a remedy
-    # about the location.
+def test_an_anchor_path_too_long_for_the_file_system_compiles_uncached_and_the_warning_says_so():
+    # The anchor's name takes the struct's, so a 300-character struct name
+    # makes a name the file system refuses; a deep enough NUMBA_CACHE_DIR does
+    # the same to a name of fixed length. Either way there is no cache here,
+    # and the warning names the length rather than offering a writable
+    # directory, which this one is.
     from numba.core.types import StructRef, float32
     from numba.experimental.structref import register
     from numbox.utils.highlevel import make_structref
@@ -490,10 +492,7 @@ def test_an_error_of_another_kind_at_the_anchor_write_is_raised_as_it_was():
     class LongNameTypeClass(StructRef):
         pass
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        with pytest.raises(OSError) as raised:
-            make_structref("S" * 300, {"value": float32}, LongNameTypeClass)
-    if os.name != "nt":
-        assert raised.value.errno == errno.ENAMETOOLONG, raised.value
-    assert not [entry for entry in caught if issubclass(entry.category, RuntimeWarning)], caught
+    with pytest.warns(RuntimeWarning, match="too long") as caught:
+        Struct = make_structref("S" * 300, {"value": float32}, LongNameTypeClass)
+    assert Struct(2.5).value == 2.5
+    assert len(caught) == 1 and "compiles without a cache" in str(caught[0].message), [str(w.message) for w in caught]

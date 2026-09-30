@@ -55,22 +55,17 @@ def _materialize_anchor(path: Path, code_txt: str) -> None:
 def _anchor_or_error(path: Path, code_txt: str):
     """Write the anchor at ``path`` and ask numba for its cache location; the error where there is none, else None.
 
-    Three steps, each with its own errors. Making the anchor's directory: any ``OSError`` there is the location's,
-    ``NUMBA_CACHE_DIR`` pointing into a file, a component too long, a full disk, and numba would pass such a
-    location over too. Writing the anchor: an error there is the location's as well, but a name too long for
-    the file system is numbox's own, made from a struct's or a function's name, and is raised. Asking numba,
-    the question the package puts for its own modules: no locator, or a location it cannot use, is the cache's,
-    and the answer may be the user's cache directory where the anchor's own cannot be written.
+    Any ``OSError`` from making the directory or writing the file means there is no cache here, whatever its
+    cause: ``NUMBA_CACHE_DIR`` pointing into a file, a full disk, a path too long for the file system, whether
+    the directory makes it so or the name numbox made from a struct's or a function's; numba itself passes a
+    location over on any ``OSError``. Then numba is asked, the question the package puts for its own modules,
+    and no locator, or a location it cannot use, is the cache's; the answer may be the user's cache directory
+    where the anchor's own cannot be written.
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        return error
-    try:
         _materialize_anchor(path, code_txt)
     except OSError as error:
-        if error.errno == errno.ENAMETOOLONG:
-            raise
         return error
     try:
         check_cache_location(path)
@@ -92,15 +87,24 @@ def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
     if not jit_options.get("cache"):
         return jit_options
     error = _anchor_or_error(path, code_txt)
-    if error is not None:
-        warnings.warn(
-            f"numba cannot cache {path.name} here ({error}); it compiles without a cache. Set NUMBA_CACHE_DIR "
-            "to a writable directory, or NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and "
-            "silence this warning",
-            RuntimeWarning, stacklevel=3,
+    if error is None:
+        return jit_options
+    silence = "NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and silence this warning"
+    if isinstance(error, OSError) and error.errno == errno.ENAMETOOLONG:
+        # The path is NUMBA_CACHE_DIR or the user's cache directory, then a
+        # directory of numbox's, then a name it made from a struct's or a
+        # function's; which of them is the long part is for the reader.
+        remedy = (
+            "The path is too long for the file system: a shorter NUMBA_CACHE_DIR, or a shorter name where the "
+            f"struct's or the function's is the long part, or {silence}"
         )
-        return {**jit_options, "cache": False}
-    return jit_options
+    else:
+        remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
+    warnings.warn(
+        f"numba cannot cache {path.name} here ({error}); it compiles without a cache. {remedy}",
+        RuntimeWarning, stacklevel=3,
+    )
+    return {**jit_options, "cache": False}
 
 
 _ORPHAN_AGE_SECONDS = 60

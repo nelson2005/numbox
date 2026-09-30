@@ -67,10 +67,13 @@ def _module_files():
     """The source files numba's answer for numbox rests on, this module's own first.
 
     numba's in-tree cache is a ``__pycache__`` beside each source, so the directories answer separately and one
-    can be writable while another is not: one module of each directory stands for the directory. And numba finds
-    a location for a module by its source, so a module that survives as ``.pyc`` alone, beside sourced ones,
-    answers for itself: it is named by the ``.py`` that is gone, which is what numba looks up. An archive shows
-    no directories to walk, so there the probe's own file, not on disk either, is the whole answer.
+    can be writable while another is not: one module of each directory stands for the directory, whether or not
+    that directory's modules cache anything, so a directory numba cannot cache in turns caching off for the
+    package even where every cached function's own directory is fine; the answer errs toward uncached, which
+    is never wrong. And numba finds a location for a module by its source, so a module that survives as
+    ``.pyc`` alone, beside sourced ones, answers for itself: it is named by the ``.py`` that is gone, which is
+    what numba looks up. An archive shows no directories to walk, so there the probe's own file, not on disk
+    either, is the whole answer.
     """
     own = inspect.getfile(_cache_probe)
     yield own
