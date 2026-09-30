@@ -57,15 +57,16 @@ def _module_files():
     """A source file for each directory of numbox that holds a module, this module's own first.
 
     numba's in-tree cache is a ``__pycache__`` beside each source, so the directories answer separately and one
-    can be writable while another is not. An archive shows no directories to walk, and a ``.pyc``-only install
-    no modules, so there the probe's own file, not on disk either, is the whole answer.
+    can be writable while another is not. A directory whose modules survive as ``.pyc`` alone is named by the
+    ``.py`` that is gone, which is what numba looks up. An archive shows no directories to walk, so there the
+    probe's own file, not on disk either, is the whole answer.
     """
     own = inspect.getfile(_cache_probe)
     yield own
     package = os.path.dirname(os.path.dirname(own))
     for directory, subdirectories, files in os.walk(package):
         subdirectories[:] = sorted(name for name in subdirectories if name != "__pycache__")
-        stems = sorted({name.rsplit(".", 1)[0] for name in files if name.endswith(".py")})
+        stems = sorted({name.rsplit(".", 1)[0] for name in files if name.endswith((".py", ".pyc"))})
         if stems and directory != os.path.dirname(own):
             yield os.path.join(directory, stems[0] + ".py")
 
