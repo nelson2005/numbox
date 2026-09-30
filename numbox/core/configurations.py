@@ -1,4 +1,3 @@
-import errno
 import inspect
 import os
 import json
@@ -50,14 +49,17 @@ def check_cache_location(py_file):
 
 
 def is_a_cache_error(error):
-    """Whether ``error`` is numba's for a cache it cannot set up: no locator, or a location that cannot be written.
+    """Whether ``error`` is numba's for a cache it cannot set up: no locator, or a location it cannot use.
 
-    A location that cannot be written refuses with permission denied, operation not permitted or a read-only
-    file system. Any other ``OSError``, a name too long for the file system, say, is about something else and
-    is not answered with a location.
+    numba itself passes over a location on any ``OSError`` from making its directory or writing a file there,
+    permission denied, a read-only file system, a path into a file, a component too long, a full disk, so any
+    ``OSError`` counts. So does the ``ValueError`` numba raises for an archive under a directory whose name
+    holds ``.zip``: its ``.zip`` locator takes the file by that substring and then finds no ``.zip`` in it.
     """
     if isinstance(error, OSError):
-        return error.errno in (errno.EACCES, errno.EPERM, errno.EROFS)
+        return True
+    if isinstance(error, ValueError):
+        return "No zip file found" in str(error)
     return isinstance(error, RuntimeError) and "no locator available" in str(error)
 
 
@@ -98,7 +100,7 @@ def uncached_where_no_cache_can_be_written(options):
     made writable, since numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk; for any other archive,
     or a ``.pyc``-only install, the source files on disk or a ``.zip``, which numba 0.61 and later cache in the
     user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the
-    warning. An error that is not the cache's is raised as it was.
+    warning. An error that is not the cache's, as ``is_a_cache_error`` draws the line, is raised as it was.
 
     A ``.zip`` whose cache directory holds every entry but can no longer be written takes the fallback too, where
     numba alone would have loaded the entries: the writability check is the rule numba applies to every other
@@ -109,7 +111,7 @@ def uncached_where_no_cache_can_be_written(options):
     for py_file in _module_files():
         try:
             check_cache_location(py_file)
-        except (RuntimeError, OSError) as error:
+        except (RuntimeError, OSError, ValueError) as error:
             if not is_a_cache_error(error):
                 raise
             failure = error

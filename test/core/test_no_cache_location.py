@@ -58,7 +58,9 @@ def _index_files(cache_dir):
     return sorted(path.name for path in Path(cache_dir).rglob("*.nbi"))
 
 
-@pytest.mark.parametrize("name", ["numbox-0.0.0-py3.12.egg", "numbox-0.0.0-py3-none-any.whl"])
+@pytest.mark.parametrize("name", [
+    "numbox-0.0.0-py3.12.egg", "numbox-0.0.0-py3-none-any.whl", "my.zip.dir/numbox-0.0.0-py3.12.egg",
+])
 def test_an_import_from_an_archive_compiles_uncached_with_one_warning_naming_the_remedy(tmp_path, name):
     # numba's cache locators need the source file on disk, so an import from
     # an .egg, .whl or .pyz archive, which Spark's --py-files ships, raised
@@ -67,7 +69,10 @@ def test_an_import_from_an_archive_compiles_uncached_with_one_warning_naming_the
     # question once, so there is one warning, not one per function.
     # NUMBA_CACHE_DIR is no way to a cache here: it is set and writable, the
     # warning fires all the same and nothing is written there, so the warning
-    # says so instead of offering it.
+    # says so instead of offering it. Under a directory whose name holds .zip
+    # numba's .zip locator takes the file by that substring and raises
+    # ValueError finding no .zip in it; that is the cache's error too.
+    (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
     archive = _archive(tmp_path / name)
     env = dict(os.environ, PYTHONPATH=str(archive), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
     env.pop("NUMBOX_JIT_OPTIONS", None)
@@ -444,6 +449,32 @@ def test_a_warm_anchor_in_a_directory_that_stopped_being_writable(tmp_path, chil
     finally:
         for path in read_only:
             path.chmod(0o755)
+
+
+@pytest.mark.parametrize("child, word, warns", [
+    (MAKE_A_STRUCTREF, "made", True), (REGISTER_AN_AGGREGATE, "summed", True), (REGISTER_A_TVF, "selected", True),
+    (COMPILE_A_KERNEL, "executed", True), (BUILD_A_DERIVE, "derived", False),
+], ids=["make_structref", "register_aggregate", "register_tvf", "compile_kernel", "derive"])
+@pytest.mark.parametrize("placement", ["a file", "a component too long"])
+def test_generated_code_compiles_uncached_under_a_numba_cache_dir_numba_cannot_use(
+        tmp_path, placement, child, word, warns):
+    # NUMBA_CACHE_DIR pointing into a file, or with a component longer than the
+    # file system allows: the package's own functions cache beside their
+    # sources, numba passing such a location over, and the anchor's directory
+    # cannot be made. Any error of the directory is the location's, so the code
+    # compiles without a cache, as it did before the anchors asked numba.
+    if placement == "a file":
+        cache_dir = tmp_path / "file"
+        cache_dir.write_text("not a directory\n")
+    else:
+        cache_dir = tmp_path / ("c" * 300)
+    env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(cache_dir))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True, env=env,
+                         cwd=str(tmp_path))
+    assert run.returncode == 0 and word in run.stdout, run.stderr
+    if warns:
+        assert "compiles without a cache" in run.stderr and "Set NUMBA_CACHE_DIR" in run.stderr, run.stderr
 
 
 def test_an_error_of_another_kind_at_the_anchor_write_is_raised_as_it_was():

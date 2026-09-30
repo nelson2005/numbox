@@ -7,14 +7,14 @@ from numba import njit, typeof
 from numba.core.types import Type
 from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple as PyTuple, Union
 
-from numbox.core.configurations import check_cache_location, is_a_cache_error, jit_options as jit_options_
+from numbox.core.configurations import jit_options as jit_options_
 from numbox.core.work.lowlevel_work_utils import ll_make_work
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _codegen_env_canon, _effective_flags, _fingerprint_function,
     _fingerprint_function_best_effort, _flags_canon, _loaded_global_names,
 )
 from numbox.utils.highlevel import cres, _signature_identity, _type_identity
-from numbox.utils.preprocessing import _anchor_root, _materialize_anchor, _orphan_anchor_sweep
+from numbox.utils.preprocessing import _anchor_or_error, _anchor_root, _orphan_anchor_sweep
 
 
 def _file_anchor():
@@ -179,14 +179,9 @@ def _derive_anchor_cres(derive_sig, sig_canon, derive, derive_fp, jit_options):
         f"    return _inner({params})\n"
     )
     anchor = _anchor_root(_DERIVE_ANCHOR_SUBDIR) / f"{name}.py"
-    try:
-        _materialize_anchor(anchor, src)
-        check_cache_location(anchor)
-    except (RuntimeError, OSError) as error:
+    if _anchor_or_error(anchor, src) is not None:
         # No anchor on disk, or none numba can cache from: a warm anchor whose
         # directory can no longer be written and no other location left.
-        if not is_a_cache_error(error):
-            raise
         return None
     ns = {
         "_cres": cres,

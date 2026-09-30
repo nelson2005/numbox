@@ -5,6 +5,7 @@ when two exec'd code blocks differ only in ``co_consts``. See the
 "Cache-anchor mechanism" section in ``docs/numbox.utils.rst`` for
 the rationale and references.
 """
+import errno
 import hashlib
 import os
 import tempfile
@@ -38,7 +39,6 @@ def _structref_anchor_path(struct_name: str, code_txt: str) -> Path:
 
 
 def _materialize_anchor(path: Path, code_txt: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         return
     fd, tmp_str = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".tmp-")
@@ -52,24 +52,47 @@ def _materialize_anchor(path: Path, code_txt: str) -> None:
         raise
 
 
+def _anchor_or_error(path: Path, code_txt: str):
+    """Write the anchor at ``path`` and ask numba for its cache location; the error where there is none, else None.
+
+    Three steps, each with its own errors. Making the anchor's directory: any ``OSError`` there is the location's,
+    ``NUMBA_CACHE_DIR`` pointing into a file, a component too long, a full disk, and numba would pass such a
+    location over too. Writing the anchor: an error there is the location's as well, but a name too long for
+    the file system is numbox's own, made from a struct's or a function's name, and is raised. Asking numba,
+    the question the package puts for its own modules: no locator, or a location it cannot use, is the cache's,
+    and the answer may be the user's cache directory where the anchor's own cannot be written.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return error
+    try:
+        _materialize_anchor(path, code_txt)
+    except OSError as error:
+        if error.errno == errno.ENAMETOOLONG:
+            raise
+        return error
+    try:
+        check_cache_location(path)
+    except (RuntimeError, OSError, ValueError) as error:
+        if not is_a_cache_error(error):
+            raise
+        return error
+    return None
+
+
 def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
     """``jit_options`` to compile the code anchored at ``path`` under, the anchor written where it will be read.
 
     numba reads the anchor only to cache the code it names, so with caching off nothing is written and the
-    path serves as the code's filename. With caching on the anchor is written, and numba is asked whether it can
-    cache a function of that file, the question the package puts for its own modules: a location it can write,
-    which may be the user's cache directory when the anchor's own cannot be written. Where the write or the
-    question fails, the code compiles without a cache after one warning naming the remedy, rather than dying
-    at the write or at the first decorated function.
+    path serves as the code's filename. With caching on the anchor is written and numba asked for its location,
+    by ``_anchor_or_error``; where that gives an error, the code compiles without a cache after one warning
+    naming the remedy, rather than dying at the write or at the first decorated function.
     """
     if not jit_options.get("cache"):
         return jit_options
-    try:
-        _materialize_anchor(path, code_txt)
-        check_cache_location(path)
-    except (RuntimeError, OSError) as error:
-        if not is_a_cache_error(error):
-            raise
+    error = _anchor_or_error(path, code_txt)
+    if error is not None:
         warnings.warn(
             f"numba cannot cache {path.name} here ({error}); it compiles without a cache. Set NUMBA_CACHE_DIR "
             "to a writable directory, or NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and "
