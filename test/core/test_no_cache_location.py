@@ -129,6 +129,34 @@ def test_a_zip_import_with_no_writable_user_cache_directory_compiles_uncached_wi
 
 
 @needs_a_directory_it_cannot_write
+def test_a_zip_import_whose_cache_directory_stopped_being_writable_compiles_uncached(tmp_path):
+    # Every entry is in the user's cache directory from an earlier import, and
+    # the directory can no longer be written. A probe that only loaded its own
+    # entry would have said the cache works and left the import to die at
+    # numba's first write for anything not there; the writability check numba
+    # runs for every other placement is run here for the .zip too.
+    archive = _archive(tmp_path / "numbox.zip")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"),
+               NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    warm = _run(env, tmp_path)
+    assert warm.returncode == 0, warm.stderr
+    assert bool(_index_files(home)) == _zip_is_cached()
+    read_only = [home, *(path for path in home.rglob("*") if path.is_dir())]
+    for path in read_only:
+        path.chmod(0o555)
+    try:
+        run = _run(env, tmp_path)
+        assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+        assert run.stderr.count("compiles without a cache") == 1, run.stderr
+    finally:
+        for path in read_only:
+            path.chmod(0o755)
+
+
+@needs_a_directory_it_cannot_write
 def test_a_read_only_install_warns_naming_numba_cache_dir_and_setting_it_caches(tmp_path):
     # The other way to have no cache location: the source is on disk, and
     # neither its directory nor the user's cache directory can be written.
