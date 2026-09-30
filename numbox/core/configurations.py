@@ -5,9 +5,9 @@ import warnings
 from importlib.metadata import version
 
 import numba.experimental.function_type  # noqa: F401  registers `FunctionModel` against `FunctionType`
-from numba import njit
+from numba.core.caching import CompileResultCacheImpl
 from numba.core.datamodel import default_manager
-from numba.core.types import FunctionType, int64, void
+from numba.core.types import FunctionType, void
 
 
 def get_jit_options():
@@ -25,7 +25,7 @@ def get_jit_options():
 
 
 def _cache_probe():
-    return 0
+    """The function of this module whose cache location stands for the package's; never compiled."""
 
 
 def uncached_where_no_cache_can_be_written(options):
@@ -38,17 +38,19 @@ def uncached_where_no_cache_can_be_written(options):
     way the import died at the first decorated function, and nothing named the way out.
 
     Every module here decorates under the one ``jit_options``, and a placement that gives numba no cache for one
-    of numbox's functions gives it none for the rest, so the question is put once, to a function of this module
-    compiled and saved here, and answered for the package: the options come back with ``cache`` off and one
-    warning names the remedy. That is ``NUMBA_CACHE_DIR`` for a source file on disk, and for an archive, where
-    numba never reads it, an unpacked install or a ``.zip``, which numba 0.61 and later cache in the user's cache
-    directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning. An error
-    that is not the cache's is raised as it was.
+    of numbox's functions gives it none for the rest, so the question is put once, for a function of this module,
+    and answered for the package. It is put the way numba puts it: the cache set-up that decoration runs, which
+    picks the location or raises, then the writability check that the first save runs, which numba skips for a
+    ``.zip``. Nothing is compiled and nothing is written but the cache directory itself. Where either step fails
+    the options come back with ``cache`` off and one warning names the remedy: ``NUMBA_CACHE_DIR`` for a source
+    file on disk, and for an archive, where numba never reads it, an unpacked install or a ``.zip``, which numba
+    0.61 and later cache in the user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching
+    off and silences the warning. An error that is not the cache's is raised as it was.
     """
     if not options.get("cache"):
         return options
     try:
-        njit(int64(), cache=True)(_cache_probe)
+        CompileResultCacheImpl(_cache_probe).locator.ensure_cache_path()
     except (RuntimeError, OSError) as error:
         if not (isinstance(error, OSError) or "no locator available" in str(error)):
             raise

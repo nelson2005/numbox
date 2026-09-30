@@ -22,9 +22,10 @@ Where no cache can be written, numba raises at decoration, and numbox's import u
 with ``RuntimeError: cannot cache function ...: no locator available for file ...``. The two placements that do
 that are a read-only install whose user cache directory cannot be written either, and an import from an
 ``.egg``, ``.whl`` or ``.pyz`` archive, which Spark's ``--py-files`` ships. Since every module here decorates
-under the one ``jit_options``, numbox now puts the question once, to a function of its own compiled and saved
-when this module is imported, and answers it for the package: where the cache cannot be written, numbox
-compiles without a cache and one ``RuntimeWarning`` names the remedy.
+under the one ``jit_options``, numbox now puts the question once, when this module is imported, for a function
+of its own, and answers it for the package: it runs the cache set-up numba runs at decoration and the
+writability check numba runs at the first save, compiling nothing, and where either fails numbox compiles
+without a cache and one ``RuntimeWarning`` names the remedy.
 
 - For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory.
 - For an archive it is an unpacked install or a ``.zip``: numba reads ``NUMBA_CACHE_DIR`` only for a source
