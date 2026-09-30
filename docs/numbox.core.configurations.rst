@@ -28,11 +28,14 @@ writability check numba runs at the first save, compiling nothing, and where eit
 without a cache and one ``RuntimeWarning`` names the remedy.
 
 - For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory.
-- For an archive it is an unpacked install or a ``.zip``: numba reads ``NUMBA_CACHE_DIR`` only for a source
-  file on disk, so the variable changes nothing there, and a ``.zip`` is the one archive numba caches, from
-  0.61 on, in the user's cache directory. numba takes that directory for a ``.zip`` without checking that it
-  can be written, so a ``.zip`` with a read-only home falls back the same way.
-- ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in either case.
+- For a ``.zip`` it is the user's cache directory made writable: a ``.zip`` is the one archive numba caches,
+  from 0.61 on, and it caches it there, taking the directory without checking that it can be written. numba
+  reads ``NUMBA_CACHE_DIR`` only for a source file on disk, so the variable changes nothing for any archive.
+  A ``.zip`` whose cache directory holds every entry but can no longer be written falls back too, where numba
+  alone would have loaded the entries: the writability check is the rule numba applies to every other
+  placement.
+- For an ``.egg``, ``.whl`` or ``.pyz`` it is an unpacked install or a ``.zip``.
+- ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in every case.
 
 A function numba cannot cache is compiled in every process that uses it, never wrong; that is the cost the
 warning reports. An error at decoration that is not the cache's is raised as it was.
