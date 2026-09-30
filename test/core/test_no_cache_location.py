@@ -171,29 +171,6 @@ def test_a_directory_whose_modules_survive_as_pyc_alone_takes_the_fallback(tmp_p
     assert "source is not a file on disk" in run.stderr and "Set NUMBA_CACHE_DIR" not in run.stderr
 
 
-
-
-def test_a_directory_whose_modules_survive_as_pyc_alone_takes_the_fallback(tmp_path):
-    # The rest of the package keeps its sources, so its directories pass; the
-    # one directory numba cannot cache from has no .py to name, and a walk that
-    # named directories by their .py files skipped it. The remedy is the one
-    # for a source that is not on disk, not NUMBA_CACHE_DIR, which numba reads
-    # for a source on disk only.
-    site = tmp_path / "site"
-    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
-    sqlite = site / "numbox" / "core" / "bindings" / "sqlite"
-    assert compileall.compile_dir(str(sqlite), quiet=1, legacy=True)
-    for source in list(sqlite.glob("*.py")):
-        source.unlink()
-    env = dict(os.environ, PYTHONPATH=str(site), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
-    env.pop("NUMBOX_JIT_OPTIONS", None)
-    run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_SQLITE_TYPEMAP], capture_output=True,
-                         text=True, env=env, cwd=str(tmp_path))
-    assert run.returncode == 0 and str(sqlite) in run.stdout, run.stderr
-    assert run.stderr.count("compiles without a cache") == 1, run.stderr
-    assert "source is not a file on disk" in run.stderr and "Set NUMBA_CACHE_DIR" not in run.stderr
-
-
 def test_a_sourceless_install_is_told_the_source_is_not_on_disk(tmp_path):
     # A .pyc-only install: numba looks the source up by the code's co_filename,
     # which names the .py that was removed, and finds no locator. The module's
@@ -350,6 +327,30 @@ REGISTER_AN_AGGREGATE = (
     "print('summed')\n"
 )
 
+COMPILE_A_KERNEL = (
+    "from numbox.core.variable.variable import Graph\n"
+    "from numbox.core.variable.compile_kernel import compile_kernel\n"
+    "def f(x):\n"
+    "    return x + 1.0\n"
+    "graph = Graph({'calc': [{'name': 'y', 'inputs': {'x': 'ext'}, 'formula': f}]}, ['ext'])\n"
+    "kernel = compile_kernel(graph, 'calc.y')\n"
+    "assert kernel.execute({'ext': {'x': 1.0}})['calc.y'] == 2.0\n"
+    "print('executed')\n"
+)
+
+BUILD_A_DERIVE = (
+    "from numpy import isclose\n"
+    "from numbox.core.work.builder import Derived, End, make_graph\n"
+    "x = End(name='x', init_value=3.14)\n"
+    "def twice(x):\n"
+    "    return 2 * x\n"
+    "y = Derived(name='y', init_value=0.0, derive=twice, sources=(x,))\n"
+    "access = make_graph(y)\n"
+    "access.y.calculate()\n"
+    "assert isclose(access.y.data, 6.28), access.y.data\n"
+    "print('derived')\n"
+)
+
 REGISTER_A_TVF = (
     "import numpy as np\n"
     "from test.core.test_sqlite_tvf import _open, _select_int, _series, _OUT\n"
@@ -397,16 +398,19 @@ def test_generated_code_compiles_uncached_where_its_anchor_cannot_be_written(tmp
 
 
 @needs_a_directory_it_cannot_write
-@pytest.mark.parametrize("child, word", [
-    (MAKE_A_STRUCTREF, "made"), (REGISTER_AN_AGGREGATE, "summed"), (REGISTER_A_TVF, "selected"),
-], ids=["make_structref", "register_aggregate", "register_tvf"])
-def test_a_warm_anchor_in_a_directory_that_stopped_being_writable(tmp_path, child, word):
+@pytest.mark.parametrize("child, word, warns", [
+    (MAKE_A_STRUCTREF, "made", True), (REGISTER_AN_AGGREGATE, "summed", True), (REGISTER_A_TVF, "selected", True),
+    (COMPILE_A_KERNEL, "executed", True), (BUILD_A_DERIVE, "derived", False),
+], ids=["make_structref", "register_aggregate", "register_tvf", "compile_kernel", "derive"])
+def test_a_warm_anchor_in_a_directory_that_stopped_being_writable(tmp_path, child, word, warns):
     # The anchor is on disk from an earlier run, in a NUMBA_CACHE_DIR that can
     # no longer be written. numba then caches the code in the user's cache
     # directory, and a check on the anchor's own directory would have turned
     # caching off where numba had a location. With the user's cache directory
     # unwritable too there is none, and a check that only wrote the anchor
-    # would have let the first decorated function die at numba's set-up.
+    # would have let the first decorated function die at numba's set-up. The
+    # builder's derive falls back without a word, as it did for an anchor it
+    # could not write.
     home = tmp_path / "home"
     home.mkdir()
     cache = tmp_path / "cache"
@@ -433,7 +437,9 @@ def test_a_warm_anchor_in_a_directory_that_stopped_being_writable(tmp_path, chil
         uncached = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True,
                                   env=env, cwd=str(tmp_path))
         assert uncached.returncode == 0 and word in uncached.stdout, uncached.stderr
-        assert "compiles without a cache" in uncached.stderr and "Set NUMBA_CACHE_DIR" in uncached.stderr
+        if warns:
+            assert "compiles without a cache" in uncached.stderr and "Set NUMBA_CACHE_DIR" in uncached.stderr
     finally:
         for path in read_only:
             path.chmod(0o755)
+

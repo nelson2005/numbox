@@ -84,7 +84,7 @@ from numbox.utils.fingerprint import (
 )
 from numbox.utils.highlevel import _type_identity
 from numbox.utils.preprocessing import (
-    _anchor_root, _materialize_anchor, _orphan_anchor_sweep,
+    _anchor_root, _anchored_or_uncached, _orphan_anchor_sweep,
 )
 
 _ANCHOR_SUBDIR = "numbox-compile-kernel"
@@ -440,16 +440,7 @@ def _compile(
         "def _kernel(", f"def {name}(", 1
     )
     anchor = _anchor_root(_ANCHOR_SUBDIR) / f"_kernel_{digest}.py"
-    if opts["cache"]:
-        try:
-            anchor.parent.mkdir(parents=True, exist_ok=True)
-            _materialize_anchor(anchor, final_src)
-        except OSError as e:
-            warnings.warn(
-                f"compile_kernel: cache directory unusable ({e}); "
-                f"compiling without an on-disk cache"
-            )
-            opts["cache"] = False
+    opts = _anchored_or_uncached(anchor, final_src, opts)
     code = compile(final_src, str(anchor), "exec")
     # __name__ must be an importable module so numba can rebuild the cached
     # overload's environment in another process (importlib.import_module needs

@@ -7,7 +7,7 @@ from numba import njit, typeof
 from numba.core.types import Type
 from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple as PyTuple, Union
 
-from numbox.core.configurations import jit_options as jit_options_
+from numbox.core.configurations import check_cache_location, is_a_cache_error, jit_options as jit_options_
 from numbox.core.work.lowlevel_work_utils import ll_make_work
 from numbox.utils.fingerprint import (
     _Unfingerprintable, _codegen_env_canon, _effective_flags, _fingerprint_function,
@@ -180,9 +180,13 @@ def _derive_anchor_cres(derive_sig, sig_canon, derive, derive_fp, jit_options):
     )
     anchor = _anchor_root(_DERIVE_ANCHOR_SUBDIR) / f"{name}.py"
     try:
-        anchor.parent.mkdir(parents=True, exist_ok=True)
         _materialize_anchor(anchor, src)
-    except OSError:
+        check_cache_location(anchor)
+    except (RuntimeError, OSError) as error:
+        # No anchor on disk, or none numba can cache from: a warm anchor whose
+        # directory can no longer be written and no other location left.
+        if not is_a_cache_error(error):
+            raise
         return None
     ns = {
         "_cres": cres,
