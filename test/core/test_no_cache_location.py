@@ -267,9 +267,9 @@ def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_ta
     env.pop("NUMBOX_JIT_OPTIONS", None)
     warm = _run(env, tmp_path)
     assert warm.returncode == 0, warm.stderr
-    locations = [path for path in (home / "cache" / "numba").iterdir() if path.name.startswith("bindings_")]
     if not _zip_is_cached():
         pytest.skip("numba caches a .zip from 0.61 on")
+    locations = [path for path in (home / "cache" / "numba").iterdir() if path.name.startswith("bindings_")]
     assert len(locations) == 1, sorted(path.name for path in (home / "cache" / "numba").iterdir())
     locations[0].chmod(0o555)
     try:
