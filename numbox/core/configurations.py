@@ -1,6 +1,7 @@
 import inspect
 import os
 import json
+import types
 import warnings
 
 from importlib.metadata import version
@@ -30,7 +31,26 @@ def get_jit_options():
 
 
 def _cache_probe():
-    """The function of this module whose cache location stands for the package's; never compiled."""
+    """The function whose cache location is asked for; never compiled."""
+
+
+def _cache_probes():
+    """A probe in each directory of numbox that holds a module, this one first.
+
+    numba's in-tree cache is a ``__pycache__`` beside each source, so the directories answer separately and one
+    can be writable while another is not. The probe's code is given each directory's first module as its file,
+    which is all a locator reads of it. An archive shows no directories to walk, and a ``.pyc``-only install no
+    modules, so there the probe as it is, whose source is not on disk either, is the whole answer.
+    """
+    own = inspect.getfile(_cache_probe)
+    yield _cache_probe
+    package = os.path.dirname(os.path.dirname(own))
+    for directory, subdirectories, files in os.walk(package):
+        subdirectories[:] = sorted(name for name in subdirectories if name != "__pycache__")
+        modules = sorted(name for name in files if name.endswith(".py"))
+        if modules and directory != os.path.dirname(own):
+            code = _cache_probe.__code__.replace(co_filename=os.path.join(directory, modules[0]))
+            yield types.FunctionType(code, _cache_probe.__globals__, _cache_probe.__name__)
 
 
 def uncached_where_no_cache_can_be_written(options):
@@ -42,11 +62,11 @@ def uncached_where_no_cache_can_be_written(options):
     cache directory without checking that it can be written, and the first write raises ``OSError`` instead. Either
     way the import died at the first decorated function, and nothing named the way out.
 
-    Every function numbox caches decorates under the one ``jit_options``, and a placement that gives numba no cache
-    for one of them gives it none for the rest, so the question is put once, for a function of this module,
-    and answered for the package. It is put the way numba puts it: the cache set-up that decoration runs, which
-    picks the location or raises, then the writability check that the first save runs, which numba skips for a
-    ``.zip``. Nothing is compiled and nothing is written but the cache directory itself. Where either step fails
+    Every function numbox caches decorates under the one ``jit_options``, so the question is put here, once, for
+    a probe in each directory of the package that holds a module, and answered for the package. It is put the
+    way numba puts it: the cache set-up that decoration runs, which picks the location or raises, then the
+    writability check that the first save runs, which numba skips for a ``.zip``. Nothing is compiled and
+    nothing is written but the cache directories themselves. Where either step fails for any directory
     the options come back with ``cache`` off and one warning names the remedy: ``NUMBA_CACHE_DIR`` for a source
     file on disk; for a ``.zip``, the user's cache directory made writable, since numba reads ``NUMBA_CACHE_DIR``
     only for a source file on disk; for any other archive, or a ``.pyc``-only install, the source files on disk
@@ -61,7 +81,8 @@ def uncached_where_no_cache_can_be_written(options):
     if not options.get("cache"):
         return options
     try:
-        CompileResultCacheImpl(_cache_probe).locator.ensure_cache_path()
+        for probe in _cache_probes():
+            CompileResultCacheImpl(probe).locator.ensure_cache_path()
     except (RuntimeError, OSError) as error:
         if not (isinstance(error, OSError) or "no locator available" in str(error)):
             raise

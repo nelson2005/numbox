@@ -100,6 +100,34 @@ def test_a_zip_import_is_cached_by_numba_from_0_61(tmp_path):
         assert bool(_index_files(home)) == cached
 
 
+@needs_a_directory_it_cannot_write
+def test_one_read_only_directory_among_writable_ones_takes_the_fallback(tmp_path):
+    # numba's in-tree cache is a __pycache__ beside each source, so the
+    # package's directories answer separately. A check on configurations.py's
+    # directory alone passed here, and the import died at libm's first binding.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    home = tmp_path / "home"
+    home.mkdir()
+    read_only = [home, site / "numbox" / "core" / "bindings"]
+    for path in read_only:
+        path.chmod(0o555)
+    try:
+        env = dict(os.environ, PYTHONPATH=str(site), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"))
+        env.pop("NUMBA_CACHE_DIR", None)
+        env.pop("NUMBOX_JIT_OPTIONS", None)
+        run = _run(env, tmp_path)
+        assert run.returncode == 0 and str(site) in run.stdout, run.stderr
+        assert run.stderr.count("compiles without a cache") == 1, run.stderr
+        assert "Set NUMBA_CACHE_DIR" in run.stderr
+        cured = _run(dict(env, NUMBA_CACHE_DIR=str(tmp_path / "cache")), tmp_path, warnings="error")
+        assert cured.returncode == 0, cured.stderr
+        assert _index_files(tmp_path / "cache")
+    finally:
+        for path in read_only:
+            path.chmod(0o755)
+
+
 def test_a_sourceless_install_is_told_the_source_is_not_on_disk(tmp_path):
     # A .pyc-only install: numba looks the source up by the code's co_filename,
     # which names the .py that was removed, and finds no locator. The module's
