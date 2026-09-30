@@ -1,3 +1,4 @@
+import inspect
 import os
 import json
 import warnings
@@ -48,9 +49,10 @@ def uncached_where_no_cache_can_be_written(options):
     ``.zip``. Nothing is compiled and nothing is written but the cache directory itself. Where either step fails
     the options come back with ``cache`` off and one warning names the remedy: ``NUMBA_CACHE_DIR`` for a source
     file on disk; for a ``.zip``, the user's cache directory made writable, since numba reads ``NUMBA_CACHE_DIR``
-    only for a source file on disk; for any other archive an unpacked install or a ``.zip``, which numba 0.61
-    and later cache in the user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off
-    and silences the warning. An error that is not the cache's is raised as it was.
+    only for a source file on disk; for any other archive, or a ``.pyc``-only install, the source files on disk
+    or a ``.zip``, which numba 0.61 and later cache in the user's cache directory.
+    ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning. An error that is not
+    the cache's is raised as it was.
 
     A ``.zip`` whose cache directory holds every entry but can no longer be written takes the fallback too, where
     numba alone would have loaded the entries: the writability check is the rule numba applies to every other
@@ -64,7 +66,9 @@ def uncached_where_no_cache_can_be_written(options):
         if not (isinstance(error, OSError) or "no locator available" in str(error)):
             raise
         silence = "NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and silence this warning"
-        if os.path.exists(__file__):
+        # numba looks the source up by the code's co_filename, which a .pyc-only
+        # install still names after the .py that is gone; __file__ names the .pyc.
+        if os.path.exists(inspect.getfile(_cache_probe)):
             remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
         elif isinstance(error, OSError):
             # The one archive numba finds a location for is a .zip, in the
@@ -78,8 +82,8 @@ def uncached_where_no_cache_can_be_written(options):
             # file on disk, so for an archive the variable changes nothing.
             remedy = (
                 "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, "
-                "install numbox unpacked or import it from a .zip, which numba 0.61 and later cache in the "
-                f"user's cache directory. Set {silence}"
+                "install numbox with its source files on disk, unpacked from any archive, or import it from a "
+                f".zip, which numba 0.61 and later cache in the user's cache directory. Set {silence}"
             )
         warnings.warn(
             f"numba cannot cache numbox here ({error}); it compiles without a cache. {remedy}",

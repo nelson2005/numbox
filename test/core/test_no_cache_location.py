@@ -6,6 +6,7 @@ under an archive import or a read-only install. Every check here runs in a
 subprocess with its own tree and cache directory, so the placement under test
 is the one the subprocess sees and nothing else.
 """
+import compileall
 import os
 import shutil
 import subprocess
@@ -97,6 +98,25 @@ def test_a_zip_import_is_cached_by_numba_from_0_61(tmp_path):
         # On Windows numba asks the system for the user's cache directory, and
         # no variable set here moves it.
         assert bool(_index_files(home)) == cached
+
+
+def test_a_sourceless_install_is_told_the_source_is_not_on_disk(tmp_path):
+    # A .pyc-only install: numba looks the source up by the code's co_filename,
+    # which names the .py that was removed, and finds no locator. The module's
+    # __file__ is the .pyc, on disk, and a check on it offered NUMBA_CACHE_DIR,
+    # which numba ignores without the source.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    assert compileall.compile_dir(str(site), quiet=1, legacy=True)
+    for source in list(site.rglob("*.py")):
+        source.unlink()
+    env = dict(os.environ, PYTHONPATH=str(site), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = _run(env, tmp_path)
+    assert run.returncode == 0 and str(site) in run.stdout, run.stderr
+    assert run.stderr.count("compiles without a cache") == 1, run.stderr
+    assert "source is not a file on disk" in run.stderr and "Set NUMBA_CACHE_DIR" not in run.stderr
+    assert _index_files(tmp_path / "cache") == []
 
 
 def _zip_is_cached():
