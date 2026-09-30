@@ -12,6 +12,8 @@ import time
 import warnings
 from pathlib import Path
 
+from numbox.core.configurations import check_cache_location, is_a_cache_error
+
 
 def _anchor_root(subdir: str = "numbox-structref") -> Path:
     from numba import config
@@ -54,17 +56,20 @@ def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
     """``jit_options`` to compile the code anchored at ``path`` under, the anchor written where it will be read.
 
     numba reads the anchor only to cache the code it names, so with caching off nothing is written and the
-    path serves as the code's filename. With caching on the anchor is written and its directory checked for
-    writing, as numba checks a cache directory, since the cache entries land beside it; where that fails, an
-    unwritable user cache directory or ``NUMBA_CACHE_DIR``, the code compiles without a cache after one
-    warning naming the remedy, rather than dying at the write or at numba's own check of the same directory.
+    path serves as the code's filename. With caching on the anchor is written, and numba is asked whether it can
+    cache a function of that file, the question the package puts for its own modules: a location it can write,
+    which may be the user's cache directory when the anchor's own cannot be written. Where the write or the
+    question fails, the code compiles without a cache after one warning naming the remedy, rather than dying
+    at the write or at the first decorated function.
     """
     if not jit_options.get("cache"):
         return jit_options
     try:
         _materialize_anchor(path, code_txt)
-        tempfile.TemporaryFile(dir=str(path.parent)).close()
-    except OSError as error:
+        check_cache_location(path)
+    except (RuntimeError, OSError) as error:
+        if not is_a_cache_error(error):
+            raise
         warnings.warn(
             f"numba cannot cache {path.name} here ({error}); it compiles without a cache. Set NUMBA_CACHE_DIR "
             "to a writable directory, or NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and "

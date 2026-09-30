@@ -34,23 +34,40 @@ def _cache_probe():
     """The function whose cache location is asked for; never compiled."""
 
 
-def _cache_probes():
-    """A probe in each directory of numbox that holds a module, this one first.
+def check_cache_location(py_file):
+    """Raise as numba would where a function whose source is ``py_file`` cannot be cached; else return.
+
+    The question is put the way numba puts it: the cache set-up that decoration runs, which picks the location
+    for the file or raises ``RuntimeError`` with no locator, then the writability check, which decoration runs
+    for every location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe's code is
+    given ``py_file`` as its file, which is all a locator reads of it. Nothing is compiled, and nothing is
+    written but the cache directory itself.
+    """
+    code = _cache_probe.__code__.replace(co_filename=os.fspath(py_file))
+    probe = types.FunctionType(code, _cache_probe.__globals__, _cache_probe.__name__)
+    CompileResultCacheImpl(probe).locator.ensure_cache_path()
+
+
+def is_a_cache_error(error):
+    """Whether ``error`` is numba's for a cache it cannot set up: no locator, or a location that cannot be written."""
+    return isinstance(error, OSError) or "no locator available" in str(error)
+
+
+def _module_files():
+    """A source file for each directory of numbox that holds a module, this module's own first.
 
     numba's in-tree cache is a ``__pycache__`` beside each source, so the directories answer separately and one
-    can be writable while another is not. The probe's code is given each directory's first module as its file,
-    which is all a locator reads of it. An archive shows no directories to walk, and a ``.pyc``-only install no
-    modules, so there the probe as it is, whose source is not on disk either, is the whole answer.
+    can be writable while another is not. An archive shows no directories to walk, and a ``.pyc``-only install
+    no modules, so there the probe's own file, not on disk either, is the whole answer.
     """
     own = inspect.getfile(_cache_probe)
-    yield _cache_probe
+    yield own
     package = os.path.dirname(os.path.dirname(own))
     for directory, subdirectories, files in os.walk(package):
         subdirectories[:] = sorted(name for name in subdirectories if name != "__pycache__")
-        modules = sorted(name for name in files if name.endswith(".py"))
-        if modules and directory != os.path.dirname(own):
-            code = _cache_probe.__code__.replace(co_filename=os.path.join(directory, modules[0]))
-            yield types.FunctionType(code, _cache_probe.__globals__, _cache_probe.__name__)
+        stems = sorted({name.rsplit(".", 1)[0] for name in files if name.endswith(".py")})
+        if stems and directory != os.path.dirname(own):
+            yield os.path.join(directory, stems[0] + ".py")
 
 
 def uncached_where_no_cache_can_be_written(options):
@@ -59,20 +76,17 @@ def uncached_where_no_cache_can_be_written(options):
     numba sets a cached function up when it is decorated and raises ``RuntimeError`` there when no cache location
     can be written: a read-only install whose user cache directory cannot be written either, or an import from an
     ``.egg``, ``.whl`` or ``.pyz`` archive, which Spark's ``--py-files`` ships. For a ``.zip`` it takes the user's
-    cache directory without checking that it can be written, and the first write raises ``OSError`` instead. Either
-    way the import died at the first decorated function, and nothing named the way out.
+    cache directory without checking at decoration that it can be written, and the first write raises ``OSError``
+    instead. Either way the import died at the first decorated function, and nothing named the way out.
 
     Every function numbox caches decorates under the one ``jit_options``, so the question is put here, once, for
-    a probe in each directory of the package that holds a module, and answered for the package. It is put the
-    way numba puts it: the cache set-up that decoration runs, which picks the location or raises, then the
-    writability check that the first save runs, which numba skips for a ``.zip``. Nothing is compiled and
-    nothing is written but the cache directories themselves. Where either step fails for any directory
-    the options come back with ``cache`` off and one warning names the remedy: ``NUMBA_CACHE_DIR`` for a source
-    file on disk; for a ``.zip``, the user's cache directory made writable, since numba reads ``NUMBA_CACHE_DIR``
-    only for a source file on disk; for any other archive, or a ``.pyc``-only install, the source files on disk
-    or a ``.zip``, which numba 0.61 and later cache in the user's cache directory.
-    ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning. An error that is not
-    the cache's is raised as it was.
+    a source file in each directory of the package that holds a module, and answered for the package. Where
+    numba can cache no function of one of those files the options come back with ``cache`` off and one warning
+    names the remedy: ``NUMBA_CACHE_DIR`` for a source file on disk; for a ``.zip``, the user's cache directory
+    made writable, since numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk; for any other archive,
+    or a ``.pyc``-only install, the source files on disk or a ``.zip``, which numba 0.61 and later cache in the
+    user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the
+    warning. An error that is not the cache's is raised as it was.
 
     A ``.zip`` whose cache directory holds every entry but can no longer be written takes the fallback too, where
     numba alone would have loaded the entries: the writability check is the rule numba applies to every other
@@ -80,38 +94,39 @@ def uncached_where_no_cache_can_be_written(options):
     """
     if not options.get("cache"):
         return options
-    try:
-        for probe in _cache_probes():
-            CompileResultCacheImpl(probe).locator.ensure_cache_path()
-    except (RuntimeError, OSError) as error:
-        if not (isinstance(error, OSError) or "no locator available" in str(error)):
-            raise
-        silence = "NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and silence this warning"
-        # numba looks the source up by the code's co_filename, which a .pyc-only
-        # install still names after the .py that is gone; __file__ names the .pyc.
-        if os.path.exists(inspect.getfile(_cache_probe)):
-            remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
-        elif isinstance(error, OSError):
-            # The one archive numba finds a location for is a .zip, in the
-            # user's cache directory, and the error names the directory.
-            remedy = (
-                "numba caches a .zip in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, "
-                f"because the source is not a file on disk: make that directory writable, or {silence}"
-            )
-        else:
-            # Every location numba reads NUMBA_CACHE_DIR for needs the source
-            # file on disk, so for an archive the variable changes nothing.
-            remedy = (
-                "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, "
-                "install numbox with its source files on disk, unpacked from any archive, or import it from a "
-                f".zip, which numba 0.61 and later cache in the user's cache directory. Set {silence}"
-            )
-        warnings.warn(
-            f"numba cannot cache numbox here ({error}); it compiles without a cache. {remedy}",
-            RuntimeWarning, stacklevel=2,
+    for py_file in _module_files():
+        try:
+            check_cache_location(py_file)
+        except (RuntimeError, OSError) as error:
+            if not is_a_cache_error(error):
+                raise
+            failure = error
+            break
+    else:
+        return options
+    silence = "NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and silence this warning"
+    if os.path.exists(py_file):
+        remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
+    elif isinstance(failure, OSError):
+        # The one archive numba finds a location for is a .zip, in the
+        # user's cache directory, and the error names the directory.
+        remedy = (
+            "numba caches a .zip in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, "
+            f"because the source is not a file on disk: make that directory writable, or {silence}"
         )
-        return {**options, "cache": False}
-    return options
+    else:
+        # Every location numba reads NUMBA_CACHE_DIR for needs the source
+        # file on disk, so for an archive the variable changes nothing.
+        remedy = (
+            "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, "
+            "install numbox with its source files on disk, unpacked from any archive, or import it from a "
+            f".zip, which numba 0.61 and later cache in the user's cache directory. Set {silence}"
+        )
+    warnings.warn(
+        f"numba cannot cache numbox here ({failure}); it compiles without a cache. {remedy}",
+        RuntimeWarning, stacklevel=2,
+    )
+    return {**options, "cache": False}
 
 
 jit_options = uncached_where_no_cache_can_be_written(get_jit_options())

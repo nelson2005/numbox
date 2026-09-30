@@ -328,3 +328,46 @@ def test_generated_code_compiles_uncached_where_its_anchor_cannot_be_written(tmp
         assert list((tmp_path / "cache").rglob("*.py")), "no anchor under NUMBA_CACHE_DIR"
     finally:
         home.chmod(0o755)
+
+
+@needs_a_directory_it_cannot_write
+@pytest.mark.parametrize("child, word", [
+    (MAKE_A_STRUCTREF, "made"), (REGISTER_AN_AGGREGATE, "summed"), (REGISTER_A_TVF, "selected"),
+], ids=["make_structref", "register_aggregate", "register_tvf"])
+def test_a_warm_anchor_in_a_directory_that_stopped_being_writable(tmp_path, child, word):
+    # The anchor is on disk from an earlier run, in a NUMBA_CACHE_DIR that can
+    # no longer be written. numba then caches the code in the user's cache
+    # directory, and a check on the anchor's own directory would have turned
+    # caching off where numba had a location. With the user's cache directory
+    # unwritable too there is none, and a check that only wrote the anchor
+    # would have let the first decorated function die at numba's set-up.
+    home = tmp_path / "home"
+    home.mkdir()
+    cache = tmp_path / "cache"
+    env = dict(os.environ, PYTHONPATH=str(REPO), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"),
+               NUMBA_CACHE_DIR=str(cache))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    warm = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", "-c", child], capture_output=True,
+                          text=True, env=env, cwd=str(tmp_path))
+    assert warm.returncode == 0 and word in warm.stdout, warm.stderr
+    anchors = list(cache.rglob("*.py"))
+    assert anchors, "no anchor under NUMBA_CACHE_DIR"
+    read_only = [cache, *(path for path in cache.rglob("*") if path.is_dir())]
+    for path in read_only:
+        path.chmod(0o555)
+    try:
+        in_user_cache = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", "-c", child],
+                                       capture_output=True, text=True, env=env, cwd=str(tmp_path))
+        assert in_user_cache.returncode == 0 and word in in_user_cache.stdout, in_user_cache.stderr
+        assert _index_files(home), "numba did not cache the generated code in the user's cache directory"
+        home_tree = [home, *(path for path in home.rglob("*") if path.is_dir())]
+        read_only.extend(home_tree)
+        for path in home_tree:
+            path.chmod(0o555)
+        uncached = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True,
+                                  env=env, cwd=str(tmp_path))
+        assert uncached.returncode == 0 and word in uncached.stdout, uncached.stderr
+        assert "compiles without a cache" in uncached.stderr and "Set NUMBA_CACHE_DIR" in uncached.stderr
+    finally:
+        for path in read_only:
+            path.chmod(0o755)
