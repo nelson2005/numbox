@@ -5,11 +5,11 @@ Overview
 ++++++++
 
 Every function numbox caches is decorated under one set of numba options, ``jit_options``, read once from
-the ``NUMBOX_JIT_OPTIONS`` environment variable when this module is first imported; the few bare ``@njit``
-closures numbox makes cannot be cached and take no options. The value is a JSON object passed to ``@njit``
-as keyword arguments, and any other shape is refused by name; unset means ``{"cache": true}``, so numbox
-compiles into numba's on-disk cache by default, and ``export NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns
-that off.
+the ``NUMBOX_JIT_OPTIONS`` environment variable when this module is first imported; a bare ``@njit`` in
+numbox, ``array_data_p`` or ``make_vector``'s ``create``, is not cached and takes none. The value is a JSON
+object passed to ``@njit`` as keyword arguments, and any other shape is refused by name; unset means
+``{"cache": true}``, so numbox compiles into numba's on-disk cache by default, and
+``export NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns that off.
 
 Where the cache lands
 +++++++++++++++++++++

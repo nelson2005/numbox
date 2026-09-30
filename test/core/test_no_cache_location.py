@@ -80,7 +80,8 @@ def test_an_import_from_an_archive_compiles_uncached_with_one_warning_naming_the
 def test_a_zip_import_is_cached_by_numba_from_0_61(tmp_path):
     # The warning sends an archive's user to a .zip, which numba caches from
     # 0.61 on, in the user's cache directory whatever NUMBA_CACHE_DIR says.
-    # Before that a .zip is one more archive.
+    # Before that a .zip is one more archive. This pins the remedy the warning
+    # names, numba's behaviour, not the fallback, which has nothing to do here.
     import numba
     archive = _archive(tmp_path / "numbox.zip")
     home = tmp_path / "home"
