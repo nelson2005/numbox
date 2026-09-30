@@ -482,21 +482,71 @@ def test_generated_code_compiles_uncached_under_a_numba_cache_dir_numba_cannot_u
         assert "compiles without a cache" not in run.stderr, run.stderr
 
 
-def test_an_anchor_path_too_long_for_the_file_system_compiles_uncached_and_the_warning_says_so():
-    # The anchor's name takes the struct's, so a 300-character struct name
-    # makes a name the file system refuses; a deep enough NUMBA_CACHE_DIR does
-    # the same to a name of fixed length. Either way there is no cache here,
-    # and the warning names the length rather than offering a writable
-    # directory, which this one is.
-    from numba.core.types import StructRef, float32
-    from numba.experimental.structref import register
-    from numbox.utils.highlevel import make_structref
+# The type class lives in a module of its own, as the docs ask, so that the
+# struct's cache entries load in a second process.
+A_TYPE_CLASS = (
+    "from numba.core.types import StructRef\n"
+    "from numba.experimental.structref import register\n"
+    "@register\n"
+    "class TypeClass(StructRef):\n"
+    "    pass\n"
+)
 
-    @register
-    class LongNameTypeClass(StructRef):
-        pass
+MAKE_A_LONG_NAMED_STRUCTREF = (
+    "import sys\n"
+    "from numba.core.types import float32\n"
+    "from numbox.utils.highlevel import make_structref\n"
+    "from long_named_type_class import TypeClass\n"
+    "def double(self):\n"
+    "    return self.value * 2\n"
+    "name = 'S' * int(sys.argv[1])\n"
+    "Struct = make_structref(name, {'value': float32}, TypeClass, struct_methods={'double': double})\n"
+    "struct = Struct(1.5)\n"
+    "assert struct.value == 1.5 and struct.double() == 3.0\n"
+    "assert Struct.__name__ == name and Struct.__qualname__ == name and repr(struct).startswith(name + '(')\n"
+    "print('made', len(name))\n"
+)
 
-    with pytest.warns(RuntimeWarning, match="too long") as caught:
-        Struct = make_structref("S" * 300, {"value": float32}, LongNameTypeClass)
-    assert Struct(2.5).value == 2.5
-    assert len(caught) == 1 and "compiles without a cache" in str(caught[0].message), [str(w.message) for w in caught]
+
+@pytest.mark.parametrize("length", [40, 41, 150, 300])
+def test_a_struct_name_of_any_length_caches(tmp_path, length):
+    # numba names a cache file after the anchor's stem and the jitted
+    # function's qualname, both of which carried the struct's name, so a
+    # name of about 93 characters overflowed the file system's 255 bytes in
+    # numba's own files, past the anchor's check. The stems and the generated
+    # names are bounded now: as they are up to 40 characters, a prefix and a
+    # digest beyond, and the class takes its full name back once compiled.
+    (tmp_path / "long_named_type_class.py").write_text(A_TYPE_CLASS)
+    script = tmp_path / "make.py"
+    script.write_text(MAKE_A_LONG_NAMED_STRUCTREF)
+    env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", str(script), str(length)],
+                         capture_output=True, text=True, env=env, cwd=str(tmp_path))
+    assert run.returncode == 0 and f"made {length}" in run.stdout, run.stderr
+    names = _index_files(tmp_path / "cache")
+    assert names and all(len(name.encode()) <= 255 for name in names), names
+    again = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", str(script), str(length)],
+                           capture_output=True, text=True, env=env, cwd=str(tmp_path))
+    assert again.returncode == 0, again.stderr
+    assert _index_files(tmp_path / "cache") == names
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="a path of 4096 bytes and a name of 255 are Linux's limits")
+def test_an_anchor_path_too_long_for_the_file_system_compiles_uncached_and_the_warning_says_so(tmp_path):
+    # A NUMBA_CACHE_DIR deep enough that the anchor's directory fits the path
+    # limit and the anchor's own name, of fixed length, does not. There is no
+    # cache here, and the warning names the length rather than offering a
+    # writable directory, which this one is.
+    deep = tmp_path
+    while len(str(deep)) < 4096 - 90:
+        deep = deep / ("d" * 200)
+    deep = deep / ("d" * (4096 - 50 - len(str(deep))))
+    deep.mkdir(parents=True)
+    env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(deep))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", MAKE_A_STRUCTREF], capture_output=True, text=True,
+                         env=env, cwd=str(tmp_path))
+    assert run.returncode == 0 and "made" in run.stdout, run.stderr
+    assert "compiles without a cache" in run.stderr, run.stderr
+    assert "too long for the file system: a shorter NUMBA_CACHE_DIR" in run.stderr, run.stderr

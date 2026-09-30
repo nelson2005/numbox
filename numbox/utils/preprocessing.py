@@ -24,14 +24,31 @@ def _anchor_root(subdir: str = "numbox-structref") -> Path:
     return Path(AppDirs(appname="numba", appauthor=False).user_cache_dir) / subdir
 
 
+_STEM_MAX = 40
+
+
+def bounded_stem(name: str) -> str:
+    """``name`` as the stem of a file name: as it is up to 40 characters, else its first 31 and a digest of the whole.
+
+    An anchor's name, and the names numba gives the cache files of the functions it holds, carry the name of
+    the struct or the function they were generated for, and a file system allows a name 255 bytes long; numba's
+    repeat the stem and the generated function's name, so a struct named with about 93 characters overflowed
+    them. Bounded, the file names stay under 120 bytes whatever the name's length, and a name of 40 characters
+    or fewer, which is nearly every name, keeps the file names it had.
+    """
+    if len(name) <= _STEM_MAX:
+        return name
+    return f"{name[:_STEM_MAX - 9]}_{hashlib.sha256(name.encode('utf-8')).hexdigest()[:8]}"
+
+
 def _anchor_path(subdir: str, stem: str, code_txt: str) -> Path:
-    """Content-addressed on-disk source anchor for dynamically-exec'd code.
+    """Content-addressed on-disk source anchor for dynamically-exec'd code, its stem bounded.
 
     See the "Cache-anchor mechanism" section in
     ``docs/numbox.utils.rst`` for the rationale.
     """
     digest = hashlib.sha256(code_txt.encode("utf-8")).hexdigest()[:16]
-    return _anchor_root(subdir) / f"{stem}_{digest}.py"
+    return _anchor_root(subdir) / f"{bounded_stem(stem)}_{digest}.py"
 
 
 def _structref_anchor_path(struct_name: str, code_txt: str) -> Path:

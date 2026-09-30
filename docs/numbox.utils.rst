@@ -170,12 +170,23 @@ no, an unwritable user cache directory or ``NUMBA_CACHE_DIR`` with no
 other location left, the generated code compiles without a cache after
 one warning naming the remedy, instead of dying at the write or at
 numba's set-up. A path too long for the file system is one such
-failure, and the warning says so, whether ``NUMBA_CACHE_DIR`` or the
-name the anchor takes from a struct or a function is the long part.
-The question is put for the anchor alone; numba names its own cache
-files after the anchor and the generated function, repeating a
-struct's name, so a name long enough for those to overflow, around a
-hundred characters, still dies in numba's save, as it always did.
+failure, and the warning says so; with the names bounded, as below,
+``NUMBA_CACHE_DIR`` is the only part that can make it so.
+
+The anchor's name carries the struct's or the function's, and numba
+names its cache files after the anchor and the qualified name of the
+function it caches, which carries the struct's again through the class
+whose body defines the jitted getters and method thunks, so a struct
+named with about 93 characters overflowed the 255 bytes a file system
+allows a name, in numba's own files past the anchor's check. Those
+names are bounded now (``bounded_stem``): a name of 40 characters or
+fewer is used as it is, so nearly every struct keeps the file names it
+had, and a longer one becomes its first 31 characters and a digest of
+the whole. The generated class is defined under the bounded name and
+takes the struct's full name back once its body is compiled, so
+``__name__``, ``__qualname__`` and ``repr`` show the name the caller
+gave, whatever its length, and the struct caches. A field's name is
+the one part left unbounded, since a getter's name is the field's.
 ``compile_kernel``, the work builder's derives and the sqlite
 aggregate, window and table-valued function registrations anchor their
 generated code the same way and fall back the same way, the derive
