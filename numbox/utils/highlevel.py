@@ -295,10 +295,13 @@ def make_structref(
 
     Anchor file
     -----------
-    The generated ``code_txt`` is written to a content-addressed file
-    under numba's cache directory and that file -- not ``highlevel.py``
-    -- is used as the ``compile()`` anchor. See the "Cache-anchor
-    mechanism" section in ``docs/numbox.utils.rst`` for the rationale.
+    A content-addressed file under numba's cache directory, not
+    ``highlevel.py``, is the ``compile()`` anchor of the generated
+    ``code_txt``. It is written when the options say ``cache`` and numba
+    can cache a function of it; otherwise nothing is written, the path
+    serves as the code's filename and the struct compiles without a
+    cache, with a warning where caching was asked for. See the
+    "Cache-anchor mechanism" section in ``docs/numbox.utils.rst``.
     """
     code_txt, fields_types, cacheable = make_structref_code_txt(
         struct_name, struct_fields, struct_type_class, struct_methods, user_ns=ns
