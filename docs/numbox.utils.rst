@@ -163,13 +163,16 @@ range. Earlier supported versions (3.10--3.13) collide on any
 constant edit.
 
 The anchor exists to be cached from, so it is written only when the
-options say ``cache`` and its directory can be written, the same check
-numba makes of a cache directory; where it cannot be, an unwritable
-user cache directory or ``NUMBA_CACHE_DIR``, the generated code
-compiles without a cache after one warning naming the remedy, instead
-of dying at the write. The sqlite aggregate, window and table-valued
-function registrations anchor their generated code the same way and
-fall back the same way. See :doc:`numbox.core.configurations` for the
+options say ``cache``, and numba is then asked whether it can cache a
+function of that file, the question the package puts for its own
+modules; where the write fails or the answer is no, an unwritable user
+cache directory or ``NUMBA_CACHE_DIR`` with no other location left,
+the generated code compiles without a cache after one warning naming
+the remedy, instead of dying at the write or at numba's set-up.
+``compile_kernel``, the work builder's derives and the sqlite
+aggregate, window and table-valued function registrations anchor their
+generated code the same way and fall back the same way, the derive
+without a warning. See :doc:`numbox.core.configurations` for the
 package-wide rule the anchors follow.
 
 See also ``numba.core.caching.Cache._index_key`` and
