@@ -1,3 +1,4 @@
+import errno
 import inspect
 import os
 import json
@@ -49,8 +50,15 @@ def check_cache_location(py_file):
 
 
 def is_a_cache_error(error):
-    """Whether ``error`` is numba's for a cache it cannot set up: no locator, or a location that cannot be written."""
-    return isinstance(error, OSError) or "no locator available" in str(error)
+    """Whether ``error`` is numba's for a cache it cannot set up: no locator, or a location that cannot be written.
+
+    A location that cannot be written refuses with permission denied, operation not permitted or a read-only
+    file system. Any other ``OSError``, a name too long for the file system, say, is about something else and
+    is not answered with a location.
+    """
+    if isinstance(error, OSError):
+        return error.errno in (errno.EACCES, errno.EPERM, errno.EROFS)
+    return isinstance(error, RuntimeError) and "no locator available" in str(error)
 
 
 def _module_files():

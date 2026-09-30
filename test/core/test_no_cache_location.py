@@ -7,10 +7,12 @@ subprocess with its own tree and cache directory, so the placement under test
 is the one the subprocess sees and nothing else.
 """
 import compileall
+import errno
 import os
 import shutil
 import subprocess
 import sys
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -443,3 +445,24 @@ def test_a_warm_anchor_in_a_directory_that_stopped_being_writable(tmp_path, chil
         for path in read_only:
             path.chmod(0o755)
 
+
+def test_an_error_of_another_kind_at_the_anchor_write_is_raised_as_it_was():
+    # A location that cannot be written refuses with permission denied or a
+    # read-only file system, and the fallback answers those. A name too long
+    # for the file system is about the name, and was swallowed with a remedy
+    # about the location.
+    from numba.core.types import StructRef, float32
+    from numba.experimental.structref import register
+    from numbox.utils.highlevel import make_structref
+
+    @register
+    class LongNameTypeClass(StructRef):
+        pass
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(OSError) as raised:
+            make_structref("S" * 300, {"value": float32}, LongNameTypeClass)
+    if os.name != "nt":
+        assert raised.value.errno == errno.ENAMETOOLONG, raised.value
+    assert not [entry for entry in caught if issubclass(entry.category, RuntimeWarning)], caught
