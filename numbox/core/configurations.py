@@ -43,9 +43,14 @@ def uncached_where_no_cache_can_be_written(options):
     picks the location or raises, then the writability check that the first save runs, which numba skips for a
     ``.zip``. Nothing is compiled and nothing is written but the cache directory itself. Where either step fails
     the options come back with ``cache`` off and one warning names the remedy: ``NUMBA_CACHE_DIR`` for a source
-    file on disk, and for an archive, where numba never reads it, an unpacked install or a ``.zip``, which numba
-    0.61 and later cache in the user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching
-    off and silences the warning. An error that is not the cache's is raised as it was.
+    file on disk; for a ``.zip``, the user's cache directory made writable, since numba reads ``NUMBA_CACHE_DIR``
+    only for a source file on disk; for any other archive an unpacked install or a ``.zip``, which numba 0.61
+    and later cache in the user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off
+    and silences the warning. An error that is not the cache's is raised as it was.
+
+    A ``.zip`` whose cache directory holds every entry but can no longer be written takes the fallback too, where
+    numba alone would have loaded the entries: the writability check is the rule numba applies to every other
+    placement, and the one the ``.zip`` locator is missing.
     """
     if not options.get("cache"):
         return options
@@ -57,6 +62,13 @@ def uncached_where_no_cache_can_be_written(options):
         silence = "NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and silence this warning"
         if os.path.exists(__file__):
             remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
+        elif isinstance(error, OSError):
+            # The one archive numba finds a location for is a .zip, in the
+            # user's cache directory, and the error names the directory.
+            remedy = (
+                "numba caches a .zip in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, "
+                f"because the source is not a file on disk: make that directory writable, or {silence}"
+            )
         else:
             # Every location numba reads NUMBA_CACHE_DIR for needs the source
             # file on disk, so for an archive the variable changes nothing.

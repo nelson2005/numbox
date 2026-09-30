@@ -98,11 +98,18 @@ def test_a_zip_import_is_cached_by_numba_from_0_61(tmp_path):
         assert bool(_index_files(home)) == cached
 
 
+def _zip_is_cached():
+    import numba
+    return tuple(int(part) for part in numba.__version__.split(".")[:2]) >= (0, 61)
+
+
 @needs_a_directory_it_cannot_write
 def test_a_zip_import_with_no_writable_user_cache_directory_compiles_uncached_with_a_warning(tmp_path):
     # numba takes the user's cache directory for a .zip without checking that
     # it can be written, so where it cannot, an executor with a read-only
     # home, the first save raised PermissionError and the import died on it.
+    # The remedy is that directory made writable, not the .zip the archive
+    # warning offers, which is what the user already has.
     archive = _archive(tmp_path / "numbox.zip")
     home = tmp_path / "home"
     home.mkdir()
@@ -115,6 +122,8 @@ def test_a_zip_import_with_no_writable_user_cache_directory_compiles_uncached_wi
         assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
         assert "NUMBA_CACHE_DIR has no effect here" in run.stderr
+        if _zip_is_cached():
+            assert "make that directory writable" in run.stderr and "import it from a .zip" not in run.stderr
     finally:
         home.chmod(0o755)
 
@@ -146,3 +155,4 @@ def test_a_read_only_install_warns_naming_numba_cache_dir_and_setting_it_caches(
     finally:
         for path in read_only:
             path.chmod(0o755)
+
