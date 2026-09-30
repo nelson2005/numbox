@@ -129,6 +129,48 @@ def test_one_read_only_directory_among_writable_ones_takes_the_fallback(tmp_path
 
 
 IMPORT_SQLITE_TYPEMAP = "import numbox.core.bindings.sqlite._typemap as m; print(m.__file__)"
+IMPORT_LIBM = "import numbox.core.bindings.libm as m; print(m.__file__)"
+
+
+def test_a_module_that_survives_as_pyc_alone_beside_sourced_ones_takes_the_fallback(tmp_path):
+    # numba finds a location by each module's own source, so one module without
+    # its .py fails where its neighbours, __init__.py among them, pass. A walk
+    # that asked one module per directory passed here, and libm died.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    libm = site / "numbox" / "core" / "bindings" / "libm.py"
+    assert compileall.compile_file(str(libm), quiet=1, legacy=True)
+    libm.unlink()
+    env = dict(os.environ, PYTHONPATH=str(site), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
+                         env=env, cwd=str(tmp_path))
+    assert run.returncode == 0 and str(site) in run.stdout, run.stderr
+    assert run.stderr.count("compiles without a cache") == 1, run.stderr
+    assert "source is not a file on disk" in run.stderr and "Set NUMBA_CACHE_DIR" not in run.stderr
+
+
+def test_a_directory_whose_modules_survive_as_pyc_alone_takes_the_fallback(tmp_path):
+    # The rest of the package keeps its sources, so its directories pass; the
+    # one directory numba cannot cache from has no .py to name, and a walk that
+    # named directories by their .py files skipped it. The remedy is the one
+    # for a source that is not on disk, not NUMBA_CACHE_DIR, which numba reads
+    # for a source on disk only.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    sqlite = site / "numbox" / "core" / "bindings" / "sqlite"
+    assert compileall.compile_dir(str(sqlite), quiet=1, legacy=True)
+    for source in list(sqlite.glob("*.py")):
+        source.unlink()
+    env = dict(os.environ, PYTHONPATH=str(site), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_SQLITE_TYPEMAP], capture_output=True,
+                         text=True, env=env, cwd=str(tmp_path))
+    assert run.returncode == 0 and str(sqlite) in run.stdout, run.stderr
+    assert run.stderr.count("compiles without a cache") == 1, run.stderr
+    assert "source is not a file on disk" in run.stderr and "Set NUMBA_CACHE_DIR" not in run.stderr
+
+
 
 
 def test_a_directory_whose_modules_survive_as_pyc_alone_takes_the_fallback(tmp_path):

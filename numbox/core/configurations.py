@@ -54,12 +54,13 @@ def is_a_cache_error(error):
 
 
 def _module_files():
-    """A source file for each directory of numbox that holds a module, this module's own first.
+    """The source files numba's answer for numbox rests on, this module's own first.
 
     numba's in-tree cache is a ``__pycache__`` beside each source, so the directories answer separately and one
-    can be writable while another is not. A directory whose modules survive as ``.pyc`` alone is named by the
-    ``.py`` that is gone, which is what numba looks up. An archive shows no directories to walk, so there the
-    probe's own file, not on disk either, is the whole answer.
+    can be writable while another is not: one module of each directory stands for the directory. And numba finds
+    a location for a module by its source, so a module that survives as ``.pyc`` alone, beside sourced ones,
+    answers for itself: it is named by the ``.py`` that is gone, which is what numba looks up. An archive shows
+    no directories to walk, so there the probe's own file, not on disk either, is the whole answer.
     """
     own = inspect.getfile(_cache_probe)
     yield own
@@ -67,8 +68,10 @@ def _module_files():
     for directory, subdirectories, files in os.walk(package):
         subdirectories[:] = sorted(name for name in subdirectories if name != "__pycache__")
         stems = sorted({name.rsplit(".", 1)[0] for name in files if name.endswith((".py", ".pyc"))})
-        if stems and directory != os.path.dirname(own):
-            yield os.path.join(directory, stems[0] + ".py")
+        for index, stem in enumerate(stems):
+            source = os.path.join(directory, stem + ".py")
+            if index == 0 or not os.path.exists(source):
+                yield source
 
 
 def uncached_where_no_cache_can_be_written(options):
