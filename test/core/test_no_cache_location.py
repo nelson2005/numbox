@@ -444,6 +444,8 @@ def test_a_warm_anchor_in_a_directory_that_stopped_being_writable(tmp_path, chil
         assert uncached.returncode == 0 and word in uncached.stdout, uncached.stderr
         if warns:
             assert "compiles without a cache" in uncached.stderr and "Set NUMBA_CACHE_DIR" in uncached.stderr
+        else:
+            assert "compiles without a cache" not in uncached.stderr, uncached.stderr
     finally:
         for path in read_only:
             path.chmod(0o755)
@@ -476,6 +478,8 @@ def test_generated_code_compiles_uncached_under_a_numba_cache_dir_numba_cannot_u
     assert run.returncode == 0 and word in run.stdout, run.stderr
     if warns:
         assert "compiles without a cache" in run.stderr and remedy in run.stderr, run.stderr
+    else:
+        assert "compiles without a cache" not in run.stderr, run.stderr
 
 
 def test_an_anchor_path_too_long_for_the_file_system_compiles_uncached_and_the_warning_says_so():

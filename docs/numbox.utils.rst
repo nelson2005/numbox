@@ -172,6 +172,10 @@ one warning naming the remedy, instead of dying at the write or at
 numba's set-up. A path too long for the file system is one such
 failure, and the warning says so, whether ``NUMBA_CACHE_DIR`` or the
 name the anchor takes from a struct or a function is the long part.
+The question is put for the anchor alone; numba names its own cache
+files after the anchor and the generated function, repeating a
+struct's name, so a name long enough for those to overflow, around a
+hundred characters, still dies in numba's save, as it always did.
 ``compile_kernel``, the work builder's derives and the sqlite
 aggregate, window and table-valued function registrations anchor their
 generated code the same way and fall back the same way, the derive

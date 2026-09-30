@@ -29,6 +29,10 @@ in-tree cache is a ``__pycache__`` beside each source, it runs the cache set-up 
 the writability check numba runs at the first save, compiling nothing, and where either fails for any
 directory numbox compiles without a cache and one ``RuntimeWarning`` names the remedy. Every directory
 counts, whether or not its modules cache anything, so the answer errs toward uncached, which is never wrong.
+An archive shows no directories to walk, so for a ``.zip`` the question is put for ``configurations.py``
+alone, and a location numba keeps per directory of the archive, in the user's cache directory, that has
+been made unwritable on its own is not seen; a cache directory with permissions of its own inside it is
+nothing numba or an installer makes.
 
 - For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory.
 - For a ``.zip`` it is the user's cache directory made writable: a ``.zip`` is the one archive numba caches,
