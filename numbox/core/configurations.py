@@ -19,9 +19,13 @@ def get_jit_options():
         return {"cache": True}
     try:
         as_json = json.loads(as_str)
-        return as_json
     except json.JSONDecodeError:
         raise ValueError("NUMBOX_JIT_OPTIONS must be valid JSON")
+    if not isinstance(as_json, dict):
+        # Its keys go to njit as keyword arguments, and the fallback below
+        # reads "cache" from it, so a value of another shape stops here, named.
+        raise ValueError('NUMBOX_JIT_OPTIONS must be a JSON object, e.g. {"cache": false}')
+    return as_json
 
 
 def _cache_probe():
