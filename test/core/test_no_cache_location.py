@@ -254,6 +254,97 @@ def test_a_zip_import_whose_cache_directory_stopped_being_writable_compiles_unca
 
 
 @needs_a_directory_it_cannot_write
+def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_takes_the_fallback(tmp_path):
+    # numba caches a .zip per directory of it, each in a location of its own
+    # under the user's cache directory, so the directories answer separately
+    # there too; a check on configurations.py's location alone passed here,
+    # and libm died at its first save. The archive's directories are listed.
+    archive = _archive(tmp_path / "numbox.zip")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"))
+    env.pop("NUMBA_CACHE_DIR", None)
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    warm = _run(env, tmp_path)
+    assert warm.returncode == 0, warm.stderr
+    locations = [path for path in (home / "cache" / "numba").iterdir() if path.name.startswith("bindings_")]
+    if not _zip_is_cached():
+        pytest.skip("numba caches a .zip from 0.61 on")
+    assert len(locations) == 1, sorted(path.name for path in (home / "cache" / "numba").iterdir())
+    locations[0].chmod(0o555)
+    try:
+        run = _run(env, tmp_path)
+        assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+        assert run.stderr.count("compiles without a cache") == 1, run.stderr
+        assert "make that directory writable" in run.stderr, run.stderr
+    finally:
+        locations[0].chmod(0o755)
+
+
+@needs_a_directory_it_cannot_write
+def test_a_symlinked_directory_of_the_package_answers_too(tmp_path):
+    # A directory of the package reached through a symlink was not walked, so a
+    # read-only one behind the link, with no user cache, passed the check and
+    # died at libm's first binding.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    elsewhere = tmp_path / "elsewhere"
+    shutil.move(str(site / "numbox" / "core" / "bindings"), str(elsewhere))
+    (site / "numbox" / "core" / "bindings").symlink_to(elsewhere, target_is_directory=True)
+    home = tmp_path / "home"
+    home.mkdir()
+    read_only = [home, elsewhere, *(path for path in elsewhere.rglob("*") if path.is_dir())]
+    for path in read_only:
+        path.chmod(0o555)
+    try:
+        env = dict(os.environ, PYTHONPATH=str(site), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"))
+        env.pop("NUMBA_CACHE_DIR", None)
+        env.pop("NUMBOX_JIT_OPTIONS", None)
+        run = _run(env, tmp_path)
+        assert run.returncode == 0 and str(site) in run.stdout, run.stderr
+        assert run.stderr.count("compiles without a cache") == 1, run.stderr
+        assert "Set NUMBA_CACHE_DIR" in run.stderr
+    finally:
+        for path in read_only:
+            path.chmod(0o755)
+
+
+@needs_a_directory_it_cannot_write
+def test_a_frozen_application_is_told_its_user_cache_directory(tmp_path):
+    # With sys.frozen set numba caches a source that is not on disk in the
+    # user's cache directory, as a .zip; where that directory cannot be written
+    # the remedy is to make it so, not the sources or a .zip the archive text
+    # offered.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    assert compileall.compile_dir(str(site), quiet=1, legacy=True)
+    for source in list(site.rglob("*.py")):
+        source.unlink()
+    home = tmp_path / "home"
+    home.mkdir()
+    frozen = "import sys\nsys.frozen = True\n" + IMPORT_AND_USE
+    env = dict(os.environ, PYTHONPATH=str(site), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"))
+    env.pop("NUMBA_CACHE_DIR", None)
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    warm = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", "-c", frozen], capture_output=True,
+                          text=True, env=env, cwd=str(tmp_path))
+    assert warm.returncode == 0 and _index_files(home), warm.stderr
+    read_only = [home, *(path for path in home.rglob("*") if path.is_dir())]
+    for path in read_only:
+        path.chmod(0o555)
+    try:
+        run = subprocess.run([sys.executable, "-W", "always", "-c", frozen], capture_output=True, text=True,
+                             env=env, cwd=str(tmp_path))
+        assert run.returncode == 0 and str(site) in run.stdout, run.stderr
+        assert run.stderr.count("compiles without a cache") == 1, run.stderr
+        assert "frozen application" in run.stderr and "make that directory writable" in run.stderr, run.stderr
+        assert "install numbox with its source files" not in run.stderr
+    finally:
+        for path in read_only:
+            path.chmod(0o755)
+
+
+@needs_a_directory_it_cannot_write
 def test_a_read_only_install_warns_naming_numba_cache_dir_and_setting_it_caches(tmp_path):
     # The other way to have no cache location: the source is on disk, and
     # neither its directory nor the user's cache directory can be written.

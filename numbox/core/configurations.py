@@ -1,8 +1,10 @@
 import inspect
 import os
 import json
+import sys
 import types
 import warnings
+import zipfile
 
 from importlib.metadata import version
 
@@ -78,13 +80,41 @@ def _module_files():
     own = inspect.getfile(_cache_probe)
     yield own
     package = os.path.dirname(os.path.dirname(own))
-    for directory, subdirectories, files in os.walk(package):
+    if not os.path.isdir(package):
+        yield from _archived_module_files(own)
+        return
+    for directory, subdirectories, files in os.walk(package, followlinks=True):
         subdirectories[:] = sorted(name for name in subdirectories if name != "__pycache__")
         stems = sorted({name.rsplit(".", 1)[0] for name in files if name.endswith((".py", ".pyc"))})
         for index, stem in enumerate(stems):
             source = os.path.join(directory, stem + ".py")
             if index == 0 or not os.path.exists(source):
                 yield source
+
+
+def _archived_module_files(own):
+    """One module per directory of numbox inside the ``.zip`` that holds ``own``; nothing for any other archive.
+
+    numba caches a ``.zip`` per directory of it, each in a location of its own under the user's cache directory,
+    so the directories answer separately there too. Any other archive has no location at all, and the probe's
+    own file has already asked.
+    """
+    parts = own.split(os.sep)
+    depth = next((index for index, part in enumerate(parts) if part.endswith(".zip")), None)
+    if depth is None:
+        return
+    zip_path = os.sep.join(parts[:depth + 1])
+    if not zipfile.is_zipfile(zip_path):
+        return
+    package = "/".join(parts[depth + 1:-2])
+    with zipfile.ZipFile(zip_path) as archive:
+        names = sorted(name for name in archive.namelist() if name.startswith(package + "/") and name.endswith(".py"))
+    seen = set()
+    for name in names:
+        directory = name.rpartition("/")[0]
+        if directory not in seen:
+            seen.add(directory)
+            yield os.path.join(zip_path, *name.split("/"))
 
 
 def uncached_where_no_cache_can_be_written(options):
@@ -124,12 +154,14 @@ def uncached_where_no_cache_can_be_written(options):
     silence = "NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and silence this warning"
     if os.path.exists(py_file):
         remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
-    elif isinstance(failure, OSError):
-        # The one archive numba finds a location for is a .zip, in the
-        # user's cache directory, and the error names the directory.
+    elif isinstance(failure, OSError) or getattr(sys, "frozen", False):
+        # Two placements numba caches without the source on disk, a .zip and a
+        # frozen application, both in the user's cache directory; the error
+        # names the directory.
         remedy = (
-            "numba caches a .zip in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, "
-            f"because the source is not a file on disk: make that directory writable, or {silence}"
+            "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
+            f"has no effect here, because the source is not a file on disk: make that directory writable, or "
+            f"{silence}"
         )
     else:
         # Every location numba reads NUMBA_CACHE_DIR for needs the source

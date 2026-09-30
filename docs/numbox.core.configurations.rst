@@ -29,19 +29,22 @@ in-tree cache is a ``__pycache__`` beside each source, it runs the cache set-up 
 the writability check numba runs at the first save, compiling nothing, and where either fails for any
 directory numbox compiles without a cache and one ``RuntimeWarning`` names the remedy. Every directory
 counts, whether or not its modules cache anything, so the answer errs toward uncached, which is never wrong.
-An archive shows no directories to walk, so for a ``.zip`` the question is put for ``configurations.py``
-alone, and a location numba keeps per directory of the archive, in the user's cache directory, that has
-been made unwritable on its own is not seen; a cache directory with permissions of its own inside it is
-nothing numba or an installer makes.
+For a ``.zip``, which numba caches per directory of the archive, each in a location of its own under the
+user's cache directory, the archive's directories are listed and the question put for one module of each;
+any other archive has no location at all. A directory of the package reached through a symlink is walked
+like the rest. The check makes the cache directories it asks about, as numba would at the first decoration
+in each; with caching beside the sources that is an empty ``__pycache__`` per directory of the package.
 
 - For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory.
-- For a ``.zip`` it is the user's cache directory made writable: a ``.zip`` is the one archive numba caches,
-  from 0.61 on, and it caches it there, taking the directory without checking that it can be written. numba
-  reads ``NUMBA_CACHE_DIR`` only for a source file on disk, so the variable changes nothing for any archive.
+- For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
+  one archive numba caches, from 0.61 on, and it caches it there, taking the directory without checking that
+  it can be written; a frozen application (``sys.frozen``) is cached there too, its sources not being on disk.
+  numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk, so the variable changes nothing for either.
   A ``.zip`` whose cache directory holds every entry but can no longer be written falls back too, where numba
   alone would have loaded the entries: the writability check is the rule numba applies to every other
   placement.
-- For an ``.egg``, ``.whl`` or ``.pyz`` it is an unpacked install or a ``.zip``.
+- For an ``.egg``, ``.whl`` or ``.pyz``, or a ``.pyc``-only install, it is the source files on disk or a
+  ``.zip``.
 - ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in every case.
 
 A function numba cannot cache is compiled in every process that uses it, never wrong; that is the cost the
