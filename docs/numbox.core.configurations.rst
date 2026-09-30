@@ -41,6 +41,12 @@ without a cache and one ``RuntimeWarning`` names the remedy.
 A function numba cannot cache is compiled in every process that uses it, never wrong; that is the cost the
 warning reports. An error at decoration that is not the cache's is raised as it was.
 
+The code numbox generates at run time, ``make_structref``'s and the sqlite registrations', is anchored to a
+file under ``NUMBA_CACHE_DIR`` or the user's cache directory so that numba can cache it. That directory can be
+unwritable where the package's own functions cache, since those cache beside their sources, so each anchor
+makes the same check when it is written and the code it names compiles without a cache, after the same
+warning, where the check fails. See the cache-anchor section of :doc:`numbox.utils`.
+
 Modules
 ++++++++
 

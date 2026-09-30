@@ -226,3 +226,77 @@ def test_an_error_that_is_not_the_caches_is_raised_as_it_was(tmp_path):
                          capture_output=True, text=True, env=env, cwd=str(tmp_path))
     assert run.returncode != 0 and "a locator of another kind refused" in run.stderr, run.stderr
     assert "compiles without a cache" not in run.stderr
+
+
+# The code numbox generates at run time, each child importing the helpers of
+# the test module that exercises it.
+MAKE_A_STRUCTREF = (
+    "from numba.core.types import StructRef, float32\n"
+    "from numba.experimental.structref import register\n"
+    "from numbox.utils.highlevel import make_structref\n"
+    "@register\n"
+    "class TypeClass(StructRef):\n"
+    "    pass\n"
+    "Struct = make_structref('Struct', {'value': float32}, TypeClass)\n"
+    "assert Struct(2.5).value == 2.5\n"
+    "print('made')\n"
+)
+
+REGISTER_AN_AGGREGATE = (
+    "from test.core.test_sqlite_udf_helpers import (_open_memory, _make_table, _read1_int64, sum_state_type,\n"
+    "                                               sum_init, sum_step, sum_finalize)\n"
+    "from numbox.core.bindings.sqlite.udf_helpers import register_aggregate\n"
+    "from numbox.core.bindings.sqlite.conn import sqlite3_close\n"
+    "db = _open_memory()\n"
+    "_make_table(db, [1, 2, 3, 4, 5])\n"
+    "register_aggregate(db, 'my_sum', 1, sum_state_type, sum_init, sum_step, sum_finalize)\n"
+    "value, _ = _read1_int64(db, 'SELECT __cap(my_sum(v)) FROM t')\n"
+    "sqlite3_close(db)\n"
+    "assert value == 15, value\n"
+    "print('summed')\n"
+)
+
+REGISTER_A_TVF = (
+    "import numpy as np\n"
+    "from test.core.test_sqlite_tvf import _open, _select_int, _series, _OUT\n"
+    "from numbox.core.bindings.sqlite.tvf import register_tvf\n"
+    "from numbox.core.bindings.sqlite.conn import sqlite3_close\n"
+    "db = _open()\n"
+    "handle = register_tvf(db.value, 'series', (np.int64, np.int64), _OUT, _series)\n"
+    "rc, rows = _select_int(db, 'SELECT n FROM series(2, 5)')\n"
+    "assert rc == 0 and [row[0] for row in rows] == [2, 3, 4], (rc, rows)\n"
+    "sqlite3_close(db.value)\n"
+    "print('selected')\n"
+)
+
+
+@needs_a_directory_it_cannot_write
+@pytest.mark.parametrize("child, word", [
+    (MAKE_A_STRUCTREF, "made"), (REGISTER_AN_AGGREGATE, "summed"), (REGISTER_A_TVF, "selected"),
+], ids=["make_structref", "register_aggregate", "register_tvf"])
+def test_generated_code_compiles_uncached_where_its_anchor_cannot_be_written(tmp_path, child, word):
+    # The code numbox generates at run time is anchored to a file under
+    # NUMBA_CACHE_DIR or the user's cache directory, and the anchor was written
+    # whatever the cache option said. So with the tree writable, where the
+    # package's own functions cache, and the user's cache directory not,
+    # make_structref and the sqlite registrations died at the anchor's
+    # directory. The anchor is written to be cached from, and where it cannot
+    # be, the code compiles without a cache after a warning; NUMBA_CACHE_DIR at
+    # a writable directory cures it and holds the anchor.
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o555)
+    try:
+        env = dict(os.environ, PYTHONPATH=str(REPO), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"))
+        env.pop("NUMBA_CACHE_DIR", None)
+        env.pop("NUMBOX_JIT_OPTIONS", None)
+        run = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True,
+                             env=env, cwd=str(tmp_path))
+        assert run.returncode == 0 and word in run.stdout, run.stderr
+        assert "compiles without a cache" in run.stderr and "Set NUMBA_CACHE_DIR" in run.stderr, run.stderr
+        cured = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", "-c", child], capture_output=True,
+                               text=True, env=dict(env, NUMBA_CACHE_DIR=str(tmp_path / "cache")), cwd=str(tmp_path))
+        assert cured.returncode == 0 and word in cured.stdout, cured.stderr
+        assert list((tmp_path / "cache").rglob("*.py")), "no anchor under NUMBA_CACHE_DIR"
+    finally:
+        home.chmod(0o755)
