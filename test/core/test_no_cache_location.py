@@ -184,3 +184,24 @@ def test_a_read_only_install_warns_naming_numba_cache_dir_and_setting_it_caches(
         for path in read_only:
             path.chmod(0o755)
 
+
+ANOTHER_ERROR_AT_THE_CACHE_SET_UP = (
+    "import numba.core.caching as caching\n"
+    "def refuse(self, py_func):\n"
+    "    raise RuntimeError('a locator of another kind refused')\n"
+    "caching.CompileResultCacheImpl.__init__ = refuse\n"
+    "import numbox.core.configurations\n"
+)
+
+
+def test_an_error_that_is_not_the_caches_is_raised_as_it_was(tmp_path):
+    # The fallback answers two errors of numba's cache set-up, no locator and
+    # a directory that cannot be written. A RuntimeError of another kind at
+    # the same step, a locator of the user's own refusing, say, is not its to
+    # turn into an uncached import with a remedy that does not apply.
+    env = dict(os.environ, NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", ANOTHER_ERROR_AT_THE_CACHE_SET_UP],
+                         capture_output=True, text=True, env=env, cwd=str(tmp_path))
+    assert run.returncode != 0 and "a locator of another kind refused" in run.stderr, run.stderr
+    assert "compiles without a cache" not in run.stderr
