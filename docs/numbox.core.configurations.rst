@@ -61,8 +61,10 @@ those cache beside their sources, so each anchor puts the same question for its 
 and the code it names compiles without a cache where the answer is no, after a warning of the same shape (the
 builder's derive falls back without one, as it did). ``make_structref``, ``compile_kernel`` and the builder
 take jit options of the caller's, which the variable does not reach, so that warning's silence is ``cache``
-off in the options the code was given, or the variable where they are the package's. See the cache-anchor
-section of :doc:`numbox.utils`.
+off in the options the code was given, or the variable where they are the package's. ``make_graph``'s
+kernel is anchored to the builder's own file and cached beside it, so it puts the question for that file
+under the options it was given, and falls back the same way with the package's remedy for the placement.
+See the cache-anchor section of :doc:`numbox.utils`.
 
 Modules
 ++++++++

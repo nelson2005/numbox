@@ -200,7 +200,8 @@ too; a method's name is bounded in its thunk and its overload.
 ``compile_kernel``, the work builder's derives and the sqlite
 aggregate, window and table-valued function registrations anchor their
 generated code the same way and fall back the same way, the derive
-without a warning. See :doc:`numbox.core.configurations` for the
+without a warning; ``make_graph``'s kernel, anchored to the builder's
+own file, asks for that file under the options it was given. See :doc:`numbox.core.configurations` for the
 package-wide rule the anchors follow.
 
 See also ``numba.core.caching.Cache._index_key`` and
