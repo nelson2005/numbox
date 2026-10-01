@@ -322,12 +322,14 @@ def make_structref(
     -----------
     A content-addressed file under numba's cache directory, not
     ``highlevel.py``, is the ``compile()`` anchor of the generated
-    ``code_txt``. With caching off nothing is written and the path
-    serves as the code's filename. With caching on the anchor is written
-    and numba asked whether it can cache a function of it, which needs
-    the file on disk; where the write fails, or numba has no location
-    for the file, the struct compiles without a cache after a warning,
-    an anchor that was written left where it is. A method without a
+    ``code_txt``, written whenever it can be, since numba quotes the
+    source from it in its messages: with caching off a write that fails
+    is nothing, the path serving as the code's filename. With caching on
+    the anchor is written and numba asked whether it can cache a function
+    of it, which needs the file on disk; where the write fails, or numba
+    has no location for the file, the struct compiles without a cache
+    after a warning, an anchor that was written left where it is. A
+    method without a
     canonical fingerprint turns caching off before any of this, without
     a warning, as it always did. See the "Cache-anchor mechanism"
     section in ``docs/numbox.utils.rst``.
