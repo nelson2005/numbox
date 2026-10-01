@@ -12,6 +12,7 @@ from importlib.metadata import version
 import numba.experimental.function_type  # noqa: F401  registers `FunctionModel` against `FunctionType`
 from numba.core.caching import CompileResultCacheImpl
 from numba.core.datamodel import default_manager
+from numba.misc.appdirs import AppDirs
 from numba.core.types import FunctionType, void
 
 
@@ -192,12 +193,14 @@ def uncached_where_no_cache_can_be_written(options):
         remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
     elif isinstance(failure, OSError) or getattr(sys, "frozen", False):
         # Two placements numba caches without the source on disk, a .zip and a
-        # frozen application, both in the user's cache directory; the error
-        # names the directory.
+        # frozen application, both in the user's cache directory. The .zip's
+        # error names it; the frozen application's is the no-locator one, numba
+        # having passed the directory over on its error, so it is named here.
+        user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
         remedy = (
             "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
-            f"has no effect here, because the source is not a file on disk: make that directory writable, or "
-            f"{silence}"
+            f"has no effect here, because the source is not a file on disk: make that directory, "
+            f"{user_cache_dir}, writable, or {silence}"
         )
     else:
         # Every location numba reads NUMBA_CACHE_DIR for needs the source

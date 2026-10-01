@@ -9,6 +9,7 @@ is the one the subprocess sees and nothing else.
 import compileall
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -314,7 +315,7 @@ def test_a_zip_import_with_no_writable_user_cache_directory_compiles_uncached_wi
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
         assert "NUMBA_CACHE_DIR has no effect here" in run.stderr
         if _zip_is_cached():
-            assert "make that directory writable" in run.stderr and "import it from a .zip" not in run.stderr
+            assert "make that directory, " in run.stderr and "import it from a .zip" not in run.stderr
     finally:
         home.chmod(0o755)
 
@@ -370,7 +371,7 @@ def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_ta
         run = _run(env, tmp_path)
         assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
-        assert "make that directory writable" in run.stderr, run.stderr
+        assert "make that directory, " in run.stderr, run.stderr
     finally:
         locations[0].chmod(0o755)
 
@@ -431,7 +432,11 @@ def test_a_frozen_application_is_told_its_user_cache_directory(tmp_path):
                              env=env, cwd=str(tmp_path))
         assert run.returncode == 0 and str(site) in run.stdout, run.stderr
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
-        assert "frozen application" in run.stderr and "make that directory writable" in run.stderr, run.stderr
+        assert "frozen application" in run.stderr, run.stderr
+        # The frozen error is the no-locator one, which names no directory,
+        # so the warning names numba's: the user cache directory under the home.
+        named = re.search(r"make that directory, (.+?), writable", run.stderr)
+        assert named and Path(named.group(1)).is_relative_to(home), run.stderr
         assert "install numbox with its source files" not in run.stderr
     finally:
         for path in read_only:
