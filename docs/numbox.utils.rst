@@ -173,7 +173,9 @@ no, an unwritable user cache directory or ``NUMBA_CACHE_DIR`` with no
 other location left, the generated code compiles without a cache after
 one warning naming the remedy, instead of dying at the write or at
 numba's set-up. A path too long for the file system is one such
-failure, and the warning says so; with the names bounded, as below,
+failure, and the warning says so where the file system does (Windows
+reports a component too long as a syntax error, and the warning then
+offers the directory, quoting the error); with the names bounded, as below,
 the directory is the only part that can make it so, ``NUMBA_CACHE_DIR``
 or the user's cache directory, and ``NUMBA_CACHE_DIR`` at a shorter
 path moves the anchor out of either. The check writes names shorter

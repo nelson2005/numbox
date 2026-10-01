@@ -284,7 +284,8 @@ def test_a_pyc_in_a_zip_asks_by_the_file_it_was_compiled_from(tmp_path, tree):
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
     assert "source is not a file on disk" in run.stderr and "holding its source files" in run.stderr, run.stderr
     if _zip_is_cached():
-        assert (str(libm) if tree == "site" else "No zip file found") in run.stderr, run.stderr
+        # numba quotes the file with %r, which doubles Windows's backslashes.
+        assert (repr(str(libm)) if tree == "site" else "No zip file found") in run.stderr, run.stderr
 
 
 def test_a_stale_pyc_beside_its_source_in_a_zip_is_passed_over_as_zipimport_passes_it(tmp_path):
@@ -316,6 +317,9 @@ def test_a_stale_pyc_beside_its_source_in_a_zip_is_passed_over_as_zipimport_pass
     assert run.returncode == 0 and run.stdout.strip().endswith("libm.py"), run.stderr
     if _zip_is_cached():
         assert "compiles without a cache" not in run.stderr, run.stderr
+    if _zip_is_cached() and os.name != "nt":
+        # On Windows numba's user cache directory is the shell's known folder,
+        # which no variable moves under the home.
         assert _index_files(home), "libm's functions were not cached from the archive"
 
 
@@ -422,16 +426,19 @@ def test_a_zip_whose_configurations_runs_from_a_pyc_compiled_from_a_tree_still_o
         home.chmod(0o755)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="numba's user cache directory on Windows is not XDG_CACHE_HOME's")
+@pytest.mark.skipif(os.name == "nt", reason="numba's user cache directory on Windows is not under HOME")
 def test_a_zip_import_whose_user_cache_directory_is_too_long_is_told_so(tmp_path):
     # numba's location for a .zip is under the user's cache directory, and
     # with a component of that too long for the file system the location
     # cannot be made: the warning said to make it writable, which cannot help;
-    # the path is the thing, through XDG_CACHE_HOME or HOME.
+    # the path is the thing, through XDG_CACHE_HOME or HOME. The home itself
+    # carries the component, since macOS keeps the directory under
+    # ~/Library/Caches and reads no XDG_CACHE_HOME.
     archive = _archive(tmp_path / "numbox.zip")
-    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(tmp_path / "home"),
-               XDG_CACHE_HOME=str(tmp_path / ("c" * 300)), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
-    env.pop("NUMBOX_JIT_OPTIONS", None)
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(tmp_path / ("c" * 300)),
+               NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    for name in ("NUMBOX_JIT_OPTIONS", "XDG_CACHE_HOME"):
+        env.pop(name, None)
     run = _run(env, tmp_path)
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
@@ -462,17 +469,19 @@ def test_a_moved_zip_whose_pyc_members_name_its_old_path_compiles_uncached_and_i
         assert f"names {archive}" in run.stderr and "which is not there" in run.stderr, run.stderr
 
 
-@pytest.mark.skipif(os.name == "nt", reason="a symlink needs a privilege on Windows, and the cache directory is not XDG's")
+@pytest.mark.skipif(os.name == "nt", reason="a symlink needs a privilege on Windows; the cache directory is not under HOME")
 def test_a_zip_import_whose_user_cache_directory_hangs_off_a_dangling_link_is_told_to_make_it(tmp_path):
     # numba's location cannot be made under a link to nowhere, ENOENT, which is
     # the error a moved archive's stamp gives too: the warning blamed the
     # archive's .pyc members, of which this archive has none. The moved archive
-    # is the one whose path the module's code lies under.
+    # is the one whose path the module's code lies under. The home is the link,
+    # for macOS's ~/Library/Caches as for Linux's ~/.cache.
     archive = _archive(tmp_path / "numbox.zip")
     (tmp_path / "dangling").symlink_to(tmp_path / "nowhere", target_is_directory=True)
-    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(tmp_path / "home"),
-               XDG_CACHE_HOME=str(tmp_path / "dangling"), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
-    env.pop("NUMBOX_JIT_OPTIONS", None)
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(tmp_path / "dangling"),
+               NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    for name in ("NUMBOX_JIT_OPTIONS", "XDG_CACHE_HOME"):
+        env.pop(name, None)
     run = _run(env, tmp_path)
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
@@ -533,8 +542,9 @@ def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_ta
     assert warm.returncode == 0, warm.stderr
     if not _zip_is_cached():
         pytest.skip("numba caches a .zip from 0.61 on")
-    locations = [path for path in (home / "cache" / "numba").iterdir() if path.name.startswith("bindings_")]
-    assert len(locations) == 1, sorted(path.name for path in (home / "cache" / "numba").iterdir())
+    # Under XDG_CACHE_HOME on Linux, under Library/Caches on macOS.
+    locations = [path for path in home.rglob("bindings_*") if path.is_dir()]
+    assert len(locations) == 1, sorted(str(path.relative_to(home)) for path in home.rglob("*") if path.is_dir())
     locations[0].chmod(0o555)
     try:
         run = _run(env, tmp_path)
@@ -848,7 +858,10 @@ def test_generated_code_compiles_uncached_under_a_numba_cache_dir_numba_cannot_u
         remedy = "Set NUMBA_CACHE_DIR to a writable directory"
     else:
         cache_dir = tmp_path / ("c" * 300)
-        remedy = "too long for the file system: NUMBA_CACHE_DIR at a shorter path"
+        # Windows reports the component as a syntax error (WinError 123, EINVAL),
+        # naming no length, and the warning offers the directory then.
+        remedy = ("Set NUMBA_CACHE_DIR to a writable directory" if os.name == "nt"
+                  else "too long for the file system: NUMBA_CACHE_DIR at a shorter path")
     env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(cache_dir))
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True, env=env,
