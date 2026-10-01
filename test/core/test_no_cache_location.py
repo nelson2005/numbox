@@ -587,12 +587,13 @@ MAKE_A_LONG_NAMED_STRUCTREF = (
     "from numba.core.types import float32\n"
     "from numbox.utils.highlevel import make_structref\n"
     "from long_named_type_class import TypeClass\n"
-    "def double(self):\n"
+    "def dddddddddddddddddddddddddddddddddddddddd(self):\n"
     "    return self.value * 2\n"
     "name = NAME\n"
-    "Struct = make_structref(name, {'value': float32}, TypeClass, struct_methods={'double': double})\n"
+    "methods = {'d' * 40: dddddddddddddddddddddddddddddddddddddddd}\n"
+    "Struct = make_structref(name, {'value': float32}, TypeClass, struct_methods=methods)\n"
     "struct = Struct(1.5)\n"
-    "assert struct.value == 1.5 and struct.double() == 3.0\n"
+    "assert struct.value == 1.5 and getattr(struct, 'd' * 40)() == 3.0\n"
     "assert Struct.__name__ == name and Struct.__qualname__ == name and repr(struct).startswith(name + '(')\n"
     "print('made', len(name))\n"
 )
@@ -609,6 +610,10 @@ def test_a_struct_name_of_any_length_caches(tmp_path, name):
     # beyond, and the class takes its full name back once compiled. The file
     # system counts bytes, so a name of 40 accented characters (80 bytes) is
     # bounded, and 100 CJK characters (300 bytes) are cut by whole characters.
+    # The method's name is 40 bytes, the most a bounded name can be, so the
+    # thunk's files are the longest numba writes for any struct: under the
+    # 230 bytes bounded_stem promises, which leave room for numba's temporary
+    # name at the write.
     (tmp_path / "long_named_type_class.py").write_text(A_TYPE_CLASS)
     script = tmp_path / "make.py"
     script.write_text(MAKE_A_LONG_NAMED_STRUCTREF.replace("NAME", repr(name)), encoding="utf-8")
@@ -617,8 +622,9 @@ def test_a_struct_name_of_any_length_caches(tmp_path, name):
     run = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", str(script)],
                          capture_output=True, text=True, env=env, cwd=str(tmp_path))
     assert run.returncode == 0 and f"made {len(name)}" in run.stdout, run.stderr
+    cache_files = [path.name for path in (tmp_path / "cache").rglob("*.nb*")]
+    assert cache_files and all(len(each.encode()) < 230 for each in cache_files), cache_files
     indexes = _index_files(tmp_path / "cache")
-    assert indexes and all(len(index.encode()) <= 255 for index in indexes), indexes
     again = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", str(script)],
                            capture_output=True, text=True, env=env, cwd=str(tmp_path))
     assert again.returncode == 0, again.stderr
