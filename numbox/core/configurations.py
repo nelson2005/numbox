@@ -90,7 +90,15 @@ def _module_files():
     if not os.path.isdir(package):
         yield from _archived_module_files(__file__)
         return
+    walked = set()
     for directory, subdirectories, files in os.walk(package, followlinks=True):
+        # A symlink is followed, and a directory reached twice through links,
+        # a cycle among them, is walked once.
+        real = os.path.realpath(directory)
+        if real in walked:
+            subdirectories[:] = []
+            continue
+        walked.add(real)
         subdirectories[:] = sorted(name for name in subdirectories if name != "__pycache__")
         stems = sorted({name.rsplit(".", 1)[0] for name in files if name.endswith((".py", ".pyc"))})
         sources = [os.path.join(directory, stem + ".py") for stem in stems]

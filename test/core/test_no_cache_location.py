@@ -468,6 +468,23 @@ def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_ta
         locations[0].chmod(0o755)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="a symlink needs a privilege on Windows")
+def test_symlinks_that_cycle_inside_the_package_are_walked_once(tmp_path):
+    # Two links pointing up the package, followed with no memory of where the
+    # walk had been, gave an exponential number of paths before the file
+    # system's link limit, and the import did not finish; the base imported at
+    # once. Each real directory is walked once.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    (site / "numbox" / "core" / "up").symlink_to("..", target_is_directory=True)
+    (site / "numbox" / "utils" / "up").symlink_to("..", target_is_directory=True)
+    env = dict(os.environ, PYTHONPATH=str(site), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", "-c", IMPORT_LIBM], capture_output=True,
+                         text=True, env=env, cwd=str(tmp_path), timeout=120)
+    assert run.returncode == 0 and str(site) in run.stdout, run.stderr
+
+
 @needs_a_directory_it_cannot_write
 def test_a_symlinked_directory_of_the_package_answers_too(tmp_path):
     # A directory of the package reached through a symlink was not walked, so a
