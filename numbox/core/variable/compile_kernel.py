@@ -906,11 +906,17 @@ def compile_kernel(
         output is requested once -- the return tuple is positional, so a
         repeat carries no information).
     :param jit_options: merged over numbox's defaults
-        (`NUMBOX_JIT_OPTIONS` env) and passed to @njit. All options except
-        `cache` participate in the content-addressed digest.
+        (`NUMBOX_JIT_OPTIONS` env, with `cache` off where numba can write no
+        cache for numbox's own files, see `numbox.core.configurations`) and
+        passed to @njit. All options except `cache` participate in the
+        content-addressed digest.
     :param cache: tri-state. `None` (default) defers to
-        `jit_options["cache"]`, then the `NUMBOX_JIT_OPTIONS` env default,
-        then `True`. An explicit `True`/`False` wins over both.
+        `jit_options["cache"]`, then numbox's default, the
+        `NUMBOX_JIT_OPTIONS` env value or `True` unless numba can write no
+        cache for numbox's own files, where it is `False` even though the
+        kernel's own anchor might be cacheable. An explicit `True`/`False`
+        wins over both, and the anchor's own check still turns caching off
+        where that anchor cannot be cached.
 
     Error timing: structural problems raise here (unknown or malformed
     `required` entries, non-callable formulas, arity mismatches against the
