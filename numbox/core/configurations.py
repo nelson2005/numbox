@@ -122,7 +122,8 @@ def _archived_module_files(own):
             if name.endswith(".pyc"):
                 data = archive.read(name)
                 if data[:4] == importlib.util.MAGIC_NUMBER:
-                    yield marshal.loads(data[16:]).co_filename
+                    # The bytes zipimport unmarshals to run this module.
+                    yield marshal.loads(data[16:]).co_filename  # nosec B302
             elif directory not in seen:
                 seen.add(directory)
                 yield os.path.join(zip_path, *name.split("/"))
