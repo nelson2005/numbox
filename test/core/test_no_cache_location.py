@@ -200,6 +200,36 @@ def _zip_is_cached():
     return tuple(int(part) for part in numba.__version__.split(".")[:2]) >= (0, 61)
 
 
+def test_a_pyc_in_a_zip_asks_by_the_file_it_was_compiled_from(tmp_path):
+    # zipimport takes a .pyc before the .py beside it and keeps the file it was
+    # compiled from on its code, which is what numba looks up for the module's
+    # functions; here that file is gone. A listing of the archive's .py members
+    # said every directory caches, from numba 0.61 on, and libm's first
+    # binding died at numba's set-up.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    libm = site / "numbox" / "core" / "bindings" / "libm.py"
+    assert compileall.compile_file(str(libm), quiet=1, legacy=True)
+    libm.unlink()
+    archive = tmp_path / "numbox.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for member in sorted(path for path in site.rglob("*") if path.suffix in (".py", ".pyc")):
+            zipped.write(member, str(member.relative_to(site)))
+    shutil.rmtree(site)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"),
+               NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
+                         env=env, cwd=str(tmp_path))
+    assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+    assert run.stderr.count("compiles without a cache") == 1, run.stderr
+    assert "source is not a file on disk" in run.stderr and "holding its source files" in run.stderr, run.stderr
+    if _zip_is_cached():
+        assert str(libm) in run.stderr, run.stderr
+
+
 @needs_a_directory_it_cannot_write
 def test_a_zip_import_with_no_writable_user_cache_directory_compiles_uncached_with_a_warning(tmp_path):
     # numba takes the user's cache directory for a .zip without checking that

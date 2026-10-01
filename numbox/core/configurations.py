@@ -1,6 +1,8 @@
+import importlib.util
 import inspect
 import os
 import json
+import marshal
 import sys
 import types
 import warnings
@@ -93,11 +95,14 @@ def _module_files():
 
 
 def _archived_module_files(own):
-    """One module per directory of numbox inside the ``.zip`` that holds ``own``; nothing for any other archive.
+    """One module per directory of numbox inside the ``.zip`` that holds ``own``, and the file each ``.pyc`` in it
+    was compiled from; nothing for any other archive.
 
     numba caches a ``.zip`` per directory of it, each in a location of its own under the user's cache directory,
-    so the directories answer separately there too. Any other archive has no location at all, and the probe's
-    own file has already asked.
+    so the directories answer separately there too. A ``.pyc`` imported from the archive, which zipimport takes
+    before the ``.py`` beside it, keeps the file it was compiled from as its code's file, and that is what numba
+    looks up for its functions: the archive's own path for the module is not; so a ``.pyc`` member asks by that
+    file, there or gone. Any other archive has no location at all, and the probe's own file has already asked.
     """
     parts = own.split(os.sep)
     depth = next((index for index, part in enumerate(parts) if part.endswith(".zip")), None)
@@ -108,13 +113,19 @@ def _archived_module_files(own):
         return
     package = "/".join(parts[depth + 1:-2])
     with zipfile.ZipFile(zip_path) as archive:
-        names = sorted(name for name in archive.namelist() if name.startswith(package + "/") and name.endswith(".py"))
-    seen = set()
-    for name in names:
-        directory = name.rpartition("/")[0]
-        if directory not in seen:
-            seen.add(directory)
-            yield os.path.join(zip_path, *name.split("/"))
+        names = sorted(name for name in archive.namelist()
+                       if name.startswith(package + "/") and name.endswith((".py", ".pyc"))
+                       and "/__pycache__/" not in name)
+        seen = set()
+        for name in names:
+            directory = name.rpartition("/")[0]
+            if name.endswith(".pyc"):
+                data = archive.read(name)
+                if data[:4] == importlib.util.MAGIC_NUMBER:
+                    yield marshal.loads(data[16:]).co_filename
+            elif directory not in seen:
+                seen.add(directory)
+                yield os.path.join(zip_path, *name.split("/"))
 
 
 def uncached_where_no_cache_can_be_written(options):
@@ -131,9 +142,10 @@ def uncached_where_no_cache_can_be_written(options):
     numba can cache no function of one of those files the options come back with ``cache`` off and one warning
     names the remedy: ``NUMBA_CACHE_DIR`` for a source file on disk; for a ``.zip``, the user's cache directory
     made writable, since numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk; for any other archive,
-    or a ``.pyc``-only install, the source files on disk or a ``.zip``, which numba 0.61 and later cache in the
-    user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the
-    warning. An error that is not the cache's, as ``is_a_cache_error`` draws the line, is raised as it was.
+    or a ``.pyc``-only install, or a ``.pyc`` in a ``.zip``, the source files on disk or a ``.zip`` holding them,
+    which numba 0.61 and later cache in the user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'``
+    turns caching off and silences the warning. An error that is not the cache's, as ``is_a_cache_error`` draws
+    the line, is raised as it was.
 
     A ``.zip`` whose cache directory holds every entry but can no longer be written takes the fallback too, where
     numba alone would have loaded the entries: the writability check is the rule numba applies to every other
@@ -169,7 +181,8 @@ def uncached_where_no_cache_can_be_written(options):
         remedy = (
             "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, "
             "install numbox with its source files on disk, unpacked from any archive, or import it from a "
-            f".zip, which numba 0.61 and later cache in the user's cache directory. Set {silence}"
+            f".zip holding its source files, which numba 0.61 and later cache in the user's cache directory. "
+            f"Set {silence}"
         )
     warnings.warn(
         f"numba cannot cache numbox here ({failure}); it compiles without a cache. {remedy}",
