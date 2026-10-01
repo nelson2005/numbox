@@ -47,14 +47,18 @@ def check_cache_location(py_file):
     """Raise as numba would where a function whose source is ``py_file`` cannot be cached; else return.
 
     The question is put the way numba puts it: the cache set-up that decoration runs, which picks the location
-    for the file or raises ``RuntimeError`` with no locator, then the writability check, which decoration runs
-    for every location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe's code is
-    given ``py_file`` as its file, which is all a locator reads of it. Nothing is compiled, and nothing is
-    written but the cache directory itself. An ``OSError`` names the location numba picked.
+    for the file or raises ``RuntimeError`` with no locator, then the source's stamp, which decoration reads
+    and which stats the archive for a ``.zip``, then the writability check, which decoration runs for every
+    location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe's code is given
+    ``py_file`` as its file, which is all a locator reads of it. Nothing is compiled, and nothing is written
+    but the cache directory itself. An ``OSError`` from the check names the location numba picked.
     """
     code = _cache_probe.__code__.replace(co_filename=os.fspath(py_file))
     probe = types.FunctionType(code, _cache_probe.__globals__, _cache_probe.__name__)
     locator = CompileResultCacheImpl(probe).locator
+    # numba reads the source's stamp at decoration too, the archive's for a
+    # .zip, which is not there where the code names an archive since moved.
+    locator.get_source_stamp()
     try:
         locator.ensure_cache_path()
     except OSError as error:
@@ -214,6 +218,14 @@ def cache_remedy(py_file, failure, silence):
         # The .zip's error names the location numba picked, which is under
         # the user's cache directory; the frozen application's names nothing.
         location = getattr(failure, "filename", None) or AppDirs(appname="numba", appauthor=False).user_cache_dir
+        if isinstance(failure, FileNotFoundError):
+            # The stamp numba reads at decoration, of the archive the code
+            # names: .pyc members compiled to name an archive since moved.
+            return (
+                f"the module's code names {failure.filename}, which is not there: its .pyc was compiled to name "
+                "that path, so compile the archive's .pyc members to name its path now, or ship its source files; "
+                f"or {silence}"
+            )
         if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
             return (
                 "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "

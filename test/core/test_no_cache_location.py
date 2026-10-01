@@ -440,6 +440,28 @@ def test_a_zip_import_whose_user_cache_directory_is_too_long_is_told_so(tmp_path
         assert "make that directory, " not in run.stderr, run.stderr
 
 
+def test_a_moved_zip_whose_pyc_members_name_its_old_path_compiles_uncached_and_is_told_why(tmp_path):
+    # numba reads the source's stamp at decoration, the archive's for a .zip,
+    # by the path the module's code names: .pyc members compiled to name the
+    # archive, then the archive moved, name a path that is not there, and the
+    # import died there with FileNotFoundError past a check that read no stamp.
+    (tmp_path / "build").mkdir()
+    archive = _archive(tmp_path / "build" / "numbox.zip", ("numbox/core/bindings",))
+    moved = tmp_path / "numbox.zip"
+    archive.rename(moved)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, PYTHONPATH=str(moved), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"),
+               NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
+                         env=env, cwd=str(tmp_path))
+    assert run.returncode == 0 and str(moved) in run.stdout, run.stderr
+    assert run.stderr.count("compiles without a cache") == 1, run.stderr
+    if _zip_is_cached():
+        assert f"names {archive}" in run.stderr and "which is not there" in run.stderr, run.stderr
+
+
 @needs_a_directory_it_cannot_write
 def test_a_zip_import_whose_cache_directory_stopped_being_writable_compiles_uncached(tmp_path):
     # Every entry is in the user's cache directory from an earlier import, and
