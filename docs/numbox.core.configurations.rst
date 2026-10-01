@@ -32,9 +32,10 @@ directory numbox compiles without a cache and one ``RuntimeWarning`` names the r
 counts, whether or not its modules cache anything, so the answer errs toward uncached, which is never wrong.
 For a ``.zip``, which numba caches per directory of the archive, each in a location of its own under the
 user's cache directory, the archive's directories are listed and the question put for one module of each; a
-``.pyc`` in the archive, which zipimport takes before the ``.py`` beside it and whose code keeps the file it was
-compiled from, is asked by that file, since that is what numba looks up for it, on disk or gone; any other
-archive has no location at all. A directory of the package reached through a symlink is walked
+``.pyc`` in the archive that zipimport would run, which it takes before the ``.py`` beside it unless it is
+stale against it or of another interpreter, and whose code keeps the file it was compiled from, is asked by
+that file, since that is what numba looks up for it, on disk or gone, and one zipimport would pass over is
+passed over; any other archive has no location at all. A directory of the package reached through a symlink is walked
 like the rest. The check makes the cache directories it asks about, as numba would at the first decoration
 in each; with caching beside the sources that is an empty ``__pycache__`` per directory of the package.
 

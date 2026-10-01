@@ -246,6 +246,36 @@ def test_a_pyc_in_a_zip_asks_by_the_file_it_was_compiled_from(tmp_path):
         assert str(libm) in run.stderr, run.stderr
 
 
+def test_a_stale_pyc_beside_its_source_in_a_zip_is_passed_over_as_zipimport_passes_it(tmp_path):
+    # zipimport runs the .py where the .pyc beside it is stale against it, by
+    # size or time, so the module's functions are cached from the archive like
+    # the rest; a probe that asked by the stale .pyc's compile-time file, gone
+    # here, turned caching off for the package and offered a .zip holding the
+    # sources, which this is.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    libm = site / "numbox" / "core" / "bindings" / "libm.py"
+    assert compileall.compile_file(str(libm), quiet=1, legacy=True)
+    with libm.open("a") as source:
+        source.write("\n# a line after the .pyc was compiled\n")
+    archive = tmp_path / "numbox.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for member in sorted(path for path in site.rglob("*") if path.suffix in (".py", ".pyc")):
+            zipped.write(member, str(member.relative_to(site)))
+    shutil.rmtree(site)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"),
+               NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
+                         env=env, cwd=str(tmp_path))
+    assert run.returncode == 0 and run.stdout.strip().endswith("libm.py"), run.stderr
+    if _zip_is_cached():
+        assert "compiles without a cache" not in run.stderr, run.stderr
+        assert _index_files(home), "libm's functions were not cached from the archive"
+
+
 def test_a_stray_pyc_in_a_zip_that_nothing_imports_is_passed_over(tmp_path):
     # A .pyc member of this interpreter's magic that zipimport could not run,
     # truncated here, and that no import reaches: the probe's unmarshal of it

@@ -1,12 +1,11 @@
-import importlib.util
 import inspect
 import os
 import json
-import marshal
 import sys
 import types
 import warnings
 import zipfile
+import zipimport
 
 from importlib.metadata import version
 
@@ -99,13 +98,13 @@ def _module_files():
 
 def _archived_module_files(own):
     """One module per directory of numbox inside the ``.zip`` that holds ``own``, and the file each ``.pyc`` in it
-    was compiled from; nothing for any other archive.
+    that zipimport would run was compiled from; nothing for any other archive.
 
     numba caches a ``.zip`` per directory of it, each in a location of its own under the user's cache directory,
-    so the directories answer separately there too. A ``.pyc`` imported from the archive, which zipimport takes
-    before the ``.py`` beside it, keeps the file it was compiled from as its code's file, and that is what numba
-    looks up for its functions: the archive's own path for the module is not; so a ``.pyc`` member asks by that
-    file, there or gone. Any other archive has no location at all, and the probe's own file has already asked.
+    so the directories answer separately there too. A ``.pyc`` run from the archive keeps the file it was compiled
+    from as its code's file, and that is what numba looks up for its functions, the archive's own path for the
+    module is not; so such a member asks by that file, there or gone. Any other archive has no location at all,
+    and the probe's own file has already asked.
     """
     parts = own.split(os.sep)
     depth = next((index for index, part in enumerate(parts) if part.endswith(".zip")), None)
@@ -119,31 +118,34 @@ def _archived_module_files(own):
         names = sorted(name for name in archive.namelist()
                        if name.startswith(package + "/") and name.endswith((".py", ".pyc"))
                        and "/__pycache__/" not in name)
-        seen = set()
-        for name in names:
-            directory = name.rpartition("/")[0]
-            if name.endswith(".pyc"):
-                compiled_from = _compiled_from(archive.read(name))
-                if compiled_from is not None:
-                    yield compiled_from
-            elif directory not in seen:
-                seen.add(directory)
-                yield os.path.join(zip_path, *name.split("/"))
+    seen = set()
+    for name in names:
+        directory, _, file = name.rpartition("/")
+        if file.endswith(".pyc"):
+            compiled_from = _compiled_from(zip_path, directory, file[:-4])
+            if compiled_from is not None:
+                yield compiled_from
+        elif directory not in seen:
+            seen.add(directory)
+            yield os.path.join(zip_path, *name.split("/"))
 
 
-def _compiled_from(data):
-    """The file the ``.pyc`` bytes ``data`` were compiled from; None where this interpreter would not run them.
+def _compiled_from(zip_path, directory, stem):
+    """The file the ``.pyc`` zipimport runs module ``stem`` of ``directory`` from was compiled from, or None.
 
-    zipimport runs a ``.pyc`` of its own magic number only, and dies on one it cannot unmarshal when the module
-    is imported; a stray one is nobody's, and asks nothing.
+    zipimport decides: it runs the ``.pyc`` before the ``.py`` beside it, but not one of another interpreter's
+    magic number, nor one stale against that ``.py``, which it passes over for the source, nor one it cannot
+    unmarshal, and the module's import fails with it; so its answer, its code, is read, and a ``.py`` it
+    compiled, whose code names the archive, or no code at all, leaves nothing to ask.
     """
-    if data[:4] != importlib.util.MAGIC_NUMBER:
-        return None
+    if stem == "__init__":
+        directory, _, stem = directory.rpartition("/")
+    importer = zipimport.zipimporter(os.path.join(zip_path, *directory.split("/")))
     try:
-        code = marshal.loads(data[16:])  # nosec B302 - the bytes zipimport unmarshals to run the module
-    except (EOFError, ValueError, TypeError):
+        code = importer.get_code(stem)
+    except (ImportError, EOFError, ValueError, TypeError):
         return None
-    return code.co_filename if isinstance(code, types.CodeType) else None
+    return None if code.co_filename.startswith(zip_path) else code.co_filename
 
 
 def uncached_where_no_cache_can_be_written(options):
