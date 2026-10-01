@@ -420,6 +420,24 @@ def test_a_zip_whose_configurations_runs_from_a_pyc_compiled_from_a_tree_still_o
         home.chmod(0o755)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="numba's user cache directory on Windows is not XDG_CACHE_HOME's")
+def test_a_zip_import_whose_user_cache_directory_is_too_long_is_told_so(tmp_path):
+    # numba's location for a .zip is under the user's cache directory, and
+    # with a component of that too long for the file system the location
+    # cannot be made: the warning said to make it writable, which cannot help;
+    # the path is the thing, through XDG_CACHE_HOME or HOME.
+    archive = _archive(tmp_path / "numbox.zip")
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(tmp_path / "home"),
+               XDG_CACHE_HOME=str(tmp_path / ("c" * 300)), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = _run(env, tmp_path)
+    assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+    assert run.stderr.count("compiles without a cache") == 1, run.stderr
+    if _zip_is_cached():
+        assert "too long for the file system, so put that directory" in run.stderr, run.stderr
+        assert "make that directory, " not in run.stderr, run.stderr
+
+
 @needs_a_directory_it_cannot_write
 def test_a_zip_import_whose_cache_directory_stopped_being_writable_compiles_uncached(tmp_path):
     # Every entry is in the user's cache directory from an earlier import, and

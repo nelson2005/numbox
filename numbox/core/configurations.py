@@ -1,3 +1,4 @@
+import errno
 import importlib.machinery
 import inspect
 import os
@@ -201,14 +202,25 @@ def cache_remedy(py_file, failure, silence):
     the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
     application's is the no-locator one, numba having passed the location over on its error, so the user's
     cache directory is named. For any other archive, or a module without its source, the source files on disk
-    or a ``.zip`` holding them.
+    or a ``.zip`` holding them. A ``.zip``'s location too long for the file system is the user's cache
+    directory's doing, with the names numba makes bounded, and the remedy is that directory at a shorter
+    path, through ``XDG_CACHE_HOME`` or ``HOME``.
     """
     if os.path.exists(py_file):
+        # numba itself passes a location it cannot make or write over, for a
+        # source on disk, so the error here is the no-locator one.
         return f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
     if isinstance(failure, OSError) or getattr(sys, "frozen", False):
         # The .zip's error names the location numba picked, which is under
         # the user's cache directory; the frozen application's names nothing.
         location = getattr(failure, "filename", None) or AppDirs(appname="numba", appauthor=False).user_cache_dir
+        if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
+            return (
+                "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
+                f"has no effect here, because the source is not a file on disk: the path is too long for the file "
+                f"system, so put that directory, {location}, at a shorter path, through XDG_CACHE_HOME or HOME, or "
+                f"{silence}"
+            )
         return (
             "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
             f"has no effect here, because the source is not a file on disk: make that directory, {location}, "
