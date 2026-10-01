@@ -1,3 +1,4 @@
+import importlib.machinery
 import inspect
 import os
 import json
@@ -77,12 +78,12 @@ def _module_files():
     can be writable while another is not: one module of each directory stands for the directory, whether or not
     that directory's modules cache anything, so a directory numba cannot cache in turns caching off for the
     package even where every cached function's own directory is fine; the answer errs toward uncached, which
-    is never wrong. And numba finds a location for a module by its source, so a module that survives as
-    ``.pyc`` alone, beside sourced ones, answers for itself: it is named by the ``.py`` that is gone, which is
-    what numba looks up. The package is found by this module's ``__file__``, which is where it was imported
-    from, an archive or a directory: its code's file, which numba looks up for the probe and which is asked
-    first, can be elsewhere, the source a ``.pyc`` was compiled from. An archive shows no directories to walk,
-    so there its members are listed instead.
+    is never wrong. And numba finds a location for a module by its code's file, so a module that survives as
+    ``.pyc`` alone, beside sourced ones, answers for itself, by the file it was compiled from, which its code
+    keeps: the ``.py`` that is gone where it was compiled in place, or a tree elsewhere, on disk or not. The
+    package is found by this module's ``__file__``, which is where it was imported from, an archive or a
+    directory: its code's file, which numba looks up for the probe and which is asked first, can be elsewhere
+    the same way. An archive shows no directories to walk, so there its members are listed instead.
     """
     yield inspect.getfile(_cache_probe)
     package = os.path.dirname(os.path.dirname(__file__))
@@ -92,10 +93,29 @@ def _module_files():
     for directory, subdirectories, files in os.walk(package, followlinks=True):
         subdirectories[:] = sorted(name for name in subdirectories if name != "__pycache__")
         stems = sorted({name.rsplit(".", 1)[0] for name in files if name.endswith((".py", ".pyc"))})
-        for index, stem in enumerate(stems):
-            source = os.path.join(directory, stem + ".py")
-            if index == 0 or not os.path.exists(source):
-                yield source
+        sources = [os.path.join(directory, stem + ".py") for stem in stems]
+        on_disk = [source for source in sources if os.path.exists(source)]
+        if on_disk:
+            yield on_disk[0]
+        for source in sources:
+            if source not in on_disk:
+                compiled_from = _sourceless_compiled_from(source[:-3] + ".pyc")
+                if compiled_from is not None:
+                    yield compiled_from
+
+
+def _sourceless_compiled_from(pyc_path):
+    """The file the ``.pyc`` at ``pyc_path``, alone beside sourced modules, was compiled from, or None.
+
+    The import system runs such a ``.pyc`` through its sourceless loader, which keeps the compile-time file on
+    the code, and fails the module's import on one it cannot run, of another interpreter's magic number or
+    unreadable; so the loader's answer is read, and none leaves nothing to ask.
+    """
+    loader = importlib.machinery.SourcelessFileLoader(os.path.basename(pyc_path)[:-4], pyc_path)
+    try:
+        return loader.get_code(loader.name).co_filename
+    except Exception:
+        return None
 
 
 def _archived_module_files(own):

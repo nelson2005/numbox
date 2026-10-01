@@ -172,6 +172,29 @@ def test_a_module_that_survives_as_pyc_alone_beside_sourced_ones_takes_the_fallb
     assert "source is not a file on disk" in run.stderr and "Set NUMBA_CACHE_DIR" not in run.stderr
 
 
+def test_a_pyc_alone_compiled_from_a_tree_still_on_disk_caches_by_that_tree(tmp_path):
+    # The sourceless loader keeps the file a .pyc was compiled from on its code,
+    # and numba looks that up: here a tree elsewhere, still on disk, so libm's
+    # functions cache under NUMBA_CACHE_DIR by it. A probe that asked by the .py
+    # beside the .pyc, gone, turned caching off for the package and said the
+    # source is not on disk.
+    built = tmp_path / "build" / "numbox" / "core" / "bindings" / "libm.py"
+    built.parent.mkdir(parents=True)
+    shutil.copy(REPO / "numbox" / "core" / "bindings" / "libm.py", built)
+    assert compileall.compile_file(str(built), quiet=1, legacy=True)
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    libm = site / "numbox" / "core" / "bindings" / "libm.py"
+    libm.unlink()
+    shutil.copy(built.with_suffix(".pyc"), libm.with_suffix(".pyc"))
+    env = dict(os.environ, PYTHONPATH=str(site), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", "-c", IMPORT_LIBM], capture_output=True,
+                         text=True, env=env, cwd=str(tmp_path))
+    assert run.returncode == 0 and str(site) in run.stdout, run.stderr
+    assert any(name.startswith("libm.") for name in _index_files(tmp_path / "cache")), "libm did not cache"
+
+
 def test_a_directory_whose_modules_survive_as_pyc_alone_takes_the_fallback(tmp_path):
     # The rest of the package keeps its sources, so its directories pass; the
     # one directory numba cannot cache from has no .py to name, and a walk that

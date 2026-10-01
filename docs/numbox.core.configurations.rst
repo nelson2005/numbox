@@ -30,6 +30,8 @@ in-tree cache is a ``__pycache__`` beside each source, it runs the cache set-up 
 the writability check numba runs at the first save, compiling nothing, and where either fails for any
 directory numbox compiles without a cache and one ``RuntimeWarning`` names the remedy. Every directory
 counts, whether or not its modules cache anything, so the answer errs toward uncached, which is never wrong.
+A module that survives as ``.pyc`` alone is asked by the file it was compiled from, which its code keeps and
+numba looks up: the ``.py`` that is gone where it was compiled in place, or a tree elsewhere, on disk or not.
 For a ``.zip``, which numba caches per directory of the archive, each in a location of its own under the
 user's cache directory, the archive's directories are listed and the question put for one module of each; a
 ``.pyc`` in the archive that zipimport would run, which it takes before the ``.py`` beside it unless it is
