@@ -31,6 +31,9 @@ def get_jit_options():
         # Its keys go to njit as keyword arguments, and the fallback below
         # reads "cache" from it, so a value of another shape stops here, named.
         raise ValueError('NUMBOX_JIT_OPTIONS must be a JSON object, e.g. {"cache": false}')
+    if "cache" in as_json and not isinstance(as_json["cache"], bool):
+        # numba reads the option's truth, so the string "false" turned caching on.
+        raise ValueError('NUMBOX_JIT_OPTIONS "cache" must be true or false, e.g. {"cache": false}')
     return as_json
 
 
