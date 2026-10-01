@@ -121,8 +121,9 @@ def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
     )
     if isinstance(error, OSError) and error.errno == errno.ENAMETOOLONG:
         # The names numbox makes are bounded, so the long part is the
-        # directory: NUMBA_CACHE_DIR or the user's cache directory.
-        remedy = f"The path is too long for the file system: a shorter NUMBA_CACHE_DIR, or {silence}"
+        # directory, NUMBA_CACHE_DIR or the user's cache directory; a short
+        # NUMBA_CACHE_DIR moves the anchor out of either.
+        remedy = f"The path is too long for the file system: NUMBA_CACHE_DIR at a shorter path, or {silence}"
     else:
         remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
     warnings.warn(

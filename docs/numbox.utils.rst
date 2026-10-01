@@ -171,12 +171,13 @@ other location left, the generated code compiles without a cache after
 one warning naming the remedy, instead of dying at the write or at
 numba's set-up. A path too long for the file system is one such
 failure, and the warning says so; with the names bounded, as below,
-``NUMBA_CACHE_DIR`` is the only part that can make it so. The check
-writes names shorter than the longest numba writes, so a
-``NUMBA_CACHE_DIR`` within about 230 bytes of the path limit, 4096 on
-Linux, passes it and overflows at numba's first save instead, where
-numba's own error names the length; a shorter ``NUMBA_CACHE_DIR`` is
-the remedy there too.
+the directory is the only part that can make it so, ``NUMBA_CACHE_DIR``
+or the user's cache directory, and ``NUMBA_CACHE_DIR`` at a shorter
+path moves the anchor out of either. The check writes names shorter
+than the longest numba writes, so a directory within about 230 bytes
+of the path limit, 4096 on Linux, passes it and overflows at numba's
+first save instead, where numba's own error names the length; the
+remedy is the same.
 
 The anchor's name carries the struct's or the function's, and numba
 names its cache files after the anchor and the qualified name of the

@@ -610,7 +610,7 @@ def test_generated_code_compiles_uncached_under_a_numba_cache_dir_numba_cannot_u
         remedy = "Set NUMBA_CACHE_DIR to a writable directory"
     else:
         cache_dir = tmp_path / ("c" * 300)
-        remedy = "too long for the file system: a shorter NUMBA_CACHE_DIR"
+        remedy = "too long for the file system: NUMBA_CACHE_DIR at a shorter path"
     env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(cache_dir))
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True, env=env,
@@ -708,20 +708,25 @@ def test_a_struct_name_of_any_length_caches(tmp_path, name):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="a path of 4096 bytes and a name of 255 are Linux's limits")
-def test_an_anchor_path_too_long_for_the_file_system_compiles_uncached_and_the_warning_says_so(tmp_path):
-    # A NUMBA_CACHE_DIR deep enough that the anchor's directory fits the path
-    # limit and the anchor's own name, of fixed length, does not. There is no
-    # cache here, and the warning names the length rather than offering a
-    # writable directory, which this one is.
+@pytest.mark.parametrize("directory", ["NUMBA_CACHE_DIR", "HOME"])
+def test_an_anchor_path_too_long_for_the_file_system_compiles_uncached_and_the_warning_says_so(tmp_path, directory):
+    # A cache directory deep enough that the anchor's directory fits the path
+    # limit and the anchor's own name, of fixed length, does not: NUMBA_CACHE_DIR,
+    # or the user's cache directory under a deep home, which the warning met
+    # with "a shorter NUMBA_CACHE_DIR" where none was set. There is no cache
+    # here, and the warning names the length rather than offering a writable
+    # directory, which this one is; NUMBA_CACHE_DIR at a short path cures both.
     deep = tmp_path
     while len(str(deep)) < 4096 - 90:
         deep = deep / ("d" * 200)
     deep = deep / ("d" * (4096 - 50 - len(str(deep))))
     deep.mkdir(parents=True)
-    env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(deep))
-    env.pop("NUMBOX_JIT_OPTIONS", None)
+    env = dict(os.environ, PYTHONPATH=str(REPO))
+    for name in ("NUMBOX_JIT_OPTIONS", "NUMBA_CACHE_DIR", "XDG_CACHE_HOME"):
+        env.pop(name, None)
+    env[directory] = str(deep)
     run = subprocess.run([sys.executable, "-W", "always", "-c", MAKE_A_STRUCTREF], capture_output=True, text=True,
                          env=env, cwd=str(tmp_path))
     assert run.returncode == 0 and "made" in run.stdout, run.stderr
     assert "compiles without a cache" in run.stderr, run.stderr
-    assert "too long for the file system: a shorter NUMBA_CACHE_DIR" in run.stderr, run.stderr
+    assert "too long for the file system: NUMBA_CACHE_DIR at a shorter path" in run.stderr, run.stderr
