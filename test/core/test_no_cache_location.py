@@ -10,6 +10,7 @@ import compileall
 import importlib.util
 import marshal
 import os
+import py_compile
 import re
 import shutil
 import subprocess
@@ -40,11 +41,22 @@ IMPORT_AND_USE = (
 )
 
 
-def _archive(path):
-    """numbox's modules zipped into ``path``, which goes on PYTHONPATH as it is."""
+def _archive(path, bytecode_naming_the_archive=()):
+    """numbox's modules zipped into ``path``, which goes on PYTHONPATH as it is.
+
+    A directory named in ``bytecode_naming_the_archive`` goes in as ``.pyc`` alone, each compiled to name its
+    path inside the archive, as ``compileall -d`` and ``py_compile``'s ``dfile`` do.
+    """
     with zipfile.ZipFile(path, "w") as zipped:
         for source in sorted((REPO / "numbox").rglob("*.py")):
-            zipped.write(source, str(source.relative_to(REPO)))
+            member = str(source.relative_to(REPO))
+            if source.parent.relative_to(REPO).as_posix() in bytecode_naming_the_archive:
+                compiled = py_compile.compile(str(source), cfile=str(path.parent / (source.name + "c")),
+                                              dfile=os.path.join(str(path), member), doraise=True)
+                zipped.write(compiled, member + "c")
+                os.unlink(compiled)
+            else:
+                zipped.write(source, member)
     return path
 
 
@@ -437,16 +449,21 @@ def test_a_zip_import_whose_cache_directory_stopped_being_writable_compiles_unca
 
 
 @needs_a_directory_it_cannot_write
-@pytest.mark.parametrize("parent", ["", "container.zip"])
-def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_takes_the_fallback(tmp_path, parent):
+@pytest.mark.parametrize("parent, bytecode", [("", ()), ("container.zip", ()), ("", ("numbox/core/bindings",))],
+                         ids=["sources", "under a directory named .zip", "bindings as .pyc naming the archive"])
+def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_takes_the_fallback(
+        tmp_path, parent, bytecode):
     # numba caches a .zip per directory of it, each in a location of its own
     # under the user's cache directory, so the directories answer separately
     # there too; a check on configurations.py's location alone passed here,
     # and libm died at its first save. The archive's directories are listed,
     # the archive being the first part of the path named .zip that is one: a
-    # listing that took a directory so named above it listed nothing.
+    # listing that took a directory so named above it listed nothing. A
+    # directory of .pyc members compiled to name the archive, as compileall -d
+    # does, stands in the listing like one of .py members: a listing that let
+    # only .py members stand never asked for it.
     (tmp_path / parent).mkdir(exist_ok=True)
-    archive = _archive(tmp_path / parent / "numbox.zip")
+    archive = _archive(tmp_path / parent / "numbox.zip", bytecode)
     home = tmp_path / "home"
     home.mkdir()
     env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"))

@@ -159,31 +159,38 @@ def _archived_module_files(own):
     for name in names:
         directory, _, file = name.rpartition("/")
         if file.endswith(".pyc"):
-            compiled_from = _compiled_from(zip_path, directory, file[:-4])
-            if compiled_from is not None:
-                yield compiled_from
-        elif directory not in seen:
+            member = _compiled_from(zip_path, directory, file[:-4])
+            if member is None:
+                continue
+            if not member.startswith(zip_path + os.sep):
+                yield member
+                continue
+        else:
+            member = os.path.join(zip_path, *name.split("/"))
+        if directory not in seen:
             seen.add(directory)
-            yield os.path.join(zip_path, *name.split("/"))
+            yield member
 
 
 def _compiled_from(zip_path, directory, stem):
-    """The file the ``.pyc`` zipimport runs module ``stem`` of ``directory`` from was compiled from, or None.
+    """The file the code zipimport runs module ``stem`` of ``directory`` from names, or None where it runs none.
 
     zipimport decides: it runs the ``.pyc`` before the ``.py`` beside it, but not one of another interpreter's
     magic number, nor one stale against that ``.py``, which it passes over for the source, nor one it cannot
-    unmarshal, and the module's import fails with it; so its answer, its code, is read, and a ``.py`` it
-    compiled, whose code names the archive, or no code at all, for whatever stops zipimport, a source it cannot
-    compile or a member it cannot decompress among the reasons, leaves nothing to ask.
+    unmarshal, and the module's import fails with it; so its answer, its code, is read. The file that names is
+    the archive's own path for the module where zipimport compiled the ``.py``, or where the ``.pyc`` was
+    compiled to name the archive, and stands for the directory as a ``.py`` member does; else it is the file
+    elsewhere the ``.pyc`` was compiled from, there or gone, and asks for itself. No code at all, for whatever
+    stops zipimport, a source it cannot compile or a member it cannot decompress among the reasons, leaves
+    nothing to ask.
     """
     if stem == "__init__":
         directory, _, stem = directory.rpartition("/")
     importer = zipimport.zipimporter(os.path.join(zip_path, *directory.split("/")))
     try:
-        code = importer.get_code(stem)
+        return importer.get_code(stem).co_filename
     except Exception:
         return None
-    return None if code.co_filename.startswith(zip_path + os.sep) else code.co_filename
 
 
 def cache_remedy(py_file, failure, silence):
