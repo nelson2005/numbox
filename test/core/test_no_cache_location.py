@@ -463,7 +463,9 @@ def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_ta
         run = _run(env, tmp_path)
         assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
-        assert "make that directory, " in run.stderr, run.stderr
+        # The directory to make writable is the location that lost it, not the
+        # user's cache directory above it, which the warning named.
+        assert f"make that directory, {locations[0]}, writable" in run.stderr, run.stderr
     finally:
         locations[0].chmod(0o755)
 

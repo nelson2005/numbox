@@ -49,11 +49,17 @@ def check_cache_location(py_file):
     for the file or raises ``RuntimeError`` with no locator, then the writability check, which decoration runs
     for every location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe's code is
     given ``py_file`` as its file, which is all a locator reads of it. Nothing is compiled, and nothing is
-    written but the cache directory itself.
+    written but the cache directory itself. An ``OSError`` names the location numba picked.
     """
     code = _cache_probe.__code__.replace(co_filename=os.fspath(py_file))
     probe = types.FunctionType(code, _cache_probe.__globals__, _cache_probe.__name__)
-    CompileResultCacheImpl(probe).locator.ensure_cache_path()
+    locator = CompileResultCacheImpl(probe).locator
+    try:
+        locator.ensure_cache_path()
+    except OSError as error:
+        # The error names what failed, a temporary file's name among the
+        # possibilities; the location it is in is what a reader can act on.
+        raise OSError(error.errno, error.strerror, locator.get_cache_path()) from error
 
 
 def is_a_cache_error(error):
@@ -184,19 +190,22 @@ def cache_remedy(py_file, failure, silence):
     """The remedy for ``failure``, numba's for a function whose file is ``py_file``, ending in ``silence``.
 
     ``NUMBA_CACHE_DIR`` for a source file on disk, which is the only kind numba reads the variable for. For a
-    ``.zip`` or a frozen application, both cached in the user's cache directory, that directory made writable:
-    the ``.zip``'s error names it, the frozen application's is the no-locator one, numba having passed the
-    directory over on its error, so it is named here. For any other archive, or a module without its source,
-    the source files on disk or a ``.zip`` holding them.
+    ``.zip`` or a frozen application, both cached under the user's cache directory, the location made writable:
+    the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
+    application's is the no-locator one, numba having passed the location over on its error, so the user's
+    cache directory is named. For any other archive, or a module without its source, the source files on disk
+    or a ``.zip`` holding them.
     """
     if os.path.exists(py_file):
         return f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
     if isinstance(failure, OSError) or getattr(sys, "frozen", False):
-        user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
+        # The .zip's error names the location numba picked, which is under
+        # the user's cache directory; the frozen application's names nothing.
+        location = getattr(failure, "filename", None) or AppDirs(appname="numba", appauthor=False).user_cache_dir
         return (
             "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
-            f"has no effect here, because the source is not a file on disk: make that directory, "
-            f"{user_cache_dir}, writable, or {silence}"
+            f"has no effect here, because the source is not a file on disk: make that directory, {location}, "
+            f"writable, or {silence}"
         )
     return (
         "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, "
