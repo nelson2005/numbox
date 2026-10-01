@@ -105,15 +105,16 @@ def _archived_module_files(own):
     numba caches a ``.zip`` per directory of it, each in a location of its own under the user's cache directory,
     so the directories answer separately there too. A ``.pyc`` run from the archive keeps the file it was compiled
     from as its code's file, and that is what numba looks up for its functions, the archive's own path for the
-    module is not; so such a member asks by that file, there or gone. Any other archive has no location at all,
-    and the probe's own file has already asked.
+    module is not; so such a member asks by that file, there or gone. The archive is the first part of the path
+    named ``.zip`` that is one, a directory so named above it being no archive. Any other archive has no location
+    at all, and the probe's own file has already asked.
     """
     parts = own.split(os.sep)
-    depth = next((index for index, part in enumerate(parts) if part.endswith(".zip")), None)
-    if depth is None:
-        return
-    zip_path = os.sep.join(parts[:depth + 1])
-    if not zipfile.is_zipfile(zip_path):
+    for depth, part in enumerate(parts):
+        zip_path = os.sep.join(parts[:depth + 1])
+        if part.endswith(".zip") and zipfile.is_zipfile(zip_path):
+            break
+    else:
         return
     package = "/".join(parts[depth + 1:-2])
     with zipfile.ZipFile(zip_path) as archive:

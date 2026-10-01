@@ -402,12 +402,16 @@ def test_a_zip_import_whose_cache_directory_stopped_being_writable_compiles_unca
 
 
 @needs_a_directory_it_cannot_write
-def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_takes_the_fallback(tmp_path):
+@pytest.mark.parametrize("parent", ["", "container.zip"])
+def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_takes_the_fallback(tmp_path, parent):
     # numba caches a .zip per directory of it, each in a location of its own
     # under the user's cache directory, so the directories answer separately
     # there too; a check on configurations.py's location alone passed here,
-    # and libm died at its first save. The archive's directories are listed.
-    archive = _archive(tmp_path / "numbox.zip")
+    # and libm died at its first save. The archive's directories are listed,
+    # the archive being the first part of the path named .zip that is one: a
+    # listing that took a directory so named above it listed nothing.
+    (tmp_path / parent).mkdir(exist_ok=True)
+    archive = _archive(tmp_path / parent / "numbox.zip")
     home = tmp_path / "home"
     home.mkdir()
     env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"))
