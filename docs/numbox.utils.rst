@@ -179,10 +179,12 @@ function it caches, which carries the struct's again through the class
 whose body defines the jitted getters and method thunks, so a struct
 named with about 93 characters overflowed the 255 bytes a file system
 allows a name, in numba's own files past the anchor's check. Those
-names are bounded now (``bounded_stem``): a name of 40 characters or
-fewer is used as it is, so nearly every struct keeps the file names it
-had, and a longer one becomes its first 31 characters and a digest of
-the whole. The generated class is defined under the bounded name and
+names are bounded now (``bounded_stem``): a name of 40 bytes or fewer
+is used as it is, so nearly every struct keeps the file names it had,
+and a longer one becomes the whole characters of it that fit in 31
+bytes and a digest of the whole. The measure is the name's UTF-8,
+which is the file system's: a character of another script takes up to
+four bytes there. The generated class is defined under the bounded name and
 takes the struct's full name back once its body is compiled, so
 ``__name__``, ``__qualname__`` and ``repr`` show the name the caller
 gave, whatever its length, and the struct caches. A field's name is

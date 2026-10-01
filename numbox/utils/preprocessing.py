@@ -28,17 +28,20 @@ _STEM_MAX = 40
 
 
 def bounded_stem(name: str) -> str:
-    """``name`` as the stem of a file name: as it is up to 40 characters, else its first 31 and a digest of the whole.
+    """``name`` as the stem of a file name: as it is up to 40 bytes, else whole characters of it within 31 and a digest.
 
     An anchor's name, and the names numba gives the cache files of the functions it holds, carry the name of
     the struct or the function they were generated for, and a file system allows a name 255 bytes long; numba's
     repeat the stem and the generated function's name, so a struct named with about 93 characters overflowed
-    them. Bounded, the file names stay under 120 bytes whatever the name's length, and a name of 40 characters
-    or fewer, which is nearly every name, keeps the file names it had.
+    them. Bounded, the file names stay under 120 bytes whatever the name's length, and a name of 40 bytes or
+    fewer, which is nearly every name, keeps the file names it had. The measure is the name's UTF-8, which is
+    the file system's: a character of another script takes up to four bytes there.
     """
-    if len(name) <= _STEM_MAX:
+    encoded = name.encode("utf-8")
+    if len(encoded) <= _STEM_MAX:
         return name
-    return f"{name[:_STEM_MAX - 9]}_{hashlib.sha256(name.encode('utf-8')).hexdigest()[:8]}"
+    head = encoded[:_STEM_MAX - 9].decode("utf-8", errors="ignore")
+    return f"{head}_{hashlib.sha256(encoded).hexdigest()[:8]}"
 
 
 def _anchor_path(subdir: str, stem: str, code_txt: str) -> Path:

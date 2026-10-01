@@ -584,13 +584,12 @@ A_TYPE_CLASS = (
 )
 
 MAKE_A_LONG_NAMED_STRUCTREF = (
-    "import sys\n"
     "from numba.core.types import float32\n"
     "from numbox.utils.highlevel import make_structref\n"
     "from long_named_type_class import TypeClass\n"
     "def double(self):\n"
     "    return self.value * 2\n"
-    "name = 'S' * int(sys.argv[1])\n"
+    "name = NAME\n"
     "Struct = make_structref(name, {'value': float32}, TypeClass, struct_methods={'double': double})\n"
     "struct = Struct(1.5)\n"
     "assert struct.value == 1.5 and struct.double() == 3.0\n"
@@ -599,28 +598,31 @@ MAKE_A_LONG_NAMED_STRUCTREF = (
 )
 
 
-@pytest.mark.parametrize("length", [40, 41, 150, 300])
-def test_a_struct_name_of_any_length_caches(tmp_path, length):
+@pytest.mark.parametrize("name", ["S" * 40, "S" * 41, "S" * 150, "S" * 300, "é" * 40, "結" * 100],
+                         ids=["40 ascii", "41 ascii", "150 ascii", "300 ascii", "40 accented", "100 cjk"])
+def test_a_struct_name_of_any_length_caches(tmp_path, name):
     # numba names a cache file after the anchor's stem and the jitted
     # function's qualname, both of which carried the struct's name, so a
     # name of about 93 characters overflowed the file system's 255 bytes in
     # numba's own files, past the anchor's check. The stems and the generated
-    # names are bounded now: as they are up to 40 characters, a prefix and a
-    # digest beyond, and the class takes its full name back once compiled.
+    # names are bounded now: as they are up to 40 bytes, a prefix and a digest
+    # beyond, and the class takes its full name back once compiled. The file
+    # system counts bytes, so a name of 40 accented characters (80 bytes) is
+    # bounded, and 100 CJK characters (300 bytes) are cut by whole characters.
     (tmp_path / "long_named_type_class.py").write_text(A_TYPE_CLASS)
     script = tmp_path / "make.py"
-    script.write_text(MAKE_A_LONG_NAMED_STRUCTREF)
+    script.write_text(MAKE_A_LONG_NAMED_STRUCTREF.replace("NAME", repr(name)), encoding="utf-8")
     env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
     env.pop("NUMBOX_JIT_OPTIONS", None)
-    run = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", str(script), str(length)],
+    run = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", str(script)],
                          capture_output=True, text=True, env=env, cwd=str(tmp_path))
-    assert run.returncode == 0 and f"made {length}" in run.stdout, run.stderr
-    names = _index_files(tmp_path / "cache")
-    assert names and all(len(name.encode()) <= 255 for name in names), names
-    again = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", str(script), str(length)],
+    assert run.returncode == 0 and f"made {len(name)}" in run.stdout, run.stderr
+    indexes = _index_files(tmp_path / "cache")
+    assert indexes and all(len(index.encode()) <= 255 for index in indexes), indexes
+    again = subprocess.run([sys.executable, "-W", "error::RuntimeWarning", str(script)],
                            capture_output=True, text=True, env=env, cwd=str(tmp_path))
     assert again.returncode == 0, again.stderr
-    assert _index_files(tmp_path / "cache") == names
+    assert _index_files(tmp_path / "cache") == indexes
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="a path of 4096 bytes and a name of 255 are Linux's limits")
