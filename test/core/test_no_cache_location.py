@@ -603,15 +603,21 @@ A_TYPE_CLASS = (
 MAKE_A_LONG_NAMED_STRUCTREF = (
     "from numba.core.types import float32\n"
     "from numbox.utils.highlevel import make_structref\n"
+    "from numbox.utils.preprocessing import bounded_stem\n"
     "from long_named_type_class import TypeClass\n"
     "def dddddddddddddddddddddddddddddddddddddddd(self):\n"
     "    return self.value * 2\n"
     "name = NAME\n"
     "field = 'f' + name[1:]\n"
+    "fields = {'value': float32}\n"
+    "if bounded_stem(field) != field:\n"
+    "    fields[bounded_stem(field)] = float32\n"
+    "fields[field] = float32\n"
     "methods = {'d' * 40: dddddddddddddddddddddddddddddddddddddddd}\n"
-    "Struct = make_structref(name, {'value': float32, field: float32}, TypeClass, struct_methods=methods)\n"
-    "struct = Struct(1.5, 2.5)\n"
-    "assert struct.value == 1.5 and getattr(struct, field) == 2.5 and getattr(struct, 'd' * 40)() == 3.0\n"
+    "Struct = make_structref(name, fields, TypeClass, struct_methods=methods)\n"
+    "values = [1.5 * (index + 1) for index in range(len(fields))]\n"
+    "struct = Struct(*values)\n"
+    "assert [getattr(struct, each) for each in fields] == values and getattr(struct, 'd' * 40)() == 3.0\n"
     "assert Struct.__name__ == name and Struct.__qualname__ == name and repr(struct).startswith(name + '(')\n"
     "print('made', len(name))\n"
 )
@@ -629,10 +635,12 @@ def test_a_struct_name_of_any_length_caches(tmp_path, name):
     # system counts bytes, so a name of 40 accented characters (80 bytes) is
     # bounded, and 100 CJK characters (300 bytes) are cut by whole characters.
     # A field named with the struct's length is bounded in its getter the same
-    # way. The method's name is 40 bytes, the most a bounded name can be, so
-    # the thunk's files are the longest numba writes for any struct: under the
-    # 230 bytes bounded_stem promises, which leave room for numba's temporary
-    # name at the write.
+    # way, and a field named with that bounded name, defined before it, keeps
+    # its property: the long field's getter took the name and the hand-over
+    # deleted the short field's. The method's name is 40 bytes, the most a
+    # bounded name can be, so the thunk's files are the longest numba writes
+    # for any struct: under the 230 bytes bounded_stem promises, which leave
+    # room for numba's temporary name at the write.
     (tmp_path / "long_named_type_class.py").write_text(A_TYPE_CLASS)
     script = tmp_path / "make.py"
     script.write_text(MAKE_A_LONG_NAMED_STRUCTREF.replace("NAME", repr(name)), encoding="utf-8")

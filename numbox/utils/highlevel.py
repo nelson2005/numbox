@@ -192,8 +192,14 @@ class {class_name}(StructRefProxy):
     def __repr__(self):
         return {repr_str}
 """)
+    # A long field's getter is defined under its bounded name and handed to the
+    # field's; that name must be nobody else's in the class body, or the hand-over
+    # would take another field's property or a method.
+    taken = set(struct_fields) | set(struct_methods or ())
     for field in struct_fields:
         getter_name = bounded_stem(field)
+        while getter_name != field and getter_name in taken:
+            getter_name = "_" + getter_name
         code_txt.write(f"""
     @property
     @njit(**jit_options)
