@@ -52,7 +52,9 @@ per directory of the package, a linked one included.
   placement.
 - For an ``.egg``, ``.whl`` or ``.pyz``, a ``.pyc``-only install or a ``.pyc`` in a ``.zip``, it is the source
   files on disk or a ``.zip`` holding them.
-- ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in every case.
+- ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in every case, the
+  package's options being what it sets; the anchors' warning under a caller's own options, below, is
+  silenced by those.
 
 A function numba cannot cache is compiled in every process that uses it, never wrong; that is the cost the
 warning reports. An error at decoration that is not the cache's is raised as it was.
