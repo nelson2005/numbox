@@ -218,9 +218,11 @@ def cache_remedy(py_file, failure, silence):
         # The .zip's error names the location numba picked, which is under
         # the user's cache directory; the frozen application's names nothing.
         location = getattr(failure, "filename", None) or AppDirs(appname="numba", appauthor=False).user_cache_dir
-        if isinstance(failure, FileNotFoundError):
+        if isinstance(failure, FileNotFoundError) and py_file.startswith(failure.filename + os.sep):
             # The stamp numba reads at decoration, of the archive the code
-            # names: .pyc members compiled to name an archive since moved.
+            # names: .pyc members compiled to name an archive since moved. A
+            # location that cannot be made, under a dangling link, is ENOENT
+            # too, and is not under the code's file.
             return (
                 f"the module's code names {failure.filename}, which is not there: its .pyc was compiled to name "
                 "that path, so compile the archive's .pyc members to name its path now, or ship its source files; "

@@ -462,6 +462,24 @@ def test_a_moved_zip_whose_pyc_members_name_its_old_path_compiles_uncached_and_i
         assert f"names {archive}" in run.stderr and "which is not there" in run.stderr, run.stderr
 
 
+@pytest.mark.skipif(os.name == "nt", reason="a symlink needs a privilege on Windows, and the cache directory is not XDG's")
+def test_a_zip_import_whose_user_cache_directory_hangs_off_a_dangling_link_is_told_to_make_it(tmp_path):
+    # numba's location cannot be made under a link to nowhere, ENOENT, which is
+    # the error a moved archive's stamp gives too: the warning blamed the
+    # archive's .pyc members, of which this archive has none. The moved archive
+    # is the one whose path the module's code lies under.
+    archive = _archive(tmp_path / "numbox.zip")
+    (tmp_path / "dangling").symlink_to(tmp_path / "nowhere", target_is_directory=True)
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(tmp_path / "home"),
+               XDG_CACHE_HOME=str(tmp_path / "dangling"), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = _run(env, tmp_path)
+    assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+    assert run.stderr.count("compiles without a cache") == 1, run.stderr
+    if _zip_is_cached():
+        assert "make that directory, " in run.stderr and "its .pyc was compiled" not in run.stderr, run.stderr
+
+
 @needs_a_directory_it_cannot_write
 def test_a_zip_import_whose_cache_directory_stopped_being_writable_compiles_uncached(tmp_path):
     # Every entry is in the user's cache directory from an earlier import, and
