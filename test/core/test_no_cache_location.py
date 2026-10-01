@@ -590,10 +590,11 @@ MAKE_A_LONG_NAMED_STRUCTREF = (
     "def dddddddddddddddddddddddddddddddddddddddd(self):\n"
     "    return self.value * 2\n"
     "name = NAME\n"
+    "field = 'f' + name[1:]\n"
     "methods = {'d' * 40: dddddddddddddddddddddddddddddddddddddddd}\n"
-    "Struct = make_structref(name, {'value': float32}, TypeClass, struct_methods=methods)\n"
-    "struct = Struct(1.5)\n"
-    "assert struct.value == 1.5 and getattr(struct, 'd' * 40)() == 3.0\n"
+    "Struct = make_structref(name, {'value': float32, field: float32}, TypeClass, struct_methods=methods)\n"
+    "struct = Struct(1.5, 2.5)\n"
+    "assert struct.value == 1.5 and getattr(struct, field) == 2.5 and getattr(struct, 'd' * 40)() == 3.0\n"
     "assert Struct.__name__ == name and Struct.__qualname__ == name and repr(struct).startswith(name + '(')\n"
     "print('made', len(name))\n"
 )
@@ -610,8 +611,9 @@ def test_a_struct_name_of_any_length_caches(tmp_path, name):
     # beyond, and the class takes its full name back once compiled. The file
     # system counts bytes, so a name of 40 accented characters (80 bytes) is
     # bounded, and 100 CJK characters (300 bytes) are cut by whole characters.
-    # The method's name is 40 bytes, the most a bounded name can be, so the
-    # thunk's files are the longest numba writes for any struct: under the
+    # A field named with the struct's length is bounded in its getter the same
+    # way. The method's name is 40 bytes, the most a bounded name can be, so
+    # the thunk's files are the longest numba writes for any struct: under the
     # 230 bytes bounded_stem promises, which leave room for numba's temporary
     # name at the write.
     (tmp_path / "long_named_type_class.py").write_text(A_TYPE_CLASS)

@@ -187,8 +187,10 @@ which is the file system's: a character of another script takes up to
 four bytes there. The generated class is defined under the bounded name and
 takes the struct's full name back once its body is compiled, so
 ``__name__``, ``__qualname__`` and ``repr`` show the name the caller
-gave, whatever its length, and the struct caches. A field's name is
-the one part left unbounded, since a getter's name is the field's.
+gave, whatever its length, and the struct caches. A field's jitted
+getter is defined under the bounded name the same way and the
+property takes the field's, so a field's name of any length caches
+too; a method's name is bounded in its thunk and its overload.
 ``compile_kernel``, the work builder's derives and the sqlite
 aggregate, window and table-valued function registrations anchor their
 generated code the same way and fall back the same way, the derive

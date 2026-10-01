@@ -193,11 +193,17 @@ class {class_name}(StructRefProxy):
         return {repr_str}
 """)
     for field in struct_fields:
+        getter_name = bounded_stem(field)
         code_txt.write(f"""
     @property
     @njit(**jit_options)
-    def {field}(self):
+    def {getter_name}(self):
         return self.{field}
+""")
+        if getter_name != field:
+            code_txt.write(f"""
+    {field} = {getter_name}
+    del {getter_name}
 """)
     methods_code_txt = StringIO()
     if struct_methods is not None:
