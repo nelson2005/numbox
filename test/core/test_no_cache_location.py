@@ -573,6 +573,23 @@ def test_generated_code_compiles_uncached_under_a_numba_cache_dir_numba_cannot_u
         assert "compiles without a cache" not in run.stderr, run.stderr
 
 
+def test_the_anchor_warning_names_the_options_the_caller_gave(tmp_path):
+    # make_structref, compile_kernel and the builder take jit options of the
+    # caller's, which NUMBOX_JIT_OPTIONS does not reach, and the warning offered
+    # the variable alone, here with it set to turn caching off already.
+    child = MAKE_A_STRUCTREF.replace("TypeClass)\n", "TypeClass, jit_options={'cache': True})\n")
+    assert child != MAKE_A_STRUCTREF
+    cache_dir = tmp_path / "file"
+    cache_dir.write_text("not a directory\n")
+    env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(cache_dir),
+               NUMBOX_JIT_OPTIONS='{"cache": false}')
+    run = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True, env=env,
+                         cwd=str(tmp_path))
+    assert run.returncode == 0 and "made" in run.stdout, run.stderr
+    assert "compiles without a cache" in run.stderr, run.stderr
+    assert '"cache" off in the jit options this code was given' in run.stderr, run.stderr
+
+
 # The type class lives in a module of its own, as the docs ask, so that the
 # struct's cache entries load in a second process.
 A_TYPE_CLASS = (

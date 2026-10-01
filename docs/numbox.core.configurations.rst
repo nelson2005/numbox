@@ -54,8 +54,11 @@ The code numbox generates at run time, ``make_structref``'s, ``compile_kernel``'
 and the sqlite registrations', is anchored to a file under ``NUMBA_CACHE_DIR`` or the user's cache directory
 so that numba can cache it. That directory can be unwritable where the package's own functions cache, since
 those cache beside their sources, so each anchor puts the same question for its own file when it is written,
-and the code it names compiles without a cache where the answer is no, after the same warning (the builder's
-derive falls back without one, as it did). See the cache-anchor section of :doc:`numbox.utils`.
+and the code it names compiles without a cache where the answer is no, after a warning of the same shape (the
+builder's derive falls back without one, as it did). ``make_structref``, ``compile_kernel`` and the builder
+take jit options of the caller's, which the variable does not reach, so that warning's silence is ``cache``
+off in the options the code was given, or the variable where they are the package's. See the cache-anchor
+section of :doc:`numbox.utils`.
 
 Modules
 ++++++++

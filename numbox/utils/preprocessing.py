@@ -112,15 +112,17 @@ def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
     error = _anchor_or_error(path, code_txt)
     if error is None:
         return jit_options
-    silence = "NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and silence this warning"
+    # The options are the package's unless the caller gave its own, as
+    # make_structref, compile_kernel and the builder take; the variable
+    # reaches only the package's.
+    silence = (
+        "compile without a cache to silence this warning: \"cache\" off in the jit options this code was given, "
+        "or NUMBOX_JIT_OPTIONS='{\"cache\": false}' where they are the package's"
+    )
     if isinstance(error, OSError) and error.errno == errno.ENAMETOOLONG:
-        # The path is NUMBA_CACHE_DIR or the user's cache directory, then a
-        # directory of numbox's, then a name it made from a struct's or a
-        # function's; which of them is the long part is for the reader.
-        remedy = (
-            "The path is too long for the file system: a shorter NUMBA_CACHE_DIR, or a shorter name where the "
-            f"struct's or the function's is the long part, or {silence}"
-        )
+        # The names numbox makes are bounded, so the long part is the
+        # directory: NUMBA_CACHE_DIR or the user's cache directory.
+        remedy = f"The path is too long for the file system: a shorter NUMBA_CACHE_DIR, or {silence}"
     else:
         remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
     warnings.warn(
