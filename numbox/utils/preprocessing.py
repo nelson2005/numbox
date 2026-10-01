@@ -13,7 +13,7 @@ import time
 import warnings
 from pathlib import Path
 
-from numbox.core.configurations import check_cache_location, is_a_cache_error
+from numbox.core.configurations import cache_remedy, check_cache_location, is_a_cache_error
 
 
 def _anchor_root(subdir: str = "numbox-structref") -> Path:
@@ -25,6 +25,14 @@ def _anchor_root(subdir: str = "numbox-structref") -> Path:
 
 
 _STEM_MAX = 40
+
+# The options generated code compiles under are the package's unless the caller
+# gave its own, as make_structref, compile_kernel and the builder take; the
+# variable reaches only the package's.
+_SILENCE = (
+    "compile without a cache to silence this warning: \"cache\" off in the jit options this code was given, "
+    "or NUMBOX_JIT_OPTIONS='{\"cache\": false}' where they are the package's"
+)
 
 
 def bounded_stem(name: str) -> str:
@@ -112,22 +120,41 @@ def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
     error = _anchor_or_error(path, code_txt)
     if error is None:
         return jit_options
-    # The options are the package's unless the caller gave its own, as
-    # make_structref, compile_kernel and the builder take; the variable
-    # reaches only the package's.
-    silence = (
-        "compile without a cache to silence this warning: \"cache\" off in the jit options this code was given, "
-        "or NUMBOX_JIT_OPTIONS='{\"cache\": false}' where they are the package's"
-    )
     if isinstance(error, OSError) and error.errno == errno.ENAMETOOLONG:
         # The names numbox makes are bounded, so the long part is the
         # directory, NUMBA_CACHE_DIR or the user's cache directory; a short
         # NUMBA_CACHE_DIR moves the anchor out of either.
-        remedy = f"The path is too long for the file system: NUMBA_CACHE_DIR at a shorter path, or {silence}"
+        remedy = f"The path is too long for the file system: NUMBA_CACHE_DIR at a shorter path, or {_SILENCE}"
     else:
-        remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
+        remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {_SILENCE}"
     warnings.warn(
         f"numba cannot cache {path.name} here ({error}); it compiles without a cache. {remedy}",
+        RuntimeWarning, stacklevel=3,
+    )
+    return {**jit_options, "cache": False}
+
+
+def _cached_at_or_uncached(py_file: str, jit_options: dict) -> dict:
+    """``jit_options`` to compile code anchored to the module file ``py_file`` under: as given where numba can cache
+    a function of that file, else with ``cache`` off after one warning naming the remedy.
+
+    ``make_graph``'s kernel is anchored to the builder's own file and cached beside it, and the options a caller
+    gives reach numba as they are, past the package's answer, so the question is put for the file, the way the
+    package puts it for its own; the remedy is the package's for the placement.
+    """
+    if not jit_options.get("cache"):
+        return jit_options
+    try:
+        check_cache_location(py_file)
+    except (RuntimeError, OSError, ValueError) as error:
+        if not is_a_cache_error(error):
+            raise
+        failure = error
+    else:
+        return jit_options
+    warnings.warn(
+        f"numba cannot cache the code generated at {os.path.basename(py_file)} here ({failure}); it compiles "
+        f"without a cache. {cache_remedy(py_file, failure, _SILENCE)}",
         RuntimeWarning, stacklevel=3,
     )
     return {**jit_options, "cache": False}

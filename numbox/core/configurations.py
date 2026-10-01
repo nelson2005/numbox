@@ -151,6 +151,32 @@ def _compiled_from(zip_path, directory, stem):
     return None if code.co_filename.startswith(zip_path) else code.co_filename
 
 
+def cache_remedy(py_file, failure, silence):
+    """The remedy for ``failure``, numba's for a function whose file is ``py_file``, ending in ``silence``.
+
+    ``NUMBA_CACHE_DIR`` for a source file on disk, which is the only kind numba reads the variable for. For a
+    ``.zip`` or a frozen application, both cached in the user's cache directory, that directory made writable:
+    the ``.zip``'s error names it, the frozen application's is the no-locator one, numba having passed the
+    directory over on its error, so it is named here. For any other archive, or a module without its source,
+    the source files on disk or a ``.zip`` holding them.
+    """
+    if os.path.exists(py_file):
+        return f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
+    if isinstance(failure, OSError) or getattr(sys, "frozen", False):
+        user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
+        return (
+            "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
+            f"has no effect here, because the source is not a file on disk: make that directory, "
+            f"{user_cache_dir}, writable, or {silence}"
+        )
+    return (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, "
+        "install numbox with its source files on disk, unpacked from any archive, or import it from a "
+        f".zip holding its source files, which numba 0.61 and later cache in the user's cache directory; or "
+        f"{silence}"
+    )
+
+
 def uncached_where_no_cache_can_be_written(options):
     """``options`` as given, or with ``cache`` off after one warning where numba can write no cache for numbox.
 
@@ -191,28 +217,7 @@ def uncached_where_no_cache_can_be_written(options):
     else:
         return options
     silence = "NUMBOX_JIT_OPTIONS='{\"cache\": false}' to turn caching off and silence this warning"
-    if os.path.exists(py_file):
-        remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
-    elif isinstance(failure, OSError) or getattr(sys, "frozen", False):
-        # Two placements numba caches without the source on disk, a .zip and a
-        # frozen application, both in the user's cache directory. The .zip's
-        # error names it; the frozen application's is the no-locator one, numba
-        # having passed the directory over on its error, so it is named here.
-        user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
-        remedy = (
-            "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
-            f"has no effect here, because the source is not a file on disk: make that directory, "
-            f"{user_cache_dir}, writable, or {silence}"
-        )
-    else:
-        # Every location numba reads NUMBA_CACHE_DIR for needs the source
-        # file on disk, so for an archive the variable changes nothing.
-        remedy = (
-            "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, "
-            "install numbox with its source files on disk, unpacked from any archive, or import it from a "
-            f".zip holding its source files, which numba 0.61 and later cache in the user's cache directory. "
-            f"Set {silence}"
-        )
+    remedy = cache_remedy(py_file, failure, silence)
     warnings.warn(
         f"numba cannot cache numbox here ({failure}); it compiles without a cache. {remedy}",
         RuntimeWarning, stacklevel=2,

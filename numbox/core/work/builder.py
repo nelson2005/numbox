@@ -14,7 +14,7 @@ from numbox.utils.fingerprint import (
     _fingerprint_function_best_effort, _flags_canon, _loaded_global_names,
 )
 from numbox.utils.highlevel import cres, _signature_identity, _type_identity
-from numbox.utils.preprocessing import _anchor_or_error, _anchor_root, _orphan_anchor_sweep
+from numbox.utils.preprocessing import _anchor_or_error, _anchor_root, _cached_at_or_uncached, _orphan_anchor_sweep
 
 
 def _file_anchor():
@@ -330,6 +330,9 @@ def make_graph(
     if jit_options is None:
         jit_options = {}
     jit_options = {**jit_options_, **jit_options}
+    # The kernel below is anchored to this file and cached beside it; a
+    # caller's cache option reaches numba past the package's answer.
+    jit_options = _cached_at_or_uncached(getfile(_file_anchor), jit_options)
     ns = {
         **getmodule(_file_anchor).__dict__,
         **{"jit_options": jit_options, "ll_make_work": ll_make_work, "njit": njit}

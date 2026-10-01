@@ -725,6 +725,23 @@ def test_generated_code_compiles_uncached_under_a_numba_cache_dir_numba_cannot_u
         assert "compiles without a cache" not in run.stderr, run.stderr
 
 
+def test_make_graph_under_a_callers_cache_option_falls_back_from_an_archive(tmp_path):
+    # make_graph's kernel is anchored to builder.py itself and cached beside it,
+    # and a caller's options reach numba as they are: with cache on from an
+    # archive the kernel died at numba's set-up, where the package, the
+    # structref, the kernel compiler and the derives had fallen back.
+    archive = _archive(tmp_path / "numbox-0.0.0-py3.12.egg")
+    child = BUILD_A_DERIVE.replace("make_graph(y)", "make_graph(y, jit_options={'cache': True})")
+    assert child != BUILD_A_DERIVE
+    env = dict(os.environ, PYTHONPATH=str(archive), NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True, env=env,
+                         cwd=str(tmp_path))
+    assert run.returncode == 0 and "derived" in run.stdout, run.stderr
+    assert "the code generated at builder.py" in run.stderr and "source is not a file on disk" in run.stderr
+    assert '"cache" off in the jit options this code was given' in run.stderr, run.stderr
+
+
 def test_the_anchor_warning_names_the_options_the_caller_gave(tmp_path):
     # make_structref, compile_kernel and the builder take jit options of the
     # caller's, which NUMBOX_JIT_OPTIONS does not reach, and the warning offered
