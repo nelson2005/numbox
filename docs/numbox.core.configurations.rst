@@ -6,7 +6,7 @@ Overview
 
 Every function numbox caches is decorated under one set of numba options, ``jit_options``, read once from
 the ``NUMBOX_JIT_OPTIONS`` environment variable when this module is first imported; a bare ``@njit`` in
-numbox, ``array_data_p`` or ``make_vector``'s ``create``, is not cached and takes none. The value is a JSON
+numbox, as in ``lowlevel.py``, ``meminfo.py`` and ``make_vector``, is not cached and takes none. The value is a JSON
 object passed to ``@njit`` as keyword arguments, and any other shape is refused by name, as is a ``cache``
 that is not ``true`` or ``false`` (the string ``"false"`` is true to numba, which reads the option's truth);
 unset means ``{"cache": true}``, so numbox compiles into numba's on-disk cache by default, and
@@ -37,9 +37,10 @@ user's cache directory, the archive's directories are listed and the question pu
 ``.pyc`` in the archive that zipimport would run, which it takes before the ``.py`` beside it unless it is
 stale against it or of another interpreter, and whose code keeps the file it was compiled from, is asked by
 that file, since that is what numba looks up for it, on disk or gone, and one zipimport would pass over is
-passed over; any other archive has no location at all. A directory of the package reached through a symlink is walked
-like the rest. The check makes the cache directories it asks about, as numba would at the first decoration
-in each; with caching beside the sources that is an empty ``__pycache__`` per directory of the package.
+passed over; any other archive has no location at all. A directory of the package reached through a symlink
+is walked like the rest, wherever the link points. The check makes the cache directories it asks about, as
+numba would at the first decoration in each; with caching beside the sources that is an empty ``__pycache__``
+per directory of the package, a linked one included.
 
 - For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory.
 - For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
