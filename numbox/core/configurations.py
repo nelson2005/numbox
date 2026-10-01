@@ -168,8 +168,12 @@ def uncached_where_no_cache_can_be_written(options):
     A ``.zip`` whose cache directory holds every entry but can no longer be written takes the fallback too, where
     numba alone would have loaded the entries: the writability check is the rule numba applies to every other
     placement, and the one the ``.zip`` locator is missing.
+
+    Options without a ``cache`` key, as ``NUMBOX_JIT_OPTIONS`` can give, leave ``njit`` to its default, off, but
+    the sqlite virtual-table and table-valued-function callbacks cache under them, so they are asked about too and
+    come back with ``cache`` off, said, where the answer is no.
     """
-    if not options.get("cache"):
+    if not options.get("cache", True):
         return options
     for py_file in _module_files():
         try:

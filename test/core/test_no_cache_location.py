@@ -84,6 +84,21 @@ def test_an_import_from_an_archive_compiles_uncached_with_one_warning_naming_the
     assert quiet.returncode == 0, quiet.stderr
 
 
+def test_options_without_a_cache_key_are_asked_for_the_sites_that_cache_under_them(tmp_path):
+    # NUMBOX_JIT_OPTIONS without "cache" leaves njit's default, off, but the
+    # sqlite virtual-table and table-valued-function callbacks cache unless it
+    # says no, and a check that read the missing key as off let the first
+    # callback die at numba's set-up from an archive.
+    archive = _archive(tmp_path / "numbox-0.0.0-py3.12.egg")
+    env = dict(os.environ, PYTHONPATH=str(archive), NUMBA_CACHE_DIR=str(tmp_path / "cache"),
+               NUMBOX_JIT_OPTIONS='{"boundscheck": false}')
+    child = "import numbox.core.bindings.sqlite.vtable as m; print(m.__file__)"
+    run = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True, env=env,
+                         cwd=str(tmp_path))
+    assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+    assert run.stderr.count("compiles without a cache") == 1, run.stderr
+
+
 def test_a_zip_import_is_cached_by_numba_from_0_61(tmp_path):
     # The warning sends an archive's user to a .zip, which numba caches from
     # 0.61 on, in the user's cache directory whatever NUMBA_CACHE_DIR says.
