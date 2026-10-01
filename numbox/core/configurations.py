@@ -120,13 +120,27 @@ def _archived_module_files(own):
         for name in names:
             directory = name.rpartition("/")[0]
             if name.endswith(".pyc"):
-                data = archive.read(name)
-                if data[:4] == importlib.util.MAGIC_NUMBER:
-                    # The bytes zipimport unmarshals to run this module.
-                    yield marshal.loads(data[16:]).co_filename  # nosec B302
+                compiled_from = _compiled_from(archive.read(name))
+                if compiled_from is not None:
+                    yield compiled_from
             elif directory not in seen:
                 seen.add(directory)
                 yield os.path.join(zip_path, *name.split("/"))
+
+
+def _compiled_from(data):
+    """The file the ``.pyc`` bytes ``data`` were compiled from; None where this interpreter would not run them.
+
+    zipimport runs a ``.pyc`` of its own magic number only, and dies on one it cannot unmarshal when the module
+    is imported; a stray one is nobody's, and asks nothing.
+    """
+    if data[:4] != importlib.util.MAGIC_NUMBER:
+        return None
+    try:
+        code = marshal.loads(data[16:])  # nosec B302 - the bytes zipimport unmarshals to run the module
+    except (EOFError, ValueError, TypeError):
+        return None
+    return code.co_filename if isinstance(code, types.CodeType) else None
 
 
 def uncached_where_no_cache_can_be_written(options):

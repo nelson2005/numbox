@@ -7,6 +7,7 @@ subprocess with its own tree and cache directory, so the placement under test
 is the one the subprocess sees and nothing else.
 """
 import compileall
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -228,6 +229,24 @@ def test_a_pyc_in_a_zip_asks_by_the_file_it_was_compiled_from(tmp_path):
     assert "source is not a file on disk" in run.stderr and "holding its source files" in run.stderr, run.stderr
     if _zip_is_cached():
         assert str(libm) in run.stderr, run.stderr
+
+
+def test_a_stray_pyc_in_a_zip_that_nothing_imports_is_passed_over(tmp_path):
+    # A .pyc member of this interpreter's magic that zipimport could not run,
+    # truncated here, and that no import reaches: the probe's unmarshal of it
+    # died with EOFError at the import of configurations, where main imported.
+    archive = _archive(tmp_path / "numbox.zip")
+    with zipfile.ZipFile(archive, "a") as zipped:
+        zipped.writestr("numbox/stray.pyc", importlib.util.MAGIC_NUMBER + bytes(12) + b"\xe3\x00")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"),
+               NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = _run(env, tmp_path)
+    assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+    if _zip_is_cached():
+        assert "compiles without a cache" not in run.stderr, run.stderr
 
 
 @needs_a_directory_it_cannot_write
