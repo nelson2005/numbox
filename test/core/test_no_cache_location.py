@@ -8,6 +8,7 @@ is the one the subprocess sees and nothing else.
 """
 import compileall
 import importlib.util
+import marshal
 import os
 import re
 import shutil
@@ -326,13 +327,20 @@ def test_a_stale_pyc_whose_source_in_the_zip_does_not_compile_is_passed_over(tmp
         assert "compiles without a cache" not in run.stderr, run.stderr
 
 
-def test_a_stray_pyc_in_a_zip_that_nothing_imports_is_passed_over(tmp_path):
+@pytest.mark.parametrize("damage", ["truncated", "lzma"])
+def test_a_stray_pyc_in_a_zip_that_nothing_imports_is_passed_over(tmp_path, damage):
     # A .pyc member of this interpreter's magic that zipimport could not run,
-    # truncated here, and that no import reaches: the probe's unmarshal of it
-    # died with EOFError at the import of configurations, where main imported.
+    # truncated, or stored with a compression zipimport does not read, and that
+    # no import reaches: the probe's unmarshal of the first died with EOFError
+    # at the import of configurations, where main imported, and zipimport's
+    # own read of the second with zlib.error, past the exceptions then caught.
     archive = _archive(tmp_path / "numbox.zip")
     with zipfile.ZipFile(archive, "a") as zipped:
-        zipped.writestr("numbox/stray.pyc", importlib.util.MAGIC_NUMBER + bytes(12) + b"\xe3\x00")
+        if damage == "truncated":
+            zipped.writestr("numbox/stray.pyc", importlib.util.MAGIC_NUMBER + bytes(12) + b"\xe3\x00")
+        else:
+            data = importlib.util.MAGIC_NUMBER + bytes(12) + marshal.dumps(compile("stray = True\n", "stray.py", "exec"))
+            zipped.writestr("numbox/stray.pyc", data, compress_type=zipfile.ZIP_LZMA)
     home = tmp_path / "home"
     home.mkdir()
     env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"),
