@@ -217,13 +217,17 @@ def _zip_is_cached():
     return tuple(int(part) for part in numba.__version__.split(".")[:2]) >= (0, 61)
 
 
-def test_a_pyc_in_a_zip_asks_by_the_file_it_was_compiled_from(tmp_path):
+@pytest.mark.parametrize("tree", ["site", "numbox.zip.tree"])
+def test_a_pyc_in_a_zip_asks_by_the_file_it_was_compiled_from(tmp_path, tree):
     # zipimport takes a .pyc before the .py beside it and keeps the file it was
     # compiled from on its code, which is what numba looks up for the module's
     # functions; here that file is gone. A listing of the archive's .py members
     # said every directory caches, from numba 0.61 on, and libm's first
-    # binding died at numba's set-up.
-    site = tmp_path / "site"
+    # binding died at numba's set-up. A tree named after the archive, beside
+    # it, passed a test by string prefix for the archive's own files, and its
+    # .pyc went unasked: numba, seeing ".zip" in the file's path and no part
+    # named so, died with its ValueError.
+    site = tmp_path / tree
     shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
     libm = site / "numbox" / "core" / "bindings" / "libm.py"
     assert compileall.compile_file(str(libm), quiet=1, legacy=True)
@@ -244,7 +248,7 @@ def test_a_pyc_in_a_zip_asks_by_the_file_it_was_compiled_from(tmp_path):
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
     assert "source is not a file on disk" in run.stderr and "holding its source files" in run.stderr, run.stderr
     if _zip_is_cached():
-        assert str(libm) in run.stderr, run.stderr
+        assert (str(libm) if tree == "site" else "No zip file found") in run.stderr, run.stderr
 
 
 def test_a_stale_pyc_beside_its_source_in_a_zip_is_passed_over_as_zipimport_passes_it(tmp_path):

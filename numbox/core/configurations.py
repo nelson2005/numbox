@@ -149,7 +149,7 @@ def _compiled_from(zip_path, directory, stem):
         code = importer.get_code(stem)
     except (ImportError, SyntaxError, EOFError, ValueError, TypeError):
         return None
-    return None if code.co_filename.startswith(zip_path) else code.co_filename
+    return None if code.co_filename.startswith(zip_path + os.sep) else code.co_filename
 
 
 def cache_remedy(py_file, failure, silence):
