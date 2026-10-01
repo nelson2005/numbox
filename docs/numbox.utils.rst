@@ -162,10 +162,13 @@ the failure mode on that version to constants outside the inline
 range. Earlier supported versions (3.10--3.13) collide on any
 constant edit.
 
-The anchor exists to be cached from, so it is written only when the
-options say ``cache``, and numba is then asked whether it can cache a
-function of that file, the question the package puts for its own
-modules; where the write fails, for whatever reason, or the answer is
+The anchor is written whenever it can be: numba caches from it, and
+quotes the source from it in its messages, a typing error's among them,
+so with caching off a write that fails is nothing and the path serves
+as the code's name, as it did. With caching on numba is then asked
+whether it can cache a function of that file, the question the package
+puts for its own modules; where the write fails, for whatever reason,
+or the answer is
 no, an unwritable user cache directory or ``NUMBA_CACHE_DIR`` with no
 other location left, the generated code compiles without a cache after
 one warning naming the remedy, instead of dying at the write or at
@@ -200,7 +203,8 @@ too; a method's name is bounded in its thunk and its overload.
 ``compile_kernel``, the work builder's derives and the sqlite
 aggregate, window and table-valued function registrations anchor their
 generated code the same way and fall back the same way, the derive
-without a warning; ``make_graph``'s kernel, anchored to the builder's
+without a warning, and the kernel and the derive write no anchor when
+not caching, as before; ``make_graph``'s kernel, anchored to the builder's
 own file, asks for that file under the options it was given. See :doc:`numbox.core.configurations` for the
 package-wide rule the anchors follow.
 

@@ -110,14 +110,20 @@ def _anchor_or_error(path: Path, code_txt: str):
 
 
 def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
-    """``jit_options`` to compile the code anchored at ``path`` under, the anchor written where it will be read.
+    """``jit_options`` to compile the code anchored at ``path`` under, the anchor written where it can be.
 
-    numba reads the anchor only to cache the code it names, so with caching off nothing is written and the
-    path serves as the code's filename. With caching on the anchor is written and numba asked for its location,
-    by ``_anchor_or_error``; where that gives an error, the code compiles without a cache after one warning
-    naming the remedy, rather than dying at the write or at the first decorated function.
+    numba reads the anchor to cache the code it names, and quotes the source from it in its messages, a typing
+    error's among them, so it is written whenever it can be: with caching off a write that fails is nothing,
+    the path serving as the code's filename as it did. With caching on the anchor is written and numba asked
+    for its location, by ``_anchor_or_error``; where that gives an error, the code compiles without a cache
+    after one warning naming the remedy, rather than dying at the write or at the first decorated function.
     """
     if not jit_options.get("cache"):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _materialize_anchor(path, code_txt)
+        except OSError:
+            pass
         return jit_options
     error = _anchor_or_error(path, code_txt)
     if error is None:

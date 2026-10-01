@@ -880,6 +880,31 @@ def test_make_graph_under_a_callers_cache_option_falls_back_from_an_archive(tmp_
     assert _index_files(tmp_path / "cache"), "the derive did not cache under NUMBA_CACHE_DIR"
 
 
+A_STRUCTREF_WITH_A_TYPING_ERROR = MAKE_A_STRUCTREF.replace(
+    "Struct = make_structref('Struct', {'value': float32}, TypeClass)\n",
+    "def bad(self):\n"
+    "    return self.value + 'x'\n"
+    "Struct = make_structref('Struct', {'value': float32}, TypeClass, struct_methods={'bad': bad})\n"
+    "Struct(2.5).bad()\n",
+)
+
+
+def test_a_typing_error_in_generated_code_quotes_the_source_with_caching_off(tmp_path):
+    # numba quotes the offending line from the file the code names, the
+    # anchor, which with caching off was no longer written: the message then
+    # pointed at a file that was not there, with "source missing", where main
+    # showed the line. The anchor is written where it can be, cache or no.
+    assert A_STRUCTREF_WITH_A_TYPING_ERROR != MAKE_A_STRUCTREF
+    script = tmp_path / "probe.py"
+    script.write_text(A_STRUCTREF_WITH_A_TYPING_ERROR)
+    env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(tmp_path / "cache"),
+               NUMBOX_JIT_OPTIONS='{"cache": false}')
+    run = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, env=env, cwd=str(tmp_path))
+    assert run.returncode != 0 and "TypingError" in run.stderr, run.stderr
+    assert "source missing" not in run.stderr and "return self.value + 'x'" in run.stderr, run.stderr
+    assert list((tmp_path / "cache").rglob("*.py")) and not _index_files(tmp_path / "cache")
+
+
 @pytest.mark.parametrize("child, word", [
     (MAKE_A_STRUCTREF.replace("TypeClass)\n", "TypeClass, jit_options={'cache': True})\n"), "made"),
     (COMPILE_A_KERNEL.replace("'calc.y')", "'calc.y', jit_options={'cache': False}, cache=True)"), "executed"),

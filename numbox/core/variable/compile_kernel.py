@@ -440,7 +440,10 @@ def _compile(
         "def _kernel(", f"def {name}(", 1
     )
     anchor = _anchor_root(_ANCHOR_SUBDIR) / f"_kernel_{digest}.py"
-    opts = _anchored_or_uncached(anchor, final_src, opts)
+    if opts["cache"]:
+        # An uncached kernel has no anchor, as before; the structref and the
+        # sqlite registrations write theirs for numba's messages either way.
+        opts = _anchored_or_uncached(anchor, final_src, opts)
     code = compile(final_src, str(anchor), "exec")
     # __name__ must be an importable module so numba can rebuild the cached
     # overload's environment in another process (importlib.import_module needs
