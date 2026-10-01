@@ -343,6 +343,37 @@ def test_a_zip_import_with_no_writable_user_cache_directory_compiles_uncached_wi
 
 
 @needs_a_directory_it_cannot_write
+def test_a_zip_whose_configurations_runs_from_a_pyc_compiled_from_a_tree_still_on_disk(tmp_path):
+    # configurations.pyc in the archive, current, compiled from a tree that is
+    # still on disk: zipimport runs it with that tree's file on its code, and a
+    # probe that took the package's place from its own code's file walked the
+    # tree, found it cacheable, and never asked the archive, whose first
+    # function died at numba's first save with the home read-only.
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    configurations = site / "numbox" / "core" / "configurations.py"
+    assert compileall.compile_file(str(configurations), quiet=1, legacy=True)
+    archive = tmp_path / "numbox.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for member in sorted(path for path in site.rglob("*") if path.suffix in (".py", ".pyc")):
+            zipped.write(member, str(member.relative_to(site)))
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o555)
+    try:
+        env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"),
+                   NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+        env.pop("NUMBOX_JIT_OPTIONS", None)
+        run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
+                             env=env, cwd=str(tmp_path))
+        assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+        assert run.stderr.count("compiles without a cache") == 1, run.stderr
+        assert "NUMBA_CACHE_DIR has no effect here" in run.stderr, run.stderr
+    finally:
+        home.chmod(0o755)
+
+
+@needs_a_directory_it_cannot_write
 def test_a_zip_import_whose_cache_directory_stopped_being_writable_compiles_uncached(tmp_path):
     # Every entry is in the user's cache directory from an earlier import, and
     # the directory can no longer be written. A probe that only loaded its own

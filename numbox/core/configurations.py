@@ -79,14 +79,15 @@ def _module_files():
     package even where every cached function's own directory is fine; the answer errs toward uncached, which
     is never wrong. And numba finds a location for a module by its source, so a module that survives as
     ``.pyc`` alone, beside sourced ones, answers for itself: it is named by the ``.py`` that is gone, which is
-    what numba looks up. An archive shows no directories to walk, so there the probe's own file, not on disk
-    either, is the whole answer.
+    what numba looks up. The package is found by this module's ``__file__``, which is where it was imported
+    from, an archive or a directory: its code's file, which numba looks up for the probe and which is asked
+    first, can be elsewhere, the source a ``.pyc`` was compiled from. An archive shows no directories to walk,
+    so there its members are listed instead.
     """
-    own = inspect.getfile(_cache_probe)
-    yield own
-    package = os.path.dirname(os.path.dirname(own))
+    yield inspect.getfile(_cache_probe)
+    package = os.path.dirname(os.path.dirname(__file__))
     if not os.path.isdir(package):
-        yield from _archived_module_files(own)
+        yield from _archived_module_files(__file__)
         return
     for directory, subdirectories, files in os.walk(package, followlinks=True):
         subdirectories[:] = sorted(name for name in subdirectories if name != "__pycache__")
@@ -98,8 +99,8 @@ def _module_files():
 
 
 def _archived_module_files(own):
-    """One module per directory of numbox inside the ``.zip`` that holds ``own``, and the file each ``.pyc`` in it
-    that zipimport would run was compiled from; nothing for any other archive.
+    """One module per directory of numbox inside the ``.zip`` that holds ``own``, this module as imported, and the
+    file each ``.pyc`` in it that zipimport would run was compiled from; nothing for any other archive.
 
     numba caches a ``.zip`` per directory of it, each in a location of its own under the user's cache directory,
     so the directories answer separately there too. A ``.pyc`` run from the archive keeps the file it was compiled
