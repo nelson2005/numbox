@@ -27,11 +27,13 @@ def _anchor_root(subdir: str = "numbox-structref") -> Path:
 _STEM_MAX = 40
 
 # The options generated code compiles under are the package's unless the caller
-# gave its own, as make_structref, compile_kernel and the builder take; the
-# variable reaches only the package's.
+# gave its own, as make_structref, compile_kernel and the builder take, and
+# compile_kernel's cache argument overrides them all; the variable reaches only
+# the package's.
 _SILENCE = (
-    "compile without a cache to silence this warning: \"cache\" off in the jit options this code was given, "
-    "or NUMBOX_JIT_OPTIONS='{\"cache\": false}' where they are the package's"
+    "compile without a cache to silence this warning: \"cache\" off in the jit options this code was given, or "
+    "in its cache argument where it takes one, or NUMBOX_JIT_OPTIONS='{\"cache\": false}' where the options are "
+    "the package's"
 )
 
 

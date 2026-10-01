@@ -63,8 +63,9 @@ so that numba can cache it. That directory can be unwritable where the package's
 those cache beside their sources, so each anchor puts the same question for its own file when it is written,
 and the code it names compiles without a cache where the answer is no, after a warning of the same shape (the
 builder's derive falls back without one, as it did). ``make_structref``, ``compile_kernel`` and the builder
-take jit options of the caller's, which the variable does not reach, so that warning's silence is ``cache``
-off in the options the code was given, or the variable where they are the package's. ``make_graph``'s
+take jit options of the caller's, which the variable does not reach, and ``compile_kernel``'s ``cache``
+argument overrides those too, so that warning's silence is ``cache`` off in the options the code was given,
+the argument where it takes one, or the variable where the options are the package's. ``make_graph``'s
 kernel is anchored to the builder's own file and cached beside it, so it puts the question for that file
 under the options it was given, and falls back the same way with the package's remedy for the placement.
 See the cache-anchor section of :doc:`numbox.utils`.

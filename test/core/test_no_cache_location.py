@@ -803,21 +803,26 @@ def test_make_graph_under_a_callers_cache_option_falls_back_from_an_archive(tmp_
     assert _index_files(tmp_path / "cache"), "the derive did not cache under NUMBA_CACHE_DIR"
 
 
-def test_the_anchor_warning_names_the_options_the_caller_gave(tmp_path):
+@pytest.mark.parametrize("child, word", [
+    (MAKE_A_STRUCTREF.replace("TypeClass)\n", "TypeClass, jit_options={'cache': True})\n"), "made"),
+    (COMPILE_A_KERNEL.replace("'calc.y')", "'calc.y', jit_options={'cache': False}, cache=True)"), "executed"),
+], ids=["make_structref with jit_options", "compile_kernel with cache"])
+def test_the_anchor_warning_names_the_options_the_caller_gave(tmp_path, child, word):
     # make_structref, compile_kernel and the builder take jit options of the
-    # caller's, which NUMBOX_JIT_OPTIONS does not reach, and the warning offered
-    # the variable alone, here with it set to turn caching off already.
-    child = MAKE_A_STRUCTREF.replace("TypeClass)\n", "TypeClass, jit_options={'cache': True})\n")
-    assert child != MAKE_A_STRUCTREF
+    # caller's, which NUMBOX_JIT_OPTIONS does not reach, and compile_kernel's
+    # cache argument overrides those too; the warning offered the variable
+    # alone, here set to turn caching off already, and then the jit options,
+    # here off as well.
+    assert child not in (MAKE_A_STRUCTREF, COMPILE_A_KERNEL)
     cache_dir = tmp_path / "file"
     cache_dir.write_text("not a directory\n")
     env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(cache_dir),
                NUMBOX_JIT_OPTIONS='{"cache": false}')
     run = subprocess.run([sys.executable, "-W", "always", "-c", child], capture_output=True, text=True, env=env,
                          cwd=str(tmp_path))
-    assert run.returncode == 0 and "made" in run.stdout, run.stderr
+    assert run.returncode == 0 and word in run.stdout, run.stderr
     assert "compiles without a cache" in run.stderr, run.stderr
-    assert '"cache" off in the jit options this code was given' in run.stderr, run.stderr
+    assert '"cache" off in the jit options this code was given, or in its cache argument where it takes one' in run.stderr
 
 
 # The type class lives in a module of its own, as the docs ask, so that the
