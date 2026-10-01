@@ -292,7 +292,9 @@ def test_a_stale_pyc_beside_its_source_in_a_zip_is_passed_over_as_zipimport_pass
     # size or time, so the module's functions are cached from the archive like
     # the rest; a probe that asked by the stale .pyc's compile-time file, gone
     # here, turned caching off for the package and offered a .zip holding the
-    # sources, which this is.
+    # sources, which this is. This pins the outcome; that a .pyc zipimport
+    # would run is asked at all is pinned by the sourceless case above, since
+    # passing every .pyc over gives this outcome too.
     site = tmp_path / "site"
     shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
     libm = site / "numbox" / "core" / "bindings" / "libm.py"
