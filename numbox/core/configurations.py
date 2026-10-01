@@ -137,14 +137,15 @@ def _compiled_from(zip_path, directory, stem):
     zipimport decides: it runs the ``.pyc`` before the ``.py`` beside it, but not one of another interpreter's
     magic number, nor one stale against that ``.py``, which it passes over for the source, nor one it cannot
     unmarshal, and the module's import fails with it; so its answer, its code, is read, and a ``.py`` it
-    compiled, whose code names the archive, or no code at all, leaves nothing to ask.
+    compiled, whose code names the archive, or no code at all, a source it cannot compile among the reasons,
+    leaves nothing to ask.
     """
     if stem == "__init__":
         directory, _, stem = directory.rpartition("/")
     importer = zipimport.zipimporter(os.path.join(zip_path, *directory.split("/")))
     try:
         code = importer.get_code(stem)
-    except (ImportError, EOFError, ValueError, TypeError):
+    except (ImportError, SyntaxError, EOFError, ValueError, TypeError):
         return None
     return None if code.co_filename.startswith(zip_path) else code.co_filename
 

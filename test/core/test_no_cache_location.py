@@ -277,6 +277,28 @@ def test_a_stale_pyc_beside_its_source_in_a_zip_is_passed_over_as_zipimport_pass
         assert _index_files(home), "libm's functions were not cached from the archive"
 
 
+def test_a_stale_pyc_whose_source_in_the_zip_does_not_compile_is_passed_over(tmp_path):
+    # zipimport, passing the stale .pyc over, compiles the .py beside it, and a
+    # syntax error there, uncaught, killed the import of configurations where
+    # nothing imports the module; its own import would die on it, as it should.
+    archive = _archive(tmp_path / "numbox.zip")
+    stray = tmp_path / "stray.py"
+    stray.write_text("compiled = True\n")
+    assert compileall.compile_file(str(stray), quiet=1, legacy=True)
+    with zipfile.ZipFile(archive, "a") as zipped:
+        zipped.write(stray.with_suffix(".pyc"), "numbox/stray.pyc")
+        zipped.writestr("numbox/stray.py", "def broken(:\n    pass\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"),
+               NUMBA_CACHE_DIR=str(tmp_path / "cache"))
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = _run(env, tmp_path)
+    assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+    if _zip_is_cached():
+        assert "compiles without a cache" not in run.stderr, run.stderr
+
+
 def test_a_stray_pyc_in_a_zip_that_nothing_imports_is_passed_over(tmp_path):
     # A .pyc member of this interpreter's magic that zipimport could not run,
     # truncated here, and that no import reaches: the probe's unmarshal of it
