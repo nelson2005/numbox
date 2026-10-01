@@ -40,7 +40,9 @@ that file, since that is what numba looks up for it, on disk or gone, and one zi
 passed over; any other archive has no location at all. A directory of the package reached through a symlink
 is walked like the rest, wherever the link points. The check makes the cache directories it asks about, as
 numba would at the first decoration in each; with caching beside the sources that is an empty ``__pycache__``
-per directory of the package, a linked one included.
+per directory of the package, a linked one included. The check writes a name shorter than numba's, so a
+cache directory within a few dozen bytes of the path limit, 4096 on Linux, passes it and overflows at
+numba's first save instead, where numba's own error names the length; a shorter path is the remedy.
 
 - For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory.
 - For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
