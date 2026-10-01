@@ -740,6 +740,9 @@ def test_make_graph_under_a_callers_cache_option_falls_back_from_an_archive(tmp_
     assert run.returncode == 0 and "derived" in run.stdout, run.stderr
     assert "the code generated at builder.py" in run.stderr and "source is not a file on disk" in run.stderr
     assert '"cache" off in the jit options this code was given' in run.stderr, run.stderr
+    # The derives cache under anchors of their own, written here, and the
+    # builder's answer for its file is not theirs.
+    assert _index_files(tmp_path / "cache"), "the derive did not cache under NUMBA_CACHE_DIR"
 
 
 def test_the_anchor_warning_names_the_options_the_caller_gave(tmp_path):

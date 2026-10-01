@@ -331,11 +331,12 @@ def make_graph(
         jit_options = {}
     jit_options = {**jit_options_, **jit_options}
     # The kernel below is anchored to this file and cached beside it; a
-    # caller's cache option reaches numba past the package's answer.
-    jit_options = _cached_at_or_uncached(getfile(_file_anchor), jit_options)
+    # caller's cache option reaches numba past the package's answer. The
+    # derives cache under anchors of their own and keep the options as given.
+    kernel_options = _cached_at_or_uncached(getfile(_file_anchor), jit_options)
     ns = {
         **getmodule(_file_anchor).__dict__,
-        **{"jit_options": jit_options, "ll_make_work": ll_make_work, "njit": njit}
+        **{"jit_options": kernel_options, "ll_make_work": ll_make_work, "njit": njit}
     }
     _make_args = []
     code_txt = StringIO()
@@ -361,7 +362,7 @@ def make_graph(
         # compile the kernel without an on-disk cache so a stale binary cannot be
         # linked -- recompiled per process, never wrong. The
         # name (fed by type_sigs) is unchanged, so nothing else re-keys.
-        ns["jit_options"] = {**jit_options, "cache": False}
+        ns["jit_options"] = {**kernel_options, "cache": False}
     access_nodes_names = [n.name for n in access_nodes]
     tup_ = ", ".join(access_nodes_names) + ","
     code_txt.write(f"""\n\taccess_tuple = ({tup_})""")
