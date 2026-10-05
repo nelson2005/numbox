@@ -57,9 +57,11 @@ warning instead.
   directory under the user's cache directory, each of the two under a cache directory named for the source's
   directory, by its name and a hash of its path. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
   package installed at a shorter path for the second; the user's cache directory at a shorter path, through
-  ``XDG_CACHE_HOME`` or ``HOME``, for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a
-  short path, which numba takes first, or, where it is set and numba passed it over, unwritable or too deep,
-  the warning names it and the remedy is a writable directory at a short path.
+  ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, where numba asks the system,
+  for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short path, which numba takes
+  first, or, where it is set and numba passed it over, unwritable or too deep, the warning names it and the
+  remedy is a writable directory at a short path. Where ``NUMBA_CACHE_LOCATOR_CLASSES``, from numba 0.64,
+  puts another locator first, ``NUMBA_CACHE_DIR`` is not offered.
 - For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
   one archive numba caches, from 0.61 on, and it caches it there, taking the directory without checking that
   it can be written; a frozen application (``sys.frozen``) is cached there too, its sources not being on disk.
