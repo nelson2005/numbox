@@ -220,11 +220,14 @@ def _compiled_from(zip_path, directory, stem):
 def cache_remedy(py_file, failure, silence, package="numbox"):
     """The remedy for ``failure``, numba's for a function whose file is ``py_file``, ending in ``silence``.
 
-    ``NUMBA_CACHE_DIR`` for a source file on disk, which is the only kind numba reads the variable for; where its
-    location is too long for the file system, a shorter ``NUMBA_CACHE_DIR`` or none, since numba's location under
-    the variable is a directory named for the source's directory, by its name and a hash of its path, and without
-    the variable numba caches beside the source; else the package at a shorter path, where the location beside
-    the source is the long one. For a ``.zip`` or a frozen application, both cached under the user's cache
+    ``NUMBA_CACHE_DIR`` for a source file on disk, which is the only kind numba reads the variable for. Where the
+    location is too long for the file system, the error names it, and the remedy is for the one it is: numba takes
+    a directory under ``NUMBA_CACHE_DIR`` where that is set, else the ``__pycache__`` beside the source, else a
+    directory under the user's cache directory, each of the two under a cache directory named for the source's
+    directory, by its name and a hash of its path. So a shorter ``NUMBA_CACHE_DIR``, or none, for the first; the
+    package at a shorter path for the second; the user's cache directory at a shorter path, through
+    ``XDG_CACHE_HOME`` or ``HOME``, for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short
+    path, which numba takes first. For a ``.zip`` or a frozen application, both cached under the user's cache
     directory, the location made writable:
     the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
     application's is the no-locator one, numba having passed the location over on its error, so the user's
@@ -241,11 +244,21 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     if os.path.exists(py_file):
         if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
             # numba's own check passes the location, its temporary file
-            # fitting where its cache files would not; the error names it.
-            return (
-                "the path is too long for the file system: a shorter NUMBA_CACHE_DIR, or none, where it is set, "
-                f"else {package} installed at a shorter path; or {silence}"
-            )
+            # fitting where its cache files would not; the error names it,
+            # and which of numba's three it is decides what shortens it.
+            from numba import config
+            location = os.path.join(os.path.abspath(failure.filename or ""), "")
+            user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
+            if config.CACHE_DIR and location.startswith(os.path.join(os.path.abspath(config.CACHE_DIR), "")):
+                cure = "a shorter NUMBA_CACHE_DIR, or none"
+            elif location.startswith(os.path.join(os.path.abspath(user_cache_dir), "")):
+                cure = (
+                    f"the user's cache directory, {user_cache_dir}, at a shorter path, through XDG_CACHE_HOME or "
+                    "HOME, or NUMBA_CACHE_DIR set to a short path"
+                )
+            else:
+                cure = f"{package} installed at a shorter path, or NUMBA_CACHE_DIR set to a short path"
+            return f"the path is too long for the file system: {cure}; or {silence}"
         # numba itself passes a location it cannot make or write over, for a
         # source on disk, so the error here is the no-locator one.
         return f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"

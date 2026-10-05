@@ -709,17 +709,87 @@ def test_a_location_too_close_to_the_path_limit_for_numbas_files_compiles_uncach
     assert not _index_files(cache_dir)
 
 
+@needs_a_directory_it_cannot_write
+@pytest.mark.skipif(sys.platform != "linux", reason="a path of 4096 bytes is Linux's limit")
+def test_a_read_only_install_whose_user_cache_directory_is_too_long_is_told_to_shorten_that(tmp_path):
+    # Where the source's __pycache__ cannot be written and NUMBA_CACHE_DIR is
+    # not set, numba caches under the user's cache directory, and a location
+    # there too long for numba's files was told "a shorter NUMBA_CACHE_DIR, or
+    # none, where it is set, else numbox installed at a shorter path": a
+    # variable that was not set and a reinstall that changes nothing. The first
+    # module asked has its location there end 20 bytes short of the limit.
+    from numba.core.caching import _CacheLocator
+    site = tmp_path / "site"
+    shutil.copytree(REPO / "numbox", site / "numbox", ignore=shutil.ignore_patterns("__pycache__"))
+    location = _CacheLocator.get_suitable_cache_subpath(str(site / "numbox" / "core" / "configurations.py"))
+    xdg = _directory_of_length(tmp_path / "xdg", 4096 - 20 - 1 - len(location) - len("/numba"))
+    read_only = [path for path in site.rglob("*") if path.is_dir()]
+    for path in read_only:
+        path.chmod(0o555)
+    try:
+        env = dict(os.environ, PYTHONPATH=str(site), XDG_CACHE_HOME=str(xdg))
+        env.pop("NUMBA_CACHE_DIR", None)
+        env.pop("NUMBOX_JIT_OPTIONS", None)
+        run = _run(env, tmp_path)
+        assert run.returncode == 0 and str(site) in run.stdout, run.stderr
+        assert run.stderr.count("compiles without a cache") == 1, run.stderr
+        assert "at a shorter path, through XDG_CACHE_HOME or HOME" in run.stderr, run.stderr
+        assert "a shorter NUMBA_CACHE_DIR" not in run.stderr and "numbox installed" not in run.stderr, run.stderr
+        cured = _run(dict(env, XDG_CACHE_HOME=str(tmp_path / "short")), tmp_path, warnings="error")
+        assert cured.returncode == 0, cured.stderr
+        assert _index_files(tmp_path / "short")
+    finally:
+        for path in read_only:
+            path.chmod(0o755)
+
+
+@pytest.mark.parametrize("location", ["NUMBA_CACHE_DIR", "beside the source", "the user's cache directory"])
+def test_a_location_too_long_is_told_what_shortens_the_one_it_is(tmp_path, monkeypatch, location):
+    # numba takes a directory under NUMBA_CACHE_DIR where that is set, else the
+    # __pycache__ beside the source, else a directory under the user's cache
+    # directory, and the error names the one that is too long. One remedy for
+    # all three named a variable that was not set and a reinstall that changes
+    # nothing where the location was under the user's cache directory.
+    import numba
+    from numba.misc.appdirs import AppDirs
+    from numbox.core.configurations import cache_remedy
+    py_file = tmp_path / "package" / "module.py"
+    py_file.parent.mkdir()
+    py_file.write_text("")
+    user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
+    if location == "NUMBA_CACHE_DIR":
+        monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
+        where, cure = tmp_path / "cache" / "package_0123", "a shorter NUMBA_CACHE_DIR, or none"
+        not_said = "installed at a shorter path"
+    elif location == "beside the source":
+        monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+        where = py_file.parent / "__pycache__"
+        cure = "numbduck installed at a shorter path, or NUMBA_CACHE_DIR set to a short path"
+        not_said = "a shorter NUMBA_CACHE_DIR"
+    else:
+        monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+        where = Path(user_cache_dir) / "package_0123"
+        cure = f"the user's cache directory, {user_cache_dir}, at a shorter path, through XDG_CACHE_HOME or HOME"
+        not_said = "installed at a shorter path"
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", str(where))
+    remedy = cache_remedy(str(py_file), failure, "silence", package="numbduck")
+    assert remedy.startswith(f"the path is too long for the file system: {cure}"), remedy
+    assert not_said not in remedy, remedy
+
+
 @pytest.mark.parametrize("placement", ["too long", "archive"])
-def test_the_remedies_that_name_a_package_name_the_one_given(tmp_path, placement):
+def test_the_remedies_that_name_a_package_name_the_one_given(tmp_path, monkeypatch, placement):
     # A package built on numbox puts the question for its own files and takes
     # the remedy from cache_remedy; the two remedies that tell the reader to
     # install a package again named numbox whichever package had asked.
+    import numba
     from numbox.core.configurations import cache_remedy
     if placement == "too long":
+        monkeypatch.setattr(numba.config, "CACHE_DIR", "")
         py_file = tmp_path / "ducklib.py"
         py_file.write_text("")
-        failure = OSError(errno.ENAMETOOLONG, "File name too long", str(tmp_path / "cache"))
-        named = "else {} installed at a shorter path"
+        failure = OSError(errno.ENAMETOOLONG, "File name too long", str(tmp_path / "__pycache__"))
+        named = "{} installed at a shorter path"
     else:
         py_file = tmp_path / "numbduck-0.0.0-py3-none-any.whl" / "numbduck" / "ducklib.py"
         failure = RuntimeError(f"cannot cache function 'f': no locator available for file '{py_file}'")
