@@ -839,22 +839,57 @@ def test_the_user_cache_directory_is_told_what_moves_it_on_the_platform(tmp_path
     assert f"put that directory, {location}, at a shorter path{moved_through}, or silence" in zipped, zipped
 
 
-def test_numba_cache_dir_is_not_offered_where_the_locators_put_another_first(tmp_path, monkeypatch):
-    # numba 0.64 and later take NUMBA_CACHE_LOCATOR_CLASSES as the locators and
-    # their order; without the user-provided locator first, NUMBA_CACHE_DIR is
-    # not what numba takes first, and a set one was not passed over.
+@pytest.mark.parametrize("locators, offered", [
+    ("InTreeCacheLocator,UserWideCacheLocator", False),
+    ("numba.core.caching.UserProvidedCacheLocator, numba.core.caching.InTreeCacheLocator", True),
+])
+def test_numba_cache_dir_is_offered_only_where_the_locators_put_it_first(tmp_path, monkeypatch, locators, offered):
+    # numba 0.62 and later take NUMBA_CACHE_LOCATOR_CLASSES as the locators and
+    # their order, each entry a class of numba's caching module by its name or
+    # its dotted path; without the user-provided locator first, NUMBA_CACHE_DIR
+    # is not what numba takes first, and a set one was not passed over.
     import numba
     from numbox.core.configurations import cache_remedy
     monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
-    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator,UserWideCacheLocator",
-                        raising=False)
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
     py_file = tmp_path / "package" / "module.py"
     py_file.parent.mkdir()
     py_file.write_text("")
     failure = OSError(errno.ENAMETOOLONG, "File name too long", str(py_file.parent / "__pycache__"))
     remedy = cache_remedy(str(py_file), failure, "silence", package="numbduck")
-    assert remedy == "the path is too long for the file system: numbduck installed at a shorter path; or silence", (
+    instead = (f", or NUMBA_CACHE_DIR, which is set to {tmp_path / 'cache'} and numba could not use, made a writable "
+               "directory at a short path") if offered else ""
+    assert remedy == f"the path is too long for the file system: numbduck installed at a shorter path{instead}; or silence", (
         remedy)
+
+
+@pytest.mark.parametrize("setting", ["unset", "set, passed over", "another locator first"])
+def test_no_locator_for_a_source_on_disk_is_told_what_numba_would_take(tmp_path, monkeypatch, setting):
+    # numba raises "no locator available" where it passed every location over.
+    # "Set NUMBA_CACHE_DIR to a writable directory" was the answer whatever the
+    # setting: to a NUMBA_CACHE_DIR too deep for numba to make its directory in,
+    # where a writable one as deep cures nothing, and to a locator list numba
+    # 0.62 and later read from NUMBA_CACHE_LOCATOR_CLASSES without the
+    # user-provided locator, where numba never reads the variable.
+    import numba
+    from numbox.core.configurations import cache_remedy
+    py_file = tmp_path / "package" / "module.py"
+    py_file.parent.mkdir()
+    py_file.write_text("")
+    cache_dir = str(tmp_path / ("d" * 200))
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "" if setting == "unset" else cache_dir)
+    locators = "InTreeCacheLocator,UserWideCacheLocator" if setting == "another locator first" else ""
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+    remedy = cache_remedy(str(py_file), failure, "silence")
+    expected = {
+        "unset": "Set NUMBA_CACHE_DIR to a writable directory, or silence",
+        "set, passed over": (f"NUMBA_CACHE_DIR is set to {cache_dir}, which numba could not use: set it to a writable "
+                             "directory at a short path, or silence"),
+        "another locator first": (f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {locators}, says: make one of "
+                                  "those locations writable, or silence"),
+    }[setting]
+    assert remedy == expected, remedy
 
 
 @pytest.mark.parametrize("placement", ["too long", "archive"])

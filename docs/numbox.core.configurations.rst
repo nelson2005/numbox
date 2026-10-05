@@ -51,7 +51,11 @@ the check here makes a file named as long as the longest numba writes for the pa
 which a test holds every function of the package under), so that location turns caching off with the
 warning instead.
 
-- For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory. Where the
+- For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory; where it is
+  set and numba passed it over, the warning names it and asks for a writable directory at a short path, since
+  numba passes over one too deep to make its directory in as it does an unwritable one; and where
+  ``NUMBA_CACHE_LOCATOR_CLASSES``, from numba 0.62, puts another locator first, it is the locations that
+  names made writable. Where the
   location is too long for the file system, the remedy is for the location the error names: numba takes a
   directory under ``NUMBA_CACHE_DIR`` where that is set, else the ``__pycache__`` beside the source, else a
   directory under the user's cache directory, each of the two under a cache directory named for the source's
@@ -60,8 +64,8 @@ warning instead.
   ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, where numba asks the system,
   for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short path, which numba takes
   first, or, where it is set and numba passed it over, unwritable or too deep, the warning names it and the
-  remedy is a writable directory at a short path. Where ``NUMBA_CACHE_LOCATOR_CLASSES``, from numba 0.64,
-  puts another locator first, ``NUMBA_CACHE_DIR`` is not offered.
+  remedy is a writable directory at a short path. Where ``NUMBA_CACHE_LOCATOR_CLASSES`` puts
+  another locator first, ``NUMBA_CACHE_DIR`` is not offered.
 - For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
   one archive numba caches, from 0.61 on, and it caches it there, taking the directory without checking that
   it can be written; a frozen application (``sys.frozen``) is cached there too, its sources not being on disk.
