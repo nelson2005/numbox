@@ -233,7 +233,11 @@ def _moved_through():
 def cache_remedy(py_file, failure, silence, package="numbox"):
     """The remedy for ``failure``, numba's for a function whose file is ``py_file``, ending in ``silence``.
 
-    ``NUMBA_CACHE_DIR`` for a source file on disk, which is the only kind numba reads the variable for. Where the
+    ``NUMBA_CACHE_DIR`` for a source file on disk, which is the only kind numba reads the variable for; where it is
+    set and numba passed it over, the variable named and a writable directory at a short path asked for, since
+    numba passes over one too deep to make its directory in as it does an unwritable one; and where
+    ``NUMBA_CACHE_LOCATOR_CLASSES``, from numba 0.62, puts another locator first, the locations it names made
+    writable. Where the
     location is too long for the file system, the error names it, and the remedy is for the one it is: numba takes
     a directory under ``NUMBA_CACHE_DIR`` where that is set, else the ``__pycache__`` beside the source, else a
     directory under the user's cache directory, each of the two under a cache directory named for the source's
@@ -241,8 +245,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     package at a shorter path for the second; the user's cache directory at a shorter path, through
     ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, for the third; and for either
     of the last two ``NUMBA_CACHE_DIR`` set to a short path, which numba takes first, or, where it is set and numba
-    passed it over, named and made a writable directory at a short path. Where ``NUMBA_CACHE_LOCATOR_CLASSES``,
-    from numba 0.64, puts another locator first, ``NUMBA_CACHE_DIR`` is not offered. The error can name the
+    passed it over, named and made a writable directory at a short path. Where ``NUMBA_CACHE_LOCATOR_CLASSES``
+    puts another locator first, ``NUMBA_CACHE_DIR`` is not offered. The error can name the
     location or a file numba writes in it. For a ``.zip`` or a frozen application, both cached under the user's cache
     directory, the location made writable:
     the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
@@ -258,6 +262,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     ``longest_file_name`` for its own functions, ``LONGEST_CACHE_FILE_NAME`` being numbox's.
     """
     if os.path.exists(py_file):
+        from numba import config
+        # numba takes NUMBA_CACHE_DIR first unless NUMBA_CACHE_LOCATOR_CLASSES,
+        # from numba 0.62, orders its locators otherwise; an entry is a class
+        # of numba's caching module, by its name or its dotted path.
+        locators = getattr(config, "CACHE_LOCATOR_CLASSES", "")
+        first = locators.split(",")[0].strip().rsplit(".", 1)[-1] if locators else "UserProvidedCacheLocator"
+        cache_dir_first = first.lstrip("_") == "UserProvidedCacheLocator"
         if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
             # numba's own check passes the location, its temporary file
             # fitting where its cache files would not; the error names it,
@@ -265,18 +276,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # is a path numba builds from the file, matched whole, since the
             # three can nest: an install under either cache directory, or
             # NUMBA_CACHE_DIR above the user's.
-            from numba import config
             from numba.core.caching import _CacheLocator
             # The error names the location, or a file numba writes in it.
             named = os.path.abspath(failure.filename or "")
             named = {named, os.path.dirname(named)}
             subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
             user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
-            # numba takes NUMBA_CACHE_DIR first unless NUMBA_CACHE_LOCATOR_CLASSES,
-            # from numba 0.64, orders its locators otherwise.
-            locators = getattr(config, "CACHE_LOCATOR_CLASSES", "")
-            first = locators.split(",")[0].strip().rsplit(".", 1)[-1] if locators else "UserProvidedCacheLocator"
-            if first.lstrip("_") != "UserProvidedCacheLocator":
+            if not cache_dir_first:
                 instead = ""
             elif config.CACHE_DIR:
                 # Taken first and set, so a location elsewhere means numba
@@ -300,6 +306,18 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return f"the path is too long for the file system: {cure}; or {silence}"
         # numba itself passes a location it cannot make or write over, for a
         # source on disk, so the error here is the no-locator one.
+        if not cache_dir_first:
+            return (
+                f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {locators}, says: make one of those locations "
+                f"writable, or {silence}"
+            )
+        if config.CACHE_DIR:
+            # Set and passed over: unwritable, or too deep for numba to make
+            # its directory there, which a writable one as deep would not cure.
+            return (
+                f"NUMBA_CACHE_DIR is set to {config.CACHE_DIR}, which numba could not use: set it to a writable "
+                f"directory at a short path, or {silence}"
+            )
         return f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
     if isinstance(failure, OSError) or getattr(sys, "frozen", False):
         # The .zip's error names the location numba picked, which is under
