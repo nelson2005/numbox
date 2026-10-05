@@ -705,7 +705,8 @@ def test_a_location_too_close_to_the_path_limit_for_numbas_files_compiles_uncach
     run = _run(env, tmp_path)
     assert run.returncode == 0 and str(REPO / "numbox" / "core") in run.stdout, run.stderr
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
-    assert "the path is too long for the file system: a shorter NUMBA_CACHE_DIR, or none" in run.stderr, run.stderr
+    assert "the path is too long for the file system: a shorter NUMBA_CACHE_DIR; or NUMBOX_JIT_OPTIONS" in (
+        run.stderr), run.stderr
     assert not _index_files(cache_dir)
 
 
@@ -783,7 +784,7 @@ def test_a_location_too_long_is_told_what_shortens_the_one_it_is(tmp_path, monke
     subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
     user_cache_dir = tmp_path / "user-cache" / "numba"
     where, cure = {
-        "NUMBA_CACHE_DIR": (tmp_path / "cache" / subpath, "a shorter NUMBA_CACHE_DIR, or none"),
+        "NUMBA_CACHE_DIR": (tmp_path / "cache" / subpath, "a shorter NUMBA_CACHE_DIR"),
         "beside": (py_file.parent / "__pycache__",
                    "numbduck installed at a shorter path, or NUMBA_CACHE_DIR set to a short path"),
         "user": (user_cache_dir / subpath,
@@ -1194,7 +1195,7 @@ def test_a_struct_name_of_any_length_caches(tmp_path, name):
 @pytest.mark.skipif(sys.platform != "linux", reason="a path of 4096 bytes and a name of 255 are Linux's limits")
 @pytest.mark.parametrize("directory, remedy", [
     ("HOME", "too long for the file system: NUMBA_CACHE_DIR at a shorter path"),
-    ("NUMBA_CACHE_DIR", "the path is too long for the file system: a shorter NUMBA_CACHE_DIR, or none"),
+    ("NUMBA_CACHE_DIR", "the path is too long for the file system: a shorter NUMBA_CACHE_DIR; or NUMBOX_JIT_OPTIONS"),
 ])
 def test_an_anchor_path_too_long_for_the_file_system_compiles_uncached_and_the_warning_says_so(
         tmp_path, directory, remedy):
