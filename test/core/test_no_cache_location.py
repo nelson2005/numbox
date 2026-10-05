@@ -1186,10 +1186,20 @@ def test_an_anchor_path_too_long_for_the_file_system_compiles_uncached_and_the_w
     # NUMBA_CACHE_DIR" where none was set. There is no cache here, and the
     # warning names the length rather than offering a writable directory, which
     # this one is; NUMBA_CACHE_DIR at a short path cures it. A NUMBA_CACHE_DIR
-    # as deep is too deep for the package's own files, whose location under it
-    # appends their directory's path, so the package answers first, with its
-    # remedy, and the struct compiles under its answer without a word of its own.
-    deep = _directory_of_length(tmp_path, 4096 - 50)
+    # is made deep enough for the package's own files instead, whose location
+    # under it, a directory named for theirs by its name and a hash of its
+    # path, ends 20 bytes short of the limit: numba's own check passes there,
+    # with a named temporary file too where the file system makes no unnamed
+    # one, and the package's does not, so the package answers first, with its
+    # remedy, and the struct compiles under its answer without a word of its
+    # own. At the home's depth numba's check failed the location on such a file
+    # system and moved on to the tree, and the anchor answered instead.
+    if directory == "NUMBA_CACHE_DIR":
+        from numba.core.caching import _CacheLocator
+        location = _CacheLocator.get_suitable_cache_subpath(str(REPO / "numbox" / "core" / "configurations.py"))
+        deep = _directory_of_length(tmp_path, 4096 - 20 - 1 - len(location))
+    else:
+        deep = _directory_of_length(tmp_path, 4096 - 50)
     env = dict(os.environ, PYTHONPATH=str(REPO))
     for name in ("NUMBOX_JIT_OPTIONS", "NUMBA_CACHE_DIR", "XDG_CACHE_HOME"):
         env.pop(name, None)
