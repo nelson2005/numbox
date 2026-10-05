@@ -750,6 +750,7 @@ LOCATION_CASES = {
     "NUMBA_CACHE_DIR": ("cache", "site", "NUMBA_CACHE_DIR"),
     "beside the source": (None, "site", "beside"),
     "the user's cache directory": (None, "site", "user"),
+    "beside the source, NUMBA_CACHE_DIR passed over": ("cache", "site", "beside"),
     "beside a source under NUMBA_CACHE_DIR": ("cache", "cache/site", "beside"),
     "the user's cache directory under NUMBA_CACHE_DIR": ("user-cache", "site", "user"),
     "beside a source under the user's cache directory": (None, "user-cache/numba/site", "beside"),
@@ -783,13 +784,20 @@ def test_a_location_too_long_is_told_what_shortens_the_one_it_is(tmp_path, monke
     py_file.write_text("")
     subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
     user_cache_dir = tmp_path / "user-cache" / "numba"
+    # A location other than NUMBA_CACHE_DIR's where the variable is set means
+    # numba passed it over, so the warning names it rather than telling the
+    # reader to set what is set.
+    if cache_dir:
+        instead = (f"or NUMBA_CACHE_DIR, which is set to {tmp_path / cache_dir} and numba could not use, made a "
+                   "writable directory at a short path")
+    else:
+        instead = "or NUMBA_CACHE_DIR set to a short path"
     where, cure = {
         "NUMBA_CACHE_DIR": (tmp_path / "cache" / subpath, "a shorter NUMBA_CACHE_DIR"),
-        "beside": (py_file.parent / "__pycache__",
-                   "numbduck installed at a shorter path, or NUMBA_CACHE_DIR set to a short path"),
+        "beside": (py_file.parent / "__pycache__", f"numbduck installed at a shorter path, {instead}"),
         "user": (user_cache_dir / subpath,
                  f"the user's cache directory, {user_cache_dir}, at a shorter path, through XDG_CACHE_HOME or HOME, "
-                 "or NUMBA_CACHE_DIR set to a short path"),
+                 f"{instead}"),
     }[which]
     failure = OSError(errno.ENAMETOOLONG, "File name too long", str(where))
     remedy = configurations.cache_remedy(str(py_file), failure, "silence", package="numbduck")

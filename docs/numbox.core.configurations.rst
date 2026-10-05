@@ -58,7 +58,8 @@ warning instead.
   directory, by its name and a hash of its path. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
   package installed at a shorter path for the second; the user's cache directory at a shorter path, through
   ``XDG_CACHE_HOME`` or ``HOME``, for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a
-  short path, which numba takes first.
+  short path, which numba takes first, or, where it is set and numba passed it over, unwritable or too deep,
+  the warning names it and the remedy is a writable directory at a short path.
 - For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
   one archive numba caches, from 0.61 on, and it caches it there, taking the directory without checking that
   it can be written; a frozen application (``sys.frozen``) is cached there too, its sources not being on disk.
