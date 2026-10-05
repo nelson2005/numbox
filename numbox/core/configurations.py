@@ -227,7 +227,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     directory, by its name and a hash of its path. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
     package at a shorter path for the second; the user's cache directory at a shorter path, through
     ``XDG_CACHE_HOME`` or ``HOME``, for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short
-    path, which numba takes first. For a ``.zip`` or a frozen application, both cached under the user's cache
+    path, which numba takes first, or, where it is set and numba passed it over, named and made a writable directory
+    at a short path. For a ``.zip`` or a frozen application, both cached under the user's cache
     directory, the location made writable:
     the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
     application's is the no-locator one, numba having passed the location over on its error, so the user's
@@ -254,17 +255,26 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             location = os.path.abspath(failure.filename or "")
             subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
             user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
+            if config.CACHE_DIR:
+                # numba takes NUMBA_CACHE_DIR first, so a location elsewhere
+                # means it passed the variable over: unwritable, or too deep.
+                instead = (
+                    f"or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR} and numba could not use, made a "
+                    "writable directory at a short path"
+                )
+            else:
+                instead = "or NUMBA_CACHE_DIR set to a short path"
             if location == os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__")):
-                cure = f"{package} installed at a shorter path, or NUMBA_CACHE_DIR set to a short path"
+                cure = f"{package} installed at a shorter path, {instead}"
             elif config.CACHE_DIR and location == os.path.abspath(os.path.join(config.CACHE_DIR, subpath)):
                 cure = "a shorter NUMBA_CACHE_DIR"
             elif location == os.path.abspath(os.path.join(user_cache_dir, subpath)):
                 cure = (
                     f"the user's cache directory, {user_cache_dir}, at a shorter path, through XDG_CACHE_HOME or "
-                    "HOME, or NUMBA_CACHE_DIR set to a short path"
+                    f"HOME, {instead}"
                 )
             else:
-                cure = "NUMBA_CACHE_DIR set to a short path, which numba takes first"
+                cure = f"{instead[len('or '):]}, which numba takes first"
             return f"the path is too long for the file system: {cure}; or {silence}"
         # numba itself passes a location it cannot make or write over, for a
         # source on disk, so the error here is the no-locator one.
