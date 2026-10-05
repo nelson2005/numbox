@@ -757,8 +757,9 @@ LOCATION_CASES = {
 }
 
 
+@pytest.mark.parametrize("named", ["the location", "a file in it"])
 @pytest.mark.parametrize("case", list(LOCATION_CASES))
-def test_a_location_too_long_is_told_what_shortens_the_one_it_is(tmp_path, monkeypatch, case):
+def test_a_location_too_long_is_told_what_shortens_the_one_it_is(tmp_path, monkeypatch, case, named):
     # numba takes a directory under NUMBA_CACHE_DIR where that is set, else the
     # __pycache__ beside the source, else a directory under the user's cache
     # directory, and the error names the one that is too long. One remedy for
@@ -767,7 +768,9 @@ def test_a_location_too_long_is_told_what_shortens_the_one_it_is(tmp_path, monke
     # telling them apart by which directory a location starts with took one for
     # another where they nest: an install under either cache directory, or
     # NUMBA_CACHE_DIR above the user's. The user's cache directory is one under
-    # tmp_path, so that every case runs on every platform.
+    # tmp_path, so that every case runs on every platform. numbox's own check
+    # names the location; numba's first save names a file in it, and a caller
+    # can pass that error on.
     import numba
     import numbox.core.configurations as configurations
     from numba.core.caching import _CacheLocator
@@ -787,21 +790,71 @@ def test_a_location_too_long_is_told_what_shortens_the_one_it_is(tmp_path, monke
     # A location other than NUMBA_CACHE_DIR's where the variable is set means
     # numba passed it over, so the warning names it rather than telling the
     # reader to set what is set.
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     if cache_dir:
-        instead = (f"or NUMBA_CACHE_DIR, which is set to {tmp_path / cache_dir} and numba could not use, made a "
+        instead = (f", or NUMBA_CACHE_DIR, which is set to {tmp_path / cache_dir} and numba could not use, made a "
                    "writable directory at a short path")
     else:
-        instead = "or NUMBA_CACHE_DIR set to a short path"
+        instead = ", or NUMBA_CACHE_DIR set to a short path"
     where, cure = {
         "NUMBA_CACHE_DIR": (tmp_path / "cache" / subpath, "a shorter NUMBA_CACHE_DIR"),
-        "beside": (py_file.parent / "__pycache__", f"numbduck installed at a shorter path, {instead}"),
+        "beside": (py_file.parent / "__pycache__", f"numbduck installed at a shorter path{instead}"),
         "user": (user_cache_dir / subpath,
-                 f"the user's cache directory, {user_cache_dir}, at a shorter path, through XDG_CACHE_HOME or HOME, "
+                 f"the user's cache directory, {user_cache_dir}, at a shorter path{configurations._moved_through()}"
                  f"{instead}"),
     }[which]
+    if named == "a file in it":
+        where = where / "module.f-1.py312.nbi"
     failure = OSError(errno.ENAMETOOLONG, "File name too long", str(where))
     remedy = configurations.cache_remedy(str(py_file), failure, "silence", package="numbduck")
     assert remedy == f"the path is too long for the file system: {cure}; or silence", remedy
+
+
+@pytest.mark.parametrize("platform, moved_through", [
+    ("linux", ", through XDG_CACHE_HOME or HOME"), ("darwin", ", through HOME"), ("win32", ""),
+])
+def test_the_user_cache_directory_is_told_what_moves_it_on_the_platform(tmp_path, monkeypatch, platform, moved_through):
+    # numba's appdirs puts the user's cache directory under XDG_CACHE_HOME or
+    # HOME on Linux, under HOME alone on macOS, and asks the system on Windows,
+    # so "through XDG_CACHE_HOME or HOME" sent a macOS reader to a variable that
+    # moves nothing, for a source on disk and for a .zip alike.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = tmp_path / "package" / "module.py"
+    py_file.parent.mkdir()
+    py_file.write_text("")
+    user_cache_dir = configurations.AppDirs(appname="numba", appauthor=False).user_cache_dir
+    location = os.path.join(user_cache_dir, _CacheLocator.get_suitable_cache_subpath(str(py_file)))
+    monkeypatch.setattr(sys, "platform", platform)
+    on_disk = configurations.cache_remedy(
+        str(py_file), OSError(errno.ENAMETOOLONG, "File name too long", location), "silence")
+    assert f"the user's cache directory, {user_cache_dir}, at a shorter path{moved_through}, or NUMBA_CACHE_DIR" in (
+        on_disk), on_disk
+    zipped = configurations.cache_remedy(
+        str(tmp_path / "package.zip" / "package" / "module.py"),
+        OSError(errno.ENAMETOOLONG, "File name too long", location), "silence")
+    assert f"put that directory, {location}, at a shorter path{moved_through}, or silence" in zipped, zipped
+
+
+def test_numba_cache_dir_is_not_offered_where_the_locators_put_another_first(tmp_path, monkeypatch):
+    # numba 0.64 and later take NUMBA_CACHE_LOCATOR_CLASSES as the locators and
+    # their order; without the user-provided locator first, NUMBA_CACHE_DIR is
+    # not what numba takes first, and a set one was not passed over.
+    import numba
+    from numbox.core.configurations import cache_remedy
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator,UserWideCacheLocator",
+                        raising=False)
+    py_file = tmp_path / "package" / "module.py"
+    py_file.parent.mkdir()
+    py_file.write_text("")
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", str(py_file.parent / "__pycache__"))
+    remedy = cache_remedy(str(py_file), failure, "silence", package="numbduck")
+    assert remedy == "the path is too long for the file system: numbduck installed at a shorter path; or silence", (
+        remedy)
 
 
 @pytest.mark.parametrize("placement", ["too long", "archive"])
