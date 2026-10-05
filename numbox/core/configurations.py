@@ -245,19 +245,26 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
             # numba's own check passes the location, its temporary file
             # fitting where its cache files would not; the error names it,
-            # and which of numba's three it is decides what shortens it.
+            # and which of numba's three it is decides what shortens it. Each
+            # is a path numba builds from the file, matched whole, since the
+            # three can nest: an install under either cache directory, or
+            # NUMBA_CACHE_DIR above the user's.
             from numba import config
-            location = os.path.join(os.path.abspath(failure.filename or ""), "")
+            from numba.core.caching import _CacheLocator
+            location = os.path.abspath(failure.filename or "")
+            subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
             user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
-            if config.CACHE_DIR and location.startswith(os.path.join(os.path.abspath(config.CACHE_DIR), "")):
+            if location == os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__")):
+                cure = f"{package} installed at a shorter path, or NUMBA_CACHE_DIR set to a short path"
+            elif config.CACHE_DIR and location == os.path.abspath(os.path.join(config.CACHE_DIR, subpath)):
                 cure = "a shorter NUMBA_CACHE_DIR, or none"
-            elif location.startswith(os.path.join(os.path.abspath(user_cache_dir), "")):
+            elif location == os.path.abspath(os.path.join(user_cache_dir, subpath)):
                 cure = (
                     f"the user's cache directory, {user_cache_dir}, at a shorter path, through XDG_CACHE_HOME or "
                     "HOME, or NUMBA_CACHE_DIR set to a short path"
                 )
             else:
-                cure = f"{package} installed at a shorter path, or NUMBA_CACHE_DIR set to a short path"
+                cure = "NUMBA_CACHE_DIR set to a short path, which numba takes first"
             return f"the path is too long for the file system: {cure}; or {silence}"
         # numba itself passes a location it cannot make or write over, for a
         # source on disk, so the error here is the no-locator one.
