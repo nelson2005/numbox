@@ -230,13 +230,17 @@ def _moved_through():
     return ", through XDG_CACHE_HOME or HOME"
 
 
-def _numba_locator(name):
-    """numba's cache locator class of this name, as numba spells it from 0.62 or with the underscore it had before.
+def _class_named(module, name):
+    """The class of this name in ``module``, as numba spells its locators from 0.62 or with the underscore it put
+    before them until then; None where the module has neither."""
+    return getattr(module, name, None) or getattr(module, "_" + name, None)
 
-    None where this numba has no such class: the ``.zip`` locator arrived in 0.61.
-    """
+
+def _numba_locator(name):
+    """numba's cache locator class of this name, or None where this numba has none: the ``.zip`` locator arrived in
+    0.61."""
     from numba.core import caching
-    return getattr(caching, name, None) or getattr(caching, "_" + name, None)
+    return _class_named(caching, name)
 
 
 def _locators(listed):
@@ -255,8 +259,8 @@ def _locators(listed):
         if "." in entry:
             module_path, class_name = entry.rsplit(".", 1)
             try:
-                cls = getattr(importlib.import_module(module_path), class_name)
-            except (ImportError, AttributeError):
+                cls = _class_named(importlib.import_module(module_path), class_name)
+            except ImportError:
                 cls = None
         else:
             cls = _numba_locator(entry)
