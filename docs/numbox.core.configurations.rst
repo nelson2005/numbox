@@ -68,7 +68,11 @@ warning instead.
   before the locator that took the location, or, where it is set and numba passed it over, unwritable or too
   deep, the warning names it and the remedy is a writable directory at a short path.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order; its IPython and ``.zip`` locators take no file on disk,
-  so one of them ahead changes nothing.
+  so one of them ahead changes nothing. Where the location numba took refuses a file for another reason, a
+  full disk or permissions changed since numba's own check, the warning names the location and the reason and
+  asks for room or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it
+  before that location, or set to another directory where the location is the variable's own; numba passes over
+  a location it cannot make or write in, so only its no-locator error means the variable was passed over.
 - For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
   one archive numba caches, from 0.61 on, and it caches it there, taking the directory without checking that
   it can be written; a frozen application (``sys.frozen``) is cached there too, its sources not being on disk.
