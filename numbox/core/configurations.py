@@ -258,7 +258,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location is too long for the file system, the error names it, and the remedy is for the one it is: numba takes
     a directory under ``NUMBA_CACHE_DIR`` where that is set, else the ``__pycache__`` beside the source, else a
     directory under the user's cache directory, each of the two under a cache directory named for the source's
-    directory, by its name and a hash of its path. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
+    directory, by its name and a hash of its path; the path the error names is matched whole against each, in the
+    order numba tries them, since the three can nest and ``NUMBA_CACHE_DIR`` set to the user's cache directory makes
+    one path of two. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
     package at a shorter path for the second; the user's cache directory at a shorter path, through
     ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, for the third; and for either
     of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it before the locator that took the
@@ -310,26 +312,30 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # and which of numba's three it is decides what shortens it. Each
             # is a path numba builds from the file, matched whole, since the
             # three can nest: an install under either cache directory, or
-            # NUMBA_CACHE_DIR above the user's.
+            # NUMBA_CACHE_DIR above the user's. They are matched in numba's
+            # order, since NUMBA_CACHE_DIR set to the user's cache directory
+            # makes one path of two, and the order says which locator took it.
             from numba.core.caching import _CacheLocator
             # The error names the location, or a file numba writes in it.
             named = os.path.abspath(failure.filename or "")
             named = {named, os.path.dirname(named)}
             subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
             user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
-            if os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__")) in named:
-                cure = f"{package} installed at a shorter path{instead('InTreeCacheLocator')}"
-            elif config.CACHE_DIR and os.path.abspath(os.path.join(config.CACHE_DIR, subpath)) in named:
+            locations = {
+                "UserProvidedCacheLocator": os.path.join(config.CACHE_DIR, subpath) if config.CACHE_DIR else None,
+                "InTreeCacheLocator": os.path.join(os.path.dirname(py_file), "__pycache__"),
+                "UserWideCacheLocator": os.path.join(user_cache_dir, subpath),
+            }
+            taken = next(
+                (name for name in order if locations.get(name) and os.path.abspath(locations[name]) in named), None)
+            if taken == "UserProvidedCacheLocator":
                 cure = "a shorter NUMBA_CACHE_DIR"
-            elif os.path.abspath(os.path.join(user_cache_dir, subpath)) in named:
-                cure = (
-                    f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}"
-                    f"{instead('UserWideCacheLocator')}"
-                )
-            elif instead(None):
-                cure = f"{instead(None)[len(', or '):]}, which numba takes first"
+            elif taken == "InTreeCacheLocator":
+                cure = f"{package} installed at a shorter path{instead(taken)}"
+            elif taken == "UserWideCacheLocator":
+                cure = f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}{instead(taken)}"
             else:
-                cure = f"that location, {failure.filename}, at a shorter path"
+                cure = f"that location, {failure.filename}, at a shorter path{instead(None)}"
             return f"the path is too long for the file system: {cure}; or {silence}"
         # numba itself passes a location it cannot make or write over, for a
         # source on disk, so the error here is the no-locator one.

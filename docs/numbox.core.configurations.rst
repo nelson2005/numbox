@@ -59,7 +59,9 @@ warning instead.
   location is too long for the file system, the remedy is for the location the error names: numba takes a
   directory under ``NUMBA_CACHE_DIR`` where that is set, else the ``__pycache__`` beside the source, else a
   directory under the user's cache directory, each of the two under a cache directory named for the source's
-  directory, by its name and a hash of its path. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
+  directory, by its name and a hash of its path; the path the error names is matched whole against each, in
+  the order numba tries them, since the three can nest and ``NUMBA_CACHE_DIR`` set to the user's cache
+  directory makes one path of two. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
   package installed at a shorter path for the second; the user's cache directory at a shorter path, through
   ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, where numba asks the system,
   for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it
