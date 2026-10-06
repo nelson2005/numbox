@@ -54,18 +54,19 @@ warning instead.
 - For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory; where it is
   set and numba passed it over, the warning names it and asks for a writable directory at a short path, since
   numba passes over one too deep to make its directory in as it does an unwritable one; and where
-  ``NUMBA_CACHE_LOCATOR_CLASSES``, from numba 0.62, puts another locator first, it is the locations that
-  names made writable. Where the
+  ``NUMBA_CACHE_LOCATOR_CLASSES``, from numba 0.62, leaves the user-provided locator out, it is the locations
+  the list names made writable, numba never reading the variable. Where the
   location is too long for the file system, the remedy is for the location the error names: numba takes a
   directory under ``NUMBA_CACHE_DIR`` where that is set, else the ``__pycache__`` beside the source, else a
   directory under the user's cache directory, each of the two under a cache directory named for the source's
   directory, by its name and a hash of its path. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
   package installed at a shorter path for the second; the user's cache directory at a shorter path, through
   ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, where numba asks the system,
-  for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short path, which numba takes
-  first, or, where it is set and numba passed it over, unwritable or too deep, the warning names it and the
-  remedy is a writable directory at a short path. Where ``NUMBA_CACHE_LOCATOR_CLASSES`` puts
-  another locator first, ``NUMBA_CACHE_DIR`` is not offered.
+  for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it
+  before the locator that took the location, or, where it is set and numba passed it over, unwritable or too
+  deep, the warning names it and the remedy is a writable directory at a short path.
+  ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order; its IPython and ``.zip`` locators take no file on disk,
+  so one of them ahead changes nothing.
 - For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
   one archive numba caches, from 0.61 on, and it caches it there, taking the directory without checking that
   it can be written; a frozen application (``sys.frozen``) is cached there too, its sources not being on disk.

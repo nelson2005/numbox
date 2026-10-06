@@ -842,12 +842,18 @@ def test_the_user_cache_directory_is_told_what_moves_it_on_the_platform(tmp_path
 @pytest.mark.parametrize("locators, offered", [
     ("InTreeCacheLocator,UserWideCacheLocator", False),
     ("numba.core.caching.UserProvidedCacheLocator, numba.core.caching.InTreeCacheLocator", True),
+    ("IPythonCacheLocator,UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator", True),
+    ("InTreeCacheLocator,UserProvidedCacheLocator,UserWideCacheLocator", False),
 ])
-def test_numba_cache_dir_is_offered_only_where_the_locators_put_it_first(tmp_path, monkeypatch, locators, offered):
+def test_numba_cache_dir_is_offered_only_where_numba_tries_it_before_the_location_it_took(
+        tmp_path, monkeypatch, locators, offered):
     # numba 0.62 and later take NUMBA_CACHE_LOCATOR_CLASSES as the locators and
     # their order, each entry a class of numba's caching module by its name or
-    # its dotted path; without the user-provided locator first, NUMBA_CACHE_DIR
-    # is not what numba takes first, and a set one was not passed over.
+    # its dotted path. NUMBA_CACHE_DIR is an alternative to the __pycache__
+    # numba took only where numba tries the variable before that: a set one
+    # was passed over, an unset one would be taken. The IPython and .zip
+    # locators take no file on disk, so one of them ahead changes nothing,
+    # where the first entry's name alone said another locator was first.
     import numba
     from numbox.core.configurations import cache_remedy
     monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
@@ -863,33 +869,48 @@ def test_numba_cache_dir_is_offered_only_where_the_locators_put_it_first(tmp_pat
         remedy)
 
 
-@pytest.mark.parametrize("setting", ["unset", "set, passed over", "another locator first"])
+# Each case: whether NUMBA_CACHE_DIR is set, NUMBA_CACHE_LOCATOR_CLASSES, and
+# the remedy before "or silence".
+NO_LOCATOR_CASES = {
+    "unset": (False, "", "Set NUMBA_CACHE_DIR to a writable directory"),
+    "set, passed over": (
+        True, "",
+        "NUMBA_CACHE_DIR is set to {cache_dir}, which numba could not use: set it to a writable directory at a short "
+        "path"),
+    "without the user-provided locator": (
+        False, "InTreeCacheLocator,UserWideCacheLocator",
+        "numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {locators}, says: make one of those locations writable"),
+    "unset, the user-provided locator after another": (
+        False, "InTreeCacheLocator,UserProvidedCacheLocator", "Set NUMBA_CACHE_DIR to a writable directory"),
+    "set, passed over, the user-provided locator after another": (
+        True, "InTreeCacheLocator,UserProvidedCacheLocator",
+        "NUMBA_CACHE_DIR is set to {cache_dir}, which numba could not use: set it to a writable directory at a short "
+        "path"),
+}
+
+
+@pytest.mark.parametrize("setting", list(NO_LOCATOR_CASES))
 def test_no_locator_for_a_source_on_disk_is_told_what_numba_would_take(tmp_path, monkeypatch, setting):
     # numba raises "no locator available" where it passed every location over.
     # "Set NUMBA_CACHE_DIR to a writable directory" was the answer whatever the
     # setting: to a NUMBA_CACHE_DIR too deep for numba to make its directory in,
     # where a writable one as deep cures nothing, and to a locator list numba
     # 0.62 and later read from NUMBA_CACHE_LOCATOR_CLASSES without the
-    # user-provided locator, where numba never reads the variable.
+    # user-provided locator, where numba never reads the variable. With that
+    # locator anywhere in the list numba reads the variable once the locators
+    # before it have passed, so its place in the list changes nothing here.
     import numba
     from numbox.core.configurations import cache_remedy
     py_file = tmp_path / "package" / "module.py"
     py_file.parent.mkdir()
     py_file.write_text("")
     cache_dir = str(tmp_path / ("d" * 200))
-    monkeypatch.setattr(numba.config, "CACHE_DIR", "" if setting == "unset" else cache_dir)
-    locators = "InTreeCacheLocator,UserWideCacheLocator" if setting == "another locator first" else ""
+    cache_dir_set, locators, opening = NO_LOCATOR_CASES[setting]
+    monkeypatch.setattr(numba.config, "CACHE_DIR", cache_dir if cache_dir_set else "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
     failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
     remedy = cache_remedy(str(py_file), failure, "silence")
-    expected = {
-        "unset": "Set NUMBA_CACHE_DIR to a writable directory, or silence",
-        "set, passed over": (f"NUMBA_CACHE_DIR is set to {cache_dir}, which numba could not use: set it to a writable "
-                             "directory at a short path, or silence"),
-        "another locator first": (f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {locators}, says: make one of "
-                                  "those locations writable, or silence"),
-    }[setting]
-    assert remedy == expected, remedy
+    assert remedy == f"{opening.format(cache_dir=cache_dir, locators=locators)}, or silence", remedy
 
 
 @pytest.mark.parametrize("placement", ["too long", "archive"])
