@@ -72,7 +72,9 @@ warning instead.
   only in an ipykernel directory and its ``.zip`` locator only a path with a part ending in ``.zip``, an
   archive or a directory, so either ahead of the rest changes nothing for any other file; the ``.zip`` locator
   ahead of them all takes such a path first and caches it under the user's cache directory, or finds no archive
-  in it, and the warning then asks for a locator for a file on disk listed before it. A list with no locator
+  in it, and the warning then asks for a locator for a file on disk listed before it; after some of them, it
+  finds no archive once those have passed the file over, numba trying none after it, and the warning asks for
+  one of their locations made writable or a locator for a file on disk listed before it. A list with no locator
   that takes the file is told so. Where the location numba took refuses a file for another reason, a
   full disk or permissions changed since numba's own check, the warning names the location and the reason and
   asks for room or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it

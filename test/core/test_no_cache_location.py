@@ -1083,32 +1083,56 @@ def test_a_location_too_long_under_the_zip_locator_listed_first_is_the_users_cac
         f"{configurations._moved_through()}; or silence"), remedy
 
 
-@pytest.mark.parametrize("locators, expected", [
-    ("", "Set NUMBA_CACHE_DIR to a writable directory"),
+from_062 = pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+
+
+# Each case: whether NUMBA_CACHE_DIR is set, NUMBA_CACHE_LOCATOR_CLASSES, and
+# the remedy before "or silence".
+@pytest.mark.parametrize("cache_dir_set, locators, expected", [
+    (False, "", "Set NUMBA_CACHE_DIR to a writable directory"),
     pytest.param(
-        "ZipCacheLocator,InTreeCacheLocator,UserWideCacheLocator",
+        False, "ZipCacheLocator,InTreeCacheLocator,UserWideCacheLocator",
         'numba\'s .zip locator, which NUMBA_CACHE_LOCATOR_CLASSES puts before every locator for a source file on disk, '
         'takes this file for the ".zip" in its path and finds no archive there: list UserProvidedCacheLocator, '
         "InTreeCacheLocator or UserWideCacheLocator before it",
-        marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")),
+        marks=from_062),
+    pytest.param(
+        True, "InTreeCacheLocator,ZipCacheLocator,UserProvidedCacheLocator",
+        'numba\'s .zip locator takes this file for the ".zip" in its path and finds no archive there, after every '
+        "locator NUMBA_CACHE_LOCATOR_CLASSES, {locators}, puts before it passed the file over: make one of those "
+        "locations writable, or list UserProvidedCacheLocator, InTreeCacheLocator or UserWideCacheLocator before it",
+        marks=from_062),
+    pytest.param(
+        True, "UserProvidedCacheLocator,ZipCacheLocator,InTreeCacheLocator",
+        "NUMBA_CACHE_DIR is set to {cache_dir}, which numba could not use: set it to a writable directory at a short "
+        "path",
+        marks=from_062),
+    pytest.param(
+        False, "UserProvidedCacheLocator,ZipCacheLocator,InTreeCacheLocator",
+        "Set NUMBA_CACHE_DIR to a writable directory", marks=from_062),
 ])
 def test_a_source_on_disk_with_zip_in_its_path_and_no_archive_is_told_by_the_zip_locators_place(
-        tmp_path, monkeypatch, locators, expected):
+        tmp_path, monkeypatch, cache_dir_set, locators, expected):
     # numba's .zip locator takes a path with ".zip" in it and raises ValueError
-    # where no part of the path is an archive. In numba's own order it comes
-    # after every locator for a file on disk, so the error means they all
-    # passed the file over and the no-locator remedy applies. Listed before
-    # them it takes the file first, and the remedy offered NUMBA_CACHE_DIR,
-    # which numba never reaches.
+    # where no part of the path ends in .zip. numba tries the locators before
+    # it and none after, so the error means the ones before it passed the file
+    # over: in numba's own order that is every locator for a file on disk, and
+    # the no-locator remedy applies; listed first it takes the file first, and
+    # the remedy offered NUMBA_CACHE_DIR, which numba never reaches; listed
+    # after one locator for a file on disk and before the user-provided one,
+    # it raised before numba read NUMBA_CACHE_DIR, and the remedy, answering
+    # the error only where the .zip locator came first, said the variable, set
+    # and writable, was one numba could not use.
     import numba
     from numbox.core.configurations import cache_remedy
-    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    cache_dir = str(tmp_path / "cache")
+    monkeypatch.setattr(numba.config, "CACHE_DIR", cache_dir if cache_dir_set else "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
     py_file = tmp_path / "not.zipped" / "module.py"
     py_file.parent.mkdir()
     py_file.write_text("")
     remedy = cache_remedy(str(py_file), ValueError("No zip file found in path"), "silence")
-    assert remedy == f"{expected}, or silence", remedy
+    assert remedy == f"{expected.format(cache_dir=cache_dir, locators=locators)}, or silence", remedy
 
 
 @pytest.mark.parametrize("placement", ["too long", "archive"])

@@ -292,7 +292,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     an ipykernel directory and its ``.zip`` locator only a path with a part ending in ``.zip``, an archive or a
     directory, so either ahead of the rest changes nothing for any other file; the ``.zip`` locator ahead of them all
     takes such a path first and caches it under the user's cache directory, or finds no archive in it, and the remedy
-    then asks for a locator for a file on disk listed before it. A list with no locator that takes the file is told
+    then asks for a locator for a file on disk listed before it; after some of them, it finds no archive once those
+    have passed the file over, numba trying none after it, and the remedy asks for one of their locations made
+    writable or a locator for a file on disk listed before it. A list with no locator that takes the file is told
     so. Where the location numba took refuses a file for another reason, a full disk
     or permissions changed since numba's own check, the remedy names the location and the reason and asks for room
     or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it before that
@@ -416,22 +418,33 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"there, or make it writable{alternative}; or {silence}"
             )
         # numba itself passes a location it cannot make or write over, for a
-        # source on disk, so the error here is the no-locator one, or the .zip
-        # locator's for a path with .zip in it and no archive, which it raises
-        # where it comes before every locator that would take the file.
-        if not order:
+        # source on disk, so the error here is the no-locator one, every
+        # locator tried and passed over, or the .zip locator's for a path with
+        # .zip in it and no part ending in it, which numba raises where it
+        # reaches that locator: the locators before it passed the file over,
+        # and none after it was tried.
+        zip_raised = isinstance(failure, ValueError) and for_a_zip in order
+        tried = order[:order.index(for_a_zip)] if zip_raised else order
+        if not tried:
+            if zip_raised:
+                return (
+                    "numba's .zip locator, which NUMBA_CACHE_LOCATOR_CLASSES puts before every locator for a source "
+                    'file on disk, takes this file for the ".zip" in its path and finds no archive there: list '
+                    f"UserProvidedCacheLocator, InTreeCacheLocator or UserWideCacheLocator before it, or {silence}"
+                )
             return (
                 f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says, and none of those locators takes "
                 "a source file on disk: list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator "
                 f"or UserWideCacheLocator, or {silence}"
             )
-        if isinstance(failure, ValueError) and order[0] is for_a_zip:
-            return (
-                "numba's .zip locator, which NUMBA_CACHE_LOCATOR_CLASSES puts before every locator for a source file "
-                'on disk, takes this file for the ".zip" in its path and finds no archive there: list '
-                f"UserProvidedCacheLocator, InTreeCacheLocator or UserWideCacheLocator before it, or {silence}"
-            )
-        if not cache_dir_read:
+        if user_provided not in tried:
+            if zip_raised:
+                return (
+                    'numba\'s .zip locator takes this file for the ".zip" in its path and finds no archive there, after '
+                    f"every locator NUMBA_CACHE_LOCATOR_CLASSES, {listed}, puts before it passed the file over: make "
+                    "one of those locations writable, or list UserProvidedCacheLocator, InTreeCacheLocator or "
+                    f"UserWideCacheLocator before it, or {silence}"
+                )
             return (
                 f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says: make one of those locations "
                 f"writable, or {silence}"
