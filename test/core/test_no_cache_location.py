@@ -810,6 +810,70 @@ def test_a_location_too_long_is_told_what_shortens_the_one_it_is(tmp_path, monke
     assert remedy == f"the path is too long for the file system: {cure}; or silence", remedy
 
 
+@pytest.mark.parametrize("locators, cure", [
+    ("", "a shorter NUMBA_CACHE_DIR"),
+    ("UserWideCacheLocator", "the user's cache directory, {user_cache_dir}, at a shorter path{moved_through}"),
+    ("UserWideCacheLocator,UserProvidedCacheLocator",
+     "the user's cache directory, {user_cache_dir}, at a shorter path{moved_through}"),
+    ("InTreeCacheLocator,UserProvidedCacheLocator,UserWideCacheLocator", "a shorter NUMBA_CACHE_DIR"),
+])
+def test_a_location_too_long_that_is_numba_cache_dirs_and_the_users_cache_directorys_is_told_by_the_locator_order(
+        tmp_path, monkeypatch, locators, cure):
+    # NUMBA_CACHE_DIR set to the user's cache directory makes one path of two
+    # of numba's locations, and which locator took it is the order's to say:
+    # numba's own order tries the variable first, so a shorter NUMBA_CACHE_DIR
+    # shortens it; a list that tries the user's cache directory before the
+    # variable, or never reads the variable, took it as the user's cache
+    # directory, and the variable's remedy, matched first whatever the order,
+    # told the reader to shorten a variable numba did not read.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    user_cache_dir = tmp_path / "user-cache" / "numba"
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(user_cache_dir))
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    location = user_cache_dir / _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", str(location))
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    expected = cure.format(user_cache_dir=user_cache_dir, moved_through=configurations._moved_through())
+    assert remedy == f"the path is too long for the file system: {expected}; or silence", remedy
+
+
+@pytest.mark.parametrize("locators", [
+    "", "IPythonCacheLocator,UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator",
+])
+def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_numba_tries_first(
+        tmp_path, monkeypatch, locators):
+    # A caller can pass on an error naming a location that is none of the three
+    # numba builds from the file. The remedy names it and offers NUMBA_CACHE_DIR
+    # where numba tries the variable before any other location, the IPython
+    # locator ahead taking no file on disk; it read "NUMBA_CACHE_DIR set to a
+    # short path, which numba takes first", the alternative's clause cut from
+    # its "or" and nothing said of the location.
+    import numba
+    from numbox.core.configurations import cache_remedy
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    py_file = tmp_path / "package" / "module.py"
+    py_file.parent.mkdir()
+    py_file.write_text("")
+    elsewhere = tmp_path / "elsewhere" / "cache"
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", str(elsewhere))
+    remedy = cache_remedy(str(py_file), failure, "silence")
+    assert remedy == (
+        f"the path is too long for the file system: that location, {elsewhere}, at a shorter path, or NUMBA_CACHE_DIR "
+        "set to a short path; or silence"), remedy
+
+
 @pytest.mark.parametrize("platform, moved_through", [
     ("linux", ", through XDG_CACHE_HOME or HOME"), ("darwin", ", through HOME"), ("win32", ""),
 ])
