@@ -230,21 +230,39 @@ def _moved_through():
     return ", through XDG_CACHE_HOME or HOME"
 
 
-_LOCATORS_FOR_A_FILE_ON_DISK = ("UserProvidedCacheLocator", "InTreeCacheLocator", "UserWideCacheLocator")
+def _numba_locator(name):
+    """numba's cache locator class of this name, as numba spells it from 0.62 or with the underscore it had before.
+
+    None where this numba has no such class: the ``.zip`` locator arrived in 0.61.
+    """
+    from numba.core import caching
+    return getattr(caching, name, None) or getattr(caching, "_" + name, None)
 
 
-def _locators_for_a_file_on_disk(listed):
-    """The cache locators numba tries for a source file on disk, by class name, in the order it tries them.
+def _locators(listed):
+    """numba's cache locator classes in the order it tries them.
 
     ``listed`` is ``NUMBA_CACHE_LOCATOR_CLASSES`` as numba 0.62 and later read it, each entry a class of numba's
-    caching module by its name or its dotted path, or empty for numba's own order: ``NUMBA_CACHE_DIR``'s locator,
-    the ``__pycache__`` beside the source, the user's cache directory. numba's IPython and ``.zip`` locators take no
-    file on disk and are left out; a class that is not numba's may take one, and stays.
+    caching module by its name or its dotted path, resolved as numba resolves it; an entry numba could not resolve
+    it has refused already, before any location was tried, and is left out here. Empty, the order is numba's own.
     """
+    from numba.core import caching
     if not listed:
-        return list(_LOCATORS_FOR_A_FILE_ON_DISK)
-    names = [entry.strip().rsplit(".", 1)[-1].lstrip("_") for entry in listed.split(",")]
-    return [name for name in names if name not in ("IPythonCacheLocator", "ZipCacheLocator")]
+        return list(caching.CacheImpl._locator_classes)
+    classes = []
+    for entry in listed.split(","):
+        entry = entry.strip()
+        if "." in entry:
+            module_path, class_name = entry.rsplit(".", 1)
+            try:
+                cls = getattr(importlib.import_module(module_path), class_name)
+            except (ImportError, AttributeError):
+                cls = None
+        else:
+            cls = _numba_locator(entry)
+        if cls is not None:
+            classes.append(cls)
+    return classes
 
 
 def cache_remedy(py_file, failure, silence, package="numbox"):
@@ -265,8 +283,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, for the third; and for either
     of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it before the locator that took the
     location, or, where it is set and numba passed it over, named and made a writable directory at a short path.
-    ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order; its IPython and ``.zip`` locators take no file on disk, so
-    one of them ahead changes nothing. Where the location numba took refuses a file for another reason, a full disk
+    ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module, a subclass of
+    its in-tree locator caching beside the source as that does. numba's IPython locator takes a file on disk only in
+    an ipykernel directory and its ``.zip`` locator only a path with a part ending in ``.zip``, an archive or a
+    directory, so either ahead of the rest changes nothing for any other file; the ``.zip`` locator ahead of them all
+    takes such a path first and caches it under the user's cache directory, or finds no archive in it, and the remedy
+    then asks for a locator for a file on disk listed before it. A list with no locator that takes the file is told
+    so. Where the location numba took refuses a file for another reason, a full disk
     or permissions changed since numba's own check, the remedy names the location and the reason and asks for room
     or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it before that
     location, or set to another directory where the location is the variable's own; numba passes over a location it
@@ -288,8 +311,30 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     if os.path.exists(py_file):
         from numba import config
         listed = getattr(config, "CACHE_LOCATOR_CLASSES", "")
-        order = _locators_for_a_file_on_disk(listed)
-        cache_dir_read = "UserProvidedCacheLocator" in order
+        user_provided = _numba_locator("UserProvidedCacheLocator")
+        in_tree = _numba_locator("InTreeCacheLocator")
+        user_wide = _numba_locator("UserWideCacheLocator")
+        for_ipython = _numba_locator("IPythonCacheLocator")
+        for_a_zip = _numba_locator("ZipCacheLocator")
+
+        def may_take(cls):
+            # numba's IPython locator takes a file on disk only in an ipykernel
+            # directory, and its .zip locator only a path with a part ending in
+            # .zip, an archive or a directory; every other class may take any.
+            if cls is for_ipython:
+                return os.path.basename(os.path.dirname(py_file)).startswith("ipykernel_")
+            if cls is for_a_zip:
+                return ".zip" in py_file
+            return True
+
+        def caches_beside_the_source(cls):
+            return in_tree is not None and issubclass(cls, in_tree)
+
+        def caches_under_the_user_cache_dir(cls):
+            return (user_wide is not None and issubclass(cls, user_wide)) or cls is for_a_zip
+
+        order = [cls for cls in _locators(listed) if may_take(cls)]
+        cache_dir_read = user_provided in order
 
         def instead(taken, asks="a short path"):
             # NUMBA_CACHE_DIR as the alternative to the location numba took,
@@ -301,8 +346,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             if taken in order:
                 position = order.index(taken)
             else:
-                position = next((at for at, name in enumerate(order) if name != "UserProvidedCacheLocator"), len(order))
-            if not cache_dir_read or order.index("UserProvidedCacheLocator") >= position:
+                position = next((at for at, cls in enumerate(order) if cls is not user_provided), len(order))
+            if not cache_dir_read or order.index(user_provided) >= position:
                 return ""
             if config.CACHE_DIR:
                 return (
@@ -315,31 +360,39 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # The error names the location numba took, or a file numba writes
             # in it: numba's own check passed the location, its temporary file
             # fitting where its cache files would not, or the package's named
-            # file was refused since, a full disk or permissions changed. Which
-            # of numba's three it is decides the remedy. Each is a path numba
-            # builds from the file, matched whole, since the three can nest: an
-            # install under either cache directory, or NUMBA_CACHE_DIR above
-            # the user's. They are matched in numba's order, since
+            # file was refused since, a full disk or permissions changed. The
+            # locator that took it decides the remedy. Each class places the
+            # file somewhere, the .zip locator under the user's cache directory
+            # like the user-wide one, and the first in numba's order whose
+            # place the error names is the one that took it: whole paths, since
+            # the places can nest, an install under either cache directory or
+            # NUMBA_CACHE_DIR above the user's; and in order, since
             # NUMBA_CACHE_DIR set to the user's cache directory makes one path
-            # of two, and the order says which locator took it.
+            # of two.
             from numba.core.caching import _CacheLocator
             named = os.path.abspath(failure.filename or "")
             named = {named, os.path.dirname(named)}
             subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
             user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
-            locations = {
-                "UserProvidedCacheLocator": os.path.join(config.CACHE_DIR, subpath) if config.CACHE_DIR else None,
-                "InTreeCacheLocator": os.path.join(os.path.dirname(py_file), "__pycache__"),
-                "UserWideCacheLocator": os.path.join(user_cache_dir, subpath),
-            }
-            taken = next(
-                (name for name in order if locations.get(name) and os.path.abspath(locations[name]) in named), None)
+
+            def location_of(cls):
+                # None for a class that is not numba's, whose place is its own.
+                if cls is user_provided:
+                    return os.path.abspath(os.path.join(config.CACHE_DIR, subpath)) if config.CACHE_DIR else None
+                if caches_beside_the_source(cls):
+                    return os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__"))
+                if caches_under_the_user_cache_dir(cls):
+                    return os.path.abspath(os.path.join(user_cache_dir, subpath))
+                return None
+
+            locations = {cls: location_of(cls) for cls in order}
+            taken = next((cls for cls in order if locations[cls] and locations[cls] in named), None)
             if failure.errno == errno.ENAMETOOLONG:
-                if taken == "UserProvidedCacheLocator":
+                if taken is user_provided:
                     cure = "a shorter NUMBA_CACHE_DIR"
-                elif taken == "InTreeCacheLocator":
+                elif taken is not None and caches_beside_the_source(taken):
                     cure = f"{package} installed at a shorter path{instead(taken)}"
-                elif taken == "UserWideCacheLocator":
+                elif taken is not None and caches_under_the_user_cache_dir(taken):
                     cure = (
                         f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}"
                         f"{instead(taken)}"
@@ -349,8 +402,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 return f"the path is too long for the file system: {cure}; or {silence}"
             # numba took the location, so the variable was not passed over for
             # it; set elsewhere it moves the cache off a disk that is full.
-            location = os.path.abspath(locations[taken]) if taken else failure.filename
-            if taken == "UserProvidedCacheLocator":
+            location = locations[taken] if taken else failure.filename
+            if taken is user_provided:
                 alternative = ", or NUMBA_CACHE_DIR set to another writable directory"
             else:
                 alternative = instead(taken, "a writable directory")
@@ -359,7 +412,21 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"there, or make it writable{alternative}; or {silence}"
             )
         # numba itself passes a location it cannot make or write over, for a
-        # source on disk, so the error here is the no-locator one.
+        # source on disk, so the error here is the no-locator one, or the .zip
+        # locator's for a path with .zip in it and no archive, which it raises
+        # where it comes before every locator that would take the file.
+        if not order:
+            return (
+                f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says, and none of those locators takes "
+                "a source file on disk: list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator "
+                f"or UserWideCacheLocator, or {silence}"
+            )
+        if isinstance(failure, ValueError) and order[0] is for_a_zip:
+            return (
+                "numba's .zip locator, which NUMBA_CACHE_LOCATOR_CLASSES puts before every locator for a source file "
+                'on disk, takes this file for the ".zip" in its path and finds no archive there: list '
+                f"UserProvidedCacheLocator, InTreeCacheLocator or UserWideCacheLocator before it, or {silence}"
+            )
         if not cache_dir_read:
             return (
                 f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says: make one of those locations "
