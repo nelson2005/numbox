@@ -230,23 +230,41 @@ def _moved_through():
     return ", through XDG_CACHE_HOME or HOME"
 
 
+_LOCATORS_FOR_A_FILE_ON_DISK = ("UserProvidedCacheLocator", "InTreeCacheLocator", "UserWideCacheLocator")
+
+
+def _locators_for_a_file_on_disk(listed):
+    """The cache locators numba tries for a source file on disk, by class name, in the order it tries them.
+
+    ``listed`` is ``NUMBA_CACHE_LOCATOR_CLASSES`` as numba 0.62 and later read it, each entry a class of numba's
+    caching module by its name or its dotted path, or empty for numba's own order: ``NUMBA_CACHE_DIR``'s locator,
+    the ``__pycache__`` beside the source, the user's cache directory. numba's IPython and ``.zip`` locators take no
+    file on disk and are left out; a class that is not numba's may take one, and stays.
+    """
+    if not listed:
+        return list(_LOCATORS_FOR_A_FILE_ON_DISK)
+    names = [entry.strip().rsplit(".", 1)[-1].lstrip("_") for entry in listed.split(",")]
+    return [name for name in names if name not in ("IPythonCacheLocator", "ZipCacheLocator")]
+
+
 def cache_remedy(py_file, failure, silence, package="numbox"):
     """The remedy for ``failure``, numba's for a function whose file is ``py_file``, ending in ``silence``.
 
     ``NUMBA_CACHE_DIR`` for a source file on disk, which is the only kind numba reads the variable for; where it is
     set and numba passed it over, the variable named and a writable directory at a short path asked for, since
     numba passes over one too deep to make its directory in as it does an unwritable one; and where
-    ``NUMBA_CACHE_LOCATOR_CLASSES``, from numba 0.62, puts another locator first, the locations it names made
-    writable. Where the
+    ``NUMBA_CACHE_LOCATOR_CLASSES``, from numba 0.62, leaves the user-provided locator out, the locations it names
+    made writable, numba never reading the variable. Where the
     location is too long for the file system, the error names it, and the remedy is for the one it is: numba takes
     a directory under ``NUMBA_CACHE_DIR`` where that is set, else the ``__pycache__`` beside the source, else a
     directory under the user's cache directory, each of the two under a cache directory named for the source's
     directory, by its name and a hash of its path. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
     package at a shorter path for the second; the user's cache directory at a shorter path, through
     ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, for the third; and for either
-    of the last two ``NUMBA_CACHE_DIR`` set to a short path, which numba takes first, or, where it is set and numba
-    passed it over, named and made a writable directory at a short path. Where ``NUMBA_CACHE_LOCATOR_CLASSES``
-    puts another locator first, ``NUMBA_CACHE_DIR`` is not offered. The error can name the
+    of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it before the locator that took the
+    location, or, where it is set and numba passed it over, named and made a writable directory at a short path.
+    ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order; its IPython and ``.zip`` locators take no file on disk, so
+    one of them ahead changes nothing. The error can name the
     location or a file numba writes in it. For a ``.zip`` or a frozen application, both cached under the user's cache
     directory, the location made writable:
     the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
@@ -263,12 +281,29 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     """
     if os.path.exists(py_file):
         from numba import config
-        # numba takes NUMBA_CACHE_DIR first unless NUMBA_CACHE_LOCATOR_CLASSES,
-        # from numba 0.62, orders its locators otherwise; an entry is a class
-        # of numba's caching module, by its name or its dotted path.
-        locators = getattr(config, "CACHE_LOCATOR_CLASSES", "")
-        first = locators.split(",")[0].strip().rsplit(".", 1)[-1] if locators else "UserProvidedCacheLocator"
-        cache_dir_first = first.lstrip("_") == "UserProvidedCacheLocator"
+        listed = getattr(config, "CACHE_LOCATOR_CLASSES", "")
+        order = _locators_for_a_file_on_disk(listed)
+        cache_dir_read = "UserProvidedCacheLocator" in order
+
+        def instead(taken):
+            # NUMBA_CACHE_DIR as the alternative to the location numba took,
+            # offered where numba tries the variable before that location's
+            # locator: set, it was passed over, unwritable or too deep; unset,
+            # it would be taken. None is a location that is none of numba's,
+            # taken for the first in the order other than the variable's own.
+            if taken in order:
+                position = order.index(taken)
+            else:
+                position = next((at for at, name in enumerate(order) if name != "UserProvidedCacheLocator"), len(order))
+            if not cache_dir_read or order.index("UserProvidedCacheLocator") >= position:
+                return ""
+            if config.CACHE_DIR:
+                return (
+                    f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR} and numba could not use, made a "
+                    "writable directory at a short path"
+                )
+            return ", or NUMBA_CACHE_DIR set to a short path"
+
         if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
             # numba's own check passes the location, its temporary file
             # fitting where its cache files would not; the error names it,
@@ -282,33 +317,25 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             named = {named, os.path.dirname(named)}
             subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
             user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
-            if not cache_dir_first:
-                instead = ""
-            elif config.CACHE_DIR:
-                # Taken first and set, so a location elsewhere means numba
-                # passed the variable over: unwritable, or too deep.
-                instead = (
-                    f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR} and numba could not use, made a "
-                    "writable directory at a short path"
-                )
-            else:
-                instead = ", or NUMBA_CACHE_DIR set to a short path"
             if os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__")) in named:
-                cure = f"{package} installed at a shorter path{instead}"
+                cure = f"{package} installed at a shorter path{instead('InTreeCacheLocator')}"
             elif config.CACHE_DIR and os.path.abspath(os.path.join(config.CACHE_DIR, subpath)) in named:
                 cure = "a shorter NUMBA_CACHE_DIR"
             elif os.path.abspath(os.path.join(user_cache_dir, subpath)) in named:
-                cure = f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}{instead}"
-            elif instead:
-                cure = f"{instead[len(', or '):]}, which numba takes first"
+                cure = (
+                    f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}"
+                    f"{instead('UserWideCacheLocator')}"
+                )
+            elif instead(None):
+                cure = f"{instead(None)[len(', or '):]}, which numba takes first"
             else:
                 cure = f"that location, {failure.filename}, at a shorter path"
             return f"the path is too long for the file system: {cure}; or {silence}"
         # numba itself passes a location it cannot make or write over, for a
         # source on disk, so the error here is the no-locator one.
-        if not cache_dir_first:
+        if not cache_dir_read:
             return (
-                f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {locators}, says: make one of those locations "
+                f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says: make one of those locations "
                 f"writable, or {silence}"
             )
         if config.CACHE_DIR:
