@@ -292,9 +292,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     that location cannot show.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module, a subclass of
     its in-tree locator caching beside the source as that does. numba's IPython locator takes a file on disk only in
-    an ipykernel directory and its ``.zip`` locator only a path with a part ending in ``.zip``, an archive or a
-    directory, so either ahead of the rest changes nothing for any other file; the ``.zip`` locator ahead of them all
-    takes such a path first and caches it under the user's cache directory, or finds no archive in it, and the remedy
+    an ipykernel directory and its ``.zip`` locator only a path with ``.zip`` in it, so either ahead of the rest
+    changes nothing for any other file; the ``.zip`` locator ahead of them all takes such a path first and caches it
+    under the user's cache directory where a part of the path ends in ``.zip``, an archive or a directory, or, where
+    none does, finds no archive in it, and the remedy
     then asks for a locator for a file on disk listed before it; after some of them, it finds no archive once those
     have passed the file over, numba trying none after it, and the remedy asks for one of their locations made
     writable or a locator for a file on disk listed before it. A list with no locator that takes the file is told
@@ -328,8 +329,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
 
         def may_take(cls):
             # numba's IPython locator takes a file on disk only in an ipykernel
-            # directory, and its .zip locator only a path with a part ending in
-            # .zip, an archive or a directory; every other class may take any.
+            # directory, and its .zip locator only a path with .zip in it, which
+            # it caches where a part ends in .zip, an archive or a directory,
+            # and raises for where none does; every other class may take any.
             if cls is for_ipython:
                 return os.path.basename(os.path.dirname(py_file)).startswith("ipykernel_")
             if cls is for_a_zip:

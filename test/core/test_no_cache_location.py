@@ -1062,9 +1062,10 @@ def test_no_locator_for_a_source_on_disk_is_told_what_numba_would_take(tmp_path,
 
 @pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
 def test_a_location_too_long_under_the_zip_locator_listed_first_is_the_users_cache_directorys(tmp_path, monkeypatch):
-    # numba's .zip locator takes any path with a part ending in ".zip", a
-    # directory of that name included, before every locator after it, and
-    # caches under the user's cache directory. Listed first it leaves
+    # numba's .zip locator takes any path with ".zip" in it before every
+    # locator after it, and caches one with a part ending in ".zip", a
+    # directory of that name included, under the user's cache directory.
+    # Listed first it leaves
     # NUMBA_CACHE_DIR unread for such a path, where the remedy, holding that
     # locator to take no file on disk, left it out of the order and offered
     # the variable.
