@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from numbox.core.configurations import numba_version
+
 REPO = Path(__file__).resolve().parent.parent.parent
 
 # chmod takes write access from a directory neither on Windows nor from root.
@@ -962,6 +964,12 @@ def test_the_user_cache_directory_is_told_what_moves_it_on_the_platform(tmp_path
     ("numba.core.caching.UserProvidedCacheLocator, numba.core.caching.InTreeCacheLocator", True),
     ("IPythonCacheLocator,UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator", True),
     ("InTreeCacheLocator,UserProvidedCacheLocator,UserWideCacheLocator", False),
+    pytest.param(
+        "UserProvidedCacheLocator,InTreeCacheLocatorFsAgnostic,UserWideCacheLocator", True,
+        marks=pytest.mark.skipif(numba_version < 62, reason="InTreeCacheLocatorFsAgnostic arrived in numba 0.62")),
+    pytest.param(
+        "InTreeCacheLocatorFsAgnostic", False,
+        marks=pytest.mark.skipif(numba_version < 62, reason="InTreeCacheLocatorFsAgnostic arrived in numba 0.62")),
 ])
 def test_numba_cache_dir_is_offered_only_where_numba_tries_it_before_the_location_it_took(
         tmp_path, monkeypatch, locators, offered):
@@ -970,8 +978,11 @@ def test_numba_cache_dir_is_offered_only_where_numba_tries_it_before_the_locatio
     # its dotted path. NUMBA_CACHE_DIR is an alternative to the __pycache__
     # numba took only where numba tries the variable before that: a set one
     # was passed over, an unset one would be taken. The IPython and .zip
-    # locators take no file on disk, so one of them ahead changes nothing,
-    # where the first entry's name alone said another locator was first.
+    # locators take no plain file on disk, so one of them ahead changes
+    # nothing, where the first entry's name alone said another locator was
+    # first. numba's InTreeCacheLocatorFsAgnostic caches in the __pycache__ as
+    # its parent does, and keyed by name alone it was no in-tree locator, so
+    # its too-long __pycache__ got "that location" and no cure.
     import numba
     from numbox.core.configurations import cache_remedy
     monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
@@ -1004,6 +1015,11 @@ NO_LOCATOR_CASES = {
         True, "InTreeCacheLocator,UserProvidedCacheLocator",
         "NUMBA_CACHE_DIR is set to {cache_dir}, which numba could not use: set it to a writable directory at a short "
         "path"),
+    "only locators that take no plain file on disk": (
+        False, "IPythonCacheLocator,ZipCacheLocator",
+        "numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {locators}, says, and none of those locators takes a "
+        "source file on disk: list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or "
+        "UserWideCacheLocator"),
 }
 
 
@@ -1016,7 +1032,10 @@ def test_no_locator_for_a_source_on_disk_is_told_what_numba_would_take(tmp_path,
     # 0.62 and later read from NUMBA_CACHE_LOCATOR_CLASSES without the
     # user-provided locator, where numba never reads the variable. With that
     # locator anywhere in the list numba reads the variable once the locators
-    # before it have passed, so its place in the list changes nothing here.
+    # before it have passed, so its place in the list changes nothing here. A
+    # list of numba's IPython and .zip locators alone has no locator for a
+    # plain file on disk, and "make one of those locations writable" asked for
+    # what no listing can give.
     import numba
     from numbox.core.configurations import cache_remedy
     py_file = tmp_path / "package" / "module.py"
@@ -1029,6 +1048,67 @@ def test_no_locator_for_a_source_on_disk_is_told_what_numba_would_take(tmp_path,
     failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
     remedy = cache_remedy(str(py_file), failure, "silence")
     assert remedy == f"{opening.format(cache_dir=cache_dir, locators=locators)}, or silence", remedy
+
+
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+def test_a_location_too_long_under_the_zip_locator_listed_first_is_the_users_cache_directorys(tmp_path, monkeypatch):
+    # numba's .zip locator takes any path with a part ending in ".zip", a
+    # directory of that name included, before every locator after it, and
+    # caches under the user's cache directory. Listed first it leaves
+    # NUMBA_CACHE_DIR unread for such a path, where the remedy, holding that
+    # locator to take no file on disk, left it out of the order and offered
+    # the variable.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        numba.config, "CACHE_LOCATOR_CLASSES",
+        "ZipCacheLocator,UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator", raising=False)
+    py_file = tmp_path / "bundle.zip" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    user_cache_dir = tmp_path / "user-cache" / "numba"
+    location = user_cache_dir / _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", str(location))
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert remedy == (
+        f"the path is too long for the file system: the user's cache directory, {user_cache_dir}, at a shorter path"
+        f"{configurations._moved_through()}; or silence"), remedy
+
+
+@pytest.mark.parametrize("locators, expected", [
+    ("", "Set NUMBA_CACHE_DIR to a writable directory"),
+    pytest.param(
+        "ZipCacheLocator,InTreeCacheLocator,UserWideCacheLocator",
+        'numba\'s .zip locator, which NUMBA_CACHE_LOCATOR_CLASSES puts before every locator for a source file on disk, '
+        'takes this file for the ".zip" in its path and finds no archive there: list UserProvidedCacheLocator, '
+        "InTreeCacheLocator or UserWideCacheLocator before it",
+        marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")),
+])
+def test_a_source_on_disk_with_zip_in_its_path_and_no_archive_is_told_by_the_zip_locators_place(
+        tmp_path, monkeypatch, locators, expected):
+    # numba's .zip locator takes a path with ".zip" in it and raises ValueError
+    # where no part of the path is an archive. In numba's own order it comes
+    # after every locator for a file on disk, so the error means they all
+    # passed the file over and the no-locator remedy applies. Listed before
+    # them it takes the file first, and the remedy offered NUMBA_CACHE_DIR,
+    # which numba never reaches.
+    import numba
+    from numbox.core.configurations import cache_remedy
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    py_file = tmp_path / "not.zipped" / "module.py"
+    py_file.parent.mkdir()
+    py_file.write_text("")
+    remedy = cache_remedy(str(py_file), ValueError("No zip file found in path"), "silence")
+    assert remedy == f"{expected}, or silence", remedy
 
 
 @pytest.mark.parametrize("placement", ["too long", "archive"])

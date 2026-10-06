@@ -67,8 +67,13 @@ warning instead.
   for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it
   before the locator that took the location, or, where it is set and numba passed it over, unwritable or too
   deep, the warning names it and the remedy is a writable directory at a short path.
-  ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order; its IPython and ``.zip`` locators take no file on disk,
-  so one of them ahead changes nothing. Where the location numba took refuses a file for another reason, a
+  ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module, a subclass
+  of its in-tree locator caching beside the source as that does. numba's IPython locator takes a file on disk
+  only in an ipykernel directory and its ``.zip`` locator only a path with a part ending in ``.zip``, an
+  archive or a directory, so either ahead of the rest changes nothing for any other file; the ``.zip`` locator
+  ahead of them all takes such a path first and caches it under the user's cache directory, or finds no archive
+  in it, and the warning then asks for a locator for a file on disk listed before it. A list with no locator
+  that takes the file is told so. Where the location numba took refuses a file for another reason, a
   full disk or permissions changed since numba's own check, the warning names the location and the reason and
   asks for room or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it
   before that location, or set to another directory where the location is the variable's own; numba passes over
