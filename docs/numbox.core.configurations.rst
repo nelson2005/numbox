@@ -66,7 +66,9 @@ warning instead.
   ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, where numba asks the system,
   for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it
   before the locator that took the location, or, where it is set and numba passed it over, unwritable or too
-  deep, the warning names it and the remedy is a writable directory at a short path.
+  deep, the warning names it and the remedy is a writable directory at a short path. A location that is none of
+  numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
+  as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module, a subclass
   of its in-tree locator caching beside the source as that does. numba's IPython locator takes a file on disk
   only in an ipykernel directory and its ``.zip`` locator only a path with a part ending in ``.zip``, an

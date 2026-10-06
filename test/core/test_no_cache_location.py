@@ -850,20 +850,26 @@ def test_a_location_too_long_that_is_numba_cache_dirs_and_the_users_cache_direct
     assert remedy == f"the path is too long for the file system: {expected}; or silence", remedy
 
 
+@pytest.mark.parametrize("cache_dir_set", [False, True])
 @pytest.mark.parametrize("locators", [
     "", "IPythonCacheLocator,UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator",
 ])
 def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_numba_tries_first(
-        tmp_path, monkeypatch, locators):
+        tmp_path, monkeypatch, locators, cache_dir_set):
     # A caller can pass on an error naming a location that is none of the three
     # numba builds from the file. The remedy names it and offers NUMBA_CACHE_DIR
     # where numba tries the variable before any other location, the IPython
     # locator ahead taking no file on disk; it read "NUMBA_CACHE_DIR set to a
     # short path, which numba takes first", the alternative's clause cut from
-    # its "or" and nothing said of the location.
+    # its "or" and nothing said of the location. Set, the variable is named
+    # without the claim that numba passed it over: a location that is none of
+    # numba's shows nothing of what numba did with the variable, where the
+    # remedy said it was one "numba could not use", as it says of a set
+    # variable passed over for a location numba took.
     import numba
     from numbox.core.configurations import cache_remedy
-    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    cache_dir = tmp_path / "cache"
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(cache_dir) if cache_dir_set else "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
     py_file = tmp_path / "package" / "module.py"
     py_file.parent.mkdir()
@@ -871,9 +877,13 @@ def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_n
     elsewhere = tmp_path / "elsewhere" / "cache"
     failure = OSError(errno.ENAMETOOLONG, "File name too long", str(elsewhere))
     remedy = cache_remedy(str(py_file), failure, "silence")
+    if cache_dir_set:
+        instead = f", or NUMBA_CACHE_DIR, which is set to {cache_dir}, made a writable directory at a short path"
+    else:
+        instead = ", or NUMBA_CACHE_DIR set to a short path"
     assert remedy == (
-        f"the path is too long for the file system: that location, {elsewhere}, at a shorter path, or NUMBA_CACHE_DIR "
-        "set to a short path; or silence"), remedy
+        f"the path is too long for the file system: that location, {elsewhere}, at a shorter path{instead}; or silence"
+    ), remedy
 
 
 # Each case: where NUMBA_CACHE_DIR is, NUMBA_CACHE_LOCATOR_CLASSES, which of

@@ -286,7 +286,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     package at a shorter path for the second; the user's cache directory at a shorter path, through
     ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, for the third; and for either
     of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it before the locator that took the
-    location, or, where it is set and numba passed it over, named and made a writable directory at a short path.
+    location, or, where it is set and numba passed it over, named and made a writable directory at a short path. A
+    location that is none of numba's is named as the error names it, with the variable, where numba tries it before
+    any other locator, named as set or asked for at a short path, and nothing said of numba passing it over, which
+    that location cannot show.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module, a subclass of
     its in-tree locator caching beside the source as that does. numba's IPython locator takes a file on disk only in
     an ipykernel directory and its ``.zip`` locator only a path with a part ending in ``.zip``, an archive or a
@@ -348,17 +351,21 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # locator: set, it was passed over, unwritable or too deep; unset,
             # it would be taken, and ``asks`` is what it is asked to be. None
             # is a location that is none of numba's, taken for the first in
-            # the order other than the variable's own.
+            # the order other than the variable's own; it shows nothing of
+            # what numba did with the variable, so a set one is named without
+            # the claim that numba passed it over.
             if taken in order:
                 position = order.index(taken)
+                passed_over = " and numba could not use"
             else:
                 position = next((at for at, cls in enumerate(order) if cls is not user_provided), len(order))
+                passed_over = ""
             if not cache_dir_read or order.index(user_provided) >= position:
                 return ""
             if config.CACHE_DIR:
                 return (
-                    f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR} and numba could not use, made a "
-                    "writable directory at a short path"
+                    f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR}{passed_over}, made a writable "
+                    "directory at a short path"
                 )
             return f", or NUMBA_CACHE_DIR set to {asks}"
 
