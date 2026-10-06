@@ -874,6 +874,60 @@ def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_n
         "set to a short path; or silence"), remedy
 
 
+# Each case: where NUMBA_CACHE_DIR is, NUMBA_CACHE_LOCATOR_CLASSES, which of
+# numba's locations the error names, and the alternative offered after it.
+UNWRITABLE_CASES = {
+    "NUMBA_CACHE_DIR's": ("cache", "", "NUMBA_CACHE_DIR", ", or NUMBA_CACHE_DIR set to another writable directory"),
+    "beside the source, NUMBA_CACHE_DIR unset": (None, "", "beside", ", or NUMBA_CACHE_DIR set to a writable directory"),
+    "beside the source, NUMBA_CACHE_DIR passed over": (
+        "cache", "", "beside",
+        ", or NUMBA_CACHE_DIR, which is set to {cache_dir} and numba could not use, made a writable directory at a "
+        "short path"),
+    "the user's cache directory, another locator first": (None, "UserWideCacheLocator", "user", ""),
+}
+
+
+@pytest.mark.parametrize("error", [(errno.ENOSPC, "No space left on device"), (errno.EACCES, "Permission denied")])
+@pytest.mark.parametrize("case", list(UNWRITABLE_CASES))
+def test_a_location_numba_took_where_no_file_can_be_written_is_told_the_location_and_the_reason(
+        tmp_path, monkeypatch, case, error):
+    # numba takes a location its own check could write a temporary file in,
+    # and the package's check then writes a named file there, which a full
+    # disk, a quota or permissions changed since can refuse. The location is
+    # the one numba took, so "NUMBA_CACHE_DIR is set to X, which numba could
+    # not use: set it to a writable directory at a short path", the answer for
+    # a variable numba passed over, was false on both counts; the remedy names
+    # the location and the reason, and offers the variable as the alternative
+    # where numba tries it before that location, or set elsewhere where the
+    # location is the variable's own.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    cache_dir, locators, which, offer = UNWRITABLE_CASES[case]
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / cache_dir) if cache_dir else "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    location = {
+        "NUMBA_CACHE_DIR": tmp_path / "cache" / subpath,
+        "beside": py_file.parent / "__pycache__",
+        "user": tmp_path / "user-cache" / "numba" / subpath,
+    }[which]
+    number, reason = error
+    remedy = configurations.cache_remedy(str(py_file), OSError(number, reason, str(location)), "silence")
+    assert remedy == (
+        f"numba caches this file in {location}, where no file can be written ({reason}): make room there, or make it "
+        f"writable{offer.format(cache_dir=tmp_path / 'cache')}; or silence"), remedy
+
+
 @pytest.mark.parametrize("platform, moved_through", [
     ("linux", ", through XDG_CACHE_HOME or HOME"), ("darwin", ", through HOME"), ("win32", ""),
 ])

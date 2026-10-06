@@ -266,7 +266,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it before the locator that took the
     location, or, where it is set and numba passed it over, named and made a writable directory at a short path.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order; its IPython and ``.zip`` locators take no file on disk, so
-    one of them ahead changes nothing. The error can name the
+    one of them ahead changes nothing. Where the location numba took refuses a file for another reason, a full disk
+    or permissions changed since numba's own check, the remedy names the location and the reason and asks for room
+    or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it before that
+    location, or set to another directory where the location is the variable's own; numba passes over a location it
+    cannot make or write in, so only its no-locator error means the variable was passed over. The error can name the
     location or a file numba writes in it. For a ``.zip`` or a frozen application, both cached under the user's cache
     directory, the location made writable:
     the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
@@ -287,12 +291,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         order = _locators_for_a_file_on_disk(listed)
         cache_dir_read = "UserProvidedCacheLocator" in order
 
-        def instead(taken):
+        def instead(taken, asks="a short path"):
             # NUMBA_CACHE_DIR as the alternative to the location numba took,
             # offered where numba tries the variable before that location's
             # locator: set, it was passed over, unwritable or too deep; unset,
-            # it would be taken. None is a location that is none of numba's,
-            # taken for the first in the order other than the variable's own.
+            # it would be taken, and ``asks`` is what it is asked to be. None
+            # is a location that is none of numba's, taken for the first in
+            # the order other than the variable's own.
             if taken in order:
                 position = order.index(taken)
             else:
@@ -304,19 +309,20 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                     f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR} and numba could not use, made a "
                     "writable directory at a short path"
                 )
-            return ", or NUMBA_CACHE_DIR set to a short path"
+            return f", or NUMBA_CACHE_DIR set to {asks}"
 
-        if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
-            # numba's own check passes the location, its temporary file
-            # fitting where its cache files would not; the error names it,
-            # and which of numba's three it is decides what shortens it. Each
-            # is a path numba builds from the file, matched whole, since the
-            # three can nest: an install under either cache directory, or
-            # NUMBA_CACHE_DIR above the user's. They are matched in numba's
-            # order, since NUMBA_CACHE_DIR set to the user's cache directory
-            # makes one path of two, and the order says which locator took it.
+        if isinstance(failure, OSError) and (failure.errno == errno.ENAMETOOLONG or failure.filename):
+            # The error names the location numba took, or a file numba writes
+            # in it: numba's own check passed the location, its temporary file
+            # fitting where its cache files would not, or the package's named
+            # file was refused since, a full disk or permissions changed. Which
+            # of numba's three it is decides the remedy. Each is a path numba
+            # builds from the file, matched whole, since the three can nest: an
+            # install under either cache directory, or NUMBA_CACHE_DIR above
+            # the user's. They are matched in numba's order, since
+            # NUMBA_CACHE_DIR set to the user's cache directory makes one path
+            # of two, and the order says which locator took it.
             from numba.core.caching import _CacheLocator
-            # The error names the location, or a file numba writes in it.
             named = os.path.abspath(failure.filename or "")
             named = {named, os.path.dirname(named)}
             subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
@@ -328,15 +334,30 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             }
             taken = next(
                 (name for name in order if locations.get(name) and os.path.abspath(locations[name]) in named), None)
+            if failure.errno == errno.ENAMETOOLONG:
+                if taken == "UserProvidedCacheLocator":
+                    cure = "a shorter NUMBA_CACHE_DIR"
+                elif taken == "InTreeCacheLocator":
+                    cure = f"{package} installed at a shorter path{instead(taken)}"
+                elif taken == "UserWideCacheLocator":
+                    cure = (
+                        f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}"
+                        f"{instead(taken)}"
+                    )
+                else:
+                    cure = f"that location, {failure.filename}, at a shorter path{instead(None)}"
+                return f"the path is too long for the file system: {cure}; or {silence}"
+            # numba took the location, so the variable was not passed over for
+            # it; set elsewhere it moves the cache off a disk that is full.
+            location = os.path.abspath(locations[taken]) if taken else failure.filename
             if taken == "UserProvidedCacheLocator":
-                cure = "a shorter NUMBA_CACHE_DIR"
-            elif taken == "InTreeCacheLocator":
-                cure = f"{package} installed at a shorter path{instead(taken)}"
-            elif taken == "UserWideCacheLocator":
-                cure = f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}{instead(taken)}"
+                alternative = ", or NUMBA_CACHE_DIR set to another writable directory"
             else:
-                cure = f"that location, {failure.filename}, at a shorter path{instead(None)}"
-            return f"the path is too long for the file system: {cure}; or {silence}"
+                alternative = instead(taken, "a writable directory")
+            return (
+                f"numba caches this file in {location}, where no file can be written ({failure.strerror}): make room "
+                f"there, or make it writable{alternative}; or {silence}"
+            )
         # numba itself passes a location it cannot make or write over, for a
         # source on disk, so the error here is the no-locator one.
         if not cache_dir_read:
