@@ -514,8 +514,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 # its order, each once: NUMBA_CACHE_DIR set to the user's cache
                 # directory makes one path of two.
                 known = list(dict.fromkeys(locations[cls] for cls in order if locations[cls]))
-                which = ", ".join(known[:-1]) + " or " + known[-1] if len(known) > 1 else "".join(known)
-                return f"the location numba took{', one of ' + which if which else ''}"
+                if len(known) > 1:
+                    return f"the location numba took, one of {', '.join(known[:-1])} or {known[-1]}"
+                return f"the location numba took, {known[0]}"
             if failure.errno == errno.ENAMETOOLONG:
                 if taken is not None and reads_the_variable(taken):
                     cure = "a shorter NUMBA_CACHE_DIR"
