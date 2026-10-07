@@ -1284,6 +1284,79 @@ def test_a_file_not_found_error_that_names_no_file_for_a_source_not_on_disk_gets
         "writable, or silence"), remedy
 
 
+SUBCLASSED_LOCATORS = (
+    "from numba.core.caching import UserProvidedCacheLocator, ZipCacheLocator\n"
+    "class OurUserProvided(UserProvidedCacheLocator):\n    pass\n"
+    "class OurZip(ZipCacheLocator):\n    pass\n"
+)
+
+# Each case: NUMBA_CACHE_LOCATOR_CLASSES, whether NUMBA_CACHE_DIR is set, the
+# source's directory, which location the error names ("none" for numba's
+# no-locator error), and the remedy before "; or silence" or ", or silence".
+SUBCLASS_CASES = {
+    "the user-provided subclass took NUMBA_CACHE_DIR's location": (
+        "our_locators.OurUserProvided,InTreeCacheLocator,UserWideCacheLocator", True, "site", "NUMBA_CACHE_DIR",
+        "the path is too long for the file system: a shorter NUMBA_CACHE_DIR"),
+    "the .zip subclass took the user's cache directory's location": (
+        "our_locators.OurZip,UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator", True, "bundle.zip",
+        "user", "the path is too long for the file system: the user's cache directory, {user_cache_dir}, at a "
+        "shorter path{moved_through}"),
+    "the user-provided subclass before the in-tree locator that took the location": (
+        "our_locators.OurUserProvided,InTreeCacheLocator", True, "site", "beside",
+        "the path is too long for the file system: numbox installed at a shorter path, or NUMBA_CACHE_DIR, which "
+        "is set to {cache_dir} and numba could not use, made a writable directory at a short path"),
+    "no locator, the user-provided subclass passed over": (
+        "our_locators.OurUserProvided,InTreeCacheLocator", True, "site", "none",
+        "NUMBA_CACHE_DIR is set to {cache_dir}, which numba could not use: set it to a writable directory at a short "
+        "path"),
+}
+
+
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+@pytest.mark.parametrize("case", list(SUBCLASS_CASES))
+def test_a_subclass_of_one_of_numbas_locators_is_told_as_its_parent_is(tmp_path, monkeypatch, case):
+    # NUMBA_CACHE_LOCATOR_CLASSES takes a dotted path to any class, and a
+    # subclass of one of numba's locators caches where its parent does; numba
+    # takes it as it takes the parent. The remedy knew a subclass of the
+    # in-tree locator for one, and matched the user-provided and .zip
+    # locators by identity, so their subclasses got "that location, X" with no
+    # cure, and the variable the subclass reads counted as unread.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    (tmp_path / "our_locators.py").write_text(SUBCLASSED_LOCATORS)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "our_locators", raising=False)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    locators, cache_dir_set, source_dir, which, expected = SUBCLASS_CASES[case]
+    cache_dir = tmp_path / "cache"
+    user_cache_dir = tmp_path / "user-cache" / "numba"
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(cache_dir) if cache_dir_set else "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    py_file = tmp_path / source_dir / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    if which == "none":
+        failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+        ending = ", or silence"
+    else:
+        location = {
+            "NUMBA_CACHE_DIR": cache_dir / subpath, "beside": py_file.parent / "__pycache__", "user": user_cache_dir / subpath,
+        }[which]
+        failure = OSError(errno.ENAMETOOLONG, "File name too long", str(location))
+        ending = "; or silence"
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    expected = expected.format(cache_dir=cache_dir, user_cache_dir=user_cache_dir,
+                               moved_through=configurations._moved_through())
+    assert remedy == f"{expected}{ending}", remedy
+
+
 @pytest.mark.parametrize("placement", ["too long", "archive"])
 def test_the_remedies_that_name_a_package_name_the_one_given(tmp_path, monkeypatch, placement):
     # A package built on numbox puts the question for its own files and takes
