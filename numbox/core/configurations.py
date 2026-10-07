@@ -310,7 +310,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location, or set to another directory where the location is the variable's own; numba passes over a location it
     cannot make or write in, so only its no-locator error means the variable was passed over. The error can name the
     location or a file numba writes in it; one that names a location that is none of numba's is told that location as
-    the error names it. For a ``.zip`` or a frozen application, both cached under the user's cache
+    the error names it, and one that names no file, a caller's, the locations numba could have taken. For a ``.zip`` or
+    a frozen application, both cached under the user's cache
     directory, the location made writable:
     the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
     application's is the no-locator one, numba having passed the location over on its error, so the user's
@@ -396,7 +397,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 )
             return f", or NUMBA_CACHE_DIR set to {asks}"
 
-        if isinstance(failure, OSError) and (failure.errno == errno.ENAMETOOLONG or failure.filename):
+        if isinstance(failure, OSError):
             # The error names the location numba took, or a file numba writes
             # in it: numba's own check passed the location, its temporary file
             # fitting where its cache files would not, or the package's named
@@ -432,6 +433,15 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
 
             locations = {cls: location_of(cls) for cls in order}
             taken = next((cls for cls in order if locations[cls] and locations[cls] in named), None)
+
+            def could_have_taken():
+                # Which location numba took cannot be told from an error that
+                # names no file, so the ones it could have taken are listed, in
+                # its order, each once: NUMBA_CACHE_DIR set to the user's cache
+                # directory makes one path of two.
+                known = list(dict.fromkeys(locations[cls] for cls in order if locations[cls]))
+                which = ", ".join(known[:-1]) + " or " + known[-1] if len(known) > 1 else "".join(known)
+                return f"the location numba took{', one of ' + which if which else ''}"
             if failure.errno == errno.ENAMETOOLONG:
                 if taken is not None and reads_the_variable(taken):
                     cure = "a shorter NUMBA_CACHE_DIR"
@@ -443,24 +453,25 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                         f"{instead(taken)}"
                     )
                 elif not failure.filename:
-                    # Which location numba took cannot be told, so the ones it
-                    # could have taken are listed, in its order, each once:
-                    # NUMBA_CACHE_DIR set to the user's cache directory makes
-                    # one path of two.
-                    known = list(dict.fromkeys(locations[cls] for cls in order if locations[cls]))
-                    which = ", ".join(known[:-1]) + " or " + known[-1] if len(known) > 1 else "".join(known)
-                    cure = f"the location numba took{', one of ' + which if which else ''}, at a shorter path{instead(None)}"
+                    cure = f"{could_have_taken()}, at a shorter path{instead(None)}"
                 else:
                     cure = f"that location, {failure.filename}, at a shorter path{instead(None)}"
                 return f"the path is too long for the file system: {cure}; or {silence}"
             # numba took the location, so the variable was not passed over for
             # it; set elsewhere it moves the cache off a disk that is full. A
-            # location that is none of numba's is named as the error names it.
+            # location that is none of numba's is named as the error names it,
+            # and an error that names none is told the ones numba could have
+            # taken.
             if taken is not None and reads_the_variable(taken):
                 alternative = ", or NUMBA_CACHE_DIR set to another writable directory"
             else:
                 alternative = instead(taken, "a writable directory")
-            opening = f"numba caches this file in {locations[taken]}," if taken else f"that location, {failure.filename},"
+            if taken:
+                opening = f"numba caches this file in {locations[taken]},"
+            elif failure.filename:
+                opening = f"that location, {failure.filename},"
+            else:
+                opening = f"{could_have_taken()},"
             return (
                 f"{opening} where no file can be written ({failure.strerror}): make room there, or make it "
                 f"writable{alternative}; or {silence}"
