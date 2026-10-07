@@ -1299,6 +1299,33 @@ def test_a_source_on_disk_with_zip_in_its_path_and_no_archive_is_told_by_the_zip
     assert remedy == f"{expected.format(cache_dir=cache_dir, locators=locators)}, or silence", remedy
 
 
+@from_062
+@pytest.mark.parametrize("failure", [
+    pytest.param(OSError(errno.ENAMETOOLONG, "File name too long"), id="too long, unnamed"),
+    pytest.param(OSError(errno.EACCES, "Permission denied"), id="unwritable, unnamed"),
+    pytest.param(OSError(errno.ENAMETOOLONG, "File name too long", "/elsewhere/cache"), id="too long, named"),
+])
+def test_an_error_under_a_locator_list_with_no_locator_that_takes_the_file_is_told_the_list(
+        tmp_path, monkeypatch, failure):
+    # A list with no locator that takes a source file on disk leaves numba no
+    # location for it, and numba's error is the no-locator one, which is told
+    # the list. An OSError a caller passes on under such a list was answered
+    # as if numba had taken a location: unnamed, "the location numba took"
+    # with no location to list after it, and named, that location at a
+    # shorter path, though the list keeps numba from caching the file at all.
+    import numba
+    from numbox.core.configurations import cache_remedy
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "IPythonCacheLocator,ZipCacheLocator", raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    assert cache_remedy(str(py_file), failure, "silence") == (
+        "numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, IPythonCacheLocator,ZipCacheLocator, says, and none of "
+        "those locators takes a source file on disk: list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, "
+        "InTreeCacheLocator or UserWideCacheLocator, or silence"), cache_remedy(str(py_file), failure, "silence")
+
+
 @pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
 @pytest.mark.parametrize("locators, expected", [
     ("", "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, install numbox with "
