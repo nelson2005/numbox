@@ -1326,6 +1326,41 @@ def test_an_error_under_a_locator_list_with_no_locator_that_takes_the_file_is_to
         "InTreeCacheLocator or UserWideCacheLocator, or silence"), cache_remedy(str(py_file), failure, "silence")
 
 
+ON_DISK = ("install numbox with its source files on disk, unpacked from any archive")
+LIST_ON_DISK = (", and list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or UserWideCacheLocator "
+                "in NUMBA_CACHE_LOCATOR_CLASSES, {locators}, which has none of them")
+A_ZIP = ("import it from a .zip holding its source files, which numba 0.61 and later cache in the user's cache directory")
+LIST_A_ZIP = " through ZipCacheLocator, once NUMBA_CACHE_LOCATOR_CLASSES, {locators}, lists it"
+
+
+@from_062
+@pytest.mark.parametrize("locators, on_disk, a_zip", [
+    pytest.param("", ON_DISK, A_ZIP, id="numba's order"),
+    pytest.param("UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator", ON_DISK, A_ZIP + LIST_A_ZIP,
+                 id="no .zip locator"),
+    pytest.param("ZipCacheLocator", ON_DISK + LIST_ON_DISK, A_ZIP, id="no locator for a file on disk"),
+    pytest.param("IPythonCacheLocator", ON_DISK + LIST_ON_DISK, A_ZIP + LIST_A_ZIP, id="neither"),
+])
+def test_an_import_from_an_egg_under_a_locator_list_is_offered_each_way_with_the_locator_it_needs(
+        tmp_path, monkeypatch, locators, on_disk, a_zip):
+    # The remedy for an archive numba does not cache offers the source files
+    # on disk, which the three locators for a file on disk take, or a .zip
+    # holding them, which the .zip locator alone takes. It offered both under
+    # any list, so under one without the .zip locator it offered a .zip numba
+    # then had no locator for, as under one without a locator for a file on
+    # disk it offered an install numba would not cache either.
+    import numba
+    from numbox.core.configurations import cache_remedy
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    py_file = tmp_path / "numbox-0.0.0-py3.12.egg" / "numbox" / "module.py"
+    failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+    remedy = cache_remedy(str(py_file), failure, "silence")
+    assert remedy == (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, "
+        f"{on_disk.format(locators=locators)}, or {a_zip.format(locators=locators)}; or silence"), remedy
+
+
 @pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
 @pytest.mark.parametrize("locators, expected", [
     ("", "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, install numbox with "

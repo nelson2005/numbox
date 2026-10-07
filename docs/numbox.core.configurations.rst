@@ -103,7 +103,9 @@ warning instead.
   that leaves that locator out gives numba no locator for a source in a ``.zip``, and the warning asks for it to
   be listed; so for a frozen application and numba's user-wide locator, which alone takes one.
 - For an ``.egg``, ``.whl`` or ``.pyz``, a ``.pyc``-only install or a ``.pyc`` in a ``.zip``, it is the source
-  files on disk or a ``.zip`` holding them.
+  files on disk or a ``.zip`` holding them, each with the locator it needs listed where
+  ``NUMBA_CACHE_LOCATOR_CLASSES`` leaves it out: one of the three locators for a file on disk for the first, the
+  ``.zip`` locator for the second.
 - ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in every case, the
   package's options being what it sets; the anchors' warning under a caller's own options, below, is
   silenced by those.
