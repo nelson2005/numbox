@@ -966,6 +966,38 @@ def test_a_location_too_long_that_the_error_does_not_name_is_told_the_locations_
         f"{locations[-1]}, at a shorter path{instead}; or silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+@pytest.mark.parametrize("failure, told", [
+    pytest.param(OSError(errno.ENAMETOOLONG, "File name too long"),
+                 "the path is too long for the file system: the location numba took, {location}, at a shorter path",
+                 id="too long"),
+    pytest.param(OSError(errno.EACCES, "Permission denied"),
+                 "the location numba took, {location}, where no file can be written (Permission denied): make room "
+                 "there, or make it writable", id="unwritable"),
+])
+def test_an_error_that_names_no_file_under_one_locator_is_told_its_one_location(tmp_path, monkeypatch, failure, told):
+    # A list of one locator leaves numba one location to take for the file, so
+    # an error that names no file is told that location. The list of the
+    # locations numba could have taken read "one of" before the one path.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "UserWideCacheLocator", raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert remedy == f"{told.format(location=location)}; or silence", remedy
+
+
 # Each case: where NUMBA_CACHE_DIR is, NUMBA_CACHE_LOCATOR_CLASSES, which of
 # numba's locations the error names, and the alternative offered after it.
 UNWRITABLE_CASES = {
