@@ -1060,8 +1060,9 @@ def test_a_cell_file_numbas_ipython_locator_takes_is_told_ipythons_cache_directo
     # cache directory, with no directory of its own per file. That location
     # too long for the file system got "that location, X", the wording for a
     # location that is none of numba's. numba imports IPython for the location
-    # when it makes it, so where IPython is not importable that locator takes
-    # no file and the location stays none of numba's.
+    # when it makes it and catches only OSError there, so without IPython it
+    # raises ImportError at decoration, no cache error; an error a caller
+    # passes on naming that location is then told it as none of numba's.
     import types
     import numba
     import numbox.core.configurations as configurations
