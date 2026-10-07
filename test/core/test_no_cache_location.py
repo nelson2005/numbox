@@ -939,6 +939,7 @@ UNWRITABLE_CASES = {
         ", or NUMBA_CACHE_DIR, which is set to {cache_dir} and numba could not use, made a writable directory at a "
         "short path"),
     "the user's cache directory, another locator first": (None, "UserWideCacheLocator", "user", ""),
+    "none of numba's": (None, "", "none", ", or NUMBA_CACHE_DIR set to a writable directory"),
 }
 
 
@@ -954,7 +955,10 @@ def test_a_location_numba_took_where_no_file_can_be_written_is_told_the_location
     # a variable numba passed over, was false on both counts; the remedy names
     # the location and the reason, and offers the variable as the alternative
     # where numba tries it before that location, or set elsewhere where the
-    # location is the variable's own.
+    # location is the variable's own. A location that is none of numba's for
+    # the file, which a caller can pass on, is named as the error names it,
+    # as the too-long remedy names one; "numba caches this file in" claimed it
+    # for numba.
     import numba
     import numbox.core.configurations as configurations
     from numba.core.caching import _CacheLocator
@@ -975,11 +979,13 @@ def test_a_location_numba_took_where_no_file_can_be_written_is_told_the_location
         "NUMBA_CACHE_DIR": tmp_path / "cache" / subpath,
         "beside": py_file.parent / "__pycache__",
         "user": tmp_path / "user-cache" / "numba" / subpath,
+        "none": tmp_path / "elsewhere" / "cache",
     }[which]
     number, reason = error
     remedy = configurations.cache_remedy(str(py_file), OSError(number, reason, str(location)), "silence")
+    opening = f"that location, {location}," if which == "none" else f"numba caches this file in {location},"
     assert remedy == (
-        f"numba caches this file in {location}, where no file can be written ({reason}): make room there, or make it "
+        f"{opening} where no file can be written ({reason}): make room there, or make it "
         f"writable{offer.format(cache_dir=tmp_path / 'cache')}; or silence"), remedy
 
 

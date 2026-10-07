@@ -85,7 +85,8 @@ warning instead.
   full disk or permissions changed since numba's own check, the warning names the location and the reason and
   asks for room or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it
   before that location, or set to another directory where the location is the variable's own; numba passes over
-  a location it cannot make or write in, so only its no-locator error means the variable was passed over.
+  a location it cannot make or write in, so only its no-locator error means the variable was passed over. An
+  error naming a location that is none of numba's is told that location as the error names it.
 - For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
   one archive numba caches, from 0.61 on, and it caches it there, taking the directory without checking that
   it can be written; a frozen application (``sys.frozen``) is cached there too, its sources not being on disk.

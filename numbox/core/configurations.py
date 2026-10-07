@@ -307,7 +307,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it before that
     location, or set to another directory where the location is the variable's own; numba passes over a location it
     cannot make or write in, so only its no-locator error means the variable was passed over. The error can name the
-    location or a file numba writes in it. For a ``.zip`` or a frozen application, both cached under the user's cache
+    location or a file numba writes in it; one that names a location that is none of numba's is told that location as
+    the error names it. For a ``.zip`` or a frozen application, both cached under the user's cache
     directory, the location made writable:
     the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
     application's is the no-locator one, numba having passed the location over on its error, so the user's
@@ -430,15 +431,16 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                     cure = f"that location, {failure.filename}, at a shorter path{instead(None)}"
                 return f"the path is too long for the file system: {cure}; or {silence}"
             # numba took the location, so the variable was not passed over for
-            # it; set elsewhere it moves the cache off a disk that is full.
-            location = locations[taken] if taken else failure.filename
+            # it; set elsewhere it moves the cache off a disk that is full. A
+            # location that is none of numba's is named as the error names it.
             if taken is user_provided:
                 alternative = ", or NUMBA_CACHE_DIR set to another writable directory"
             else:
                 alternative = instead(taken, "a writable directory")
+            opening = f"numba caches this file in {locations[taken]}," if taken else f"that location, {failure.filename},"
             return (
-                f"numba caches this file in {location}, where no file can be written ({failure.strerror}): make room "
-                f"there, or make it writable{alternative}; or {silence}"
+                f"{opening} where no file can be written ({failure.strerror}): make room there, or make it "
+                f"writable{alternative}; or {silence}"
             )
         # numba itself passes a location it cannot make or write over, for a
         # source on disk, so the error here is the no-locator one, every
