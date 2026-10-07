@@ -1389,6 +1389,34 @@ def test_an_error_under_a_locator_list_with_no_locator_that_takes_the_file_is_to
         "InTreeCacheLocator or UserWideCacheLocator, or silence"), cache_remedy(str(py_file), failure, "silence")
 
 
+@from_062
+@pytest.mark.parametrize("failure", [
+    pytest.param(OSError(errno.ENAMETOOLONG, "File name too long"), id="too long, unnamed"),
+    pytest.param(OSError(errno.EACCES, "Permission denied"), id="unwritable, unnamed"),
+    pytest.param(OSError(errno.ENAMETOOLONG, "File name too long", "/elsewhere/cache"), id="too long, named"),
+])
+def test_an_error_under_the_user_provided_locator_alone_with_numba_cache_dir_unset_is_told_to_set_it(
+        tmp_path, monkeypatch, failure):
+    # numba's user-provided locator takes a file only with NUMBA_CACHE_DIR set,
+    # so a list of that locator alone leaves numba no locator while the
+    # variable is unset, and numba's error is the no-locator one, told to set
+    # the variable. An OSError a caller passes on under that list counted the
+    # locator as taking the file, and was told "the location numba took" with
+    # no location after it, or the location it named at a shorter path, where
+    # numba took none.
+    import numba
+    from numbox.core.configurations import cache_remedy
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "UserProvidedCacheLocator", raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    no_locator = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+    told = cache_remedy(str(py_file), no_locator, "silence")
+    assert told == "Set NUMBA_CACHE_DIR to a writable directory, or silence", told
+    assert cache_remedy(str(py_file), failure, "silence") == told, cache_remedy(str(py_file), failure, "silence")
+
+
 ON_DISK = ("install numbox with its source files on disk, unpacked from any archive")
 LIST_ON_DISK = (", and list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or UserWideCacheLocator "
                 "in NUMBA_CACHE_LOCATOR_CLASSES, {locators}, which has none of them")
