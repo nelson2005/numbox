@@ -272,8 +272,8 @@ def _locators(listed):
 
 def _ipython_numba_cache():
     """numba's cache location for a cell file its IPython locator takes: ``numba_cache`` under IPython's cache
-    directory, with no directory per file; None where IPython is not importable, as numba imports it for the
-    location when it makes it, so that locator then takes no file."""
+    directory, with no directory per file; None where IPython is not importable, which numba's locator raises
+    ImportError for at decoration, no cache error, so the location is then none of numba's."""
     try:
         try:
             from IPython.paths import get_ipython_cache_dir
@@ -311,8 +311,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is. numba's
     IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no directory
     per file, and that location too long is told as IPython's cache directory at a shorter path; numba imports
-    IPython for the location when it makes it, so where IPython is not importable that locator takes no file. numba's
-    IPython locator takes a file on disk only in
+    IPython for the location when it makes it and catches only OSError there, so where IPython is not importable it
+    raises ImportError at decoration for a file that locator takes, no cache error, and an error a caller passes on
+    naming that location is told it as none of numba's. numba's IPython locator takes a file on disk only in
     an ipykernel directory and its ``.zip`` locator only a path with ``.zip`` in it, so either ahead of the rest
     changes nothing for any other file; the ``.zip`` locator ahead of them all takes such a path first and caches it
     under the user's cache directory where a part of the path ends in ``.zip``, an archive or a directory, or, where
