@@ -289,7 +289,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location, or, where it is set and numba passed it over, named and made a writable directory at a short path. A
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
     any other locator, named as set or asked for at a short path, and nothing said of numba passing it over, which
-    that location cannot show.
+    that location cannot show. An error that names no file, which a caller can pass on where numba's and the
+    package's own name the file refused, is told the locations numba could have taken, in numba's order, to put the
+    one that is too long at a shorter path.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module, a subclass of
     its in-tree locator caching beside the source as that does. numba's IPython locator takes a file on disk only in
     an ipykernel directory and its ``.zip`` locator only a path with ``.zip`` in it, so either ahead of the rest
@@ -386,8 +388,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # NUMBA_CACHE_DIR set to the user's cache directory makes one path
             # of two.
             from numba.core.caching import _CacheLocator
-            named = os.path.abspath(failure.filename or "")
-            named = {named, os.path.dirname(named)}
+            if failure.filename:
+                named = os.path.abspath(failure.filename)
+                named = {named, os.path.dirname(named)}
+            else:
+                # A caller can pass on an error that names nothing; numba's
+                # and the package's own name the file refused.
+                named = set()
             subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
             user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
 
@@ -413,6 +420,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                         f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}"
                         f"{instead(taken)}"
                     )
+                elif failure.filename is None:
+                    # Which location numba took cannot be told, so the ones it
+                    # could have taken are listed, in its order.
+                    known = [locations[cls] for cls in order if locations[cls]]
+                    which = ", ".join(known[:-1]) + " or " + known[-1] if len(known) > 1 else "".join(known)
+                    cure = f"the location numba took{', one of ' + which if which else ''}, at a shorter path{instead(None)}"
                 else:
                     cure = f"that location, {failure.filename}, at a shorter path{instead(None)}"
                 return f"the path is too long for the file system: {cure}; or {silence}"
