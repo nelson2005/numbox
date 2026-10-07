@@ -474,8 +474,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 opening = f"that location, {failure.filename},"
             else:
                 opening = f"{could_have_taken()},"
+            # An error a caller builds from a message alone has no strerror.
+            reason = failure.strerror or failure
             return (
-                f"{opening} where no file can be written ({failure.strerror}): make room there, or make it "
+                f"{opening} where no file can be written ({reason}): make room there, or make it "
                 f"writable{alternative}; or {silence}"
             )
         # numba itself passes a location it cannot make or write over, for a
