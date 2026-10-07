@@ -1377,6 +1377,10 @@ SET_THE_VARIABLE = (", with NUMBA_CACHE_DIR set, which UserProvidedCacheLocator,
                  id="the user-provided locator alone for a file on disk, NUMBA_CACHE_DIR unset"),
     pytest.param("UserProvidedCacheLocator,ZipCacheLocator", True, ON_DISK, A_ZIP,
                  id="the user-provided locator alone for a file on disk, NUMBA_CACHE_DIR set"),
+    pytest.param("InTreeCacheLocator,ZipCacheLocator", False, ON_DISK, A_ZIP,
+                 id="the in-tree locator alone for a file on disk"),
+    pytest.param("UserWideCacheLocator,ZipCacheLocator", False, ON_DISK, A_ZIP,
+                 id="the user-wide locator alone for a file on disk"),
 ])
 def test_an_import_from_an_egg_under_a_locator_list_is_offered_each_way_with_the_locator_it_needs(
         tmp_path, monkeypatch, locators, cache_dir_set, on_disk, a_zip):
@@ -1387,7 +1391,9 @@ def test_an_import_from_an_egg_under_a_locator_list_is_offered_each_way_with_the
     # then had no locator for, as under one without a locator for a file on
     # disk it offered an install numba would not cache either; and the
     # user-provided locator, alone of the three in the list, takes nothing
-    # without NUMBA_CACHE_DIR, so unset it is asked for with the install.
+    # without NUMBA_CACHE_DIR, so unset it is asked for with the install,
+    # where the in-tree or the user-wide one alone takes a file on disk as
+    # it is, and the install is offered as it is.
     import numba
     from numbox.core.configurations import cache_remedy
     monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache") if cache_dir_set else "")
