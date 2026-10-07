@@ -886,6 +886,49 @@ def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_n
     ), remedy
 
 
+@pytest.mark.parametrize("cache_dir_set", [False, True])
+def test_a_location_too_long_that_the_error_does_not_name_is_told_the_locations_numba_could_have_taken(
+        tmp_path, monkeypatch, cache_dir_set):
+    # numba's errors and the package's own check name the file refused, but a
+    # caller can pass on an ENAMETOOLONG that names nothing. The remedy then
+    # cannot tell which location numba took, and it lists the locations numba
+    # could have taken for the file, in numba's order, for the reader to put
+    # the one that is too long at a shorter path; it read "that location,
+    # None, at a shorter path", and matched the empty name against the working
+    # directory and its parent, which could have taken one location for
+    # another.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    cache_dir = tmp_path / "cache"
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(cache_dir) if cache_dir_set else "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    # The working directory is the source's __pycache__, so an empty name
+    # matched against it would take the in-tree location for the one named.
+    (py_file.parent / "__pycache__").mkdir()
+    monkeypatch.chdir(py_file.parent / "__pycache__")
+    subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    locations = [str(py_file.parent / "__pycache__"), str(tmp_path / "user-cache" / "numba" / subpath)]
+    if cache_dir_set:
+        locations.insert(0, str(cache_dir / subpath))
+        instead = f", or NUMBA_CACHE_DIR, which is set to {cache_dir}, made a writable directory at a short path"
+    else:
+        instead = ", or NUMBA_CACHE_DIR set to a short path"
+    remedy = configurations.cache_remedy(str(py_file), OSError(errno.ENAMETOOLONG, "File name too long"), "silence")
+    assert remedy == (
+        f"the path is too long for the file system: the location numba took, one of {', '.join(locations[:-1])} or "
+        f"{locations[-1]}, at a shorter path{instead}; or silence"), remedy
+
+
 # Each case: where NUMBA_CACHE_DIR is, NUMBA_CACHE_LOCATOR_CLASSES, which of
 # numba's locations the error names, and the alternative offered after it.
 UNWRITABLE_CASES = {
