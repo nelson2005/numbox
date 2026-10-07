@@ -91,6 +91,7 @@ warning instead.
   one archive numba caches, from 0.61 on, and it caches it there, taking the directory without checking that
   it can be written; a frozen application (``sys.frozen``) is cached there too, its sources not being on disk.
   numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk, so the variable changes nothing for either.
+  An error a caller passes on that names no file is told that directory too.
   A ``.zip`` whose cache directory holds every entry but can no longer be written falls back too, where numba
   alone would have loaded the entries: the writability check is the rule numba applies to every other
   placement. numba caches a ``.zip`` through its ``.zip`` locator alone, so a ``NUMBA_CACHE_LOCATOR_CLASSES``

@@ -1260,6 +1260,30 @@ def test_a_frozen_application_under_a_locator_list_without_the_user_wide_locator
     assert remedy == f"{expected}, or silence", remedy
 
 
+def test_a_file_not_found_error_that_names_no_file_for_a_source_not_on_disk_gets_the_archive_remedy(tmp_path, monkeypatch):
+    # numba's errors name the file they are about, and so does the package's
+    # own check, but a caller can pass on a FileNotFoundError that names none.
+    # The check for a moved archive, which asks whether the source lies under
+    # the file the error names, added os.sep to that name before asking, and
+    # raised TypeError on None instead of returning a remedy.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = str(tmp_path / "site" / "package" / "module.py")
+    remedy = configurations.cache_remedy(py_file, FileNotFoundError(errno.ENOENT, "No such file or directory"), "silence")
+    assert remedy == (
+        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+        f"effect here, because the source is not a file on disk: make that directory, {tmp_path / 'user-cache' / 'numba'}, "
+        "writable, or silence"), remedy
+
+
 @pytest.mark.parametrize("placement", ["too long", "archive"])
 def test_the_remedies_that_name_a_package_name_the_one_given(tmp_path, monkeypatch, placement):
     # A package built on numbox puts the question for its own files and takes
