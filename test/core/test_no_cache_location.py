@@ -945,6 +945,10 @@ UNWRITABLE_CASES = {
         "short path"),
     "the user's cache directory, another locator first": (None, "UserWideCacheLocator", "user", ""),
     "none of numba's": (None, "", "none", ", or NUMBA_CACHE_DIR set to a writable directory"),
+    "unnamed, NUMBA_CACHE_DIR unset": (None, "", "unnamed", ", or NUMBA_CACHE_DIR set to a writable directory"),
+    "unnamed, NUMBA_CACHE_DIR set": (
+        "cache", "", "unnamed",
+        ", or NUMBA_CACHE_DIR, which is set to {cache_dir}, made a writable directory at a short path"),
 }
 
 
@@ -963,7 +967,10 @@ def test_a_location_numba_took_where_no_file_can_be_written_is_told_the_location
     # location is the variable's own. A location that is none of numba's for
     # the file, which a caller can pass on, is named as the error names it,
     # as the too-long remedy names one; "numba caches this file in" claimed it
-    # for numba.
+    # for numba. An error naming no file, a caller's too, is told the
+    # locations numba could have taken, as the too-long remedy tells them; it
+    # fell past this branch to the no-locator remedy, which dropped the reason
+    # and said the variable, set and writable, was one numba could not use.
     import numba
     import numbox.core.configurations as configurations
     from numba.core.caching import _CacheLocator
@@ -985,10 +992,19 @@ def test_a_location_numba_took_where_no_file_can_be_written_is_told_the_location
         "beside": py_file.parent / "__pycache__",
         "user": tmp_path / "user-cache" / "numba" / subpath,
         "none": tmp_path / "elsewhere" / "cache",
+        "unnamed": None,
     }[which]
     number, reason = error
-    remedy = configurations.cache_remedy(str(py_file), OSError(number, reason, str(location)), "silence")
-    opening = f"that location, {location}," if which == "none" else f"numba caches this file in {location},"
+    if which == "unnamed":
+        failure = OSError(number, reason)
+        could_have_taken = [py_file.parent / "__pycache__", tmp_path / "user-cache" / "numba" / subpath]
+        if cache_dir:
+            could_have_taken.insert(0, tmp_path / "cache" / subpath)
+        opening = f"the location numba took, one of {', '.join(map(str, could_have_taken[:-1]))} or {could_have_taken[-1]},"
+    else:
+        failure = OSError(number, reason, str(location))
+        opening = f"that location, {location}," if which == "none" else f"numba caches this file in {location},"
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
     assert remedy == (
         f"{opening} where no file can be written ({reason}): make room there, or make it "
         f"writable{offer.format(cache_dir=tmp_path / 'cache')}; or silence"), remedy
