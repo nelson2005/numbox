@@ -88,7 +88,10 @@ warning instead.
   in it, and the warning then asks for a locator for a file on disk listed before it, the user-provided one with
   ``NUMBA_CACHE_DIR`` set, which alone it takes nothing without; after some of them, it finds no archive once
   those have passed the file over, numba trying none after it, and the warning asks for one of their locations
-  made writable or such a locator listed before it. A list with no locator that takes the file is told so, for an error a caller passes on under it as for numba's no-locator one. Where the location numba took refuses a file for another reason, a
+  made writable or such a locator listed before it. A list with no locator that takes the file is told so, for an
+  error a caller passes on under it as for numba's no-locator one, and so is one whose only locator for the file is
+  the user-provided one with ``NUMBA_CACHE_DIR`` unset, which takes nothing without it: the variable to set, as
+  numba's no-locator error is told there. Where the location numba took refuses a file for another reason, a
   full disk or permissions changed since numba's own check, the warning names the location and the reason and
   asks for room or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it
   before that location, or set to another directory where the location is the variable's own; numba passes over
