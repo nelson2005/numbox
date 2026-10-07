@@ -320,8 +320,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     then asks for a locator for a file on disk listed before it, the user-provided one with ``NUMBA_CACHE_DIR`` set,
     which alone it takes nothing without; after some of them, it finds no archive once those have passed the file
     over, numba trying none after it, and the remedy asks for one of their locations made writable or such a
-    locator listed before it. A list with no locator that takes the file is told
-    so. Where the location numba took refuses a file for another reason, a full disk
+    locator listed before it. A list with no locator that takes the file is told so, for an error a caller
+    passes on under it as for numba's no-locator one. Where the location numba took refuses a file for another
+    reason, a full disk
     or permissions changed since numba's own check, the remedy names the location and the reason and asks for room
     or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it before that
     location, or set to another directory where the location is the variable's own; numba passes over a location it
@@ -417,7 +418,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 )
             return f", or NUMBA_CACHE_DIR set to {asks}"
 
-        if isinstance(failure, OSError):
+        # Under a list with no locator that takes the file, numba took no
+        # location, and the list is the remedy, below, for an error a caller
+        # passes on as for numba's no-locator one.
+        if isinstance(failure, OSError) and order:
             # The error names the location numba took, or a file numba writes
             # in it: numba's own check passed the location, its temporary file
             # fitting where its cache files would not, or the package's named
