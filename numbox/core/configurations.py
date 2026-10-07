@@ -4,6 +4,7 @@ import inspect
 import os
 import pathlib
 import json
+import linecache
 import sys
 import tempfile
 import warnings
@@ -59,8 +60,10 @@ def check_cache_location(py_file, longest_file_name=0):
     for the file or raises ``RuntimeError`` with no locator, then the source's stamp, which decoration reads
     and which stats the archive for a ``.zip``, then the writability check, which decoration runs for every
     location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe is compiled with
-    ``py_file`` as its file, which is all a locator reads of it. Nothing is compiled, and nothing is written
-    but the cache directory itself. An ``OSError`` from the check names the location numba picked.
+    ``py_file`` as its file, which is all a locator reads of it but for numba's IPython locator, which reads the
+    function's source too: the probe's is given it under the file's name while the locator is picked, the probe
+    having no module for inspect to read a ``.zip`` member's source through. Nothing is compiled, and nothing is
+    written but the cache directory itself. An ``OSError`` from the check names the location numba picked.
 
     numba's writability check makes a temporary file whose name is short, or none at all on Linux, and the
     files it saves have names of up to a hundred bytes and more, so a location within their length of the path
@@ -68,10 +71,25 @@ def check_cache_location(py_file, longest_file_name=0):
     is made and removed in the location too, and the ``OSError`` is the location's: the package asks with
     ``LONGEST_CACHE_FILE_NAME``, the bound on numba's names for its own files.
     """
+    source = "def _cache_probe():\n    pass\n"
     namespace = {}
-    exec(compile("def _cache_probe():\n    pass\n", os.fspath(py_file), "exec"), namespace)  # nosec B102 - fixed source
+    exec(compile(source, os.fspath(py_file), "exec"), namespace)  # nosec B102 - fixed source
     probe = namespace["_cache_probe"]
-    locator = CompileResultCacheImpl(probe).locator
+    # numba's IPython locator reads the function's source when it takes the
+    # file, which inspect reads from the file, or through the module's loader
+    # where the file is not on disk, a member of a .zip; the probe has no
+    # module, so its source is put where inspect reads first, under the
+    # file's name, while numba picks the locator, and what was there put back.
+    file = probe.__code__.co_filename
+    was_cached = linecache.cache.get(file)
+    linecache.cache[file] = (len(source), None, source.splitlines(True), file)
+    try:
+        locator = CompileResultCacheImpl(probe).locator
+    finally:
+        if was_cached is None:
+            linecache.cache.pop(file, None)
+        else:
+            linecache.cache[file] = was_cached
     # numba reads the source's stamp at decoration too, the archive's for a
     # .zip, which is not there where the code names an archive since moved.
     locator.get_source_stamp()
