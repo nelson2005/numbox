@@ -812,6 +812,29 @@ def test_a_location_too_long_is_told_what_shortens_the_one_it_is(tmp_path, monke
     assert remedy == f"the path is too long for the file system: {cure}; or silence", remedy
 
 
+def test_a_relative_numba_cache_dir_is_matched_as_the_location_numba_names(tmp_path, monkeypatch):
+    # numba joins NUMBA_CACHE_DIR as set to the name it gives the source's
+    # directory, so set relative, to the directory the process runs from, the
+    # location is relative, and so is the path numba's error, and the
+    # package's own, names. The remedy writes the locations absolute, and the
+    # path as named matched none of them, so it was told as a location that
+    # is none of numba's, with the variable to be made a writable directory
+    # at a short path, where a shorter NUMBA_CACHE_DIR shortens it.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "cache")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    location = os.path.join("cache", _CacheLocator.get_suitable_cache_subpath(str(py_file)))
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", location)
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert remedy == "the path is too long for the file system: a shorter NUMBA_CACHE_DIR; or silence", remedy
+
+
 @pytest.mark.parametrize("locators, cure", [
     ("", "a shorter NUMBA_CACHE_DIR"),
     ("UserWideCacheLocator", "the user's cache directory, {user_cache_dir}, at a shorter path{moved_through}"),
