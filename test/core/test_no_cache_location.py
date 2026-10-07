@@ -886,9 +886,9 @@ def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_n
     ), remedy
 
 
-@pytest.mark.parametrize("cache_dir_set", [False, True])
+@pytest.mark.parametrize("cache_dir", [None, "cache", "user-cache/numba"])
 def test_a_location_too_long_that_the_error_does_not_name_is_told_the_locations_numba_could_have_taken(
-        tmp_path, monkeypatch, cache_dir_set):
+        tmp_path, monkeypatch, cache_dir):
     # numba's errors and the package's own check name the file refused, but a
     # caller can pass on an ENAMETOOLONG that names nothing. The remedy then
     # cannot tell which location numba took, and it lists the locations numba
@@ -896,7 +896,8 @@ def test_a_location_too_long_that_the_error_does_not_name_is_told_the_locations_
     # the one that is too long at a shorter path; it read "that location,
     # None, at a shorter path", and matched the empty name against the working
     # directory and its parent, which could have taken one location for
-    # another.
+    # another. NUMBA_CACHE_DIR set to the user's cache directory makes one
+    # path of two locations, and the list named it twice.
     import numba
     import numbox.core.configurations as configurations
     from numba.core.caching import _CacheLocator
@@ -906,8 +907,8 @@ def test_a_location_too_long_that_the_error_does_not_name_is_told_the_locations_
             self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
 
     monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
-    cache_dir = tmp_path / "cache"
-    monkeypatch.setattr(numba.config, "CACHE_DIR", str(cache_dir) if cache_dir_set else "")
+    cache_dir = tmp_path / cache_dir if cache_dir else None
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(cache_dir) if cache_dir else "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     py_file = tmp_path / "site" / "package" / "module.py"
     py_file.parent.mkdir(parents=True)
@@ -918,8 +919,9 @@ def test_a_location_too_long_that_the_error_does_not_name_is_told_the_locations_
     monkeypatch.chdir(py_file.parent / "__pycache__")
     subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
     locations = [str(py_file.parent / "__pycache__"), str(tmp_path / "user-cache" / "numba" / subpath)]
-    if cache_dir_set:
+    if cache_dir:
         locations.insert(0, str(cache_dir / subpath))
+        locations = list(dict.fromkeys(locations))
         instead = f", or NUMBA_CACHE_DIR, which is set to {cache_dir}, made a writable directory at a short path"
     else:
         instead = ", or NUMBA_CACHE_DIR set to a short path"

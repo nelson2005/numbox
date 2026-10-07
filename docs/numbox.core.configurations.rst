@@ -70,8 +70,8 @@ warning instead.
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
   An error that names no file, which a caller can pass on where numba's and the package's own name the file
-  refused, is told the locations numba could have taken, in numba's order, to put the one that is too long at a
-  shorter path.
+  refused, is told the locations numba could have taken, in numba's order and each once, to put the one that is
+  too long at a shorter path.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module, a subclass
   of its in-tree locator caching beside the source as that does. numba's IPython locator takes a file on disk
   only in an ipykernel directory and its ``.zip`` locator only a path with ``.zip`` in it, so either ahead of
