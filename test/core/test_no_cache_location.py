@@ -1104,14 +1104,15 @@ from_062 = pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CL
     pytest.param(
         False, "ZipCacheLocator,InTreeCacheLocator,UserWideCacheLocator",
         'numba\'s .zip locator, which NUMBA_CACHE_LOCATOR_CLASSES puts before every locator for a source file on disk, '
-        'takes this file for the ".zip" in its path and finds no archive there: list UserProvidedCacheLocator, '
-        "InTreeCacheLocator or UserWideCacheLocator before it",
+        'takes this file for the ".zip" in its path and finds no archive there: list UserProvidedCacheLocator, with '
+        "NUMBA_CACHE_DIR set, InTreeCacheLocator or UserWideCacheLocator before it",
         marks=from_062),
     pytest.param(
         True, "InTreeCacheLocator,ZipCacheLocator,UserProvidedCacheLocator",
         'numba\'s .zip locator takes this file for the ".zip" in its path and finds no archive there, after every '
         "locator NUMBA_CACHE_LOCATOR_CLASSES, {locators}, puts before it passed the file over: make one of those "
-        "locations writable, or list UserProvidedCacheLocator, InTreeCacheLocator or UserWideCacheLocator before it",
+        "locations writable, or list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or "
+        "UserWideCacheLocator before it",
         marks=from_062),
     pytest.param(
         True, "UserProvidedCacheLocator,ZipCacheLocator,InTreeCacheLocator",
@@ -1133,7 +1134,10 @@ def test_a_source_on_disk_with_zip_in_its_path_and_no_archive_is_told_by_the_zip
     # after one locator for a file on disk and before the user-provided one,
     # it raised before numba read NUMBA_CACHE_DIR, and the remedy, answering
     # the error only where the .zip locator came first, said the variable, set
-    # and writable, was one numba could not use.
+    # and writable, was one numba could not use. The user-provided locator
+    # takes a file only with NUMBA_CACHE_DIR set, so listing it is asked for
+    # with the variable set, as the no-locator remedy asks; without that, the
+    # reader who listed it first saw the same error again.
     import numba
     from numbox.core.configurations import cache_remedy
     cache_dir = str(tmp_path / "cache")

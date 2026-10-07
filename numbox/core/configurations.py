@@ -296,9 +296,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     changes nothing for any other file; the ``.zip`` locator ahead of them all takes such a path first and caches it
     under the user's cache directory where a part of the path ends in ``.zip``, an archive or a directory, or, where
     none does, finds no archive in it, and the remedy
-    then asks for a locator for a file on disk listed before it; after some of them, it finds no archive once those
-    have passed the file over, numba trying none after it, and the remedy asks for one of their locations made
-    writable or a locator for a file on disk listed before it. A list with no locator that takes the file is told
+    then asks for a locator for a file on disk listed before it, the user-provided one with ``NUMBA_CACHE_DIR`` set,
+    which alone it takes nothing without; after some of them, it finds no archive once those have passed the file
+    over, numba trying none after it, and the remedy asks for one of their locations made writable or such a
+    locator listed before it. A list with no locator that takes the file is told
     so. Where the location numba took refuses a file for another reason, a full disk
     or permissions changed since numba's own check, the remedy names the location and the reason and asks for room
     or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it before that
@@ -439,7 +440,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 return (
                     "numba's .zip locator, which NUMBA_CACHE_LOCATOR_CLASSES puts before every locator for a source "
                     'file on disk, takes this file for the ".zip" in its path and finds no archive there: list '
-                    f"UserProvidedCacheLocator, InTreeCacheLocator or UserWideCacheLocator before it, or {silence}"
+                    "UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or UserWideCacheLocator "
+                    f"before it, or {silence}"
                 )
             return (
                 f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says, and none of those locators takes "
@@ -451,8 +453,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 return (
                     'numba\'s .zip locator takes this file for the ".zip" in its path and finds no archive there, after '
                     f"every locator NUMBA_CACHE_LOCATOR_CLASSES, {listed}, puts before it passed the file over: make "
-                    "one of those locations writable, or list UserProvidedCacheLocator, InTreeCacheLocator or "
-                    f"UserWideCacheLocator before it, or {silence}"
+                    "one of those locations writable, or list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, "
+                    f"InTreeCacheLocator or UserWideCacheLocator before it, or {silence}"
                 )
             return (
                 f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says: make one of those locations "
