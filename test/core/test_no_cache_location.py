@@ -1225,6 +1225,39 @@ def test_a_zip_import_under_a_locator_list_without_the_zip_locator_is_told_to_li
     assert remedy == f"{expected.format(locators=locators)}; or silence", remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+@pytest.mark.parametrize("locators, expected", [
+    ("", "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+         "effect here, because the source is not a file on disk: make that directory, {user_cache_dir}, writable"),
+    ("UserProvidedCacheLocator,InTreeCacheLocator",
+     "numba caches a frozen application through UserWideCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, "
+     "{locators}, leaves it out: list it"),
+])
+def test_a_frozen_application_under_a_locator_list_without_the_user_wide_locator_is_told_to_list_it(
+        tmp_path, monkeypatch, locators, expected):
+    # numba's user-wide locator alone takes a frozen application, whose source
+    # is not on disk, so a list that leaves it out gives numba no locator and
+    # the error is the no-locator one. The frozen remedy, reading no list,
+    # asked for the user's cache directory to be made writable, which it was
+    # and which numba never tried.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    py_file = str(tmp_path / "frozen" / "numbox" / "module.py")
+    failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    expected = expected.format(locators=locators, user_cache_dir=tmp_path / "user-cache" / "numba")
+    assert remedy == f"{expected}, or silence", remedy
+
+
 @pytest.mark.parametrize("placement", ["too long", "archive"])
 def test_the_remedies_that_name_a_package_name_the_one_given(tmp_path, monkeypatch, placement):
     # A package built on numbox puts the question for its own files and takes
