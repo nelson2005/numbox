@@ -1669,6 +1669,47 @@ def test_a_source_given_as_a_path_object_or_bytes_gets_the_remedy_its_string_get
     assert configurations.cache_remedy(as_given, failure, "silence") == as_a_string
 
 
+@pytest.mark.parametrize("given", ["Path", "bytes"])
+@pytest.mark.parametrize("placement", ["too long", "unwritable", "a .zip's location", "a moved archive"])
+def test_an_error_naming_its_file_as_a_path_object_or_bytes_gets_the_remedy_a_string_name_gets(
+        tmp_path, monkeypatch, placement, given):
+    # An error names the file it refused as the call that raised it was given
+    # it, bytes for a call given bytes, or as a caller built it, a path object
+    # too, and the remedy read the name as a string: bytes matched none of
+    # the locations, which the remedy writes as strings, and were told as a
+    # location that is none of numba's, and for a source not on disk the
+    # check for a moved archive, adding os.sep to the name, raised TypeError
+    # on bytes and on a path object alike.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    refused = (errno.EACCES, "Permission denied")
+    if placement in ("a .zip's location", "a moved archive"):
+        py_file = tmp_path / "bundle.zip" / "package" / "module.py"
+        if placement == "a moved archive":
+            error, named = (errno.ENOENT, "No such file or directory"), tmp_path / "bundle.zip"
+        else:
+            subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
+            error, named = refused, tmp_path / "user-cache" / "numba" / subpath
+    else:
+        py_file = tmp_path / "site" / "package" / "module.py"
+        py_file.parent.mkdir(parents=True)
+        py_file.write_text("")
+        error = (errno.ENAMETOOLONG, "File name too long") if placement == "too long" else refused
+        named = py_file.parent / "__pycache__"
+    as_given = named if given == "Path" else os.fsencode(named)
+    as_a_string = configurations.cache_remedy(str(py_file), OSError(*error, str(named)), "silence")
+    assert configurations.cache_remedy(str(py_file), OSError(*error, as_given), "silence") == as_a_string
+
+
 @pytest.mark.parametrize("placement", ["too long", "archive"])
 def test_the_remedies_that_name_a_package_name_the_one_given(tmp_path, monkeypatch, placement):
     # A package built on numbox puts the question for its own files and takes

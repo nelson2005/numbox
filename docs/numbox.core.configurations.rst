@@ -69,9 +69,9 @@ warning instead.
   deep, the warning names it and the remedy is a writable directory at a short path. A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
-  An error that names no file, which a caller can pass on where numba's and the package's own name the file
-  refused, is told the locations numba could have taken, in numba's order and each once, to put the one that is
-  too long at a shorter path.
+  The name an error carries is read as a string, bytes or a path object alike. An error that names no file, which a
+  caller can pass on where numba's and the package's own name the file refused, is told the locations numba could
+  have taken, in numba's order and each once, to put the one that is too long at a shorter path.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its
   dotted path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is.
   numba's IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no
