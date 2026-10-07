@@ -1199,6 +1199,32 @@ def test_a_source_on_disk_with_zip_in_its_path_and_no_archive_is_told_by_the_zip
     assert remedy == f"{expected.format(cache_dir=cache_dir, locators=locators)}, or silence", remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+@pytest.mark.parametrize("locators, expected", [
+    ("", "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, install numbox with "
+         "its source files on disk, unpacked from any archive, or import it from a .zip holding its source files, "
+         "which numba 0.61 and later cache in the user's cache directory"),
+    ("UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator",
+     "numba caches a .zip through ZipCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, {locators}, leaves it out: "
+     "list it"),
+])
+def test_a_zip_import_under_a_locator_list_without_the_zip_locator_is_told_to_list_it(
+        tmp_path, monkeypatch, locators, expected):
+    # numba caches a .zip through its .zip locator alone, so a list that leaves
+    # that locator out gives numba no locator for a source in a .zip, and the
+    # error is the no-locator one. The archive remedy, which reads the list for
+    # a source on disk only, told the reader to import from a .zip holding the
+    # source files, which they had done, and never named the list.
+    import numba
+    from numbox.core.configurations import cache_remedy
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    py_file = str(tmp_path / "bundle.zip" / "numbox" / "module.py")
+    failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+    remedy = cache_remedy(py_file, failure, "silence")
+    assert remedy == f"{expected.format(locators=locators)}; or silence", remedy
+
+
 @pytest.mark.parametrize("placement", ["too long", "archive"])
 def test_the_remedies_that_name_a_package_name_the_one_given(tmp_path, monkeypatch, placement):
     # A package built on numbox puts the question for its own files and takes

@@ -2,6 +2,7 @@ import errno
 import importlib.machinery
 import inspect
 import os
+import pathlib
 import json
 import sys
 import tempfile
@@ -315,22 +316,23 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     cache directory is named. For any other archive, or a module without its source, the source files on disk
     or a ``.zip`` holding them. A ``.zip``'s location too long for the file system is the user's cache
     directory's doing, with the names numba makes bounded, and the remedy is that directory at a shorter
-    path, through what moves it on the platform.
+    path, through what moves it on the platform. numba caches a ``.zip`` through its ``.zip`` locator alone, so a
+    ``NUMBA_CACHE_LOCATOR_CLASSES`` that leaves that locator out gives numba no locator for a source in a ``.zip``,
+    and the remedy is to list it.
 
     ``package`` is the one the remedy tells the reader to install again, at a shorter path or with its source
     files on disk: a package built on numbox that puts the question for its own files with
     ``check_cache_location`` and ``is_a_cache_error`` passes its own name, as it passes ``check_cache_location`` a
     ``longest_file_name`` for its own functions, ``LONGEST_CACHE_FILE_NAME`` being numbox's.
     """
+    from numba import config
+    listed = getattr(config, "CACHE_LOCATOR_CLASSES", "")
+    user_provided = _numba_locator("UserProvidedCacheLocator")
+    in_tree = _numba_locator("InTreeCacheLocator")
+    user_wide = _numba_locator("UserWideCacheLocator")
+    for_ipython = _numba_locator("IPythonCacheLocator")
+    for_a_zip = _numba_locator("ZipCacheLocator")
     if os.path.exists(py_file):
-        from numba import config
-        listed = getattr(config, "CACHE_LOCATOR_CLASSES", "")
-        user_provided = _numba_locator("UserProvidedCacheLocator")
-        in_tree = _numba_locator("InTreeCacheLocator")
-        user_wide = _numba_locator("UserWideCacheLocator")
-        for_ipython = _numba_locator("IPythonCacheLocator")
-        for_a_zip = _numba_locator("ZipCacheLocator")
-
         def may_take(cls):
             # numba's IPython locator takes a file on disk only in an ipykernel
             # directory, and its .zip locator only a path with .zip in it, which
@@ -507,6 +509,15 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
             f"has no effect here, because the source is not a file on disk: make that directory, {location}, "
             f"writable, or {silence}"
+        )
+    in_a_zip = any(part.endswith(".zip") for part in pathlib.Path(py_file).parts)
+    if in_a_zip and for_a_zip is not None and listed and for_a_zip not in _locators(listed):
+        # numba's .zip locator alone takes a source in a .zip, so a list
+        # without it leaves numba no locator for one, and the archive remedy
+        # offered the .zip the reader was importing from.
+        return (
+            f"numba caches a .zip through ZipCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves "
+            f"it out: list it; or {silence}"
         )
     return (
         "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, "
