@@ -318,7 +318,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     directory's doing, with the names numba makes bounded, and the remedy is that directory at a shorter
     path, through what moves it on the platform. numba caches a ``.zip`` through its ``.zip`` locator alone, so a
     ``NUMBA_CACHE_LOCATOR_CLASSES`` that leaves that locator out gives numba no locator for a source in a ``.zip``,
-    and the remedy is to list it.
+    and the remedy is to list it; so for a frozen application and numba's user-wide locator, which alone takes one.
 
     ``package`` is the one the remedy tells the reader to install again, at a shorter path or with its source
     files on disk: a package built on numbox that puts the question for its own files with
@@ -332,6 +332,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     user_wide = _numba_locator("UserWideCacheLocator")
     for_ipython = _numba_locator("IPythonCacheLocator")
     for_a_zip = _numba_locator("ZipCacheLocator")
+
+    def listed_without(base):
+        # Whether NUMBA_CACHE_LOCATOR_CLASSES is set and names no class of
+        # ``base``'s family, a subclass caching as its parent does.
+        return base is not None and bool(listed) and not any(issubclass(cls, base) for cls in _locators(listed))
+
     if os.path.exists(py_file):
         def may_take(cls):
             # numba's IPython locator takes a file on disk only in an ipykernel
@@ -486,6 +492,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             )
         return f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
     if isinstance(failure, OSError) or getattr(sys, "frozen", False):
+        if not isinstance(failure, OSError) and listed_without(user_wide):
+            # numba's user-wide locator alone takes a frozen application, so
+            # a list without it leaves numba no locator for one, and the
+            # remedy asked for a writable directory numba never tried.
+            return (
+                "numba caches a frozen application through UserWideCacheLocator alone, and "
+                f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves it out: list it, or {silence}"
+            )
         # The .zip's error names the location numba picked, which is under
         # the user's cache directory; the frozen application's names nothing.
         location = getattr(failure, "filename", None) or AppDirs(appname="numba", appauthor=False).user_cache_dir
@@ -511,7 +525,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"writable, or {silence}"
         )
     in_a_zip = any(part.endswith(".zip") for part in pathlib.Path(py_file).parts)
-    if in_a_zip and for_a_zip is not None and listed and for_a_zip not in _locators(listed):
+    if in_a_zip and listed_without(for_a_zip):
         # numba's .zip locator alone takes a source in a .zip, so a list
         # without it leaves numba no locator for one, and the archive remedy
         # offered the .zip the reader was importing from.

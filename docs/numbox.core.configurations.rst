@@ -95,7 +95,7 @@ warning instead.
   alone would have loaded the entries: the writability check is the rule numba applies to every other
   placement. numba caches a ``.zip`` through its ``.zip`` locator alone, so a ``NUMBA_CACHE_LOCATOR_CLASSES``
   that leaves that locator out gives numba no locator for a source in a ``.zip``, and the warning asks for it to
-  be listed.
+  be listed; so for a frozen application and numba's user-wide locator, which alone takes one.
 - For an ``.egg``, ``.whl`` or ``.pyz``, a ``.pyc``-only install or a ``.pyc`` in a ``.zip``, it is the source
   files on disk or a ``.zip`` holding them.
 - ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in every case, the
