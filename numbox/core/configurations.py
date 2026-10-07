@@ -330,9 +330,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     cannot make or write in, so only its no-locator error means the variable was passed over. The error can name the
     location or a file numba writes in it; one that names a location that is none of numba's is told that location as
     the error names it, and one that names no file, a caller's, the locations numba could have taken. For a ``.zip`` or
-    a frozen application, both cached under the user's cache
-    directory, the location made writable:
-    the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
+    a frozen application, both cached under the user's cache directory, the location made writable: the ``.zip``'s
+    error names it, a directory of numba's under the user's cache directory, or a file numba writes in it, as the
+    first save's does, and the directory is told; the frozen
     application's is the no-locator one, numba having passed the location over on its error, so the user's
     cache directory is named, as it is for an error a caller passes on that names no file. For any other archive, or a
     module without its source, the source files on disk or a ``.zip`` holding them, each with the locator it needs
@@ -350,6 +350,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     ``longest_file_name`` for its own functions, ``LONGEST_CACHE_FILE_NAME`` being numbox's.
     """
     from numba import config
+    from numba.core.caching import _CacheLocator
     # check_cache_location takes any path-like, bytes too, and so does this:
     # the str the remedy reads, which os.fspath would leave bytes as bytes.
     py_file = os.fsdecode(py_file)
@@ -437,7 +438,6 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # NUMBA_CACHE_DIR above the user's; and in order, since
             # NUMBA_CACHE_DIR set to the user's cache directory makes one path
             # of two.
-            from numba.core.caching import _CacheLocator
             if failure.filename:
                 named = os.path.abspath(failure.filename)
                 named = {named, os.path.dirname(named)}
@@ -561,9 +561,15 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 "numba caches a frozen application through UserWideCacheLocator alone, and "
                 f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves it out: list it, or {silence}"
             )
-        # The .zip's error names the location numba picked, which is under
-        # the user's cache directory; the frozen application's names nothing.
-        location = getattr(failure, "filename", None) or AppDirs(appname="numba", appauthor=False).user_cache_dir
+        # The .zip's error names the location numba picked, a directory of
+        # its own under the user's cache directory, or a file numba writes in
+        # it, as the first save's does, and the location is what a reader can
+        # act on; the frozen application's names nothing.
+        user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
+        location = getattr(failure, "filename", None) or user_cache_dir
+        in_the_user_cache = os.path.join(user_cache_dir, _CacheLocator.get_suitable_cache_subpath(py_file))
+        if os.path.dirname(os.path.abspath(location)) == os.path.abspath(in_the_user_cache):
+            location = os.path.dirname(location)
         if isinstance(failure, FileNotFoundError) and failure.filename and py_file.startswith(failure.filename + os.sep):
             # The stamp numba reads at decoration, of the archive the code
             # names: .pyc members compiled to name an archive since moved. A
