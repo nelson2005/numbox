@@ -851,11 +851,13 @@ def test_a_location_too_long_that_is_numba_cache_dirs_and_the_users_cache_direct
 
 
 @pytest.mark.parametrize("cache_dir_set", [False, True])
-@pytest.mark.parametrize("locators", [
-    "", "IPythonCacheLocator,UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator",
+@pytest.mark.parametrize("locators, offered", [
+    ("", True),
+    ("IPythonCacheLocator,UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator", True),
+    ("InTreeCacheLocator,UserProvidedCacheLocator", False),
 ])
 def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_numba_tries_first(
-        tmp_path, monkeypatch, locators, cache_dir_set):
+        tmp_path, monkeypatch, locators, offered, cache_dir_set):
     # A caller can pass on an error naming a location that is none of the three
     # numba builds from the file. The remedy names it and offers NUMBA_CACHE_DIR
     # where numba tries the variable before any other location, the IPython
@@ -865,7 +867,9 @@ def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_n
     # without the claim that numba passed it over: a location that is none of
     # numba's shows nothing of what numba did with the variable, where the
     # remedy said it was one "numba could not use", as it says of a set
-    # variable passed over for a location numba took.
+    # variable passed over for a location numba took. With another locator
+    # ahead of the variable's, the variable is not offered, and no case here
+    # held that: the offer with the position dropped passed every one.
     import numba
     from numbox.core.configurations import cache_remedy
     cache_dir = tmp_path / "cache"
@@ -877,7 +881,9 @@ def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_n
     elsewhere = tmp_path / "elsewhere" / "cache"
     failure = OSError(errno.ENAMETOOLONG, "File name too long", str(elsewhere))
     remedy = cache_remedy(str(py_file), failure, "silence")
-    if cache_dir_set:
+    if not offered:
+        instead = ""
+    elif cache_dir_set:
         instead = f", or NUMBA_CACHE_DIR, which is set to {cache_dir}, made a writable directory at a short path"
     else:
         instead = ", or NUMBA_CACHE_DIR set to a short path"
