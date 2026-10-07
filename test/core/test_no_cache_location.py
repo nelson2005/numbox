@@ -1505,6 +1505,36 @@ def test_a_zip_import_refused_its_location_under_a_list_without_the_user_wide_lo
         f"effect here, because the source is not a file on disk: {told}, or silence"), remedy
 
 
+@pytest.mark.parametrize("refused", list(A_ZIP_REFUSED))
+def test_a_zip_error_naming_a_file_numba_writes_in_its_location_is_told_the_location(tmp_path, monkeypatch, refused):
+    # The package's own check names the location numba took for a .zip, a
+    # directory of its own under the user's cache directory; numba's first
+    # save names the file it was writing there, under a temporary name, and a
+    # caller can pass that error on. The remedy quoted the file as the
+    # directory to make writable or to put at a shorter path, which the
+    # remedy for a source on disk, matching the file's directory too, did not.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = str(tmp_path / "bundle.zip" / "package" / "module.py")
+    location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
+    named = location / "module-1.py312.nbi.tmp.0123456789abcdef"
+    error, told = A_ZIP_REFUSED[refused]
+    remedy = configurations.cache_remedy(py_file, OSError(*error, str(named)), "silence")
+    told = told.format(location=location, moved_through=configurations._moved_through())
+    assert remedy == (
+        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+        f"effect here, because the source is not a file on disk: {told}, or silence"), remedy
+
+
 def test_a_file_not_found_error_that_names_no_file_for_a_source_not_on_disk_gets_the_archive_remedy(tmp_path, monkeypatch):
     # numba's errors name the file they are about, and so does the package's
     # own check, but a caller can pass on a FileNotFoundError that names none.
