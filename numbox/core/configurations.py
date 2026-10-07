@@ -328,8 +328,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     or a writable directory there, with ``NUMBA_CACHE_DIR`` as the alternative where numba tries it before that
     location, or set to another directory where the location is the variable's own; numba passes over a location it
     cannot make or write in, so only its no-locator error means the variable was passed over. The error can name the
-    location or a file numba writes in it; one that names a location that is none of numba's is told that location as
-    the error names it, and one that names no file, a caller's, the locations numba could have taken. For a ``.zip`` or
+    location or a file numba writes in it, as a string, bytes or a path object, read as a string; one that names a
+    location that is none of numba's is told that location as the error names it, and one that names no file, a
+    caller's, the locations numba could have taken. For a ``.zip`` or
     a frozen application, both cached under the user's cache directory, the location made writable: the ``.zip``'s
     error names it, a directory of numba's under the user's cache directory, or a file numba writes in it, as the
     first save's does, and the directory is told; the frozen
@@ -354,6 +355,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     # check_cache_location takes any path-like, bytes too, and so does this:
     # the str the remedy reads, which os.fspath would leave bytes as bytes.
     py_file = os.fsdecode(py_file)
+    # The error names the file refused as the call that raised it was given
+    # it, bytes for one given bytes, or as a caller built it, a path object
+    # too, and the remedy reads the name as str, as it reads the source's.
+    filename = getattr(failure, "filename", None)
+    filename = os.fsdecode(filename) if filename else None
     listed = getattr(config, "CACHE_LOCATOR_CLASSES", "")
     user_provided = _numba_locator("UserProvidedCacheLocator")
     in_tree = _numba_locator("InTreeCacheLocator")
@@ -438,8 +444,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # NUMBA_CACHE_DIR above the user's; and in order, since
             # NUMBA_CACHE_DIR set to the user's cache directory makes one path
             # of two.
-            if failure.filename:
-                named = os.path.abspath(failure.filename)
+            if filename:
+                named = os.path.abspath(filename)
                 named = {named, os.path.dirname(named)}
             else:
                 # A caller can pass on an error that names nothing; numba's
@@ -484,10 +490,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                     )
                 elif taken is not None and one_of(taken, for_ipython):
                     cure = f"IPython's cache directory, {os.path.dirname(locations[taken])}, at a shorter path{instead(taken)}"
-                elif not failure.filename:
+                elif not filename:
                     cure = f"{could_have_taken()}, at a shorter path{instead(None)}"
                 else:
-                    cure = f"that location, {failure.filename}, at a shorter path{instead(None)}"
+                    cure = f"that location, {filename}, at a shorter path{instead(None)}"
                 return f"the path is too long for the file system: {cure}; or {silence}"
             # numba took the location, so the variable was not passed over for
             # it; set elsewhere it moves the cache off a disk that is full. A
@@ -500,8 +506,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 alternative = instead(taken, "a writable directory")
             if taken:
                 opening = f"numba caches this file in {locations[taken]},"
-            elif failure.filename:
-                opening = f"that location, {failure.filename},"
+            elif filename:
+                opening = f"that location, {filename},"
             else:
                 opening = f"{could_have_taken()},"
             # An error a caller builds from a message alone has no strerror.
@@ -566,17 +572,17 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # it, as the first save's does, and the location is what a reader can
         # act on; the frozen application's names nothing.
         user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
-        location = getattr(failure, "filename", None) or user_cache_dir
+        location = filename or user_cache_dir
         in_the_user_cache = os.path.join(user_cache_dir, _CacheLocator.get_suitable_cache_subpath(py_file))
         if os.path.dirname(os.path.abspath(location)) == os.path.abspath(in_the_user_cache):
             location = os.path.dirname(location)
-        if isinstance(failure, FileNotFoundError) and failure.filename and py_file.startswith(failure.filename + os.sep):
+        if isinstance(failure, FileNotFoundError) and filename and py_file.startswith(filename + os.sep):
             # The stamp numba reads at decoration, of the archive the code
             # names: .pyc members compiled to name an archive since moved. A
             # location that cannot be made, under a dangling link, is ENOENT
             # too, and is not under the code's file.
             return (
-                f"the module's code names {failure.filename}, which is not there: its .pyc was compiled to name "
+                f"the module's code names {filename}, which is not there: its .pyc was compiled to name "
                 "that path, so compile the archive's .pyc members to name its path now, or ship its source files; "
                 f"or {silence}"
             )
