@@ -329,6 +329,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     ``longest_file_name`` for its own functions, ``LONGEST_CACHE_FILE_NAME`` being numbox's.
     """
     from numba import config
+    # check_cache_location takes any path-like, and so does this.
+    py_file = os.fspath(py_file)
     listed = getattr(config, "CACHE_LOCATOR_CLASSES", "")
     user_provided = _numba_locator("UserProvidedCacheLocator")
     in_tree = _numba_locator("InTreeCacheLocator")

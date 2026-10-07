@@ -1376,6 +1376,37 @@ def test_a_subclass_of_one_of_numbas_locators_is_told_as_its_parent_is(tmp_path,
     assert remedy == f"{expected}{ending}", remedy
 
 
+@pytest.mark.parametrize("placement", ["no locator", "too long", "archive"])
+def test_a_source_given_as_a_path_object_gets_the_remedy_its_string_gets(tmp_path, monkeypatch, placement):
+    # check_cache_location takes any path-like through os.fspath, and the
+    # remedy took one too until it asked '".zip" in py_file' of it, which a
+    # Path cannot answer: TypeError for every source on disk under numba's own
+    # order, and AttributeError at 'py_file.startswith' for a source not on disk.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    if placement == "archive":
+        py_file = tmp_path / "bundle.zip" / "package" / "module.py"
+        failure = FileNotFoundError(errno.ENOENT, "No such file or directory", str(tmp_path / "bundle.zip"))
+    else:
+        py_file = tmp_path / "site" / "package" / "module.py"
+        py_file.parent.mkdir(parents=True)
+        py_file.write_text("")
+        if placement == "too long":
+            failure = OSError(errno.ENAMETOOLONG, "File name too long", str(py_file.parent / "__pycache__"))
+        else:
+            failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+    as_a_string = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert configurations.cache_remedy(py_file, failure, "silence") == as_a_string
+
+
 @pytest.mark.parametrize("placement", ["too long", "archive"])
 def test_the_remedies_that_name_a_package_name_the_one_given(tmp_path, monkeypatch, placement):
     # A package built on numbox puts the question for its own files and takes
