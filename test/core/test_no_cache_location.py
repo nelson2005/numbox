@@ -1042,6 +1042,53 @@ def test_an_error_with_a_message_alone_is_told_that_message_as_the_reason(tmp_pa
         "NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
 
 
+@pytest.mark.parametrize("locators, ipython, expected", [
+    pytest.param(
+        "IPythonCacheLocator,InTreeCacheLocator", True,
+        "IPython's cache directory, {ipython_dir}, at a shorter path",
+        marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in 0.62")),
+    ("", True,
+     "IPython's cache directory, {ipython_dir}, at a shorter path, or NUMBA_CACHE_DIR set to a short path"),
+    ("", False, "that location, {named}, at a shorter path, or NUMBA_CACHE_DIR set to a short path"),
+])
+def test_a_cell_file_numbas_ipython_locator_takes_is_told_ipythons_cache_directory(
+        tmp_path, monkeypatch, locators, ipython, expected):
+    # numba's IPython locator takes a file on disk in an ipykernel directory,
+    # a notebook's cell file, and caches it in numba_cache under IPython's
+    # cache directory, with no directory of its own per file. That location
+    # too long for the file system got "that location, X", the wording for a
+    # location that is none of numba's. numba imports IPython for the location
+    # when it makes it, so where IPython is not importable that locator takes
+    # no file and the location stays none of numba's.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    ipython_dir = tmp_path / "ipython"
+    if ipython:
+        paths = types.ModuleType("IPython.paths")
+        paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+        monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+        monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    else:
+        monkeypatch.setitem(sys.modules, "IPython", None)
+    py_file = tmp_path / "ipykernel_123" / "cell.py"
+    py_file.parent.mkdir()
+    py_file.write_text("")
+    named = ipython_dir / "numba_cache" / "cell-1.py312.nbi"
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", str(named))
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    expected = expected.format(ipython_dir=ipython_dir, named=named)
+    assert remedy == f"the path is too long for the file system: {expected}; or silence", remedy
+
+
 @pytest.mark.parametrize("platform, moved_through", [
     ("linux", ", through XDG_CACHE_HOME or HOME"), ("darwin", ", through HOME"), ("win32", ""),
 ])
