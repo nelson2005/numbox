@@ -270,6 +270,20 @@ def _locators(listed):
     return classes
 
 
+def _ipython_numba_cache():
+    """numba's cache location for a cell file its IPython locator takes: ``numba_cache`` under IPython's cache
+    directory, with no directory per file; None where IPython is not importable, as numba imports it for the
+    location when it makes it, so that locator then takes no file."""
+    try:
+        try:
+            from IPython.paths import get_ipython_cache_dir
+        except ImportError:
+            from IPython.utils.path import get_ipython_cache_dir
+    except ImportError:
+        return None
+    return os.path.join(get_ipython_cache_dir(), "numba_cache")
+
+
 def cache_remedy(py_file, failure, silence, package="numbox"):
     """The remedy for ``failure``, numba's for a function whose file is ``py_file``, ending in ``silence``.
 
@@ -295,6 +309,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     order and each once, to put the one that is too long at a shorter path.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its dotted
     path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is. numba's
+    IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no directory
+    per file, and that location too long is told as IPython's cache directory at a shorter path; numba imports
+    IPython for the location when it makes it, so where IPython is not importable that locator takes no file. numba's
     IPython locator takes a file on disk only in
     an ipykernel directory and its ``.zip`` locator only a path with ``.zip`` in it, so either ahead of the rest
     changes nothing for any other file; the ``.zip`` locator ahead of them all takes such a path first and caches it
@@ -431,6 +448,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                     return os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__"))
                 if caches_under_the_user_cache_dir(cls):
                     return os.path.abspath(os.path.join(user_cache_dir, subpath))
+                if one_of(cls, for_ipython):
+                    ipython_cache = _ipython_numba_cache()
+                    return os.path.abspath(ipython_cache) if ipython_cache else None
                 return None
 
             locations = {cls: location_of(cls) for cls in order}
@@ -454,6 +474,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                         f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}"
                         f"{instead(taken)}"
                     )
+                elif taken is not None and one_of(taken, for_ipython):
+                    cure = f"IPython's cache directory, {os.path.dirname(locations[taken])}, at a shorter path{instead(taken)}"
                 elif not failure.filename:
                     cure = f"{could_have_taken()}, at a shorter path{instead(None)}"
                 else:
