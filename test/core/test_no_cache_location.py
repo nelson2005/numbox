@@ -1010,6 +1010,32 @@ def test_a_location_numba_took_where_no_file_can_be_written_is_told_the_location
         f"writable{offer.format(cache_dir=tmp_path / 'cache')}; or silence"), remedy
 
 
+def test_an_error_with_a_message_alone_is_told_that_message_as_the_reason(tmp_path, monkeypatch):
+    # is_a_cache_error admits any OSError, and a caller can pass on one built
+    # from a message alone, with no errno, no strerror and no filename. The
+    # reason read "(None)" and the message was lost.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    remedy = configurations.cache_remedy(str(py_file), OSError("Disk quota exceeded on /home"), "silence")
+    assert remedy == (
+        f"the location numba took, one of {py_file.parent / '__pycache__'} or {tmp_path / 'user-cache' / 'numba' / subpath}, "
+        "where no file can be written (Disk quota exceeded on /home): make room there, or make it writable, or "
+        "NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
+
+
 @pytest.mark.parametrize("platform, moved_through", [
     ("linux", ", through XDG_CACHE_HOME or HOME"), ("darwin", ", through HOME"), ("win32", ""),
 ])
