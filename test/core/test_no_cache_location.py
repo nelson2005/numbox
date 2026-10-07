@@ -1044,12 +1044,14 @@ def test_an_error_with_a_message_alone_is_told_that_message_as_the_reason(tmp_pa
 
 @pytest.mark.parametrize("locators, ipython, expected", [
     pytest.param(
-        "IPythonCacheLocator,InTreeCacheLocator", True,
+        "IPythonCacheLocator,InTreeCacheLocator", "IPython.paths",
         "IPython's cache directory, {ipython_dir}, at a shorter path",
         marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in 0.62")),
-    ("", True,
+    ("", "IPython.paths",
      "IPython's cache directory, {ipython_dir}, at a shorter path, or NUMBA_CACHE_DIR set to a short path"),
-    ("", False, "that location, {named}, at a shorter path, or NUMBA_CACHE_DIR set to a short path"),
+    ("", "IPython.utils.path",
+     "IPython's cache directory, {ipython_dir}, at a shorter path, or NUMBA_CACHE_DIR set to a short path"),
+    ("", None, "that location, {named}, at a shorter path, or NUMBA_CACHE_DIR set to a short path"),
 ])
 def test_a_cell_file_numbas_ipython_locator_takes_is_told_ipythons_cache_directory(
         tmp_path, monkeypatch, locators, ipython, expected):
@@ -1073,10 +1075,15 @@ def test_a_cell_file_numbas_ipython_locator_takes_is_told_ipythons_cache_directo
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
     ipython_dir = tmp_path / "ipython"
     if ipython:
-        paths = types.ModuleType("IPython.paths")
+        # The module numba imports the location from: IPython.paths, or
+        # IPython.utils.path in an older IPython, which numba falls back to
+        # when IPython.paths does not import.
+        paths = types.ModuleType(ipython)
         paths.get_ipython_cache_dir = lambda: str(ipython_dir)
         monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
-        monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+        monkeypatch.setitem(sys.modules, "IPython.paths", paths if ipython == "IPython.paths" else None)
+        monkeypatch.setitem(sys.modules, "IPython.utils", types.ModuleType("IPython.utils"))
+        monkeypatch.setitem(sys.modules, "IPython.utils.path", paths if ipython == "IPython.utils.path" else None)
     else:
         monkeypatch.setitem(sys.modules, "IPython", None)
     py_file = tmp_path / "ipykernel_123" / "cell.py"
