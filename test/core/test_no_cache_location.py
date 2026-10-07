@@ -1155,6 +1155,101 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     assert py_file not in linecache.cache
 
 
+@pytest.mark.parametrize("locators, made", [
+    pytest.param("", "__pycache__", id="numba's order, the in-tree locator takes it"),
+    pytest.param("IPythonCacheLocator,InTreeCacheLocator", "numba_cache", id="the IPython locator first",
+                 marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in 0.62")),
+])
+def test_a_cell_file_on_disk_is_asked_without_touching_linecache(tmp_path, monkeypatch, locators, made):
+    # inspect reads a file on disk itself, so the probe's source is given it
+    # for a file not on disk alone. Given for every file, it stood in for the
+    # real file's lines in the process-wide linecache while numba picked the
+    # locator, and a locator reading another function's source from the file
+    # meanwhile, as numba's IPython locator reads the function's own, read the
+    # probe's two lines instead. numba's own order tries the in-tree locator
+    # before the IPython one, which takes a cell file on disk only listed
+    # ahead of it.
+    import linecache
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    py_file = tmp_path / "ipykernel_123" / "cell.py"
+    py_file.parent.mkdir()
+    py_file.write_text("def cell():\n    return 1\n")
+    lines = linecache.getlines(str(py_file))
+    assert lines == ["def cell():\n", "    return 1\n"]
+    seen = []
+    real = configurations.CompileResultCacheImpl
+
+    def recording(probe):
+        seen.append(linecache.getlines(str(py_file)))
+        return real(probe)
+
+    monkeypatch.setattr(configurations, "CompileResultCacheImpl", recording)
+    configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    assert seen == [lines] and linecache.getlines(str(py_file)) == lines, seen
+    location = py_file.parent / "__pycache__" if made == "__pycache__" else ipython_dir / "numba_cache"
+    assert location.is_dir()
+
+
+def test_the_probes_source_is_given_under_a_lock_for_a_file_not_on_disk(tmp_path, monkeypatch):
+    # Two checks of one file not on disk that overlapped put the probe's
+    # source back for each other, and the process-wide linecache then held it
+    # for the file for good, an entry with no file to check it against. The
+    # source is given under a lock, one check at a time, so that each check
+    # puts back what it found: a second check waits at the lock while the
+    # first holds it.
+    import inspect
+    import linecache
+    import threading
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
+    real = configurations.CompileResultCacheImpl
+    inside = {"first": threading.Event(), "second": threading.Event()}
+    hold = threading.Event()
+    seen = {}
+
+    def holding(probe):
+        name = threading.current_thread().name
+        seen[name] = (configurations._probe_source.locked(), inspect.getsource(probe))
+        inside[name].set()
+        if name == "first":
+            hold.wait(5)
+        return real(probe)
+
+    monkeypatch.setattr(configurations, "CompileResultCacheImpl", holding)
+    checks = [threading.Thread(target=configurations.check_cache_location, args=(py_file,), name=name)
+              for name in ("first", "second")]
+    checks[0].start()
+    assert inside["first"].wait(5)
+    checks[1].start()
+    # The second check waits at the lock while the first holds it.
+    assert not inside["second"].wait(0.5)
+    hold.set()
+    for check in checks:
+        check.join(5)
+    assert inside["second"].is_set()
+    assert seen["first"] == (True, "def _cache_probe():\n    pass\n"), seen
+    assert seen["second"] == (True, "def _cache_probe():\n    pass\n"), seen
+    assert py_file not in linecache.cache
+
+
 @pytest.mark.parametrize("refused, told", [
     pytest.param(("cell-1.py312.nbi.tmp.0123456789abcdef", errno.ENAMETOOLONG, "File name too long"),
                  "the path is too long for the file system: IPython's cache directory, {ipython_dir}, at a shorter path",

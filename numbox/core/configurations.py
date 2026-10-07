@@ -7,6 +7,7 @@ import json
 import linecache
 import sys
 import tempfile
+import threading
 import warnings
 import zipfile
 import zipimport
@@ -52,6 +53,11 @@ def _cache_probe():
 # this bound.
 LONGEST_CACHE_FILE_NAME = 128
 
+# The probe's source stands in the process-wide linecache under a file's name
+# while numba picks the locator for a file not on disk, one check at a time,
+# so that each puts back what it found there.
+_probe_source = threading.Lock()
+
 
 def check_cache_location(py_file, longest_file_name=0):
     """Raise as numba would where a function whose source is ``py_file`` cannot be cached; else return.
@@ -61,8 +67,10 @@ def check_cache_location(py_file, longest_file_name=0):
     and which stats the archive for a ``.zip``, then the writability check, which decoration runs for every
     location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe is compiled with
     ``py_file`` as its file, which is all a locator reads of it but for numba's IPython locator, which reads the
-    function's source too: the probe's is given it under the file's name while the locator is picked, the probe
-    having no module for inspect to read a ``.zip`` member's source through. Nothing is compiled, and nothing is
+    function's source too: inspect reads that from a file on disk itself, and for a file not on disk, a ``.zip``
+    member's, which inspect reads through a module the probe has none of, the probe's source is given it under the
+    file's name while the locator is picked, one check at a time so that each puts back what it found, and a locator
+    reading another function's source from that file meanwhile reads the probe's. Nothing is compiled, and nothing is
     written but the cache directory itself. An ``OSError`` from the check names the location numba picked.
 
     numba's writability check makes a temporary file whose name is short, or none at all on Linux, and the
@@ -78,18 +86,23 @@ def check_cache_location(py_file, longest_file_name=0):
     # numba's IPython locator reads the function's source when it takes the
     # file, which inspect reads from the file, or through the module's loader
     # where the file is not on disk, a member of a .zip; the probe has no
-    # module, so its source is put where inspect reads first, under the
-    # file's name, while numba picks the locator, and what was there put back.
+    # module, so for a file not on disk its source is put where inspect reads
+    # first, under the file's name, while numba picks the locator, and what
+    # was there put back, one check at a time.
     file = probe.__code__.co_filename
-    was_cached = linecache.cache.get(file)
-    linecache.cache[file] = (len(source), None, source.splitlines(True), file)
-    try:
+    if os.path.exists(file):
         locator = CompileResultCacheImpl(probe).locator
-    finally:
-        if was_cached is None:
-            linecache.cache.pop(file, None)
-        else:
-            linecache.cache[file] = was_cached
+    else:
+        with _probe_source:
+            was_cached = linecache.cache.get(file)
+            linecache.cache[file] = (len(source), None, source.splitlines(True), file)
+            try:
+                locator = CompileResultCacheImpl(probe).locator
+            finally:
+                if was_cached is None:
+                    linecache.cache.pop(file, None)
+                else:
+                    linecache.cache[file] = was_cached
     # numba reads the source's stamp at decoration too, the archive's for a
     # .zip, which is not there where the code names an archive since moved.
     locator.get_source_stamp()
