@@ -350,11 +350,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location or a file numba writes in it, as a string, bytes or a path object, read as a string; one that names a
     location that is none of numba's is told that location as the error names it, and one that names no file, a
     caller's, the locations numba could have taken. For a ``.zip`` or
-    a frozen application, both cached under the user's cache directory, the location made writable: the ``.zip``'s
-    error names it, a directory of numba's under the user's cache directory, or a file numba writes in it, as the
-    first save's does, and the directory is told; the frozen
-    application's is the no-locator one, numba having passed the location over on its error, so the user's
-    cache directory is named, as it is for an error a caller passes on that names no file. For any other archive, or a
+    a frozen application, both cached under the user's cache directory, the location made writable or room made
+    there, with the reason the error gives, a full disk or permissions: the ``.zip``'s error names it, a directory of
+    numba's under the user's cache directory, or a file numba writes in it, as the first save's does, and the
+    directory is told; the frozen application's is the no-locator one, which gives no reason, numba having passed
+    the location over on its error, so the user's cache directory is named, to be made writable, as it is for an
+    error a caller passes on that names no file. For any other archive, or a
     module without its source, the source files on disk or a ``.zip`` holding them, each with the locator it needs
     listed where ``NUMBA_CACHE_LOCATOR_CLASSES`` leaves it out: one of the three for a file on disk for the first,
     the ``.zip`` locator for the second, and ``NUMBA_CACHE_DIR`` set where the user-provided locator is the one
@@ -613,6 +614,17 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
                 f"has no effect here, because the source is not a file on disk: the path is too long for the file "
                 f"system, so put that directory, {location}, at a shorter path{_moved_through()}, or {silence}"
+            )
+        if isinstance(failure, OSError):
+            # The location refused a file for another reason, a full disk or
+            # permissions, which the error gives, as the remedy for a source on
+            # disk gives it; the frozen application's no-locator error gives
+            # none, numba having passed the location over on it.
+            reason = failure.strerror or failure
+            return (
+                "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
+                f"has no effect here, because the source is not a file on disk: no file can be written in that "
+                f"directory, {location} ({reason}), so make room there, or make it writable, or {silence}"
             )
         return (
             "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
