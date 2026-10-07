@@ -313,7 +313,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     directory, the location made writable:
     the ``.zip``'s error names it, a directory of numba's under the user's cache directory; the frozen
     application's is the no-locator one, numba having passed the location over on its error, so the user's
-    cache directory is named. For any other archive, or a module without its source, the source files on disk
+    cache directory is named, as it is for an error a caller passes on that names no file. For any other archive, or a
+    module without its source, the source files on disk
     or a ``.zip`` holding them. A ``.zip``'s location too long for the file system is the user's cache
     directory's doing, with the names numba makes bounded, and the remedy is that directory at a shorter
     path, through what moves it on the platform. numba caches a ``.zip`` through its ``.zip`` locator alone, so a
@@ -505,7 +506,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # The .zip's error names the location numba picked, which is under
         # the user's cache directory; the frozen application's names nothing.
         location = getattr(failure, "filename", None) or AppDirs(appname="numba", appauthor=False).user_cache_dir
-        if isinstance(failure, FileNotFoundError) and py_file.startswith(failure.filename + os.sep):
+        if isinstance(failure, FileNotFoundError) and failure.filename and py_file.startswith(failure.filename + os.sep):
             # The stamp numba reads at decoration, of the archive the code
             # names: .pyc members compiled to name an archive since moved. A
             # location that cannot be made, under a dangling link, is ENOENT
