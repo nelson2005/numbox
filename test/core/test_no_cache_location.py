@@ -409,7 +409,8 @@ def test_a_zip_import_with_no_writable_user_cache_directory_compiles_uncached_wi
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
         assert "NUMBA_CACHE_DIR has no effect here" in run.stderr
         if _zip_is_cached():
-            assert "make that directory, " in run.stderr and "import it from a .zip" not in run.stderr
+            assert "so make room there, or make it writable" in run.stderr, run.stderr
+            assert "import it from a .zip" not in run.stderr
     finally:
         home.chmod(0o755)
 
@@ -463,7 +464,7 @@ def test_a_zip_import_whose_user_cache_directory_is_too_long_is_told_so(tmp_path
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
     if _zip_is_cached():
         assert "too long for the file system, so put that directory" in run.stderr, run.stderr
-        assert "make that directory, " not in run.stderr, run.stderr
+        assert "make room there" not in run.stderr, run.stderr
 
 
 def test_a_moved_zip_whose_pyc_members_name_its_old_path_compiles_uncached_and_is_told_why(tmp_path):
@@ -505,7 +506,8 @@ def test_a_zip_import_whose_user_cache_directory_hangs_off_a_dangling_link_is_to
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
     if _zip_is_cached():
-        assert "make that directory, " in run.stderr and "its .pyc was compiled" not in run.stderr, run.stderr
+        assert "so make room there, or make it writable" in run.stderr, run.stderr
+        assert "its .pyc was compiled" not in run.stderr, run.stderr
 
 
 @needs_a_directory_it_cannot_write
@@ -571,7 +573,8 @@ def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_ta
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
         # The directory to make writable is the location that lost it, not the
         # user's cache directory above it, which the warning named.
-        assert f"make that directory, {locations[0]}, writable" in run.stderr, run.stderr
+        assert (f"no file can be written in that directory, {locations[0]} (Permission denied), so make room there, "
+                "or make it writable") in run.stderr, run.stderr
     finally:
         locations[0].chmod(0o755)
 
@@ -1526,7 +1529,9 @@ def test_a_frozen_application_under_a_locator_list_without_the_user_wide_locator
 
 
 A_ZIP_REFUSED = {
-    "unwritable": ((errno.EACCES, "Permission denied"), "make that directory, {location}, writable"),
+    "unwritable": ((errno.EACCES, "Permission denied"),
+                   "no file can be written in that directory, {location} (Permission denied), so make room there, or "
+                   "make it writable"),
     "too long": ((errno.ENAMETOOLONG, "File name too long"),
                  "the path is too long for the file system, so put that directory, {location}, at a shorter "
                  "path{moved_through}"),
@@ -1615,8 +1620,9 @@ def test_a_file_not_found_error_that_names_no_file_for_a_source_not_on_disk_gets
     remedy = configurations.cache_remedy(py_file, FileNotFoundError(errno.ENOENT, "No such file or directory"), "silence")
     assert remedy == (
         "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
-        f"effect here, because the source is not a file on disk: make that directory, {tmp_path / 'user-cache' / 'numba'}, "
-        "writable, or silence"), remedy
+        "effect here, because the source is not a file on disk: no file can be written in that directory, "
+        f"{tmp_path / 'user-cache' / 'numba'} (No such file or directory), so make room there, or make it writable, "
+        "or silence"), remedy
 
 
 SUBCLASSED_LOCATORS = (

@@ -98,10 +98,12 @@ warning instead.
   a location it cannot make or write in, so only its no-locator error means the variable was passed over. An
   error naming a location that is none of numba's is told that location as the error names it, and one naming
   no file the locations numba could have taken.
-- For a ``.zip``, or a frozen application, it is the user's cache directory made writable: a ``.zip`` is the
-  one archive numba caches, from 0.61 on, and it caches it there, taking the directory without checking that
-  it can be written; the error names that location, or a file numba's first save writes in it, and the location
-  is told; a frozen application (``sys.frozen``) is cached there too, its sources not being on disk.
+- For a ``.zip``, or a frozen application, it is the user's cache directory made writable, or room made there,
+  with the reason the error gives, a full disk or permissions: a ``.zip`` is the one archive numba caches, from
+  0.61 on, and it caches it there, taking the directory without checking that it can be written; the error names
+  that location, or a file numba's first save writes in it, and the location is told with the reason; a frozen
+  application (``sys.frozen``) is cached there too, its sources not being on disk, and its error is numba's
+  no-locator one, which gives no reason, so that directory is to be made writable.
   numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk, so the variable changes nothing for either.
   An error a caller passes on that names no file is told that directory too.
   A ``.zip`` whose cache directory holds every entry but can no longer be written falls back too, where numba
