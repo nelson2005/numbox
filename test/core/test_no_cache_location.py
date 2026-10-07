@@ -1455,12 +1455,17 @@ def test_a_subclass_of_one_of_numbas_locators_is_told_as_its_parent_is(tmp_path,
     assert remedy == f"{expected}{ending}", remedy
 
 
+@pytest.mark.parametrize("given", ["Path", "bytes"])
 @pytest.mark.parametrize("placement", ["no locator", "too long", "archive"])
-def test_a_source_given_as_a_path_object_gets_the_remedy_its_string_gets(tmp_path, monkeypatch, placement):
+def test_a_source_given_as_a_path_object_or_bytes_gets_the_remedy_its_string_gets(
+        tmp_path, monkeypatch, placement, given):
     # check_cache_location takes any path-like through os.fspath, and the
     # remedy took one too until it asked '".zip" in py_file' of it, which a
     # Path cannot answer: TypeError for every source on disk under numba's own
     # order, and AttributeError at 'py_file.startswith' for a source not on disk.
+    # A bytes path, which check_cache_location takes as well, raised TypeError
+    # at the first 'startswith' asked of it with a str, os.fspath passing bytes
+    # through as bytes.
     import numba
     import numbox.core.configurations as configurations
 
@@ -1482,8 +1487,9 @@ def test_a_source_given_as_a_path_object_gets_the_remedy_its_string_gets(tmp_pat
             failure = OSError(errno.ENAMETOOLONG, "File name too long", str(py_file.parent / "__pycache__"))
         else:
             failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+    as_given = py_file if given == "Path" else os.fsencode(py_file)
     as_a_string = configurations.cache_remedy(str(py_file), failure, "silence")
-    assert configurations.cache_remedy(py_file, failure, "silence") == as_a_string
+    assert configurations.cache_remedy(as_given, failure, "silence") == as_a_string
 
 
 @pytest.mark.parametrize("placement", ["too long", "archive"])
