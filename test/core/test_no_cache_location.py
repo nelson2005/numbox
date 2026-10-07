@@ -1120,6 +1120,38 @@ def test_a_cell_file_numbas_ipython_locator_takes_is_told_ipythons_cache_directo
     assert remedy == f"the path is too long for the file system: {expected}; or silence", remedy
 
 
+def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(tmp_path, monkeypatch):
+    # numba's IPython locator takes a file in an ipykernel directory, on disk
+    # or not, and reads the function's source when it does: from the file, or
+    # through the module's loader for a member of a .zip. The probe the check
+    # compiles has no module, so for such a member inspect found no source,
+    # and the check raised the OSError from reading it, which is no cache
+    # error and which the remedy, taking an OSError for a source not on disk
+    # as the .zip's, answered with the user's cache directory made writable,
+    # a directory numba never tried. The probe's source is given to inspect
+    # for the time numba picks the locator, and the question goes on to
+    # IPython's cache directory, as numba's does.
+    import linecache
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def f():\n    pass\n")
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert (ipython_dir / "numba_cache").is_dir()
+    # The source is the probe's for the locator's choosing alone.
+    assert py_file not in linecache.cache
+
+
 @pytest.mark.parametrize("platform, moved_through", [
     ("linux", ", through XDG_CACHE_HOME or HOME"), ("darwin", ", through HOME"), ("win32", ""),
 ])
