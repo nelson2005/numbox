@@ -290,9 +290,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location, or, where it is set and numba passed it over, named and made a writable directory at a short path. A
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
     any other locator, named as set or asked for at a short path, and nothing said of numba passing it over, which
-    that location cannot show. An error that names no file, which a caller can pass on where numba's and the
-    package's own name the file refused, is told the locations numba could have taken, in numba's order and each
-    once, to put the one that is too long at a shorter path.
+    that location cannot show. An error that names no file, or an empty name, which a caller can pass on where
+    numba's and the package's own name the file refused, is told the locations numba could have taken, in numba's
+    order and each once, to put the one that is too long at a shorter path.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its dotted
     path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is. numba's
     IPython locator takes a file on disk only in
@@ -442,7 +442,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                         f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}"
                         f"{instead(taken)}"
                     )
-                elif failure.filename is None:
+                elif not failure.filename:
                     # Which location numba took cannot be told, so the ones it
                     # could have taken are listed, in its order, each once:
                     # NUMBA_CACHE_DIR set to the user's cache directory makes
