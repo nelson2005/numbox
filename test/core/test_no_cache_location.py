@@ -886,9 +886,10 @@ def test_a_location_too_long_that_is_none_of_numbas_is_named_with_the_variable_n
     ), remedy
 
 
+@pytest.mark.parametrize("filename", [None, ""])
 @pytest.mark.parametrize("cache_dir", [None, "cache", "user-cache/numba"])
 def test_a_location_too_long_that_the_error_does_not_name_is_told_the_locations_numba_could_have_taken(
-        tmp_path, monkeypatch, cache_dir):
+        tmp_path, monkeypatch, cache_dir, filename):
     # numba's errors and the package's own check name the file refused, but a
     # caller can pass on an ENAMETOOLONG that names nothing. The remedy then
     # cannot tell which location numba took, and it lists the locations numba
@@ -897,7 +898,8 @@ def test_a_location_too_long_that_the_error_does_not_name_is_told_the_locations_
     # None, at a shorter path", and matched the empty name against the working
     # directory and its parent, which could have taken one location for
     # another. NUMBA_CACHE_DIR set to the user's cache directory makes one
-    # path of two locations, and the list named it twice.
+    # path of two locations, and the list named it twice. An empty name is no
+    # name either, and it read "that location, , at a shorter path".
     import numba
     import numbox.core.configurations as configurations
     from numba.core.caching import _CacheLocator
@@ -925,7 +927,8 @@ def test_a_location_too_long_that_the_error_does_not_name_is_told_the_locations_
         instead = f", or NUMBA_CACHE_DIR, which is set to {cache_dir}, made a writable directory at a short path"
     else:
         instead = ", or NUMBA_CACHE_DIR set to a short path"
-    remedy = configurations.cache_remedy(str(py_file), OSError(errno.ENAMETOOLONG, "File name too long"), "silence")
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", filename)
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
     assert remedy == (
         f"the path is too long for the file system: the location numba took, one of {', '.join(locations[:-1])} or "
         f"{locations[-1]}, at a shorter path{instead}; or silence"), remedy
