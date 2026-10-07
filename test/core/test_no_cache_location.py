@@ -1155,6 +1155,48 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     assert py_file not in linecache.cache
 
 
+@pytest.mark.parametrize("refused, told", [
+    pytest.param(("cell-1.py312.nbi.tmp.0123456789abcdef", errno.ENAMETOOLONG, "File name too long"),
+                 "the path is too long for the file system: IPython's cache directory, {ipython_dir}, at a shorter path",
+                 id="too long, a file in it"),
+    pytest.param(("", errno.EACCES, "Permission denied"),
+                 "numba caches this file in {numba_cache}, where no file can be written (Permission denied): make room "
+                 "there, or make it writable", id="unwritable, the location"),
+])
+def test_a_zip_member_in_an_ipykernel_directory_refused_ipythons_location_is_told_ipythons_cache_directory(
+        tmp_path, monkeypatch, refused, told):
+    # numba's IPython locator takes a member of a .zip in an ipykernel directory
+    # before the .zip locator is reached, and caches it in numba_cache under
+    # IPython's cache directory, which the error names, or a file numba writes
+    # in it. The remedy, taking every OSError for a source not on disk as the
+    # .zip's, told that location as the user's cache directory, with what moves
+    # that directory, where it is IPython's and the remedy is the one a cell
+    # file on disk gets there, with no NUMBA_CACHE_DIR to offer for a source
+    # not on disk.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
+    name, number, strerror = refused
+    named = ipython_dir / "numba_cache" / name if name else ipython_dir / "numba_cache"
+    remedy = configurations.cache_remedy(py_file, OSError(number, strerror, str(named)), "silence")
+    told = told.format(ipython_dir=ipython_dir, numba_cache=ipython_dir / "numba_cache")
+    assert remedy == f"{told}; or silence", remedy
+
+
 @pytest.mark.parametrize("platform, moved_through", [
     ("linux", ", through XDG_CACHE_HOME or HOME"), ("darwin", ", through HOME"), ("win32", ""),
 ])

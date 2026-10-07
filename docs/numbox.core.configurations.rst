@@ -77,7 +77,9 @@ warning instead.
   numba's IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no
   directory per file, and reads the function's source when it takes the file, which the check's probe is given
   under the file's name, having no module to read a ``.zip`` member's through; that location too long is told as
-  IPython's cache directory at a shorter path; numba
+  IPython's cache directory at a shorter path, for a cell file on disk and for a member of a ``.zip`` in an ipykernel
+  directory alike, which that locator takes before the ``.zip`` one is reached, with no ``NUMBA_CACHE_DIR`` offered
+  for a source not on disk; numba
   imports IPython for the location when it makes it and catches only OSError there, so where IPython is not
   importable it raises ImportError at decoration for a file that locator takes, no cache error, and an error a
   caller passes on naming that location is told it as none of numba's. numba's IPython locator takes a file on disk

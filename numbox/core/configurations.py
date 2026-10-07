@@ -328,7 +328,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its dotted
     path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is. numba's
     IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no directory
-    per file, and that location too long is told as IPython's cache directory at a shorter path; numba imports
+    per file, and that location too long is told as IPython's cache directory at a shorter path, for a cell file on
+    disk and for a member of a ``.zip`` in an ipykernel directory alike, which that locator takes before the ``.zip``
+    one is reached, with no ``NUMBA_CACHE_DIR`` offered for a source not on disk; numba imports
     IPython for the location when it makes it and catches only OSError there, so where IPython is not importable it
     raises ImportError at decoration for a file that locator takes, no cache error, and an error a caller passes on
     naming that location is told it as none of numba's. numba's IPython locator takes a file on disk only in
@@ -589,6 +591,26 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return (
                 "numba caches a frozen application through UserWideCacheLocator alone, and "
                 f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves it out: list it, or {silence}"
+            )
+        ipython_cache = _ipython_numba_cache() if filename else None
+        if ipython_cache and os.path.abspath(ipython_cache) in {
+            os.path.abspath(filename), os.path.dirname(os.path.abspath(filename))
+        }:
+            # numba's IPython locator takes a member of a .zip in an ipykernel
+            # directory before the .zip locator is reached, and caches it in
+            # numba_cache under IPython's cache directory, which the error
+            # names, or a file numba writes in it: the remedy a cell file on
+            # disk gets there, with no NUMBA_CACHE_DIR to offer for a source
+            # not on disk.
+            if failure.errno == errno.ENAMETOOLONG:
+                return (
+                    f"the path is too long for the file system: IPython's cache directory, "
+                    f"{os.path.dirname(ipython_cache)}, at a shorter path; or {silence}"
+                )
+            reason = failure.strerror or failure
+            return (
+                f"numba caches this file in {ipython_cache}, where no file can be written ({reason}): make room "
+                f"there, or make it writable; or {silence}"
             )
         # The .zip's error names the location numba picked, a directory of
         # its own under the user's cache directory, or a file numba writes in
