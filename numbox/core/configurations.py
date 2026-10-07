@@ -337,9 +337,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     cache directory is named, as it is for an error a caller passes on that names no file. For any other archive, or a
     module without its source, the source files on disk or a ``.zip`` holding them, each with the locator it needs
     listed where ``NUMBA_CACHE_LOCATOR_CLASSES`` leaves it out: one of the three for a file on disk for the first,
-    the ``.zip`` locator for the second. A ``.zip``'s location too long for the file system is the user's cache
-    directory's doing, with the names numba makes bounded, and the remedy is that directory at a shorter
-    path, through what moves it on the platform. numba caches a ``.zip`` through its ``.zip`` locator alone, so a
+    the ``.zip`` locator for the second, and ``NUMBA_CACHE_DIR`` set where the user-provided locator is the one
+    listed for a file on disk, which takes nothing without it. A ``.zip``'s location too long for the file system is
+    the user's cache directory's doing, with the names numba makes bounded, and the remedy is that directory at a
+    shorter path, through what moves it on the platform. numba caches a ``.zip`` through its ``.zip`` locator alone, so a
     ``NUMBA_CACHE_LOCATOR_CLASSES`` that leaves that locator out gives numba no locator for a source in a ``.zip``,
     and the remedy is to list it; so for a frozen application and numba's user-wide locator, which alone takes one.
 
@@ -594,13 +595,24 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"it out: list it; or {silence}"
         )
     on_disk = f"install {package} with its source files on disk, unpacked from any archive"
-    if all(listed_without(base) for base in (user_provided, in_tree, user_wide)):
-        # A list with none of the three locators for a file on disk would
-        # cache the install no more than it does the archive.
-        on_disk += (
-            ", and list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or "
-            f"UserWideCacheLocator in NUMBA_CACHE_LOCATOR_CLASSES, {listed}, which has none of them"
-        )
+    if listed:
+        # The install caches through a locator for a file on disk the list
+        # names: none, and it caches no more than the archive does; the
+        # user-provided one alone, and that takes nothing without
+        # NUMBA_CACHE_DIR.
+        for_a_file_on_disk = [
+            cls for cls in _locators(listed) if any(one_of(cls, base) for base in (user_provided, in_tree, user_wide))
+        ]
+        if not for_a_file_on_disk:
+            on_disk += (
+                ", and list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or "
+                f"UserWideCacheLocator in NUMBA_CACHE_LOCATOR_CLASSES, {listed}, which has none of them"
+            )
+        elif all(one_of(cls, user_provided) for cls in for_a_file_on_disk) and not config.CACHE_DIR:
+            on_disk += (
+                ", with NUMBA_CACHE_DIR set, which UserProvidedCacheLocator, the one locator for a file on disk in "
+                f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, takes nothing without"
+            )
     a_zip = "import it from a .zip holding its source files, which numba 0.61 and later cache in the user's cache directory"
     if listed_without(for_a_zip):
         # numba's .zip locator alone takes a .zip, so a list without it

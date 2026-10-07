@@ -106,7 +106,8 @@ warning instead.
 - For an ``.egg``, ``.whl`` or ``.pyz``, a ``.pyc``-only install or a ``.pyc`` in a ``.zip``, it is the source
   files on disk or a ``.zip`` holding them, each with the locator it needs listed where
   ``NUMBA_CACHE_LOCATOR_CLASSES`` leaves it out: one of the three locators for a file on disk for the first, the
-  ``.zip`` locator for the second.
+  ``.zip`` locator for the second, and ``NUMBA_CACHE_DIR`` set where the user-provided locator is the one listed for
+  a file on disk, which takes nothing without it.
 - ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in every case, the
   package's options being what it sets; the anchors' warning under a caller's own options, below, is
   silenced by those.
