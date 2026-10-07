@@ -1465,6 +1465,46 @@ def test_a_frozen_application_under_a_locator_list_without_the_user_wide_locator
     assert remedy == f"{expected}, or silence", remedy
 
 
+A_ZIP_REFUSED = {
+    "unwritable": ((errno.EACCES, "Permission denied"), "make that directory, {location}, writable"),
+    "too long": ((errno.ENAMETOOLONG, "File name too long"),
+                 "the path is too long for the file system, so put that directory, {location}, at a shorter "
+                 "path{moved_through}"),
+}
+
+
+@from_062
+@pytest.mark.parametrize("refused", list(A_ZIP_REFUSED))
+def test_a_zip_import_refused_its_location_under_a_list_without_the_user_wide_locator_is_told_the_location(
+        tmp_path, monkeypatch, refused):
+    # The remedy that asks for the user-wide locator to be listed is for
+    # numba's no-locator error, which a frozen application gets under a list
+    # without that locator. A .zip's error names the location numba took
+    # through its .zip locator, which such a list can hold, and the remedy is
+    # that location made writable or put at a shorter path, as under numba's
+    # own order; held to any error under such a list, the frozen remedy would
+    # tell a .zip's reader to list a locator numba takes no .zip through.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator,ZipCacheLocator", raising=False)
+    py_file = str(tmp_path / "bundle.zip" / "package" / "module.py")
+    location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
+    error, told = A_ZIP_REFUSED[refused]
+    remedy = configurations.cache_remedy(py_file, OSError(*error, str(location)), "silence")
+    told = told.format(location=location, moved_through=configurations._moved_through())
+    assert remedy == (
+        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+        f"effect here, because the source is not a file on disk: {told}, or silence"), remedy
+
+
 def test_a_file_not_found_error_that_names_no_file_for_a_source_not_on_disk_gets_the_archive_remedy(tmp_path, monkeypatch):
     # numba's errors name the file they are about, and so does the package's
     # own check, but a caller can pass on a FileNotFoundError that names none.
