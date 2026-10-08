@@ -2370,13 +2370,12 @@ def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_t
 def test_a_cell_numbas_ipython_locator_takes_by_its_name_is_asked_and_told_as_a_cell_file_is(
         tmp_path, monkeypatch, refused, told):
     # numba's IPython locator takes a cell, "<ipython-...>", by its name, as it
-    # takes a file in an ipykernel directory, and caches it in numba_cache
-    # under IPython's cache directory: the check puts the probe's source in
-    # linecache for it, as for a .zip member in an ipykernel directory, and
-    # the remedy is the one a cell file on disk gets. Nothing held either to
-    # the cell: with it left to the locators for a file on disk, the check
-    # raised inspect's OSError, and the remedy told IPython's location as
-    # none of numba's.
+    # takes a file in an ipykernel directory, reads its source from linecache,
+    # where IPython holds it while it runs the cell, and caches it in
+    # numba_cache under IPython's cache directory: the check leaves linecache
+    # to the locator, which reads the cell as numba does, and the remedy is
+    # the one a cell file on disk gets. Nothing held the remedy to the cell:
+    # it told IPython's location as none of numba's.
     import linecache
     import types
     import numba
@@ -2390,9 +2389,11 @@ def test_a_cell_numbas_ipython_locator_takes_by_its_name_is_asked_and_told_as_a_
     monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
     cell = "<ipython-input-3-0123456789ab>"
+    source = "def f():\n    pass\n"
+    monkeypatch.setitem(linecache.cache, cell, (len(source), None, source.splitlines(True), cell))
     configurations.check_cache_location(cell, configurations.LONGEST_CACHE_FILE_NAME)
     assert (ipython_dir / "numba_cache").is_dir()
-    assert cell not in linecache.cache
+    assert linecache.cache[cell][2] == source.splitlines(True)
     error = (errno.ENAMETOOLONG, "File name too long") if refused == "too long" else (errno.EACCES, "Permission denied")
     remedy = configurations.cache_remedy(cell, OSError(*error, str(ipython_dir / "numba_cache")), "silence")
     told = told.format(ipython_dir=ipython_dir, numba_cache=ipython_dir / "numba_cache")
@@ -2919,6 +2920,7 @@ def test_a_file_numbas_ipython_locator_alone_takes_and_passes_over_is_told_ipyth
     # answered so again for a cell under a list of the IPython locator and a
     # class of none of numba's families, which passed the cell over too and
     # is named as having.
+    import linecache
     import types
     import numba
     import numbox.core.configurations as configurations
@@ -2937,6 +2939,11 @@ def test_a_file_numbas_ipython_locator_alone_takes_and_passes_over_is_told_ipyth
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
     py_file = "<ipython-input-3-0123456789ab>" if placement.startswith("a cell") else str(
         tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
+    if placement.startswith("a cell"):
+        # IPython holds a cell's source in linecache while it runs it, and
+        # numba's IPython locator reads it there.
+        source = "def f():\n    pass\n"
+        monkeypatch.setitem(linecache.cache, py_file, (len(source), None, source.splitlines(True), py_file))
     if placement == "a cell":
         monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     elif placement.startswith("a cell"):
@@ -3180,6 +3187,39 @@ def test_a_source_whose_path_holds_bytes_that_are_not_utf8_is_answered_where_num
         py_file.encode()
     assert configurations.is_a_cache_error(failure)
     assert configurations.cache_remedy(py_file, failure, "silence") == expected
+
+
+def test_a_cell_whose_source_linecache_does_not_hold_raises_inspects_error_as_numba_does(tmp_path, monkeypatch):
+    # numba's IPython locator reads a cell's source from linecache, where
+    # IPython holds it while it runs the cell, and inspect raises, with no
+    # errno and no name, for a cell linecache does not hold, before the
+    # locator tries its location; the check gave the probe's source to every
+    # file the locator takes by name and returned for such a cell, where numba
+    # raises at decoration, and the remedy told the location numba took as
+    # refusing a file.
+    import linecache
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    cell = "<ipython-input-7-0123456789ab>"
+    linecache.cache.pop(cell, None)
+    with pytest.raises(OSError, match="could not get source code") as raised:
+        configurations.check_cache_location(cell, configurations.LONGEST_CACHE_FILE_NAME)
+    assert raised.value.errno is None and raised.value.filename is None
+    assert not ipython_dir.exists()
+    assert configurations.is_a_cache_error(raised.value)
+    remedy = configurations.cache_remedy(cell, raised.value, "silence")
+    assert remedy == (
+        f"numba's IPython locator reads a cell's source from linecache, which holds none for {cell} (could not get "
+        "source code), and numba caches a cell only while IPython holds its source; or silence"), remedy
 
 
 A_ZIP_REFUSED = {
