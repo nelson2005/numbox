@@ -2654,6 +2654,41 @@ def test_an_error_naming_no_file_with_ipython_not_importable_says_nothing_of_the
         f"{told.format(location=location)}, or silence"), remedy
 
 
+@from_062
+@pytest.mark.parametrize("locators, told", [
+    ("IPythonCacheLocator",
+     "numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, IPythonCacheLocator, says: make one of those locations "
+     "writable, or silence"),
+    ("IPythonCacheLocator,InTreeCacheLocator",
+     "the path is too long for the file system: that location, {named}, at a shorter path; or silence"),
+])
+def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_the_list_where_no_locator_has_a_place(
+        tmp_path, monkeypatch, locators, told):
+    # numba's IPython locator imports IPython for its location and lets the
+    # ImportError through at decoration, so with IPython not importable numba
+    # caches a cell file nowhere and raises no cache error; an error a caller
+    # passes on naming IPython's location is told it as none of numba's where
+    # another listed locator has a place for the file, and the list where
+    # none has, as numba's no-locator error is told it. The docstring promised
+    # the location as named under any list.
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    monkeypatch.setitem(sys.modules, "IPython", None)
+    py_file = tmp_path / "ipykernel_123" / "cell.py"
+    py_file.parent.mkdir()
+    py_file.write_text("def cell():\n    pass\n")
+    with pytest.raises(ImportError) as raised:
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    assert not configurations.is_a_cache_error(raised.value)
+    named = tmp_path / "ipython" / "numba_cache" / "cell-1.py312.nbi"
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", str(named))
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert remedy == told.format(named=named), remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
