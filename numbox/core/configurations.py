@@ -434,7 +434,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     the user's cache directory's doing, with the names numba makes bounded, and the remedy is that directory at a
     shorter path, through what moves it on the platform. numba caches a ``.zip`` through its ``.zip`` locator alone, so a
     ``NUMBA_CACHE_LOCATOR_CLASSES`` that leaves that locator out gives numba no locator for a source in a ``.zip``,
-    and the remedy is to list it; so for a frozen application and numba's user-wide locator, which alone takes one.
+    and the remedy is to list it; so for a frozen application and numba's user-wide locator, which alone takes one;
+    either is told for an error a caller passes on under such a list as for numba's no-locator one, since numba
+    took no location under it, and a source neither in a ``.zip`` nor a frozen application's, which no locator
+    takes, is told the source files on disk or a ``.zip`` holding them for any error.
 
     ``package`` is the one the remedy tells the reader to install again, at a shorter path or with its source
     files on disk: a package built on numbox that puts the question for its own files with
@@ -666,41 +669,46 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"directory at a short path, or {silence}"
             )
         return f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
-    if isinstance(failure, OSError) or getattr(sys, "frozen", False):
-        if not isinstance(failure, OSError) and listed_without(user_wide):
-            # numba's user-wide locator alone takes a frozen application, so
-            # a list without it leaves numba no locator for one, and the
-            # remedy asked for a writable directory numba never tried.
+    # The locators numba reaches for a file not on disk, in its order: its
+    # .zip locator takes a file without trying its location, so none listed
+    # after it is reached; its IPython and user-wide ones pass a location
+    # they cannot make or write over, and the next is tried.
+    order = [cls for cls in _locators(listed) if may_take(cls)]
+    zip_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip)), None)
+    reached = order if zip_at is None else order[:zip_at + 1]
+    user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
+    in_the_user_cache = os.path.join(user_cache_dir, _CacheLocator.get_suitable_cache_subpath(py_file))
+
+    def location_of(cls):
+        # Where the class places the file: the IPython locator in
+        # numba_cache under IPython's cache directory, None without
+        # IPython, or where IPython raises OSError for the directory, which
+        # numba passes the locator over on; IPython is asked for the
+        # directory where a locator of that family is reached and for no
+        # other file, since asked for any .zip member it warned, with its
+        # own directory unwritable, on every import of the package, and
+        # left a temporary directory behind; the .zip and user-wide ones in
+        # a directory of their own under the user's cache directory.
+        if one_of(cls, for_ipython):
+            ipython_cache = _ipython_numba_cache()
+            return os.path.abspath(ipython_cache) if ipython_cache else None
+        return os.path.abspath(in_the_user_cache)
+
+    locations = {cls: location_of(cls) for cls in reached}
+    if not any(locations.values()):
+        # Under a list with no locator that takes the file, or none with a
+        # place for it, numba took no location, and the list is the remedy,
+        # below, for an error a caller passes on as for numba's no-locator
+        # one, as for a source on disk: numba's user-wide locator alone
+        # takes a frozen application, so a list without it leaves numba no
+        # locator for one, and the remedy asked for a writable directory
+        # numba never tried.
+        if getattr(sys, "frozen", False) and listed_without(user_wide):
             return (
                 "numba caches a frozen application through UserWideCacheLocator alone, and "
                 f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves it out: list it, or {silence}"
             )
-        # The locators numba reaches for the file, in its order: its .zip
-        # locator takes a file without trying its location, so none listed
-        # after it is reached; its IPython and user-wide ones pass a location
-        # they cannot make or write over, and the next is tried.
-        order = [cls for cls in _locators(listed) if may_take(cls)]
-        zip_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip)), None)
-        reached = order if zip_at is None else order[:zip_at + 1]
-        user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
-        in_the_user_cache = os.path.join(user_cache_dir, _CacheLocator.get_suitable_cache_subpath(py_file))
-
-        def location_of(cls):
-            # Where the class places the file: the IPython locator in
-            # numba_cache under IPython's cache directory, None without
-            # IPython, or where IPython raises OSError for the directory, which
-            # numba passes the locator over on; IPython is asked for the
-            # directory where a locator of that family is reached and for no
-            # other file, since asked for any .zip member it warned, with its
-            # own directory unwritable, on every import of the package, and
-            # left a temporary directory behind; the .zip and user-wide ones in
-            # a directory of their own under the user's cache directory.
-            if one_of(cls, for_ipython):
-                ipython_cache = _ipython_numba_cache()
-                return os.path.abspath(ipython_cache) if ipython_cache else None
-            return os.path.abspath(in_the_user_cache)
-
-        locations = {cls: location_of(cls) for cls in reached}
+    elif isinstance(failure, OSError) or getattr(sys, "frozen", False):
         if filename:
             named = os.path.abspath(filename)
             named = {named, os.path.dirname(named)}
