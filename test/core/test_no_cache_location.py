@@ -2034,6 +2034,45 @@ def test_an_empty_path_object_names_the_working_directory_as_pathlib_reads_it(tm
     assert remedy(b"") == remedy("")
 
 
+@from_062
+def test_a_locator_entry_naming_no_class_is_left_to_numba_and_its_error_raised_as_it_was(tmp_path, monkeypatch):
+    # numba resolves a dotted entry of NUMBA_CACHE_LOCATOR_CLASSES to whatever
+    # the module holds under the name and fails at the first function it
+    # decorates where that is no class, for want of from_function; the check
+    # read the entry as numba does and asked issubclass of it first, which
+    # raised a TypeError naming neither the entry nor the variable, ahead of
+    # numba's error. An entry that is no class is no locator here, numba's
+    # own error is raised as it was, and the remedy reads the list without it.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    ours = types.ModuleType("our_locators")
+
+    def not_a_locator_class():
+        pass
+
+    ours.not_a_locator_class = not_a_locator_class
+    monkeypatch.setitem(sys.modules, "our_locators", ours)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "our_locators.not_a_locator_class,InTreeCacheLocator",
+                        raising=False)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def f():\n    pass\n")
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    with pytest.raises(AttributeError, match="from_function") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert not configurations.is_a_cache_error(raised.value)
+    on_disk = tmp_path / "site" / "package" / "module.py"
+    on_disk.parent.mkdir(parents=True)
+    on_disk.write_text("")
+    failure = OSError(errno.EACCES, "Permission denied", str(on_disk.parent / "__pycache__"))
+    with_the_entry = configurations.cache_remedy(str(on_disk), failure, "silence")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator", raising=False)
+    assert with_the_entry == configurations.cache_remedy(str(on_disk), failure, "silence")
+    assert "numba caches this file in" in with_the_entry, with_the_entry
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
