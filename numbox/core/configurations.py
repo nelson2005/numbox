@@ -73,7 +73,9 @@ def check_cache_location(py_file, longest_file_name=0):
     check at a time so that each puts back what it found, and a reader of that file's lines meanwhile, in another
     thread, reads the probe's; every other file not on disk is asked with the linecache untouched. Nothing is
     compiled, and nothing is written but the cache directory itself. An ``OSError`` from the check names the
-    location numba picked.
+    location numba picked, but for inspect's, which names no file: for a cell file on disk that numba's IPython
+    locator takes, inspect reads the source from the file itself and raises where it finds none there, in an empty
+    file, before any location is tried.
 
     numba's writability check makes a temporary file whose name is short, or none at all on Linux, and the
     files it saves have names of up to a hundred bytes and more, so a location within their length of the path
