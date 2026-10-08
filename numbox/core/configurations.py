@@ -265,10 +265,18 @@ def _moved_through():
     return ", through XDG_CACHE_HOME or HOME"
 
 
+numba_version = int(version("numba").split(".")[1])
+
+
 def _class_named(module, name):
-    """The class of this name in ``module``, as numba spells its locators from 0.62 or with the underscore it put
-    before them until then; None where the module has neither."""
-    return getattr(module, name, None) or getattr(module, "_" + name, None)
+    """The class of this name in ``module``, as numba spells its locators from 0.62, or, under 0.60 and 0.61, with the
+    underscore it put before them until then; None where the module has no such class. The underscore is tried under
+    those two alone, which read no ``NUMBA_CACHE_LOCATOR_CLASSES``, so that a listed name numba refuses from 0.62,
+    ``CacheLocator`` for its base class, is left out as numba leaves it."""
+    cls = getattr(module, name, None)
+    if cls is None and numba_version < 62:
+        cls = getattr(module, "_" + name, None)
+    return cls
 
 
 def _numba_locator(name):
@@ -284,9 +292,9 @@ def _locators(listed):
     ``listed`` is ``NUMBA_CACHE_LOCATOR_CLASSES`` as numba 0.62 and later read it, each entry a class of numba's
     caching module by its name or its dotted path, resolved as numba resolves it, with the underscore numba put before
     its locators' names until 0.62 allowed in either; an entry numba could not resolve
-    it has refused already, before any location was tried, and one that names no class it fails on at the first
-    function it decorates, for want of ``from_function``, so neither is a locator here, and numba's own error for
-    either is raised as it was. Empty, the order is numba's own.
+    it has refused already, before any location was tried, and one that names no class it fails on, for want of
+    ``from_function``, at a function it decorates where it reaches the entry, so neither is a locator here, and
+    numba's own error for either is raised as it was. Empty, the order is numba's own.
     """
     from numba.core import caching
     if not listed:
@@ -879,7 +887,6 @@ def _strict_cache_mode():
 MAX_STR_LENGTH = 2 ** 31 - 1
 
 
-numba_version = int(version("numba").split(".")[1])
 assert numba_version >= 60, numba_version
 
 #: numba's `FunctionModel`, resolved once. Looking a data model up is type machinery and
