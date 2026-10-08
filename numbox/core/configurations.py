@@ -426,7 +426,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     directory and nothing of where numba caches the file, which that location is none of; the frozen application's is
     the no-locator one, which gives no reason, numba having passed
     the location over on its error, unwritable or too deep alike, so the user's cache directory is named as one numba
-    could not use, to be made writable or put at a shorter path; an error that
+    could not use, to be made writable or put at a shorter path; a frozen application's path with ``.zip`` in it and
+    no part ending in it gets the ``.zip`` locator's error instead where the list puts that locator before the
+    user-wide one, or once the user-wide one passed its location over, and the remedy is the user-wide locator listed
+    before it, or that location made writable or put at a shorter path, as for a source on disk; an error that
     names no file, a caller's, or the first save's on a full disk, is told the locations numba could have taken, as
     for a source on disk, in its order and each once, with the reason, or, for a path too long, to put whichever is
     too long at a shorter path, and for a member in an ipykernel directory where a locator of IPython's family is
@@ -716,6 +719,26 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves it out: list it, or {silence}"
             )
     elif isinstance(failure, OSError) or getattr(sys, "frozen", False):
+        if isinstance(failure, ValueError) and zip_at is not None:
+            # numba's .zip locator takes a frozen application's file for the
+            # ".zip" in its path, without trying its location, and raises
+            # where no part of the path ends in .zip, an archive or a
+            # directory: listed before the user-wide locator, which alone
+            # takes the file, it leaves that one unreached, and the remedy is
+            # to list it before the .zip one; after it, the user-wide one
+            # passed its location over, unwritable or too deep, and that
+            # location is the remedy, as for a source on disk.
+            if not any(one_of(cls, user_wide) for cls in order[:zip_at]):
+                return (
+                    f"numba's .zip locator, listed in NUMBA_CACHE_LOCATOR_CLASSES, {listed}, with no "
+                    'UserWideCacheLocator before it, takes this file for the ".zip" in its path and finds no archive '
+                    f"there: list UserWideCacheLocator, the one locator for a frozen application, before it, or {silence}"
+                )
+            return (
+                'numba\'s .zip locator takes this file for the ".zip" in its path and finds no archive there, after '
+                "UserWideCacheLocator, which numba tries before it, could not use the user's cache directory, "
+                f"{user_cache_dir}: make it writable, or put it at a shorter path{_moved_through()}, or {silence}"
+            )
         if filename:
             named = os.path.abspath(filename)
             named = {named, os.path.dirname(named)}
