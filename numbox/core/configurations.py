@@ -375,12 +375,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location, or, where it is set and numba passed it over, named and made a writable directory at a short path. A
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
     any other locator, named as set or asked for at a short path, and nothing said of numba passing it over, which
-    that location cannot show. An error can name no file, or an empty string or bytes. A caller can build one,
-    numba's first save raises one where a write fails, as on a full disk, and inspect raises one for numba's IPython
-    locator where it finds no source in a cell file on disk; every other OSError ``check_cache_location`` raises names
-    a file. Such an error is told the locations numba could have taken, in numba's order and each once, to put the one
-    that is too long at a shorter path. A path object never names nothing: pathlib reads an empty string as the working
-    directory, ``.``, and an error naming that is told it as a location that is none of numba's.
+    that location cannot show. An error can name no file, or carry an empty string or empty bytes as its
+    name. A caller can build such an error, and numba's first save raises one where a write fails, as on a full disk.
+    So does inspect where, for numba's IPython locator, it finds no source in a cell file on disk. Every other OSError
+    that ``check_cache_location`` raises names a file. An error with no name, or an empty one, is told the locations
+    numba could have taken, in numba's order and each once. For a path too long, the remedy is the one that is too
+    long at a shorter path. For another reason, such as a full disk, the remedy gives the reason and asks for room or
+    a writable directory there. A path object is never empty: pathlib reads an empty string as the working directory,
+    ``.``, which the remedy names as a location that is none of numba's.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its dotted
     path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is. numba's
     IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no directory
@@ -410,8 +412,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location, or set to another directory where the location is the variable's own; numba passes over a location it
     cannot make or write in, so only its no-locator error means the variable was passed over. The error can name the
     location or a file numba writes in it, as a string, bytes or a path object, read as a string; one that names a
-    location that is none of numba's is told that location as the error names it, and one that names no file, a
-    caller's, the locations numba could have taken. For a ``.zip`` or
+    location that is none of numba's is told that location as the error names it, and one that names no file the
+    locations numba could have taken. For a ``.zip`` or
     a frozen application, both cached under the user's cache directory, the location made writable or room made
     there, with the reason the error gives, a full disk or permissions: the ``.zip``'s error names it, a directory of
     numba's under the user's cache directory, or a file numba writes in it, as the first save's does, and the
@@ -419,7 +421,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     that location as the error names it, as for a source on disk, with nothing of what moves the user's cache
     directory; the frozen application's is the no-locator one, which gives no reason, numba having passed
     the location over on its error, so the user's cache directory is named, to be made writable, as it is for an
-    error a caller passes on that names no file. For any other archive, or a
+    error that names no file, a caller's or the first save's on a full disk. For any other archive, or a
     module without its source, the source files on disk or a ``.zip`` holding them, each with the locator it needs
     listed where ``NUMBA_CACHE_LOCATOR_CLASSES`` leaves it out: one of the three for a file on disk for the first,
     the ``.zip`` locator for the second, and ``NUMBA_CACHE_DIR`` set where the user-provided locator is the one
