@@ -59,9 +59,11 @@ warning instead.
   location is too long for the file system, the remedy is for the location the error names: numba takes a
   directory under ``NUMBA_CACHE_DIR`` where that is set, else the ``__pycache__`` beside the source, else a
   directory under the user's cache directory, each of the two under a cache directory named for the source's
-  directory, by its name and a hash of its path; the path the error names is matched whole against each, in
-  the order numba tries them, since the three can nest and ``NUMBA_CACHE_DIR`` set to the user's cache
-  directory makes one path of two. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
+  directory, by its name and a hash of its path; the path the error names is matched whole against each location
+  a locator numba reaches gives it, in the order numba tries them, since the three can nest and
+  ``NUMBA_CACHE_DIR`` set to the user's cache directory makes one path of two; numba reaches no locator listed
+  after its ``.zip`` one for a path with ``.zip`` in it, which that locator takes without trying its location, so
+  a location one of those would give is none of numba's. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
   package installed at a shorter path for the second; the user's cache directory at a shorter path, through
   ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, where numba asks the system,
   for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it
@@ -76,10 +78,10 @@ warning instead.
   dotted path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is.
   numba's IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no
   directory per file, and reads the function's source when it takes the file, which the check's probe is given
-  under the file's name for a file not on disk that a listed locator of that family takes, one check at a time,
+  under the file's name for a file not on disk that a locator of that family numba reaches takes, one check at a time,
   having no module to read a ``.zip`` member's through, where inspect reads a file on disk itself, and the
   linecache is left alone for every other file; that location too long is told as
-  IPython's cache directory at a shorter path, for a cell file on disk and for a member of a ``.zip`` in an ipykernel
+  IPython's cache directory at a shorter path, for a cell file on disk and for a ``.zip`` member in an ipykernel
   directory alike, where that locator is listed before the ``.zip`` one, which takes a file without trying its
   location, so that none listed after it is reached, with no ``NUMBA_CACHE_DIR`` offered for a source not on
   disk; the remedy asks IPython for that directory where a locator of that family is listed

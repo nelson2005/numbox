@@ -1912,6 +1912,9 @@ def test_a_zip_members_error_naming_the_zips_location_after_ipythons_locator_pas
                  marks=from_061),
     pytest.param("ZipCacheLocator", "bundle.zip/ipykernel_123/cell.py", id="a list without the IPython locator",
                  marks=from_062),
+    pytest.param("ZipCacheLocator,IPythonCacheLocator", "bundle.zip/ipykernel_123/cell.py",
+                 id="the .zip locator listed first, which takes the member before the IPython one is reached",
+                 marks=from_062),
 ])
 def test_a_file_not_on_disk_numbas_ipython_locator_does_not_read_is_asked_without_touching_linecache(
         tmp_path, monkeypatch, locators, member):
@@ -1957,6 +1960,52 @@ def test_a_file_not_on_disk_numbas_ipython_locator_does_not_read_is_asked_withou
     assert seen == [(False, [])], seen
     assert (tmp_path / "user-cache" / "numba").is_dir()
     assert not ipython_dir.exists()
+
+
+@from_062
+@pytest.mark.parametrize("refused, told", [
+    pytest.param(("__pycache__", errno.ENAMETOOLONG, "File name too long"),
+                 "the path is too long for the file system: that location, {named}, at a shorter path",
+                 id="too long, beside the source"),
+    pytest.param(("__pycache__", errno.EACCES, "Permission denied"),
+                 "that location, {named}, where no file can be written (Permission denied): make room there, or make it "
+                 "writable", id="unwritable, beside the source"),
+    pytest.param(("", errno.ENAMETOOLONG, "File name too long"),
+                 "the path is too long for the file system: the user's cache directory, {user_cache_dir}, at a shorter "
+                 "path{moved_through}", id="too long, the .zip locator's location"),
+])
+def test_a_file_on_disk_under_a_zip_directory_with_the_zip_locator_first_is_answered_for_the_locators_numba_reaches(
+        tmp_path, monkeypatch, refused, told):
+    # numba's .zip locator takes a path with .zip in it, a file on disk under
+    # a directory named so included, without trying its location, so numba
+    # reaches no locator listed after it. The remedy matched the error's path
+    # against the locations of those too, and an error naming the __pycache__
+    # beside the source, under a list with the in-tree locator after the .zip
+    # one, was told the package installed at a shorter path, for a location
+    # numba never used. The path is matched against the locations of the
+    # locators numba reaches alone, and any other is told as the error names
+    # it.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "ZipCacheLocator,InTreeCacheLocator", raising=False)
+    py_file = tmp_path / "d.zip" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    user_cache_dir = tmp_path / "user-cache" / "numba"
+    location = user_cache_dir / _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    which, number, strerror = refused
+    named = py_file.parent / which if which else location
+    remedy = configurations.cache_remedy(str(py_file), OSError(number, strerror, str(named)), "silence")
+    told = told.format(named=named, user_cache_dir=user_cache_dir, moved_through=configurations._moved_through())
+    assert remedy == f"{told}; or silence", remedy
 
 
 A_ZIP_REFUSED = {
