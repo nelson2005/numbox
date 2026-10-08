@@ -2693,6 +2693,7 @@ def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_t
 @pytest.mark.parametrize("placement, refused", [
     ("a source on disk", "too long"), ("a source on disk", "unwritable"), ("a .zip member", "unwritable"),
     ("a source on disk", "naming no file"), ("a .zip member", "naming no file"),
+    ("a source on disk, the in-tree locator after", "naming no file"),
 ])
 def test_a_listed_class_of_none_of_numbas_families_is_told_the_location_the_error_names(
         tmp_path, monkeypatch, placement, refused):
@@ -2707,7 +2708,8 @@ def test_a_listed_class_of_none_of_numbas_families_is_told_the_location_the_erro
     # location for the other. The class takes any file for the remedy, and the
     # location the error names, which no locator of numba's gives the file, is
     # told as named, with the cause; an error naming no file is told the
-    # location numba took, unnamed.
+    # location numba took as the class's own, with no path to name, among
+    # numba's locators' places where those are reached.
     import types
     import numba
     import numbox.core.configurations as configurations
@@ -2737,9 +2739,10 @@ def test_a_listed_class_of_none_of_numbas_families_is_told_the_location_the_erro
     ours.OurLocator = OurLocator
     monkeypatch.setitem(sys.modules, "our_locators", ours)
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
-    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "our_locators.OurLocator", raising=False)
+    listed = "our_locators.OurLocator,InTreeCacheLocator" if placement.endswith("after") else "our_locators.OurLocator"
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", listed, raising=False)
     assert configurations._locators("our_locators.OurLocator") == [OurLocator]
-    if placement == "a source on disk":
+    if placement.startswith("a source on disk"):
         py_file = tmp_path / "site" / "package" / "module.py"
         py_file.parent.mkdir(parents=True)
         py_file.write_text("")
@@ -2748,13 +2751,18 @@ def test_a_listed_class_of_none_of_numbas_families_is_told_the_location_the_erro
     if refused == "naming no file":
         remedy = configurations.cache_remedy(str(py_file), OSError(errno.ENOSPC, "No space left on device"), "silence")
         if placement == "a source on disk":
-            assert remedy == ("the location numba took, where no file can be written (No space left on device): make "
-                              "room there, or make it writable; or silence"), remedy
+            assert remedy == (
+                "the location numba took, OurLocator's own, where no file can be written (No space left on device): "
+                "make room there, or make it writable; or silence"), remedy
+        elif placement.startswith("a source on disk"):
+            assert remedy == (
+                f"the location numba took, one of OurLocator's own or {py_file.parent / '__pycache__'}, where no file "
+                "can be written (No space left on device): make room there, or make it writable; or silence"), remedy
         else:
             assert remedy == (
                 "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: no file can be written "
-                "in the location numba took (No space left on device), so make room there, or make it writable, or "
-                "silence"), remedy
+                "in the location numba took, OurLocator's own (No space left on device), so make room there, or make "
+                "it writable, or silence"), remedy
         return
     if refused == "unwritable":
         where.mkdir()
