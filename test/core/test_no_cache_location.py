@@ -2900,6 +2900,37 @@ def test_a_file_numbas_ipython_locator_alone_takes_and_passes_over_is_told_ipyth
             "home it cannot write: make that home writable; or silence"), remedy
 
 
+@from_061
+def test_the_check_raises_the_stamps_error_naming_the_archive_a_moved_zips_members_code_names(tmp_path, monkeypatch):
+    # numba reads the source's stamp at decoration, the archive's for a .zip
+    # member, and the check reads it as numba does, so for a member whose code
+    # names an archive since moved it raises FileNotFoundError naming that
+    # archive, no location of numba's, before any location is tried; the
+    # check's docstring excepted inspect's error alone from naming the
+    # location numba picked.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    archive = tmp_path / "build" / "numbox.zip"
+    py_file = str(archive / "numbox" / "module.py")
+    with pytest.raises(FileNotFoundError) as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert raised.value.filename == str(archive)
+    assert configurations.is_a_cache_error(raised.value)
+    assert not (tmp_path / "user-cache").exists()
+    remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    assert remedy == (
+        f"the module's code names {archive}, which is not there: its .pyc was compiled to name that path, so compile "
+        "the archive's .pyc members to name its path now, or ship its source files; or silence"), remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
