@@ -436,8 +436,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     names no file, a caller's, or the first save's on a full disk, is told the locations numba could have taken, as
     for a source on disk, in its order and each once, with the reason, or, for a path too long, to put whichever is
     too long at a shorter path, and for a member in an ipykernel directory where a locator of IPython's family is
-    reached IPython's ``numba_cache`` is among them, with nothing said of the user's cache directory as where numba
-    caches the file. For
+    reached nothing is said of the user's cache directory as where numba caches the file, IPython's ``numba_cache``
+    being among them where IPython gives its directory. For
     any other archive, or a
     module without its source, the source files on disk or a ``.zip`` holding them, each with the locator it needs
     listed where ``NUMBA_CACHE_LOCATOR_CLASSES`` leaves it out: one of the three for a file on disk for the first,
@@ -783,9 +783,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # location is under the user's cache directory; a location that is
         # none of numba's is not, and an error that names no file for a
         # member a locator of IPython's family is reached for may be
-        # IPython's, so nothing is said of that directory for either.
-        in_the_user_cache_alone = taken is not None or (not filename and not any(
-            one_of(cls, for_ipython) and locations[cls] for cls in reached))
+        # IPython's, with IPython's directory given or not, so nothing is
+        # said of that directory for either.
+        in_the_user_cache_alone = taken is not None or (
+            not filename and not any(one_of(cls, for_ipython) for cls in reached))
         where = (
             "numba caches a .zip, or a frozen application, in the user's cache directory, and "
             if in_the_user_cache_alone else "")
@@ -822,7 +823,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             if taken is None:
                 # The error names no file, and which of the locations is too
                 # long cannot be told; the user's cache directory moves them
-                # all where IPython's is not among them.
+                # all where no locator of IPython's family is reached.
                 moved_through = _moved_through() if in_the_user_cache_alone else ""
                 return (
                     f"{opening}the path is too long for the file system, so put {could_have_taken(locations)}, at a "

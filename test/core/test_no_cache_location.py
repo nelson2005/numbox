@@ -2615,6 +2615,45 @@ def test_a_locator_entry_naming_a_class_with_no_from_function_is_left_out_as_one
         "UserWideCacheLocator, or silence"), alone
 
 
+@from_061
+@pytest.mark.parametrize("refused, told", [
+    ("a full disk", "no file can be written in the location numba took, {location} (No space left on device), so make "
+                    "room there, or make it writable"),
+    ("too long", "the path is too long for the file system, so put the location numba took, {location}, at a shorter "
+                 "path"),
+])
+def test_an_error_naming_no_file_with_ipython_not_importable_says_nothing_of_the_user_cache_directory(
+        tmp_path, monkeypatch, refused, told):
+    # numba's IPython locator takes a .zip member in an ipykernel directory
+    # before its .zip locator can, so an error naming no file for the member
+    # may be IPython's location's, and the remedy says nothing of the user's
+    # cache directory as where numba caches the file; it did so only where
+    # IPython gave its directory, and with IPython not importable, which
+    # numba raises ImportError for at decoration, opened with that directory
+    # as where numba caches a .zip, or a frozen application, against its own
+    # comment.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setitem(sys.modules, "IPython", None)
+    py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
+    location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
+    error = ((errno.ENOSPC, "No space left on device") if refused == "a full disk" else
+             (errno.ENAMETOOLONG, "File name too long"))
+    remedy = configurations.cache_remedy(py_file, OSError(*error), "silence")
+    assert remedy == (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: "
+        f"{told.format(location=location)}, or silence"), remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
