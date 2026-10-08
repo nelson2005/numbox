@@ -71,7 +71,8 @@ warning instead.
   deep, the warning names it and the remedy is a writable directory at a short path. A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
-  The name an error carries is read as a string, bytes or a path object alike. An error can name no file, or carry an
+  The name an error carries is read as a string, bytes or a path object alike, and a name of another kind, an integer
+  file descriptor's, as none. An error can name no file, or carry an
   empty string or empty bytes as its name. A caller can build such an error, and numba's first save raises one where a
   write fails, as on a full disk. So does inspect where, for numba's IPython locator, it finds no source in a cell file
   on disk. Every other OSError that ``check_cache_location`` raises names a file. An error with no name, or an empty
