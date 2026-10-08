@@ -2488,13 +2488,17 @@ def test_a_frozen_applications_path_with_zip_in_it_and_no_archive_is_answered_fo
 
 
 @from_062
-def test_the_check_raises_inspects_error_naming_no_file_for_an_empty_cell_file_on_disk(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cell_file", ["empty", pytest.param("unreadable", marks=needs_a_directory_it_cannot_write)])
+def test_the_check_raises_inspects_error_naming_no_file_for_a_cell_file_on_disk_it_reads_no_source_in(
+        tmp_path, monkeypatch, cell_file):
     # numba's IPython locator reads the function's source, and for a file on
     # disk inspect reads it from the file itself and raises OSError, naming no
-    # file, where it finds no source there, as in an empty file; the check
-    # raises that error before any location is tried, and is_a_cache_error
-    # admits it as it admits every OSError. The check's docstring said every
-    # OSError from it names the location numba picked.
+    # file and with no errno, where it reads no source there, an empty file or
+    # one it cannot read; the check raises that error before any location is
+    # tried, and is_a_cache_error admits it as it admits every OSError. The
+    # check's docstring said every OSError from it names the location numba
+    # picked, and the remedy told the location numba took, which it had not,
+    # as refusing a file.
     import types
     import numba
     import numbox.core.configurations as configurations
@@ -2509,11 +2513,27 @@ def test_the_check_raises_inspects_error_naming_no_file_for_an_empty_cell_file_o
     cell = tmp_path / "ipykernel_123" / "__init__.py"
     cell.parent.mkdir()
     cell.touch()
-    with pytest.raises(OSError, match="could not get source code") as raised:
-        configurations.check_cache_location(str(cell), configurations.LONGEST_CACHE_FILE_NAME)
-    assert raised.value.filename is None
+    if cell_file == "unreadable":
+        cell.write_text("def f():\n    pass\n")
+        cell.chmod(0)
+    try:
+        with pytest.raises(OSError, match="could not get source code") as raised:
+            configurations.check_cache_location(str(cell), configurations.LONGEST_CACHE_FILE_NAME)
+    finally:
+        cell.chmod(0o644)
+    assert raised.value.filename is None and raised.value.errno is None
     assert configurations.is_a_cache_error(raised.value)
     assert not (ipython_dir / "numba_cache").exists()
+    remedy = configurations.cache_remedy(str(cell), raised.value, "silence")
+    assert remedy == (
+        f"numba's IPython locator reads the function's source from its file, and read none in {cell} (could not get "
+        "source code), before any location was tried: make the file readable, with the source in it; or silence"), remedy
+    # An error with no errno that names a file is a caller's, not inspect's,
+    # and is told the location it names.
+    named = OSError("could not get source code")
+    named.filename = str(tmp_path / "elsewhere")
+    remedy = configurations.cache_remedy(str(cell), named, "silence")
+    assert remedy.startswith(f"that location, {tmp_path / 'elsewhere'}, where no file can be written"), remedy
 
 
 @from_062

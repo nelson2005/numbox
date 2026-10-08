@@ -75,8 +75,8 @@ def check_cache_location(py_file, longest_file_name=0):
     compiled, and nothing is written but the cache directory itself. An ``OSError`` from the check names the
     location numba picked, but for two raised before any location is tried: inspect's, which names no file, for a
     cell file on disk that numba's IPython locator takes, where inspect reads the source from the file itself and
-    finds none there, in an empty file; and the stamp's, which names the archive a ``.zip`` member's code names
-    where that has since moved, as numba's own does at decoration.
+    finds none there, in an empty file or one it cannot read; and the stamp's, which names the archive a ``.zip``
+    member's code names where that has since moved, as numba's own does at decoration.
 
     numba's writability check makes a temporary file whose name is short, or none at all on Linux, and the
     files it saves have names of up to a hundred bytes and more, so a location within their length of the path
@@ -386,7 +386,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     that location cannot show. An error can name no file, or carry an empty string or empty bytes as its name, or a name of
     another kind, an integer file descriptor's, which is none. A caller
     can build such an error, and numba's first save raises one where a write fails, as on a full disk. So does inspect
-    where, for numba's IPython locator, it finds no source in a cell file on disk. Every other OSError that
+    where, for numba's IPython locator, it reads no source in a cell file on disk, empty or unreadable, with no errno
+    either, no call of the file system's having raised it, and that error, for a file on disk that a locator of
+    IPython's family numba reaches takes, is told as inspect's, no location having been tried: the file to make
+    readable, with the source in it. Every other OSError that
     ``check_cache_location`` raises names a file. An error with no name, or an empty one, is told the locations numba
     could have taken, in numba's order and each once. For a path too long, the remedy is to put whichever of them is too
     long at a shorter path. For a file refused for another reason, such as a full disk, the remedy gives the reason and
@@ -607,6 +610,19 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return None
 
         locations = {cls: location_of(cls) for cls in reached}
+        if isinstance(failure, OSError) and failure.errno is None and not filename and any(
+                one_of(cls, for_ipython) for cls in reached):
+            # inspect's error, which no call of the file system's raised, so
+            # with no errno and no name: numba's IPython locator reads the
+            # function's source, from the file itself for one on disk, and
+            # inspect raises where it reads none there, an empty file or one
+            # it cannot read, before any location is tried; the remedy told
+            # the location numba took, which it had not, as refusing a file.
+            return (
+                f"numba's IPython locator reads the function's source from its file, and read none in {py_file} "
+                f"({failure}), before any location was tried: make the file readable, with the source in it; or "
+                f"{silence}"
+            )
         # Under a list with no locator that takes the file, or none with a
         # place for it, the user-provided one alone with NUMBA_CACHE_DIR unset,
         # numba took no location, and the list is the remedy, below, for an
