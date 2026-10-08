@@ -79,8 +79,8 @@ warning instead.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its
   dotted path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is; an
   entry numba cannot resolve, which it refuses before any location is tried, and one that names no class, which it
-  fails on at the first function it decorates, are no locators here, and numba's own error for either is raised as
-  it was.
+  fails on at a function it decorates where it reaches the entry, are no locators here, and numba's own error for
+  either is raised as it was.
   numba's IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no
   directory per file, and reads the function's source when it takes the file, which the check's probe is given
   under the file's name for a file not on disk that a locator of that family numba reaches takes, one check at a time,

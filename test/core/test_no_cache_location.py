@@ -2037,8 +2037,8 @@ def test_an_empty_path_object_names_the_working_directory_as_pathlib_reads_it(tm
 @from_062
 def test_a_locator_entry_naming_no_class_is_left_to_numba_and_its_error_raised_as_it_was(tmp_path, monkeypatch):
     # numba resolves a dotted entry of NUMBA_CACHE_LOCATOR_CLASSES to whatever
-    # the module holds under the name and fails at the first function it
-    # decorates where that is no class, for want of from_function; the check
+    # the module holds under the name and fails, for want of from_function,
+    # at a function it decorates where it reaches that entry; the check
     # read the entry as numba does and asked issubclass of it first, which
     # raised a TypeError naming neither the entry nor the variable, ahead of
     # numba's error. An entry that is no class is no locator here, numba's
@@ -2071,6 +2071,36 @@ def test_a_locator_entry_naming_no_class_is_left_to_numba_and_its_error_raised_a
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator", raising=False)
     assert with_the_entry == configurations.cache_remedy(str(on_disk), failure, "silence")
     assert "numba caches this file in" in with_the_entry, with_the_entry
+
+
+@from_062
+@pytest.mark.parametrize("refused", ["CacheLocator", "SourceFileBackedLocatorMixin"])
+def test_a_listed_name_numba_refuses_is_left_out_as_numba_leaves_it(tmp_path, monkeypatch, refused):
+    # numba 0.62 and later resolve a plain entry of NUMBA_CACHE_LOCATOR_CLASSES
+    # as a name of the caching module and refuse any other before a location
+    # is tried; the remedy, reading a name with the underscore numba put
+    # before its locators until 0.62 too, read the two names of numba's base
+    # classes as those classes and answered for a list numba refuses, with
+    # one of their locations to make writable. The underscore is tried under
+    # 0.60 and 0.61 alone, which read no list.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core import caching
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    assert configurations._locators(f"{refused},InTreeCacheLocator") == [caching.InTreeCacheLocator]
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", refused, raising=False)
+    with pytest.raises(RuntimeError, match="Unknown cache locator class") as raised:
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    assert not configurations.is_a_cache_error(raised.value)
+    failure = OSError(errno.EACCES, "Permission denied", str(py_file.parent / "__pycache__"))
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert remedy == (
+        f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {refused}, says, and none of those locators takes a "
+        "source file on disk: list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or "
+        "UserWideCacheLocator, or silence"), remedy
 
 
 A_ZIP_REFUSED = {
