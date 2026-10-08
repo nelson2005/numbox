@@ -136,8 +136,8 @@ warning instead.
   An error that names no file, a caller's, or numba's first save's on a full disk, is told the locations numba
   could have taken, as for a source on disk, in its order and each once, with the reason, or, for a path too long,
   to put whichever is too long at a shorter path; for a member in an ipykernel directory where a locator of
-  IPython's family is reached, IPython's ``numba_cache`` is among them, and the warning then says nothing of the
-  user's cache directory as where numba caches the file.
+  IPython's family is reached, the warning says nothing of the user's cache directory as where numba caches the
+  file, and IPython's ``numba_cache`` is among them where IPython gives its directory.
   A ``.zip`` whose cache directory holds every entry but can no longer be written falls back too, where numba
   alone would have loaded the entries: the writability check is the rule numba applies to every other
   placement. numba caches a ``.zip`` through its ``.zip`` locator alone, so a ``NUMBA_CACHE_LOCATOR_CLASSES``
