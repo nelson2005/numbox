@@ -306,7 +306,7 @@ def _locators(listed):
             module_path, class_name = entry.rsplit(".", 1)
             try:
                 cls = _class_named(importlib.import_module(module_path), class_name)
-            except ImportError:
+            except (ImportError, ValueError):
                 cls = None
         else:
             cls = _numba_locator(entry)
@@ -376,8 +376,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
     any other locator, named as set or asked for at a short path, and nothing said of numba passing it over, which
     that location cannot show. An error that names no file, or an empty name, a string's or bytes', which a caller
-    can pass on where numba's and the package's own name the file refused, is told the locations numba could have
-    taken, in numba's order and each once, to put the one that is too long at a shorter path; a path object has no
+    can pass on, or inspect raises for numba's IPython locator where it finds no source in a cell file on disk, where
+    numba's and the package's own cache errors name the file refused, is told the locations numba could have taken,
+    in numba's order and each once, to put the one that is too long at a shorter path; a path object has no
     empty name, pathlib reading an empty string as the working directory, ``.``, which one built from it names and
     is told as, a location that is none of numba's.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its dotted
