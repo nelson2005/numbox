@@ -82,7 +82,7 @@ warning instead.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its
   dotted path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is; an
   entry numba cannot resolve, which it refuses before any location is tried, or raises importlib's error for, a
-  relative module path's TypeError, and one that names no class, which it
+  relative module path's TypeError, and one that names no class, or a class with no ``from_function``, which it
   fails on at a function it decorates where it reaches the entry, are no locators here, and numba's own error for
   either is raised as it was.
   numba's IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no

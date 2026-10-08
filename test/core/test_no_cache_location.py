@@ -2576,6 +2576,45 @@ def test_a_locator_entry_with_a_relative_module_path_is_left_out_and_numbas_erro
     assert remedy.startswith(f"numba caches this file in {py_file.parent / '__pycache__'},"), remedy
 
 
+@from_062
+@pytest.mark.parametrize("entry", ["CacheImpl", "pathlib.PurePath"])
+def test_a_locator_entry_naming_a_class_with_no_from_function_is_left_out_as_one_naming_no_class_is(
+        tmp_path, monkeypatch, entry):
+    # numba fails on a listed class with no from_function, its own CacheImpl or
+    # any other, as it fails on an entry naming no class, for want of that
+    # method at a function it decorates where it reaches the entry; the
+    # remedy left out the entry naming no class and kept the class, as a
+    # locator of its own that takes any file on disk, so the remedy with the
+    # entry lost the NUMBA_CACHE_DIR offer, and the entry alone was told to
+    # make one of its locations writable, a list with no locator at all.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core import caching
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    assert configurations._locators(f"{entry},InTreeCacheLocator") == [caching.InTreeCacheLocator]
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", f"{entry},InTreeCacheLocator", raising=False)
+    with pytest.raises(AttributeError, match="from_function") as raised:
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    assert not configurations.is_a_cache_error(raised.value)
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", str(tmp_path / "elsewhere"))
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", f"{entry},UserProvidedCacheLocator,InTreeCacheLocator",
+                        raising=False)
+    with_the_entry = configurations.cache_remedy(str(py_file), failure, "silence")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "UserProvidedCacheLocator,InTreeCacheLocator",
+                        raising=False)
+    assert with_the_entry == configurations.cache_remedy(str(py_file), failure, "silence")
+    assert "NUMBA_CACHE_DIR set to a short path" in with_the_entry, with_the_entry
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", entry, raising=False)
+    alone = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert alone == (
+        f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {entry}, says, and none of those locators takes a "
+        "source file on disk: list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or "
+        "UserWideCacheLocator, or silence"), alone
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
