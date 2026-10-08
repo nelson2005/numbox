@@ -1187,6 +1187,43 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     assert py_file not in linecache.cache
 
 
+def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
+    # A traceback through a .zip member, or inspect, leaves the member's lines
+    # in the process-wide linecache under its name; the check gives the probe's
+    # source to inspect under that name for the time numba picks the locator,
+    # and what was there is owed back. Nothing failed with the entry discarded
+    # instead, every check so far asking about a file nothing had read.
+    import linecache
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    held = (24, None, ["def cell():\n", "    return 1\n"], py_file)
+    monkeypatch.setitem(linecache.cache, py_file, held)
+    seen = []
+    real = configurations.CompileResultCacheImpl
+
+    def recording(probe):
+        seen.append(linecache.getlines(py_file))
+        return real(probe)
+
+    monkeypatch.setattr(configurations, "CompileResultCacheImpl", recording)
+    configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert seen == [["def _cache_probe():\n", "    pass\n"]], seen
+    assert linecache.cache[py_file] is held
+    assert (ipython_dir / "numba_cache").is_dir()
+
+
 @pytest.mark.parametrize("locators, made", [
     pytest.param("", "__pycache__", id="numba's order, the in-tree locator takes it"),
     pytest.param("IPythonCacheLocator,InTreeCacheLocator", "numba_cache", id="the IPython locator first",
