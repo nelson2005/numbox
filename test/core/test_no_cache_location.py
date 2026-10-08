@@ -1824,6 +1824,58 @@ def test_a_zip_members_error_naming_the_zips_location_after_ipythons_locator_pas
         "(Permission denied), so make room there, or make it writable, or silence"), remedy
 
 
+@pytest.mark.parametrize("locators, member", [
+    pytest.param("", "bundle.zip/package/module.py", id="numba's order, a .zip member in no ipykernel directory",
+                 marks=pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")),
+    pytest.param("ZipCacheLocator", "bundle.zip/ipykernel_123/cell.py", id="a list without the IPython locator",
+                 marks=from_062),
+])
+def test_a_file_not_on_disk_numbas_ipython_locator_does_not_read_is_asked_without_touching_linecache(
+        tmp_path, monkeypatch, locators, member):
+    # The probe's source stands in for the file's in the process-wide
+    # linecache while numba picks the locator, for numba's IPython locator,
+    # which reads the function's source when it takes the file; it stood
+    # there for every file not on disk, and a reader in another thread,
+    # formatting a traceback through that file meanwhile, got the probe's two
+    # lines for it, for a .zip member in no ipykernel directory too, which
+    # that locator never takes. It stands there for a file a listed locator of
+    # that family takes, and for no other.
+    import linecache
+    import types
+    import numba
+    import numba.core.caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(numba.core.caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr(member.split("/", 1)[1], "def f():\n    pass\n")
+    py_file = str(tmp_path / member)
+    seen = []
+    real = configurations.CompileResultCacheImpl
+
+    def recording(probe):
+        seen.append((py_file in linecache.cache, linecache.getlines(py_file)))
+        return real(probe)
+
+    monkeypatch.setattr(configurations, "CompileResultCacheImpl", recording)
+    configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert seen == [(False, [])], seen
+    assert (tmp_path / "user-cache" / "numba").is_dir()
+    assert not ipython_dir.exists()
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
