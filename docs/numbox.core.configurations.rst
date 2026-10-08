@@ -80,7 +80,11 @@ warning instead.
   the remedy gives the reason and asks for room or a writable directory there. A path object is never empty: pathlib
   reads an empty string as the working directory, which the remedy names as a location that is none of numba's.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its
-  dotted path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is; an
+  dotted path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is, or a
+  class of none of numba's families, with a ``from_function`` and a place of its own, which takes any file for the
+  warning, what it takes and where it caches being its own to say: an error naming a location that no locator of
+  numba's gives the file is told that location as the error names it, which is then that class's, and one naming no
+  file under such classes alone is told the location numba took, unnamed; an
   entry numba cannot resolve, which it refuses before any location is tried, or raises importlib's error for, a
   relative module path's TypeError, and one that names no class, or a class with no ``from_function``, which it
   fails on at a function it decorates where it reaches the entry, are no locators here, and numba's own error for

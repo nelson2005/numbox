@@ -2689,6 +2689,101 @@ def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_t
     assert remedy == told.format(named=named), remedy
 
 
+@from_062
+@pytest.mark.parametrize("placement, refused", [
+    ("a source on disk", "too long"), ("a source on disk", "unwritable"), ("a .zip member", "unwritable"),
+    ("a source on disk", "naming no file"), ("a .zip member", "naming no file"),
+])
+def test_a_listed_class_of_none_of_numbas_families_is_told_the_location_the_error_names(
+        tmp_path, monkeypatch, placement, refused):
+    # NUMBA_CACHE_LOCATOR_CLASSES exists for a locator of the reader's own, a
+    # class of none of numba's families, with a from_function and a place of
+    # its own that the remedy cannot know; numba caches through it, and the
+    # check's error names its location. The remedy read the class as taking
+    # files on disk alone and as having no place, so a path too long on disk
+    # was told to make one of the list's locations writable, with the cause
+    # dropped, and a .zip member's refused file to list the .zip locator, with
+    # the location dropped; upstream main named the cause for the one and the
+    # location for the other. The class takes any file for the remedy, and the
+    # location the error names, which no locator of numba's gives the file, is
+    # told as named, with the cause; an error naming no file is told the
+    # location numba took, unnamed.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    where = tmp_path / ("x" * 300) if refused == "too long" else tmp_path / "our-cache"
+
+    class OurLocator(_CacheLocator):
+        def __init__(self, py_func, py_file):
+            self._py_file = py_file
+            self._cache_path = str(where / self.get_suitable_cache_subpath(py_file))
+
+        def get_cache_path(self):
+            return self._cache_path
+
+        def get_source_stamp(self):
+            return 0
+
+        def get_disambiguator(self):
+            return "x"
+
+        @classmethod
+        def from_function(cls, py_func, py_file):
+            return cls(py_func, py_file)
+
+    ours = types.ModuleType("our_locators")
+    ours.OurLocator = OurLocator
+    monkeypatch.setitem(sys.modules, "our_locators", ours)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "our_locators.OurLocator", raising=False)
+    assert configurations._locators("our_locators.OurLocator") == [OurLocator]
+    if placement == "a source on disk":
+        py_file = tmp_path / "site" / "package" / "module.py"
+        py_file.parent.mkdir(parents=True)
+        py_file.write_text("")
+    else:
+        py_file = tmp_path / "bundle.zip" / "package" / "module.py"
+    if refused == "naming no file":
+        remedy = configurations.cache_remedy(str(py_file), OSError(errno.ENOSPC, "No space left on device"), "silence")
+        if placement == "a source on disk":
+            assert remedy == ("the location numba took, where no file can be written (No space left on device): make "
+                              "room there, or make it writable; or silence"), remedy
+        else:
+            assert remedy == (
+                "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: no file can be written "
+                "in the location numba took (No space left on device), so make room there, or make it writable, or "
+                "silence"), remedy
+        return
+    if refused == "unwritable":
+        where.mkdir()
+        where.chmod(0o555)
+    try:
+        with pytest.raises(OSError) as raised:
+            configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    finally:
+        if refused == "unwritable":
+            where.chmod(0o755)
+    failure = raised.value
+    assert configurations.is_a_cache_error(failure)
+    named = os.fsdecode(failure.filename)
+    assert named.startswith(str(where)), named
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    if refused == "too long":
+        assert failure.errno == errno.ENAMETOOLONG
+        assert remedy == (
+            f"the path is too long for the file system: that location, {named}, at a shorter path; or silence"), remedy
+    elif placement == "a source on disk":
+        assert remedy == (
+            f"that location, {named}, where no file can be written (Permission denied): make room there, or make it "
+            "writable; or silence"), remedy
+    else:
+        assert remedy == (
+            "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: no file can be written at "
+            f"that location, {named} (Permission denied), so make room there, or make it writable, or silence"), remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "

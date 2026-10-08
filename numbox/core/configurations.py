@@ -389,7 +389,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     asks for room or a writable directory there. A path object is never empty: pathlib reads an empty string as the
     working directory, ``.``, which the remedy names as a location that is none of numba's.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its dotted
-    path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is. numba's
+    path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is, or a class of
+    none of numba's families, with a ``from_function`` and a place of its own, which takes any file for the remedy, what
+    it takes and where it caches being its own to say: an error naming a location that no locator of numba's gives the
+    file is told that location as the error names it, which is then that class's, and one naming no file under such
+    classes alone is told the location numba took, unnamed. numba's
     IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no directory
     per file, and that location too long is told as IPython's cache directory at a shorter path, for a cell file on
     disk and for a ``.zip`` member in an ipykernel directory alike, where that locator is listed before the
@@ -483,13 +487,22 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # numba's locators stands for its family.
         return base is not None and issubclass(cls, base)
 
+    def of_numbas(cls):
+        # Whether ``cls`` is of one of numba's locator families, whose places
+        # the remedy knows; a class of none of them, with a from_function and
+        # a place of its own, caches where it alone can say.
+        return any(one_of(cls, base) for base in (user_provided, in_tree, user_wide, for_ipython, for_a_zip))
+
     def could_have_taken(locations):
         # Which location numba took cannot be told from an error that names
         # no file, so the ones it could have taken, the values of
         # ``locations`` in numba's order, are listed each once: on disk,
         # NUMBA_CACHE_DIR set to the user's cache directory makes one path of
-        # two.
+        # two. A class of none of numba's families has a place the remedy
+        # cannot name.
         known = list(dict.fromkeys(location for location in locations.values() if location))
+        if not known:
+            return "the location numba took"
         if len(known) > 1:
             return f"the location numba took, one of {', '.join(known[:-1])} or {known[-1]}"
         return f"the location numba took, {known[0]}"
@@ -507,16 +520,19 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # directory, on disk or not; its .zip locator a path with .zip in it,
         # which it caches where a part ends in .zip, an archive or a directory,
         # and raises for where none does; its user-wide one a frozen
-        # application's file besides any on disk; and the rest, and a class
-        # that is none of numba's with a from_function of its own, any file
-        # on disk.
+        # application's file besides any on disk; the rest any file on disk;
+        # and a class of none of numba's families, with a from_function and
+        # a place of its own, any file, what it takes being its own to say,
+        # as is where it caches.
         if one_of(cls, for_ipython):
             return _taken_by_ipython(py_file)
         if one_of(cls, for_a_zip):
             return ".zip" in py_file
         if one_of(cls, user_wide):
             return a_file_on_disk or bool(getattr(sys, "frozen", False))
-        return a_file_on_disk
+        if of_numbas(cls):
+            return a_file_on_disk
+        return True
 
     if a_file_on_disk:
         def reads_the_variable(cls):
@@ -585,8 +601,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # Under a list with no locator that takes the file, or none with a
         # place for it, the user-provided one alone with NUMBA_CACHE_DIR unset,
         # numba took no location, and the list is the remedy, below, for an
-        # error a caller passes on as for numba's no-locator one.
-        if isinstance(failure, OSError) and any(locations.values()):
+        # error a caller passes on as for numba's no-locator one; a class of
+        # none of numba's families has a place of its own, which an error
+        # can name.
+        if isinstance(failure, OSError) and (any(locations.values()) or not all(of_numbas(cls) for cls in reached)):
             # The error names the location numba took, or a file numba writes
             # in it: numba's own check passed the location, its temporary file
             # fitting where its cache files would not, or the package's named
@@ -703,16 +721,20 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # other file, since asked for any .zip member it warned, with its
         # own directory unwritable, on every import of the package, and
         # left a temporary directory behind; the .zip and user-wide ones in
-        # a directory of their own under the user's cache directory.
+        # a directory of their own under the user's cache directory; a class
+        # of none of numba's families in a place of its own, None here.
         if one_of(cls, for_ipython):
             ipython_cache = _ipython_numba_cache()
             return os.path.abspath(ipython_cache) if ipython_cache else None
+        if not of_numbas(cls):
+            return None
         return os.path.abspath(in_the_user_cache)
 
     locations = {cls: location_of(cls) for cls in reached}
-    if not any(locations.values()):
+    if not any(locations.values()) and all(of_numbas(cls) for cls in reached):
         # Under a list with no locator that takes the file, or none with a
-        # place for it, numba took no location, and the list is the remedy,
+        # place for it, a class of none of numba's families having one of its
+        # own, numba took no location, and the list is the remedy,
         # below, for an error a caller passes on as for numba's no-locator
         # one, as for a source on disk: numba's user-wide locator alone
         # takes a frozen application, so a list without it leaves numba no
@@ -783,11 +805,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # Where numba caches the file: a .zip's or a frozen application's
         # location is under the user's cache directory; a location that is
         # none of numba's is not, and an error that names no file for a
-        # member a locator of IPython's family is reached for may be
-        # IPython's, with IPython's directory given or not, so nothing is
-        # said of that directory for either.
+        # member a locator of IPython's family, or a class of none of numba's
+        # families, is reached for may be that one's, with IPython's
+        # directory given or not, so nothing is said of that directory for
+        # any of them.
         in_the_user_cache_alone = taken is not None or (
-            not filename and not any(one_of(cls, for_ipython) for cls in reached))
+            not filename and all(of_numbas(cls) and not one_of(cls, for_ipython) for cls in reached))
         where = (
             "numba caches a .zip, or a frozen application, in the user's cache directory, and "
             if in_the_user_cache_alone else "")
