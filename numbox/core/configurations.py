@@ -908,9 +908,10 @@ def uncached_where_no_cache_can_be_written(options):
     a source file in each directory of the package that holds a module, and answered for the package. Where
     numba can cache no function of one of those files the options come back with ``cache`` off and one warning
     names the remedy: ``NUMBA_CACHE_DIR`` for a source file on disk, and where the location is too long for the
-    file system what shortens the one it is, as ``cache_remedy`` sets out; for a ``.zip``, the user's cache
-    directory made writable, since
-    numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk; for any other archive,
+    file system what shortens the one it is, as ``cache_remedy`` sets out; for a ``.zip``, the location numba took
+    under the user's cache directory made writable or given room, with the reason, or that directory at a shorter
+    path where the path is too long, and the ``.zip`` locator to list where ``NUMBA_CACHE_LOCATOR_CLASSES`` leaves it
+    out, numba reading ``NUMBA_CACHE_DIR`` only for a source file on disk; for any other archive,
     or a ``.pyc``-only install, or a ``.pyc`` in a ``.zip``, the source files on disk or a ``.zip`` holding them,
     which numba 0.61 and later cache in the user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'``
     turns caching off and silences the warning. An error that is not the cache's, as ``is_a_cache_error`` draws
