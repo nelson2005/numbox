@@ -76,8 +76,11 @@ warning instead.
   The name an error carries is read as a string, bytes or a path object alike, and a name of another kind, an integer
   file descriptor's, as none. An error can name no file, or carry an
   empty string or empty bytes as its name. A caller can build such an error, and numba's first save raises one where a
-  write fails, as on a full disk. So does inspect where, for numba's IPython locator, it finds no source in a cell file
-  on disk. Every other OSError that ``check_cache_location`` raises names a file. An error with no name, or an empty
+  write fails, as on a full disk. So does inspect where, for numba's IPython locator, it reads no source in a cell file
+  on disk, empty or unreadable, with no errno either, no call of the file system's having raised it, and that error,
+  for a file on disk that a locator of IPython's family numba reaches takes, is told as inspect's, no location having
+  been tried: the file to make readable, with the source in it. Every other OSError that ``check_cache_location``
+  raises names a file. An error with no name, or an empty
   one, is told the locations numba could have taken, in numba's order and each once. For a path too long, the remedy is
   to put whichever of them is too long at a shorter path. For a file refused for another reason, such as a full disk,
   the remedy gives the reason and asks for room or a writable directory there. A path object is never empty: pathlib
