@@ -404,8 +404,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     reached. numba's
     IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no directory
     per file, and passes the location over where it cannot make or write in it, so that a cell, which no other
-    locator takes, gets numba's no-locator error and is told that location, to make writable or put at a shorter
-    path, or IPython's cache directory to make a home for where IPython raised for it; that location too long is
+    locator of numba's takes, gets numba's no-locator error and is told that location, to make writable or put at a
+    shorter path, or IPython's cache directory to make a home for where IPython raised for it, with a class of none
+    of numba's families listed with it named as having passed the cell over too; that location too long is
     told as IPython's cache directory at a shorter path, for a cell file on
     disk and for a ``.zip`` member in an ipykernel directory alike, where that locator is listed before the
     ``.zip`` one, which takes a file without trying its location, so that none listed after it is reached, with no
@@ -908,21 +909,29 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"{opening}numba could not use that directory, {location}: make it writable, or put it at a shorter "
             f"path{_moved_through()}, or {silence}"
         )
-    if not isinstance(failure, (OSError, ValueError)) and reached and all(one_of(cls, for_ipython) for cls in reached):
-        # numba's no-locator error for a file its IPython locator alone takes,
-        # a cell or a .zip member in an ipykernel directory under a list with
-        # no .zip locator after it: the locator passed its location over, as
-        # numba's user-wide one does a frozen application's, unwritable or too
-        # deep to make, or IPython raised for its directory and gave none.
-        ipython_cache = locations[reached[0]]
+    of_ipythons = [cls for cls in reached if one_of(cls, for_ipython)]
+    if not isinstance(failure, (OSError, ValueError)) and of_ipythons and all(
+            one_of(cls, for_ipython) or not of_numbas(cls) for cls in reached):
+        # numba's no-locator error for a file its IPython locator alone of
+        # numba's takes, a cell or a .zip member in an ipykernel directory
+        # under a list with no .zip locator after it: the locator passed its
+        # location over, as numba's user-wide one does a frozen application's,
+        # unwritable or too deep to make, or IPython raised for its directory
+        # and gave none; a class of none of numba's families listed with it
+        # passed the file over too, and is named, where the remedy, taking it
+        # for one of numba's, answered with the archive remedy.
+        ipython_cache = locations[of_ipythons[0]]
+        passed_over = [cls.__name__ for cls in reached if not of_numbas(cls)]
+        passed_over = f", and {' and '.join(passed_over)}, listed too, passed the file over" if passed_over else ""
         if ipython_cache:
             return (
-                f"numba caches this file in {ipython_cache}, which it could not make or write in: make it writable, "
-                f"or put IPython's cache directory, {os.path.dirname(ipython_cache)}, at a shorter path; or {silence}"
+                f"numba caches this file in {ipython_cache}, which it could not make or write in{passed_over}: make "
+                f"it writable, or put IPython's cache directory, {os.path.dirname(ipython_cache)}, at a shorter path; "
+                f"or {silence}"
             )
         return (
             "numba caches this file in numba_cache under IPython's cache directory, which IPython raised for, under a "
-            f"home it cannot write: make that home writable; or {silence}"
+            f"home it cannot write{passed_over}: make that home writable; or {silence}"
         )
     in_a_zip = any(part.endswith(".zip") for part in pathlib.Path(py_file).parts)
     if in_a_zip and listed_without(for_a_zip):
