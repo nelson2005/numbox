@@ -3091,7 +3091,8 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
         Path(py_file).parent.chmod(0o555)
     try:
         if "an error naming" in case:
-            refused = (errno.EINVAL, "Invalid argument") if "invalid name" in case else (errno.ENAMETOOLONG, "File name too long")
+            refused = ((errno.EINVAL, "Invalid argument") if "invalid name" in case
+                       else (errno.ENAMETOOLONG, "File name too long"))
             named = os.path.join(cache_dir or str(tmp_path / "user-cache" / "numba"), subpath)
             failure = OSError(*refused, named)
         elif "a caller's no-locator error" in case:
