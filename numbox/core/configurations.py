@@ -731,21 +731,25 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         return os.path.abspath(in_the_user_cache)
 
     locations = {cls: location_of(cls) for cls in reached}
-    if not any(locations.values()) and all(of_numbas(cls) for cls in reached):
-        # Under a list with no locator that takes the file, or none with a
-        # place for it, a class of none of numba's families having one of its
-        # own, numba took no location, and the list is the remedy,
-        # below, for an error a caller passes on as for numba's no-locator
-        # one, as for a source on disk: numba's user-wide locator alone
-        # takes a frozen application, so a list without it leaves numba no
-        # locator for one, and the remedy asked for a writable directory
-        # numba never tried.
-        if getattr(sys, "frozen", False) and listed_without(user_wide):
-            return (
-                "numba caches a frozen application through UserWideCacheLocator alone, and "
-                f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves it out: list it, or {silence}"
-            )
-    elif isinstance(failure, OSError) or getattr(sys, "frozen", False):
+    took_no_location = not any(locations.values()) and all(of_numbas(cls) for cls in reached)
+    if getattr(sys, "frozen", False) and listed_without(user_wide) and (
+            took_no_location or not isinstance(failure, (OSError, ValueError))):
+        # numba's user-wide locator alone of numba's takes a frozen
+        # application, so a list without it leaves numba no locator of its
+        # own for one: its no-locator error, whatever classes of the reader's
+        # own the list holds, those having passed the file over, and any
+        # error a caller passes on where the list has no place for the file;
+        # the remedy asked for a writable directory numba never tried.
+        return (
+            "numba caches a frozen application through UserWideCacheLocator alone, and "
+            f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves it out: list it, or {silence}"
+        )
+    # Under a list with no locator that takes the file, or none with a place
+    # for it, a class of none of numba's families having one of its own,
+    # numba took no location, and the list is the remedy, below, for an error
+    # a caller passes on as for numba's no-locator one, as for a source on
+    # disk.
+    if not took_no_location and (isinstance(failure, OSError) or getattr(sys, "frozen", False)):
         if isinstance(failure, ValueError) and zip_at is not None:
             # numba's .zip locator takes a frozen application's file for the
             # ".zip" in its path, without trying its location, and raises
