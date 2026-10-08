@@ -409,7 +409,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     found the name too long for its file system, the variable's unset by that limit, and a frozen application's are
     told the name and its length, and the file in a directory of a shorter name, with, for a file on disk, the
     ``__pycache__`` beside the source made writable where the in-tree locator is listed, or that locator listed where
-    it is not, which caches under no such name. A
+    it is not, which caches under no such name. numba hashes the source's directory path as UTF-8 for that name and
+    raises for bytes that are not, at decoration, where a locator that names its directory so reaches the file, so
+    for such a path the remedy names no location under ``NUMBA_CACHE_DIR`` or the user's cache directory. A
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
     any other locator, named as set or asked for at a short path, and nothing said of numba passing it over, which
     that location cannot show. An error can name no file, or carry an empty string or empty bytes as its name, or a name of
@@ -556,7 +558,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # ``base``'s family.
         return base is not None and bool(listed) and not any(one_of(cls, base) for cls in _locators(listed))
 
-    subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
+    try:
+        subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
+    except UnicodeEncodeError:
+        # numba hashes the source's directory path as UTF-8 for the name,
+        # and raises for bytes that are not, at decoration, where a locator
+        # that names its directory so reaches the file; asked for a file
+        # none did, the remedy has no such location to name.
+        subpath = None
 
     def too_long_a_name(location):
         # numba names the directory it caches the file in, under
@@ -564,7 +573,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # directory, by its name and a hash of its path, and a name longer
         # than the file system holding ``location`` takes can be made at no
         # path, so no shorter one cures it: the clause that says so, or None
-        # where the name fits.
+        # where the name fits, or numba has none to give.
+        if subpath is None:
+            return None
         limit = _name_limit(location)
         if os.name == "nt" or sys.platform == "darwin":
             # Windows and macOS count a name in UTF-16 units, the file
@@ -669,11 +680,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # the IPython one without IPython, or where IPython raises OSError
             # for its directory, which numba passes the locator over on.
             if reads_the_variable(cls):
-                return os.path.abspath(os.path.join(config.CACHE_DIR, subpath)) if config.CACHE_DIR else None
+                return os.path.abspath(os.path.join(config.CACHE_DIR, subpath)) if config.CACHE_DIR and subpath else None
             if caches_beside_the_source(cls):
                 return os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__"))
             if caches_under_the_user_cache_dir(cls):
-                return os.path.abspath(os.path.join(user_cache_dir, subpath))
+                return os.path.abspath(os.path.join(user_cache_dir, subpath)) if subpath else None
             if one_of(cls, for_ipython):
                 ipython_cache = _ipython_numba_cache()
                 return os.path.abspath(ipython_cache) if ipython_cache else None
@@ -828,7 +839,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     zip_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip)), None)
     reached = order if zip_at is None else order[:zip_at + 1]
     user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
-    in_the_user_cache = os.path.join(user_cache_dir, subpath)
+    in_the_user_cache = os.path.join(user_cache_dir, subpath) if subpath else None
 
     def location_of(cls):
         # Where the class places the file: the IPython locator in
@@ -844,7 +855,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         if one_of(cls, for_ipython):
             ipython_cache = _ipython_numba_cache()
             return os.path.abspath(ipython_cache) if ipython_cache else None
-        if not of_numbas(cls):
+        if not of_numbas(cls) or in_the_user_cache is None:
             return None
         return os.path.abspath(in_the_user_cache)
 

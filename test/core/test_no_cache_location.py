@@ -3134,6 +3134,54 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
             "shorter name, or silence"), remedy
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.parametrize("placement", [
+    "an .egg member, numba's order",
+    pytest.param("on disk, the in-tree locator alone, its __pycache__ unwritable", marks=[
+        from_062, needs_a_directory_it_cannot_write,
+        pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")]),
+])
+def test_a_source_whose_path_holds_bytes_that_are_not_utf8_is_answered_where_numba_hashes_no_path(
+        tmp_path, monkeypatch, placement):
+    # numba names the directory it caches a file in under NUMBA_CACHE_DIR or
+    # the user's cache directory with a SHA-1 of the source's directory path
+    # encoded as UTF-8, and raises UnicodeEncodeError for a path holding bytes
+    # that are not, decoded with surrogates, where a locator that names its
+    # directory so reaches the file; the remedy computed that name for every
+    # file and raised the same where numba hashed no path, an .egg member no
+    # locator takes and a source on disk under the in-tree locator alone, and
+    # the import died where upstream main warned.
+    import numba
+    import numbox.core.configurations as configurations
+
+    directory = tmp_path / os.fsdecode(b"caf\xe9")
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    if placement.startswith("an .egg"):
+        monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+        py_file = str(directory / "numbox-0.0.0-py3.12.egg" / "numbox" / "module.py")
+        failure = RuntimeError(f"cannot cache function 'f': no locator available for file '{py_file}'")
+        expected = f"{ARCHIVE_REMEDY}; or silence"
+    else:
+        monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator", raising=False)
+        (directory / "package").mkdir(parents=True)
+        py_file = str(directory / "package" / "module.py")
+        with open(py_file, "w", encoding="utf-8") as handle:
+            handle.write("x = 1\n")
+        (directory / "package").chmod(0o555)
+        try:
+            with pytest.raises(RuntimeError, match="no locator available") as raised:
+                configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+        finally:
+            (directory / "package").chmod(0o755)
+        failure = raised.value
+        expected = ("numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, InTreeCacheLocator, says: make one of those "
+                    "locations writable, or silence")
+    with pytest.raises(UnicodeEncodeError):
+        py_file.encode()
+    assert configurations.is_a_cache_error(failure)
+    assert configurations.cache_remedy(py_file, failure, "silence") == expected
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
