@@ -2973,6 +2973,107 @@ def test_the_check_raises_the_stamps_error_naming_the_archive_a_moved_zips_membe
         "the archive's .pyc members to name its path now, or ship its source files; or silence"), remedy
 
 
+A_NAME_TOO_LONG = {
+    "a .zip member, numba's order": from_061,
+    "on disk, NUMBA_CACHE_DIR set, the user-provided locator alone": from_062,
+    "on disk, numba's order, the __pycache__ unwritable": needs_a_directory_it_cannot_write,
+    "on disk, an error naming the location under NUMBA_CACHE_DIR, the user-provided locator alone": from_062,
+    "a frozen application": [],
+    "a frozen application, a name that just fits, the user's cache directory too deep": [],
+}
+
+
+@pytest.mark.parametrize("case", [pytest.param(case, marks=marks, id=case) for case, marks in A_NAME_TOO_LONG.items()])
+def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_name_is_told_a_shorter_name(
+        tmp_path, monkeypatch, case):
+    # numba names the directory it caches a file in, under NUMBA_CACHE_DIR or
+    # the user's cache directory, after the source's directory, by its name
+    # and a hash of its path, forty-one bytes more, and a name longer than the
+    # file system takes can be made at no path: numba passes the location
+    # over, or the first save dies there for a .zip member, and the remedy
+    # asked for the user's cache directory at a shorter path, or a writable
+    # NUMBA_CACHE_DIR at a short path, which cure nothing there. It tells the
+    # name and its length, and asks for the file in a directory of a shorter
+    # name, with the __pycache__ beside a source on disk, which the in-tree
+    # locator names after nothing, made writable or that locator listed; a
+    # name that just fits is told as before.
+    import numba
+    from numba.core import caching
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    just_fits = "just fits" in case
+    limit = os.statvfs(tmp_path).f_namemax if hasattr(os, "statvfs") else 255
+    too_deep = tmp_path / ("x" * 300) / "numba" if "too deep" in case else None
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(too_deep or tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(sys, "frozen", case.startswith("a frozen"), raising=False)
+    cache_dir = str(tmp_path / "cache") if "NUMBA_CACHE_DIR" in case else ""
+    if cache_dir:
+        os.mkdir(cache_dir)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", cache_dir)
+    listed = "UserProvidedCacheLocator" if "user-provided locator alone" in case else ""
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", listed, raising=False)
+    directory = "d" * (limit - 41 if just_fits else limit - 35)
+    if case.startswith("a .zip"):
+        archive = tmp_path / "app.zip"
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr(f"{directory}/module.py", "x = 1\n")
+        py_file = str(archive / directory / "module.py")
+    elif case.startswith("on disk"):
+        py_file = str(tmp_path / "site" / directory / "module.py")
+        os.makedirs(os.path.dirname(py_file))
+        with open(py_file, "w", encoding="utf-8") as handle:
+            handle.write("x = 1\n")
+    else:
+        py_file = str(tmp_path / "frozen" / directory / "module.py")
+    subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
+    assert len(subpath.encode()) == (limit if just_fits else limit + 6)
+    clause = (
+        f"numba names the directory it caches this file in after the source's directory, {subpath}, {limit + 6} bytes, "
+        f"which is longer than a name can be on that file system ({limit})")
+    if "unwritable" in case:
+        Path(py_file).parent.chmod(0o555)
+    try:
+        if "an error naming" in case:
+            failure = OSError(errno.ENAMETOOLONG, "File name too long", os.path.join(cache_dir, subpath))
+        else:
+            expected = OSError if case.startswith("a .zip") else RuntimeError
+            with pytest.raises(expected) as raised:
+                configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+            failure = raised.value
+        assert configurations.is_a_cache_error(failure)
+        remedy = configurations.cache_remedy(py_file, failure, "silence")
+    finally:
+        if "unwritable" in case:
+            Path(py_file).parent.chmod(0o755)
+    if just_fits:
+        assert remedy == (
+            "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+            f"effect here, because the source is not a file on disk: numba could not use that directory, {too_deep}: "
+            f"make it writable, or put it at a shorter path{configurations._moved_through()}, or silence"), remedy
+    elif case.startswith("on disk, numba's order"):
+        assert failure.filename is None if isinstance(failure, OSError) else True
+        assert remedy == (
+            f"{clause}: put the file in a directory of a shorter name, or make the __pycache__ beside the source, "
+            f"{os.path.dirname(py_file)}/__pycache__, writable, where InTreeCacheLocator caches it under no such name; "
+            "or silence"), remedy
+    elif case.startswith("on disk"):
+        assert remedy == (
+            f"{clause}: put the file in a directory of a shorter name, or list InTreeCacheLocator, which caches beside "
+            "the source, in its __pycache__, under no such name; or silence"), remedy
+    else:
+        assert remedy == (
+            "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+            f"effect here, because the source is not a file on disk: {clause}, so put the file in a directory of a "
+            "shorter name, or silence"), remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "

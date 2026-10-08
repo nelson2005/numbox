@@ -70,7 +70,15 @@ warning instead.
   ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, where numba asks the system,
   for the third; and for either of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it
   before the locator that took the location, or, where it is set and numba passed it over, unwritable or too
-  deep, the warning names it and the remedy is a writable directory at a short path. A location that is none of
+  deep, the warning names it and the remedy is a writable directory at a short path. The directory numba names after
+  the source's, under ``NUMBA_CACHE_DIR`` or the user's cache directory, is that directory's name and forty-one
+  bytes, and one longer than a name can be on the file system holding the location, which the system is asked for,
+  255 bytes where it cannot say, can be made at no path: an error naming such a location, numba's no-locator error
+  for a file on disk where every locator it tried that names its directory so found the name too long for its file
+  system, the variable's unset by that limit, and a frozen application's are told the name and its length, and the
+  file in a directory of a shorter name, with, for a file on disk, the ``__pycache__`` beside the source made
+  writable where the in-tree locator is listed, or that locator listed where it is not, which caches under no such
+  name. A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
   The name an error carries is read as a string, bytes or a path object alike, and a name of another kind, an integer
@@ -144,7 +152,8 @@ warning instead.
   numba caches the file, which that location is none of; a frozen
   application (``sys.frozen``) is cached there too, its sources not being on disk, and its error is numba's
   no-locator one, which gives no reason, numba having passed the location over on its error, unwritable or too deep
-  alike, so that directory is named as one numba could not use, to be made writable or put at a shorter path.
+  alike, so that directory is named as one numba could not use, to be made writable or put at a shorter path, or,
+  where the name numba gives the directory after the source's is too long for the file system, told so.
   A frozen application's path with ``.zip`` in it and no part ending in it gets the ``.zip`` locator's error instead,
   where the list puts that locator before the user-wide one or once the user-wide one passed its location over, and
   the warning asks for the user-wide locator listed before it, or for that location made writable or put at a
