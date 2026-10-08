@@ -2784,6 +2784,41 @@ def test_a_listed_class_of_none_of_numbas_families_is_told_the_location_the_erro
             f"that location, {named} (Permission denied), so make room there, or make it writable, or silence"), remedy
 
 
+@from_062
+def test_a_frozen_applications_no_locator_error_under_a_class_of_none_of_numbas_families_is_told_the_user_wide_locator(
+        tmp_path, monkeypatch):
+    # A locator of the reader's own listed alone can pass a frozen
+    # application's file over, and numba's error is then its no-locator one,
+    # which names nothing; the remedy, counting the class as having a place
+    # of its own, answered with the user's cache directory as one numba could
+    # not use, a directory numba never tried, where under a list of numba's
+    # own locators without the user-wide one it asks for that locator.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class OurLocator(_CacheLocator):
+        @classmethod
+        def from_function(cls, py_func, py_file):
+            return None
+
+    ours = types.ModuleType("our_locators")
+    ours.OurLocator = OurLocator
+    monkeypatch.setitem(sys.modules, "our_locators", ours)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "our_locators.OurLocator", raising=False)
+    py_file = str(tmp_path / "frozen" / "numbox" / "module.py")
+    with pytest.raises(RuntimeError, match="no locator available") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert configurations.is_a_cache_error(raised.value)
+    remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    assert remedy == (
+        "numba caches a frozen application through UserWideCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, "
+        "our_locators.OurLocator, leaves it out: list it, or silence"), remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
