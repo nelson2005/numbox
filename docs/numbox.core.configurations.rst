@@ -80,7 +80,9 @@ warning instead.
   system, the variable's unset by that limit, and a frozen application's are told the name and its length, and the
   file in a directory of a shorter name, with, for a file on disk, the ``__pycache__`` beside the source made
   writable where the in-tree locator is listed, or that locator listed where it is not, which caches under no such
-  name. A location that is none of
+  name. numba hashes the source's directory path as UTF-8 for that name and raises for bytes that are not, at
+  decoration, where a locator that names its directory so reaches the file, so for such a path the remedy names no
+  location under ``NUMBA_CACHE_DIR`` or the user's cache directory. A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
   The name an error carries is read as a string, bytes or a path object alike, and a name of another kind, an integer
