@@ -80,7 +80,9 @@ warning instead.
   through, where inspect reads a file on disk itself; that location too long is told as
   IPython's cache directory at a shorter path, for a cell file on disk and for a member of a ``.zip`` in an ipykernel
   directory alike, which that locator takes before the ``.zip`` one is reached, with no ``NUMBA_CACHE_DIR`` offered
-  for a source not on disk; numba
+  for a source not on disk; the remedy asks IPython for that directory where a locator of that family is listed
+  and takes the file, and leaves IPython alone for every other file, a plain ``.zip`` member among them, since
+  IPython warns when asked under a home it cannot write and leaves a temporary directory behind; numba
   imports IPython for the location when it makes it and catches only OSError there, so where IPython is not
   importable it raises ImportError at decoration for a file that locator takes, no cache error, and an error a
   caller passes on naming that location is told it as none of numba's. numba's IPython locator takes a file on disk
