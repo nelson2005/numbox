@@ -2430,6 +2430,63 @@ def test_a_frozen_application_whose_user_cache_directory_is_too_deep_is_told_a_s
         f"path{configurations._moved_through()}, or silence"), remedy
 
 
+A_FROZEN_ZIP_PATH = {
+    "the .zip locator first": (
+        "ZipCacheLocator,UserWideCacheLocator",
+        "numba's .zip locator, listed in NUMBA_CACHE_LOCATOR_CLASSES, {locators}, with no UserWideCacheLocator before "
+        'it, takes this file for the ".zip" in its path and finds no archive there: list UserWideCacheLocator, the one '
+        "locator for a frozen application, before it"),
+    "the .zip locator and no user-wide one": (
+        "ZipCacheLocator,InTreeCacheLocator",
+        "numba's .zip locator, listed in NUMBA_CACHE_LOCATOR_CLASSES, {locators}, with no UserWideCacheLocator before "
+        'it, takes this file for the ".zip" in its path and finds no archive there: list UserWideCacheLocator, the one '
+        "locator for a frozen application, before it"),
+    "numba's order, the user-wide locator passed over": (
+        "",
+        'numba\'s .zip locator takes this file for the ".zip" in its path and finds no archive there, after '
+        "UserWideCacheLocator, which numba tries before it, could not use the user's cache directory, "
+        "{user_cache_dir}: make it writable, or put it at a shorter path{moved_through}"),
+}
+
+
+@pytest.mark.parametrize("case", [
+    pytest.param(case, marks=from_061 if case.startswith("numba's order") else from_062, id=case)
+    for case in A_FROZEN_ZIP_PATH
+])
+def test_a_frozen_applications_path_with_zip_in_it_and_no_archive_is_answered_for_the_zip_locators_error(
+        tmp_path, monkeypatch, case):
+    # numba's .zip locator takes a path with ".zip" in it without trying its
+    # location and raises where no part of the path ends in .zip, so a frozen
+    # application's file at such a path gets that error where the list puts
+    # the .zip locator before the user-wide one, which alone takes the file,
+    # or once the user-wide one passed its location over. The remedy answered
+    # with the user's cache directory to make writable, a directory numba never
+    # tried under such a list; it is the user-wide locator to list before the
+    # .zip one, or the location that one passed over, as for a source on disk.
+    import numba
+    from numba.core import caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheTooDeep:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / ("x" * 300) / "numba")
+
+    locators, told = A_FROZEN_ZIP_PATH[case]
+    monkeypatch.setattr(caching, "AppDirs", UserCacheTooDeep)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheTooDeep)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    py_file = str(tmp_path / "not.zipped" / "frozen" / "numbox" / "module.py")
+    with pytest.raises(ValueError, match="No zip file found") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert configurations.is_a_cache_error(raised.value)
+    remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    told = told.format(locators=locators, user_cache_dir=tmp_path / ("x" * 300) / "numba",
+                       moved_through=configurations._moved_through())
+    assert remedy == f"{told}, or silence", remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "

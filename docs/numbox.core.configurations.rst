@@ -127,6 +127,10 @@ warning instead.
   application (``sys.frozen``) is cached there too, its sources not being on disk, and its error is numba's
   no-locator one, which gives no reason, numba having passed the location over on its error, unwritable or too deep
   alike, so that directory is named as one numba could not use, to be made writable or put at a shorter path.
+  A frozen application's path with ``.zip`` in it and no part ending in it gets the ``.zip`` locator's error instead,
+  where the list puts that locator before the user-wide one or once the user-wide one passed its location over, and
+  the warning asks for the user-wide locator listed before it, or for that location made writable or put at a
+  shorter path, as for a source on disk.
   numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk, so the variable changes nothing for either.
   An error that names no file, a caller's, or numba's first save's on a full disk, is told the locations numba
   could have taken, as for a source on disk, in its order and each once, with the reason, or, for a path too long,
