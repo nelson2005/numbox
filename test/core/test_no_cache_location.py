@@ -2359,6 +2359,43 @@ def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_t
         f"{told.format(named=named)}, or silence"), remedy
 
 
+@pytest.mark.parametrize("refused, told", [
+    ("too long", "the path is too long for the file system: IPython's cache directory, {ipython_dir}, at a shorter path"),
+    ("unwritable", "numba caches this file in {numba_cache}, where no file can be written (Permission denied): make "
+                   "room there, or make it writable"),
+])
+def test_a_cell_numbas_ipython_locator_takes_by_its_name_is_asked_and_told_as_a_cell_file_is(
+        tmp_path, monkeypatch, refused, told):
+    # numba's IPython locator takes a cell, "<ipython-...>", by its name, as it
+    # takes a file in an ipykernel directory, and caches it in numba_cache
+    # under IPython's cache directory: the check puts the probe's source in
+    # linecache for it, as for a .zip member in an ipykernel directory, and
+    # the remedy is the one a cell file on disk gets. Nothing held either to
+    # the cell: with it left to the locators for a file on disk, the check
+    # raised inspect's OSError, and the remedy told IPython's location as
+    # none of numba's.
+    import linecache
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    cell = "<ipython-input-3-0123456789ab>"
+    configurations.check_cache_location(cell, configurations.LONGEST_CACHE_FILE_NAME)
+    assert (ipython_dir / "numba_cache").is_dir()
+    assert cell not in linecache.cache
+    error = (errno.ENAMETOOLONG, "File name too long") if refused == "too long" else (errno.EACCES, "Permission denied")
+    remedy = configurations.cache_remedy(cell, OSError(*error, str(ipython_dir / "numba_cache")), "silence")
+    told = told.format(ipython_dir=ipython_dir, numba_cache=ipython_dir / "numba_cache")
+    assert remedy == f"{told}; or silence", remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
