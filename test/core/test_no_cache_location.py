@@ -2127,6 +2127,59 @@ def test_a_locator_entry_with_an_empty_module_path_is_left_out_and_numbas_error_
     assert remedy.startswith(f"numba caches this file in {py_file.parent / '__pycache__'},"), remedy
 
 
+@from_062
+@pytest.mark.parametrize("placement", ["a cell file on disk", "a .zip member in an ipykernel directory"])
+def test_an_ipython_that_raises_for_its_cache_directory_leaves_numba_no_location_of_ipythons(
+        tmp_path, monkeypatch, placement):
+    # numba's IPython locator asks IPython for its cache directory when it
+    # makes its location, and passes the file over on OSError there as it does
+    # a location it cannot make; IPython raises one where it can make the
+    # directory nowhere. The remedy, asking IPython the same for the location
+    # to match the error's path against, raised that error instead of
+    # answering, for numba's no-locator error and for the .zip's alike.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    def nowhere():
+        raise PermissionError(errno.EACCES, "Permission denied", str(tmp_path / "home"))
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = nowhere
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    assert configurations._ipython_numba_cache() is None
+    if placement == "a cell file on disk":
+        monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "IPythonCacheLocator", raising=False)
+        py_file = tmp_path / "ipykernel_123" / "cell.py"
+        py_file.parent.mkdir()
+        py_file.write_text("def cell():\n    pass\n")
+        with pytest.raises(RuntimeError, match="no locator available") as raised:
+            configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+        assert configurations.is_a_cache_error(raised.value)
+        remedy = configurations.cache_remedy(str(py_file), raised.value, "silence")
+        assert remedy == (
+            "numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, IPythonCacheLocator, says: make one of those "
+            "locations writable, or silence"), remedy
+    else:
+        monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+        py_file = tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py"
+        location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(str(py_file))
+        failure = OSError(errno.EACCES, "Permission denied", str(location))
+        remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+        assert remedy == (
+            "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has "
+            "no effect here, because the source is not a file on disk: no file can be written in that directory, "
+            f"{location} (Permission denied), so make room there, or make it writable, or silence"), remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
