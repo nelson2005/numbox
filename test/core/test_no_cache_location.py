@@ -3007,8 +3007,12 @@ A_NAME_TOO_LONG = {
         from_062,
     "a frozen application": [],
     "a frozen application, a name that just fits, the user's cache directory too deep": [],
+    "on disk, an error naming the location under NUMBA_CACHE_DIR as an invalid name, the user-provided locator alone":
+        from_062,
+    "a .zip member, an error naming the location as an invalid name": from_061,
     "on disk, NUMBA_CACHE_DIR set, the user-provided locator alone, a name of CJK characters": [
-        from_062, pytest.mark.skipif(os.name == "nt", reason="Windows counts a name in UTF-16 units, where it fits")],
+        from_062, pytest.mark.skipif(os.name == "nt" or sys.platform == "darwin",
+                                     reason="Windows and macOS count a name in UTF-16 units, where it fits")],
 }
 
 
@@ -3026,9 +3030,10 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
     # name, with the __pycache__ beside a source on disk, which the in-tree
     # locator names after nothing, made writable or that locator listed; a
     # name that just fits is told as before. The name is counted as the
-    # file system counts it, in bytes, or in UTF-16 units on Windows, where
-    # a name of CJK characters that fits was counted in bytes and told too
-    # long.
+    # file system counts it, in bytes, or in UTF-16 units on Windows and
+    # macOS, where a name of CJK characters that fits was counted in bytes
+    # and told too long; Windows refuses a name too long as an invalid one,
+    # errno EINVAL, and the check runs whatever the errno.
     import numba
     from numba.core import caching
     import numbox.core.configurations as configurations
@@ -3070,18 +3075,21 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
     else:
         py_file = str(tmp_path / "frozen" / directory / "module.py")
     subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
-    length = len(subpath.encode())
+    counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
+    length = len(subpath.encode("utf-16-le")) // 2 if counted_in == "characters" else len(subpath.encode())
     assert length == limit if just_fits else length > limit
     if "CJK" in case:
         assert len(subpath) < limit
     clause = (
-        f"numba names the directory it caches this file in after the source's directory, {subpath}, {length} bytes, "
-        f"which is longer than a name can be on that file system ({limit})")
+        f"numba names the directory it caches this file in after the source's directory, {subpath}, {length} "
+        f"{counted_in}, which is longer than a name can be on that file system ({limit})")
     if "unwritable" in case:
         Path(py_file).parent.chmod(0o555)
     try:
         if "an error naming" in case:
-            failure = OSError(errno.ENAMETOOLONG, "File name too long", os.path.join(cache_dir, subpath))
+            refused = (errno.EINVAL, "Invalid argument") if "invalid name" in case else (errno.ENAMETOOLONG, "File name too long")
+            named = os.path.join(cache_dir or str(tmp_path / "user-cache" / "numba"), subpath)
+            failure = OSError(*refused, named)
         elif "a caller's no-locator error" in case:
             # numba's .zip locator takes the path without trying its
             # location, so numba raises no no-locator error here, and a
@@ -3107,7 +3115,8 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
         assert failure.filename is None if isinstance(failure, OSError) else True
         assert remedy == (
             f"{clause}: put the file in a directory of a shorter name, or make the __pycache__ beside the source, "
-            f"{os.path.dirname(py_file)}/__pycache__, writable, where InTreeCacheLocator caches it under no such name; "
+            f"{os.path.join(os.path.dirname(py_file), '__pycache__')}, writable, where InTreeCacheLocator caches it "
+            "under no such name; "
             "or silence"), remedy
     elif case.startswith("on disk"):
         assert remedy == (

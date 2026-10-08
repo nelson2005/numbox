@@ -273,7 +273,7 @@ def _moved_through():
 def _name_limit(location):
     """The longest name a file can have where ``location`` is: 255 where the system cannot say, or for none.
 
-    In bytes, which the file systems elsewhere count a name in, or in the UTF-16 units Windows counts one in.
+    In bytes, which the file systems elsewhere count a name in, or in the UTF-16 units Windows and macOS count one in.
 
     Asked of the nearest directory above ``location`` that exists, since the location itself may not be there yet.
     """
@@ -403,8 +403,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location, or, where it is set and numba passed it over, named and made a writable directory at a short path. The
     directory numba names after the source's, under ``NUMBA_CACHE_DIR`` or the user's cache directory, is that
     directory's name and forty-one bytes, and one longer than a name can be on the file system holding the location,
-    which the system is asked for, 255 where it cannot say, in bytes, or in the UTF-16 units Windows counts a name
-    in, can be made at no path: an error naming such a
+    which the system is asked for, 255 where it cannot say, in bytes, or in the UTF-16 units Windows and macOS count
+    a name in, can be made at no path, and is refused whatever the errno, EINVAL on Windows: an error naming such a
     location, numba's no-locator error for a file on disk where every locator it tried that names its directory so
     found the name too long for its file system, the variable's unset by that limit, and a frozen application's are
     told the name and its length, and the file in a directory of a shorter name, with, for a file on disk, the
@@ -566,9 +566,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # path, so no shorter one cures it: the clause that says so, or None
         # where the name fits.
         limit = _name_limit(location)
-        if os.name == "nt":
-            # Windows counts a name in UTF-16 units, the file systems
-            # elsewhere in bytes.
+        if os.name == "nt" or sys.platform == "darwin":
+            # Windows and macOS count a name in UTF-16 units, the file
+            # systems elsewhere in bytes.
             length, counted_in = len(subpath.encode("utf-16-le")) // 2, "characters"
         else:
             length, counted_in = len(os.fsencode(subpath)), "bytes"
@@ -720,12 +720,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 # first save raises one where a write fails, as on a full disk.
                 named = set()
             taken = next((cls for cls in reached if locations[cls] and locations[cls] in named), None)
+            # A name too long is refused whatever the errno, EINVAL on Windows.
+            named_after_the_source = taken is not None and (
+                reads_the_variable(taken) or caches_under_the_user_cache_dir(taken))
+            too_long = too_long_a_name(locations[taken]) if named_after_the_source else None
+            if too_long:
+                return f"{too_long}: put the file in a directory of a shorter name{beside_the_source()}; or {silence}"
             if failure.errno == errno.ENAMETOOLONG:
-                named_after_the_source = taken is not None and (
-                    reads_the_variable(taken) or caches_under_the_user_cache_dir(taken))
-                too_long = too_long_a_name(locations[taken]) if named_after_the_source else None
-                if too_long:
-                    return f"{too_long}: put the file in a directory of a shorter name{beside_the_source()}; or {silence}"
                 if taken is not None and reads_the_variable(taken):
                     cure = "a shorter NUMBA_CACHE_DIR"
                 elif taken is not None and caches_beside_the_source(taken):
@@ -964,13 +965,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"{opening}no file can be written at that location, {filename} ({reason}), so make room there, or "
                 f"make it writable, or {silence}"
             )
+        too_long = too_long_a_name(locations[taken]) if isinstance(failure, OSError) and taken is not None else None
+        if too_long:
+            # The .zip's directory under the user's cache directory, named
+            # after the source's, which that directory at a shorter path
+            # cures nothing of, refused whatever the errno, EINVAL on
+            # Windows; the remedy asked for one.
+            return f"{opening}{too_long}, so put the file in a directory of a shorter name, or {silence}"
         if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
-            too_long = too_long_a_name(locations[taken]) if taken is not None else None
-            if too_long:
-                # The .zip's directory under the user's cache directory, named
-                # after the source's, which that directory at a shorter path
-                # cures nothing of; the remedy asked for one.
-                return f"{opening}{too_long}, so put the file in a directory of a shorter name, or {silence}"
             if taken is None:
                 # The error names no file, and which of the locations is too
                 # long cannot be told; the user's cache directory moves them
