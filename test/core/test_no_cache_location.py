@@ -1074,10 +1074,17 @@ def test_a_location_numba_took_where_no_file_can_be_written_is_told_the_location
         f"writable{offer.format(cache_dir=tmp_path / 'cache')}; or silence"), remedy
 
 
-def test_an_error_with_a_message_alone_is_told_that_message_as_the_reason(tmp_path, monkeypatch):
+@pytest.mark.parametrize("placement", [
+    "a source on disk", "a .zip member", "a .zip member in an ipykernel directory, naming IPython's location",
+    "a .zip member, naming a location that is none of numba's",
+])
+def test_an_error_with_no_strerror_is_told_its_own_text_as_the_reason(tmp_path, monkeypatch, placement):
     # is_a_cache_error admits any OSError, and a caller can pass on one built
-    # from a message alone, with no errno, no strerror and no filename. The
-    # reason read "(None)" and the message was lost.
+    # from a message alone, with no errno, no strerror and no filename, or one
+    # naming a file with no strerror. The reason read "(None)" and the message
+    # was lost, for a source on disk; the remedies for a source not on disk
+    # give the reason the same way, and nothing held them to it.
+    import types
     import numba
     import numbox.core.configurations as configurations
     from numba.core.caching import _CacheLocator
@@ -1089,15 +1096,45 @@ def test_an_error_with_a_message_alone_is_told_that_message_as_the_reason(tmp_pa
     monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
-    py_file = tmp_path / "site" / "package" / "module.py"
-    py_file.parent.mkdir(parents=True)
-    py_file.write_text("")
-    subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
-    remedy = configurations.cache_remedy(str(py_file), OSError("Disk quota exceeded on /home"), "silence")
-    assert remedy == (
-        f"the location numba took, one of {py_file.parent / '__pycache__'} or {tmp_path / 'user-cache' / 'numba' / subpath}, "
-        "where no file can be written (Disk quota exceeded on /home): make room there, or make it writable, or "
-        "NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    failure = OSError("Disk quota exceeded on /home")
+    user_cache_dir = tmp_path / "user-cache" / "numba"
+    not_on_disk = (
+        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+        "effect here, because the source is not a file on disk: ")
+    if placement == "a source on disk":
+        py_file = tmp_path / "site" / "package" / "module.py"
+        py_file.parent.mkdir(parents=True)
+        py_file.write_text("")
+        subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
+        expected = (
+            f"the location numba took, one of {py_file.parent / '__pycache__'} or {user_cache_dir / subpath}, where no "
+            f"file can be written ({failure}): make room there, or make it writable, or NUMBA_CACHE_DIR set to a "
+            "writable directory; or silence")
+    elif placement == "a .zip member":
+        py_file = tmp_path / "bundle.zip" / "package" / "module.py"
+        expected = not_on_disk + (
+            f"no file can be written in that directory, {user_cache_dir} ({failure}), so make room there, or make it "
+            "writable, or silence")
+    elif placement.startswith("a .zip member in an ipykernel directory"):
+        py_file = tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py"
+        failure = OSError(errno.ENOSPC, None, str(ipython_dir / "numba_cache"))
+        expected = (
+            f"numba caches this file in {ipython_dir / 'numba_cache'}, where no file can be written ({failure}): make "
+            "room there, or make it writable; or silence")
+    else:
+        py_file = tmp_path / "bundle.zip" / "package" / "module.py"
+        failure = OSError(errno.ENOSPC, None, str(tmp_path / "elsewhere" / "cache"))
+        expected = not_on_disk + (
+            f"no file can be written at that location, {tmp_path / 'elsewhere' / 'cache'} ({failure}), so make room "
+            "there, or make it writable, or silence")
+    assert failure.strerror is None and "None" not in expected.replace(str(failure), "")
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert remedy == expected, remedy
 
 
 @pytest.mark.parametrize("locators, ipython, expected", [
