@@ -2550,6 +2550,32 @@ def test_a_source_not_on_disk_under_a_directory_named_for_a_zip_is_in_no_zip(tmp
     assert configurations.cache_remedy(py_file, raised.value, "silence") == f"{archive_remedy}; or silence"
 
 
+@from_062
+@pytest.mark.parametrize("entry", ["..InTreeCacheLocator", ".a.InTreeCacheLocator"])
+def test_a_locator_entry_with_a_relative_module_path_is_left_out_and_numbas_error_raised_as_it_was(
+        tmp_path, monkeypatch, entry):
+    # numba imports the module of a dotted entry and lets importlib's TypeError
+    # for a relative module path, "..InTreeCacheLocator", through at the first
+    # function it decorates, as it lets the ValueError for an empty one; the
+    # remedy, reading the list, caught the ValueError and raised the TypeError
+    # itself instead of answering an error a caller passes on under such a list.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core import caching
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    assert configurations._locators(f"{entry},InTreeCacheLocator") == [caching.InTreeCacheLocator]
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", f"{entry},InTreeCacheLocator", raising=False)
+    with pytest.raises(TypeError, match="relative import") as raised:
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    assert not configurations.is_a_cache_error(raised.value)
+    failure = OSError(errno.EACCES, "Permission denied", str(py_file.parent / "__pycache__"))
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert remedy.startswith(f"numba caches this file in {py_file.parent / '__pycache__'},"), remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "

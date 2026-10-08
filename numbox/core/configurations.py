@@ -294,7 +294,8 @@ def _locators(listed):
     ``listed`` is ``NUMBA_CACHE_LOCATOR_CLASSES`` as numba 0.62 and later read it, each entry a class of numba's
     caching module by its name or its dotted path, resolved as numba resolves it, with the underscore numba put before
     its locators' names until 0.62 allowed in either; an entry numba could not resolve
-    it has refused already, before any location was tried, and one that names no class it fails on, for want of
+    it has refused already, before any location was tried, or raised importlib's error for, a relative module path's
+    TypeError, and one that names no class it fails on, for want of
     ``from_function``, at a function it decorates where it reaches the entry, so neither is a locator here, and
     numba's own error for either is raised as it was. Empty, the order is numba's own.
     """
@@ -308,7 +309,7 @@ def _locators(listed):
             module_path, class_name = entry.rsplit(".", 1)
             try:
                 cls = _class_named(importlib.import_module(module_path), class_name)
-            except (ImportError, ValueError):
+            except (ImportError, TypeError, ValueError):
                 cls = None
         else:
             cls = _numba_locator(entry)
