@@ -318,15 +318,17 @@ def _locators(listed):
 def _ipython_numba_cache():
     """numba's cache location for a cell file its IPython locator takes: ``numba_cache`` under IPython's cache
     directory, with no directory per file; None where IPython is not importable, which numba's locator raises
-    ImportError for at decoration, no cache error, so the location is then none of numba's."""
+    ImportError for at decoration, no cache error, so the location is then none of numba's, and None where IPython
+    raises OSError for its directory, which numba's locator passes the file over on, as it does a location it cannot
+    make, so that numba took no location of IPython's."""
     try:
         try:
             from IPython.paths import get_ipython_cache_dir
         except ImportError:
             from IPython.utils.path import get_ipython_cache_dir
-    except ImportError:
+        return os.path.join(get_ipython_cache_dir(), "numba_cache")
+    except (ImportError, OSError):
         return None
-    return os.path.join(get_ipython_cache_dir(), "numba_cache")
 
 
 def _taken_by_ipython(py_file):
@@ -395,7 +397,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     behind; numba imports
     IPython for the location when it makes it and catches only OSError there, so where IPython is not importable it
     raises ImportError at decoration for a file that locator takes, no cache error, and an error a caller passes on
-    naming that location is told it as none of numba's. numba's IPython locator takes a file on disk only in
+    naming that location is told it as none of numba's, and where IPython raises OSError for its directory numba
+    passes the locator over, as it does a location it cannot make, and the remedy, asked the same, has no location of
+    IPython's to match the error against. numba's IPython locator takes a file on disk only in
     an ipykernel directory and its ``.zip`` locator only a path with ``.zip`` in it, so either ahead of the rest
     changes nothing for any other file; the ``.zip`` locator ahead of them all takes such a path first and caches it
     under the user's cache directory where a part of the path ends in ``.zip``, an archive or a directory, or, where
@@ -536,7 +540,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # cache directory like the user-wide one. None for a class that is
             # not numba's, whose place is its own, for the user-provided one
             # without NUMBA_CACHE_DIR, which takes nothing without it, and for
-            # the IPython one without IPython.
+            # the IPython one without IPython, or where IPython raises OSError
+            # for its directory, which numba passes the locator over on.
             if reads_the_variable(cls):
                 return os.path.abspath(os.path.join(config.CACHE_DIR, subpath)) if config.CACHE_DIR else None
             if caches_beside_the_source(cls):
@@ -683,12 +688,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         def location_of(cls):
             # Where the class places the file: the IPython locator in
             # numba_cache under IPython's cache directory, None without
-            # IPython, which is asked for the directory where a locator of
-            # that family is reached and for no other file, since asked for
-            # any .zip member it warned, with its own directory unwritable, on
-            # every import of the package, and left a temporary directory
-            # behind; the .zip and user-wide ones in a directory of their own
-            # under the user's cache directory.
+            # IPython, or where IPython raises OSError for the directory, which
+            # numba passes the locator over on; IPython is asked for the
+            # directory where a locator of that family is reached and for no
+            # other file, since asked for any .zip member it warned, with its
+            # own directory unwritable, on every import of the package, and
+            # left a temporary directory behind; the .zip and user-wide ones in
+            # a directory of their own under the user's cache directory.
             if one_of(cls, for_ipython):
                 ipython_cache = _ipython_numba_cache()
                 return os.path.abspath(ipython_cache) if ipython_cache else None

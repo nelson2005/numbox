@@ -97,7 +97,9 @@ warning instead.
   IPython warns when asked under a home it cannot write and leaves a temporary directory behind; numba
   imports IPython for the location when it makes it and catches only OSError there, so where IPython is not
   importable it raises ImportError at decoration for a file that locator takes, no cache error, and an error a
-  caller passes on naming that location is told it as none of numba's. numba's IPython locator takes a file on disk
+  caller passes on naming that location is told it as none of numba's, and where IPython raises OSError for its
+  directory numba passes the locator over, as it does a location it cannot make, and the warning, asked the same,
+  has no location of IPython's to match the error against. numba's IPython locator takes a file on disk
   only in an ipykernel directory and its ``.zip`` locator only a path with ``.zip`` in it, so either ahead of
   the rest changes nothing for any other file; the ``.zip`` locator ahead of them all takes such a path first and
   caches it under the user's cache directory where a part of the path ends in ``.zip``, an archive or a
