@@ -1324,6 +1324,42 @@ def test_a_zip_member_in_an_ipykernel_directory_refused_ipythons_location_is_tol
     assert remedy == f"{told}; or silence", remedy
 
 
+def test_a_zip_members_error_is_answered_without_asking_ipython_for_its_cache_directory(tmp_path, monkeypatch):
+    # numba's IPython locator takes a file in an ipykernel directory alone, so
+    # a .zip member anywhere else is never cached in IPython's cache directory;
+    # the remedy asked IPython for that directory all the same, to compare the
+    # error's path against it, and IPython, with its own directory unwritable,
+    # under a read-only home, warned on every import of the package and left a
+    # temporary directory behind. The directory is asked for where numba's
+    # IPython locator takes the file and is listed.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    def never():
+        raise AssertionError("IPython was asked for its cache directory")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = never
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    py_file = str(tmp_path / "bundle.zip" / "package" / "module.py")
+    location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
+    remedy = configurations.cache_remedy(py_file, OSError(errno.EACCES, "Permission denied", str(location)), "silence")
+    assert remedy == (
+        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+        f"effect here, because the source is not a file on disk: no file can be written in that directory, {location} "
+        "(Permission denied), so make room there, or make it writable, or silence"), remedy
+
+
 @pytest.mark.parametrize("platform, moved_through", [
     ("linux", ", through XDG_CACHE_HOME or HOME"), ("darwin", ", through HOME"), ("win32", ""),
 ])
