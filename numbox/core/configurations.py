@@ -380,7 +380,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location, or, where it is set and numba passed it over, named and made a writable directory at a short path. A
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
     any other locator, named as set or asked for at a short path, and nothing said of numba passing it over, which
-    that location cannot show. An error can name no file, or carry an empty string or empty bytes as its name. A caller
+    that location cannot show. An error can name no file, or carry an empty string or empty bytes as its name, or a name of
+    another kind, an integer file descriptor's, which is none. A caller
     can build such an error, and numba's first save raises one where a write fails, as on a full disk. So does inspect
     where, for numba's IPython locator, it finds no source in a cell file on disk. Every other OSError that
     ``check_cache_location`` raises names a file. An error with no name, or an empty one, is told the locations numba
@@ -471,9 +472,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     # it, bytes for one given bytes, or as a caller built it, a path object
     # too, and the remedy reads the name as str, as it reads the source's. An
     # empty str or bytes is no name; a path object built from an empty string
-    # names the working directory, ".", as pathlib reads it.
+    # names the working directory, ".", as pathlib reads it; a name of another
+    # kind, an integer file descriptor's as os.stat(fd) raises it, is none.
     filename = getattr(failure, "filename", None)
-    filename = os.fsdecode(filename) if filename else None
+    filename = os.fsdecode(filename) if filename and isinstance(filename, (str, bytes, os.PathLike)) else None
     listed = getattr(config, "CACHE_LOCATOR_CLASSES", "")
     user_provided = _numba_locator("UserProvidedCacheLocator")
     in_tree = _numba_locator("InTreeCacheLocator")

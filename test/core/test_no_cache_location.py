@@ -2827,6 +2827,30 @@ def test_a_frozen_applications_no_locator_error_under_a_class_of_none_of_numbas_
         "our_locators.OurLocator, leaves it out: list it, or silence"), remedy
 
 
+def test_an_error_naming_a_file_descriptor_names_no_file(tmp_path, monkeypatch):
+    # os.stat(fd) and the other calls that take a descriptor raise OSError with
+    # the integer as the file name, and is_a_cache_error admits every OSError;
+    # the remedy read every name as a path and raised TypeError on the integer
+    # instead of answering. A name of another kind than str, bytes or a path
+    # object is none, and the error is told the locations numba could have
+    # taken, as one naming no file is.
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+    with pytest.raises(OSError) as raised:
+        os.stat(987654)
+    failure = raised.value
+    assert failure.filename == 987654 and configurations.is_a_cache_error(failure)
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert remedy == configurations.cache_remedy(str(py_file), OSError(failure.errno, failure.strerror), "silence")
+    assert remedy.startswith("the location numba took, one of "), remedy
+    assert "987654" not in remedy
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
