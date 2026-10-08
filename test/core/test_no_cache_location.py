@@ -45,6 +45,12 @@ IMPORT_AND_USE = (
 )
 
 
+ARCHIVE_REMEDY = (
+    "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, install numbox with its "
+    "source files on disk, unpacked from any archive, or import it from a .zip holding its source files, which numba "
+    "0.61 and later cache in the user's cache directory")
+
+
 def _archive(path, bytecode_naming_the_archive=()):
     """numbox's modules zipped into ``path``, which goes on PYTHONPATH as it is.
 
@@ -1132,6 +1138,11 @@ def test_an_error_with_no_strerror_is_told_its_own_text_as_the_reason(tmp_path, 
         expected = not_on_disk + (
             f"no file can be written at that location, {tmp_path / 'elsewhere' / 'cache'} ({failure}), so make room "
             "there, or make it writable, or silence")
+    if numba_version < 61 and placement in ("a .zip member", "a .zip member, naming a location that is none of numba's"):
+        # numba's .zip locator arrived in 0.61; before it, no locator takes a
+        # .zip member in no ipykernel directory, and the error gets the remedy
+        # numba's no-locator one does.
+        expected = f"{ARCHIVE_REMEDY}; or silence"
     assert failure.strerror is None and "None" not in expected.replace(str(failure), "")
     remedy = configurations.cache_remedy(str(py_file), failure, "silence")
     assert remedy == expected, remedy
@@ -1428,14 +1439,15 @@ def test_a_zip_members_error_is_answered_without_asking_ipython_for_its_cache_di
     py_file = str(tmp_path / "bundle.zip" / "package" / "module.py")
     location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
     remedy = configurations.cache_remedy(py_file, OSError(errno.EACCES, "Permission denied", str(location)), "silence")
-    # numba's .zip locator arrived in 0.61; before it, a .zip member has no
-    # location of numba's, and the one the error names is told as named.
-    told = (f"no file can be written in that directory, {location} (Permission denied)" if numba_version >= 61 else
-            f"no file can be written at that location, {location} (Permission denied)")
+    if numba_version < 61:
+        # numba's .zip locator arrived in 0.61; before it, no locator takes a
+        # .zip member, and the error gets the remedy numba's no-locator one does.
+        assert remedy == f"{ARCHIVE_REMEDY}; or silence", remedy
+        return
     assert remedy == (
         "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
-        f"effect here, because the source is not a file on disk: {told}, so make room there, or make it writable, "
-        "or silence"), remedy
+        f"effect here, because the source is not a file on disk: no file can be written in that directory, {location} "
+        "(Permission denied), so make room there, or make it writable, or silence"), remedy
 
 
 @pytest.mark.parametrize("platform, moved_through", [
@@ -2180,6 +2192,58 @@ def test_an_ipython_that_raises_for_its_cache_directory_leaves_numba_no_location
             f"{location} (Permission denied), so make room there, or make it writable, or silence"), remedy
 
 
+NO_LOCATOR_TAKES_IT_OFF_DISK = {
+    "a .zip member, too long": (
+        "IPythonCacheLocator", "bundle.zip/package/module.py", (errno.ENAMETOOLONG, "File name too long"),
+        "numba caches a .zip through ZipCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, IPythonCacheLocator, "
+        "leaves it out: list it; or silence"),
+    "a .zip member, unwritable": (
+        "IPythonCacheLocator,InTreeCacheLocator", "bundle.zip/package/module.py", (errno.EACCES, "Permission denied"),
+        "numba caches a .zip through ZipCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, "
+        "IPythonCacheLocator,InTreeCacheLocator, leaves it out: list it; or silence"),
+    "a frozen application, unwritable": (
+        "InTreeCacheLocator", "frozen/numbox/module.py", (errno.EACCES, "Permission denied"),
+        "numba caches a frozen application through UserWideCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, "
+        "InTreeCacheLocator, leaves it out: list it, or silence"),
+}
+
+
+@from_062
+@pytest.mark.parametrize("case", list(NO_LOCATOR_TAKES_IT_OFF_DISK))
+@pytest.mark.parametrize("names", ["the location", "nothing"])
+def test_an_error_for_a_source_not_on_disk_under_a_list_with_no_locator_that_takes_it_is_told_the_list(
+        tmp_path, monkeypatch, case, names):
+    # numba's .zip locator alone takes a .zip member in no ipykernel directory,
+    # and its user-wide one alone a frozen application's file, so a list
+    # without the one leaves numba no locator for the file, and its error is
+    # the no-locator one, told to list it. An OSError a caller passes on under
+    # such a list, naming a location or none, was answered as a .zip's or a
+    # frozen application's: that numba caches the file in the user's cache
+    # directory, and that location, or that directory, to make writable or put
+    # at a shorter path, while numba took none. It is told the list, as
+    # numba's no-locator error is, as for a source on disk.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    locators, member, error, told = NO_LOCATOR_TAKES_IT_OFF_DISK[case]
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    monkeypatch.setattr(sys, "frozen", case.startswith("a frozen"), raising=False)
+    py_file = str(tmp_path / member)
+    location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
+    failure = OSError(*error, str(location)) if names == "the location" else OSError(*error)
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert remedy == told, remedy
+    no_locator = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+    assert configurations.cache_remedy(py_file, no_locator, "silence") == told
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
@@ -2271,11 +2335,9 @@ def test_a_file_not_found_error_that_names_no_file_for_a_source_not_on_disk_gets
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     py_file = str(tmp_path / "site" / "package" / "module.py")
     remedy = configurations.cache_remedy(py_file, FileNotFoundError(errno.ENOENT, "No such file or directory"), "silence")
-    assert remedy == (
-        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
-        "effect here, because the source is not a file on disk: no file can be written in that directory, "
-        f"{tmp_path / 'user-cache' / 'numba'} (No such file or directory), so make room there, or make it writable, "
-        "or silence"), remedy
+    # No locator takes a source neither on disk, in a .zip nor a frozen
+    # application's, so the error gets the remedy numba's no-locator one does.
+    assert remedy == f"{ARCHIVE_REMEDY}; or silence", remedy
 
 
 SUBCLASSED_LOCATORS = (
