@@ -371,7 +371,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     directory under the user's cache directory, each of the two under a cache directory named for the source's
     directory, by its name and a hash of its path; the path the error names is matched whole against each location a
     locator numba reaches gives it, in the order numba tries them, since the three can nest and ``NUMBA_CACHE_DIR`` set
-    to the user's cache directory makes one path of two; numba reaches no locator listed after its ``.zip`` one for a
+    to the user's cache directory makes one path of two, and the error is read as that locator's, the ones numba tries
+    before it having passed the file over, as numba's own errors mean and an error a caller passes on naming a
+    location numba did not take need not; numba reaches no locator listed after its ``.zip`` one for a
     path with ``.zip`` in it, which that locator takes without trying its location, so a location one of those would
     give is none of numba's. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
     package at a shorter path for the second; the user's cache directory at a shorter path, through
