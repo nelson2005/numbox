@@ -71,13 +71,14 @@ warning instead.
   deep, the warning names it and the remedy is a writable directory at a short path. A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
-  The name an error carries is read as a string, bytes or a path object alike. An error can name no file, or an empty
-  string or bytes. A caller can build one, numba's first save raises one where a write fails, as on a full disk,
-  and inspect raises one for numba's IPython locator where it finds no source in a cell file on disk; every other
-  OSError ``check_cache_location`` raises names a file. Such an error is told the locations numba could have
-  taken, in numba's order and each once, to put the one that is too long at a shorter path. A path object never
-  names nothing: pathlib reads an empty string as the working directory, and an error naming that is told it as a
-  location that is none of numba's.
+  The name an error carries is read as a string, bytes or a path object alike. An error can name no file, or carry an
+  empty string or empty bytes as its name. A caller can build such an error, and numba's first save raises one
+  where a write fails, as on a full disk. So does inspect where, for numba's IPython locator, it finds no source in
+  a cell file on disk. Every other OSError that ``check_cache_location`` raises names a file. An error with no name,
+  or an empty one, is told the locations numba could have taken, in numba's order and each once. For a path too
+  long, the remedy is the one that is too long at a shorter path. For another reason, such as a full disk, the
+  remedy gives the reason and asks for room or a writable directory there. A path object is never empty: pathlib
+  reads an empty string as the working directory, which the remedy names as a location that is none of numba's.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its
   dotted path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is; an
   entry numba cannot resolve, which it refuses before any location is tried, and one that names no class, which it
@@ -123,7 +124,8 @@ warning instead.
   application (``sys.frozen``) is cached there too, its sources not being on disk, and its error is numba's
   no-locator one, which gives no reason, so that directory is to be made writable.
   numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk, so the variable changes nothing for either.
-  An error a caller passes on that names no file is told that directory too.
+  An error that names no file, a caller's or numba's first save's on a full disk, is told that directory too, with
+  the reason.
   A ``.zip`` whose cache directory holds every entry but can no longer be written falls back too, where numba
   alone would have loaded the entries: the writability check is the rule numba applies to every other
   placement. numba caches a ``.zip`` through its ``.zip`` locator alone, so a ``NUMBA_CACHE_LOCATOR_CLASSES``
