@@ -67,8 +67,8 @@ def check_cache_location(py_file, longest_file_name=0):
     and which stats the archive for a ``.zip``, then the writability check, which decoration runs for every
     location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe is compiled with
     ``py_file`` as its file, which is all a locator reads of it but for numba's IPython locator, which reads the
-    function's source too: inspect reads that from a file on disk itself, and for a file not on disk that a listed
-    locator of that family takes, a ``.zip`` member's in an ipykernel directory, which inspect reads through a module
+    function's source too: inspect reads that from a file on disk itself, and for a file not on disk that a locator of
+    that family numba reaches takes, a ``.zip`` member's in an ipykernel directory, which inspect reads through a module
     the probe has none of, the probe's source is given it under the file's name while the locator is picked, one
     check at a time so that each puts back what it found, and a reader of that file's lines meanwhile, in another
     thread, reads the probe's; every other file not on disk is asked with the linecache untouched. Nothing is
@@ -88,8 +88,8 @@ def check_cache_location(py_file, longest_file_name=0):
     # numba's IPython locator reads the function's source when it takes the
     # file, which inspect reads from the file, or through the module's loader
     # where the file is not on disk, a member of a .zip; the probe has no
-    # module, so for a file not on disk that a listed locator of that family
-    # takes, its source is put where inspect reads first, under the file's
+    # module, so for a file not on disk that a locator of that family numba
+    # reaches takes, its source is put where inspect reads first, under the file's
     # name, while numba picks the locator, and what was there put back, one
     # check at a time. Every other file is asked with the linecache untouched.
     file = probe.__code__.co_filename
@@ -325,13 +325,21 @@ def _taken_by_ipython(py_file):
 
 
 def _ipython_locator_reads(py_file):
-    """Whether a locator of numba's IPython family, in numba's own order or where ``NUMBA_CACHE_LOCATOR_CLASSES`` lists
-    one, takes ``py_file`` by its name, and so reads the function's source."""
+    """Whether a locator of numba's IPython family that numba reaches, in its own order or where
+    ``NUMBA_CACHE_LOCATOR_CLASSES`` lists one, takes ``py_file`` by its name, and so reads the function's source; numba
+    reaches none listed after its ``.zip`` locator for a path with ``.zip`` in it, which that locator takes without
+    trying its location."""
     from numba import config
     for_ipython = _numba_locator("IPythonCacheLocator")
+    for_a_zip = _numba_locator("ZipCacheLocator")
     if for_ipython is None or not _taken_by_ipython(py_file):
         return False
-    return any(issubclass(cls, for_ipython) for cls in _locators(getattr(config, "CACHE_LOCATOR_CLASSES", "")))
+    for cls in _locators(getattr(config, "CACHE_LOCATOR_CLASSES", "")):
+        if issubclass(cls, for_ipython):
+            return True
+        if for_a_zip is not None and issubclass(cls, for_a_zip) and ".zip" in py_file:
+            return False
+    return False
 
 
 def cache_remedy(py_file, failure, silence, package="numbox"):
@@ -345,9 +353,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location is too long for the file system, the error names it, and the remedy is for the one it is: numba takes
     a directory under ``NUMBA_CACHE_DIR`` where that is set, else the ``__pycache__`` beside the source, else a
     directory under the user's cache directory, each of the two under a cache directory named for the source's
-    directory, by its name and a hash of its path; the path the error names is matched whole against each, in the
-    order numba tries them, since the three can nest and ``NUMBA_CACHE_DIR`` set to the user's cache directory makes
-    one path of two. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
+    directory, by its name and a hash of its path; the path the error names is matched whole against each location a
+    locator numba reaches gives it, in the order numba tries them, since the three can nest and ``NUMBA_CACHE_DIR`` set
+    to the user's cache directory makes one path of two; numba reaches no locator listed after its ``.zip`` one for a
+    path with ``.zip`` in it, which that locator takes without trying its location, so a location one of those would
+    give is none of numba's. So a shorter ``NUMBA_CACHE_DIR`` for the first; the
     package at a shorter path for the second; the user's cache directory at a shorter path, through
     ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, for the third; and for either
     of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it before the locator that took the
@@ -361,7 +371,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is. numba's
     IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no directory
     per file, and that location too long is told as IPython's cache directory at a shorter path, for a cell file on
-    disk and for a member of a ``.zip`` in an ipykernel directory alike, where that locator is listed before the
+    disk and for a ``.zip`` member in an ipykernel directory alike, where that locator is listed before the
     ``.zip`` one, which takes a file without trying its location, so that none listed after it is reached, with no
     ``NUMBA_CACHE_DIR`` offered for a source not on disk; IPython is asked for that directory
     where a locator of that family is listed and takes the file, and left alone for every other, a plain ``.zip``
@@ -468,6 +478,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return one_of(cls, user_wide) or one_of(cls, for_a_zip)
 
         order = [cls for cls in _locators(listed) if may_take(cls)]
+        # numba's .zip locator takes a path with .zip in it without trying
+        # its location, so none listed after it is reached for such a file.
+        zip_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip)), None)
+        reached = order if zip_at is None else order[:zip_at + 1]
         variable_at = next((at for at, cls in enumerate(order) if reads_the_variable(cls)), None)
         cache_dir_read = variable_at is not None
 
@@ -515,7 +529,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 return os.path.abspath(ipython_cache) if ipython_cache else None
             return None
 
-        locations = {cls: location_of(cls) for cls in order}
+        locations = {cls: location_of(cls) for cls in reached}
         # Under a list with no locator that takes the file, or none with a
         # place for it, the user-provided one alone with NUMBA_CACHE_DIR unset,
         # numba took no location, and the list is the remedy, below, for an
@@ -538,14 +552,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 # A caller can pass on an error that names nothing; numba's
                 # and the package's own name the file refused.
                 named = set()
-            taken = next((cls for cls in order if locations[cls] and locations[cls] in named), None)
+            taken = next((cls for cls in reached if locations[cls] and locations[cls] in named), None)
 
             def could_have_taken():
                 # Which location numba took cannot be told from an error that
                 # names no file, so the ones it could have taken are listed, in
                 # its order, each once: NUMBA_CACHE_DIR set to the user's cache
                 # directory makes one path of two.
-                known = list(dict.fromkeys(locations[cls] for cls in order if locations[cls]))
+                known = list(dict.fromkeys(locations[cls] for cls in reached if locations[cls]))
                 if len(known) > 1:
                     return f"the location numba took, one of {', '.join(known[:-1])} or {known[-1]}"
                 return f"the location numba took, {known[0]}"
@@ -593,7 +607,6 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # .zip in it and no part ending in it, which numba raises where it
         # reaches that locator: the locators before it passed the file over,
         # and none after it was tried.
-        zip_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip)), None)
         zip_raised = isinstance(failure, ValueError) and zip_at is not None
         tried = order[:zip_at] if zip_raised else order
         if not tried:
