@@ -295,7 +295,7 @@ def _locators(listed):
     caching module by its name or its dotted path, resolved as numba resolves it, with the underscore numba put before
     its locators' names until 0.62 allowed in either; an entry numba could not resolve
     it has refused already, before any location was tried, or raised importlib's error for, a relative module path's
-    TypeError, and one that names no class it fails on, for want of
+    TypeError, and one that names no class, or a class with no ``from_function``, it fails on, for want of
     ``from_function``, at a function it decorates where it reaches the entry, so neither is a locator here, and
     numba's own error for either is raised as it was. Empty, the order is numba's own.
     """
@@ -313,7 +313,7 @@ def _locators(listed):
                 cls = None
         else:
             cls = _numba_locator(entry)
-        if isinstance(cls, type):
+        if isinstance(cls, type) and callable(getattr(cls, "from_function", None)):
             classes.append(cls)
     return classes
 
@@ -507,7 +507,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # which it caches where a part ends in .zip, an archive or a directory,
         # and raises for where none does; its user-wide one a frozen
         # application's file besides any on disk; and the rest, and a class
-        # that is none of numba's, any file on disk.
+        # that is none of numba's with a from_function of its own, any file
+        # on disk.
         if one_of(cls, for_ipython):
             return _taken_by_ipython(py_file)
         if one_of(cls, for_a_zip):
