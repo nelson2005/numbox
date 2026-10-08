@@ -2978,6 +2978,8 @@ A_NAME_TOO_LONG = {
     "on disk, NUMBA_CACHE_DIR set, the user-provided locator alone": from_062,
     "on disk, numba's order, the __pycache__ unwritable": needs_a_directory_it_cannot_write,
     "on disk, an error naming the location under NUMBA_CACHE_DIR, the user-provided locator alone": from_062,
+    "on disk under a directory named for a .zip, a caller's no-locator error, the .zip locator then the user-wide one":
+        from_062,
     "a frozen application": [],
     "a frozen application, a name that just fits, the user's cache directory too deep": [],
 }
@@ -3018,6 +3020,8 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
         os.mkdir(cache_dir)
     monkeypatch.setattr(numba.config, "CACHE_DIR", cache_dir)
     listed = "UserProvidedCacheLocator" if "user-provided locator alone" in case else ""
+    if "the .zip locator then the user-wide one" in case:
+        listed = "ZipCacheLocator,UserWideCacheLocator"
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", listed, raising=False)
     directory = "d" * (limit - 41 if just_fits else limit - 35)
     if case.startswith("a .zip"):
@@ -3026,7 +3030,8 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
             zipped.writestr(f"{directory}/module.py", "x = 1\n")
         py_file = str(archive / directory / "module.py")
     elif case.startswith("on disk"):
-        py_file = str(tmp_path / "site" / directory / "module.py")
+        site = tmp_path / "site" / "a.zip" if "named for a .zip" in case else tmp_path / "site"
+        py_file = str(site / directory / "module.py")
         os.makedirs(os.path.dirname(py_file))
         with open(py_file, "w", encoding="utf-8") as handle:
             handle.write("x = 1\n")
@@ -3042,6 +3047,12 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
     try:
         if "an error naming" in case:
             failure = OSError(errno.ENAMETOOLONG, "File name too long", os.path.join(cache_dir, subpath))
+        elif "a caller's no-locator error" in case:
+            # numba's .zip locator takes the path without trying its
+            # location, so numba raises no no-locator error here, and a
+            # caller's reached a class listed after that locator, unreached,
+            # for its location and raised KeyError.
+            failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
         else:
             expected = OSError if case.startswith("a .zip") else RuntimeError
             with pytest.raises(expected) as raised:
