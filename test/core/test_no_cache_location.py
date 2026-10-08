@@ -2516,6 +2516,40 @@ def test_the_check_raises_inspects_error_naming_no_file_for_an_empty_cell_file_o
     assert not (ipython_dir / "numba_cache").exists()
 
 
+@from_062
+def test_a_source_not_on_disk_under_a_directory_named_for_a_zip_is_in_no_zip(tmp_path, monkeypatch):
+    # numba's .zip locator takes a path with ".zip" in it and finds the archive
+    # by a part of the path that ends in .zip, so a source under a directory
+    # named my.zipped is in no .zip: under a list without that locator, numba's
+    # no-locator error is told the source files on disk or a .zip holding them,
+    # with the locator each needs, and under numba's order the .zip locator
+    # takes the path and raises for the archive it finds no part of it to be,
+    # which is told the same. Nothing held the remedy to the part: with the
+    # substring enough, the no-locator error was told to list the .zip locator
+    # alone, which numba then raises through, and the suite passed.
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    py_file = str(tmp_path / "my.zipped" / "package.egg" / "numbox" / "module.py")
+    archive_remedy = (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, install numbox with "
+        "its source files on disk, unpacked from any archive, or import it from a .zip holding its source files, "
+        "which numba 0.61 and later cache in the user's cache directory")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator", raising=False)
+    with pytest.raises(RuntimeError, match="no locator available") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    assert remedy == (
+        f"{archive_remedy} through ZipCacheLocator, once NUMBA_CACHE_LOCATOR_CLASSES, InTreeCacheLocator, lists it; "
+        "or silence"), remedy
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    with pytest.raises(ValueError, match="No zip file found") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert configurations.is_a_cache_error(raised.value)
+    assert configurations.cache_remedy(py_file, raised.value, "silence") == f"{archive_remedy}; or silence"
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
