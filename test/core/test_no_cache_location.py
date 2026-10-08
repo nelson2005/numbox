@@ -2487,6 +2487,35 @@ def test_a_frozen_applications_path_with_zip_in_it_and_no_archive_is_answered_fo
     assert remedy == f"{told}, or silence", remedy
 
 
+@from_062
+def test_the_check_raises_inspects_error_naming_no_file_for_an_empty_cell_file_on_disk(tmp_path, monkeypatch):
+    # numba's IPython locator reads the function's source, and for a file on
+    # disk inspect reads it from the file itself and raises OSError, naming no
+    # file, where it finds no source there, as in an empty file; the check
+    # raises that error before any location is tried, and is_a_cache_error
+    # admits it as it admits every OSError. The check's docstring said every
+    # OSError from it names the location numba picked.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "IPythonCacheLocator", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    cell = tmp_path / "ipykernel_123" / "__init__.py"
+    cell.parent.mkdir()
+    cell.touch()
+    with pytest.raises(OSError, match="could not get source code") as raised:
+        configurations.check_cache_location(str(cell), configurations.LONGEST_CACHE_FILE_NAME)
+    assert raised.value.filename is None
+    assert configurations.is_a_cache_error(raised.value)
+    assert not (ipython_dir / "numba_cache").exists()
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
