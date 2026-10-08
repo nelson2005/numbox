@@ -392,8 +392,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is, or a class of
     none of numba's families, with a ``from_function`` and a place of its own, which takes any file for the remedy, what
     it takes and where it caches being its own to say: an error naming a location that no locator of numba's gives the
-    file is told that location as the error names it, which is then that class's, and one naming no file under such
-    classes alone is told the location numba took, unnamed. numba's
+    file is told that location as the error names it, which is then that class's, and one naming no file is told the
+    location numba took as the class's own, with no path to name, among numba's locators' places where those are
+    reached. numba's
     IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no directory
     per file, and that location too long is told as IPython's cache directory at a shorter path, for a cell file on
     disk and for a ``.zip`` member in an ipykernel directory alike, where that locator is listed before the
@@ -499,10 +500,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # ``locations`` in numba's order, are listed each once: on disk,
         # NUMBA_CACHE_DIR set to the user's cache directory makes one path of
         # two. A class of none of numba's families has a place the remedy
-        # cannot name.
-        known = list(dict.fromkeys(location for location in locations.values() if location))
-        if not known:
-            return "the location numba took"
+        # cannot name, listed as the class's own.
+        known = list(dict.fromkeys(
+            location if location else f"{cls.__name__}'s own"
+            for cls, location in locations.items() if location or not of_numbas(cls)))
         if len(known) > 1:
             return f"the location numba took, one of {', '.join(known[:-1])} or {known[-1]}"
         return f"the location numba took, {known[0]}"

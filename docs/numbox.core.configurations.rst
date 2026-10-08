@@ -84,7 +84,8 @@ warning instead.
   class of none of numba's families, with a ``from_function`` and a place of its own, which takes any file for the
   warning, what it takes and where it caches being its own to say: an error naming a location that no locator of
   numba's gives the file is told that location as the error names it, which is then that class's, and one naming no
-  file under such classes alone is told the location numba took, unnamed; an
+  file is told the location numba took as the class's own, with no path to name, among numba's locators' places where
+  those are reached; an
   entry numba cannot resolve, which it refuses before any location is tried, or raises importlib's error for, a
   relative module path's TypeError, and one that names no class, or a class with no ``from_function``, which it
   fails on at a function it decorates where it reaches the entry, are no locators here, and numba's own error for
