@@ -1136,8 +1136,9 @@ def test_an_error_with_no_strerror_is_told_its_own_text_as_the_reason(tmp_path, 
     else:
         py_file = tmp_path / "bundle.zip" / "package" / "module.py"
         failure = OSError(errno.ENOSPC, None, str(tmp_path / "elsewhere" / "cache"))
-        expected = not_on_disk + (
-            f"no file can be written at that location, {tmp_path / 'elsewhere' / 'cache'} ({failure}), so make room "
+        expected = (
+            "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: no file can be written at "
+            f"that location, {tmp_path / 'elsewhere' / 'cache'} ({failure}), so make room "
             "there, or make it writable, or silence")
     if numba_version < 61 and placement in ("a .zip member", "a .zip member, naming a location that is none of numba's"):
         # numba's .zip locator arrived in 0.61; before it, no locator takes a
@@ -1858,7 +1859,8 @@ def test_an_error_naming_ipythons_location_numbas_ipython_locator_did_not_take_i
     # under one is none of numba's, and was told as the .zip's directory to
     # put at a shorter path through what moves the user's cache directory,
     # which moves nothing of it. A location that is none of numba's is told
-    # as the error names it, as for a source on disk.
+    # as the error names it, as for a source on disk, and with nothing of
+    # where numba caches the file, which it is none of.
     import types
     import numba
     import numbox.core.configurations as configurations
@@ -1880,8 +1882,8 @@ def test_an_error_naming_ipythons_location_numbas_ipython_locator_did_not_take_i
     error, told = NONE_OF_NUMBAS_OFF_DISK[refused]
     remedy = configurations.cache_remedy(py_file, OSError(*error, str(named)), "silence")
     assert remedy == (
-        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
-        f"effect here, because the source is not a file on disk: {told.format(named=named)}, or silence"), remedy
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: "
+        f"{told.format(named=named)}, or silence"), remedy
 
 
 @from_062
@@ -2321,6 +2323,40 @@ def test_an_error_naming_no_file_for_a_source_not_on_disk_is_told_the_locations_
     told = told.format(numba_cache=ipython_dir / "numba_cache", location=location,
                        moved_through=configurations._moved_through())
     assert remedy == f"{told}, or silence", remedy
+
+
+@from_061
+@pytest.mark.parametrize("refused", list(NONE_OF_NUMBAS_OFF_DISK))
+def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_the_location_as_none_of_numbas(
+        tmp_path, monkeypatch, refused):
+    # numba's IPython locator takes a .zip member in an ipykernel directory
+    # and imports IPython for its location, catching OSError alone, so with
+    # IPython not importable numba raises ImportError at decoration, no cache
+    # error, and caches the file nowhere; an error a caller passes on naming
+    # IPython's location is told it as none of numba's. The remedy opened with
+    # where numba caches a .zip, or a frozen application, the user's cache
+    # directory, which numba did not cache this file in.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setitem(sys.modules, "IPython", None)
+    py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
+    with pytest.raises(ImportError) as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert not configurations.is_a_cache_error(raised.value)
+    named = tmp_path / "ipython" / "numba_cache"
+    error, told = NONE_OF_NUMBAS_OFF_DISK[refused]
+    remedy = configurations.cache_remedy(py_file, OSError(*error, str(named)), "silence")
+    assert remedy == (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: "
+        f"{told.format(named=named)}, or silence"), remedy
 
 
 A_ZIP_REFUSED = {

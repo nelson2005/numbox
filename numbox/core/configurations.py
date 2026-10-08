@@ -423,7 +423,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     numba's under the user's cache directory, or a file numba writes in it, as the first save's does, and the
     directory is told; an error naming a location that is none of numba's, under the list and in its order, is told
     that location as the error names it, as for a source on disk, with nothing of what moves the user's cache
-    directory; the frozen application's is the no-locator one, which gives no reason, numba having passed
+    directory and nothing of where numba caches the file, which that location is none of; the frozen application's is
+    the no-locator one, which gives no reason, numba having passed
     the location over on its error, so the user's cache directory is named, to be made writable; an error that
     names no file, a caller's, or the first save's on a full disk, is told the locations numba could have taken, as
     for a source on disk, in its order and each once, with the reason, or, for a path too long, to put whichever is
@@ -751,11 +752,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         else:
             location = filename or user_cache_dir
         # Where numba caches the file: a .zip's or a frozen application's
-        # location is under the user's cache directory, and an error that
-        # names no file for a member a locator of IPython's family is reached
-        # for may be IPython's, so nothing is said of that directory then.
-        in_the_user_cache_alone = taken is not None or not any(
-            one_of(cls, for_ipython) and locations[cls] for cls in reached)
+        # location is under the user's cache directory; a location that is
+        # none of numba's is not, and an error that names no file for a
+        # member a locator of IPython's family is reached for may be
+        # IPython's, so nothing is said of that directory for either.
+        in_the_user_cache_alone = taken is not None or (not filename and not any(
+            one_of(cls, for_ipython) and locations[cls] for cls in reached))
         where = (
             "numba caches a .zip, or a frozen application, in the user's cache directory, and "
             if in_the_user_cache_alone else "")
@@ -774,18 +776,19 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # A location that is none of numba's, under the list and in its
             # order, which an error a caller passes on can name: told as the
             # error names it, as for a source on disk, with nothing of what
-            # moves the user's cache directory, which moves nothing of it.
+            # moves the user's cache directory, which moves nothing of it, and
+            # nothing of where numba caches the file, which the location is
+            # none of: a member numba's IPython locator takes, with IPython
+            # not importable, numba caches nowhere.
             if failure.errno == errno.ENAMETOOLONG:
                 return (
-                    "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
-                    f"has no effect here, because the source is not a file on disk: the path is too long for the file "
-                    f"system, so put that location, {filename}, at a shorter path, or {silence}"
+                    f"{opening}the path is too long for the file system, so put that location, {filename}, at a "
+                    f"shorter path, or {silence}"
                 )
             reason = failure.strerror or failure
             return (
-                "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR "
-                f"has no effect here, because the source is not a file on disk: no file can be written at that "
-                f"location, {filename} ({reason}), so make room there, or make it writable, or {silence}"
+                f"{opening}no file can be written at that location, {filename} ({reason}), so make room there, or "
+                f"make it writable, or {silence}"
             )
         if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
             if taken is None:

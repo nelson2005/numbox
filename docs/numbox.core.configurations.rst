@@ -122,7 +122,8 @@ warning instead.
   0.61 on, and it caches it there, taking the directory without checking that it can be written; the error names
   that location, or a file numba's first save writes in it, and the location is told with the reason; an error
   naming a location that is none of numba's, under the list and in its order, is told that location as the error
-  names it, as for a source on disk, with nothing of what moves the user's cache directory; a frozen
+  names it, as for a source on disk, with nothing of what moves the user's cache directory and nothing of where
+  numba caches the file, which that location is none of; a frozen
   application (``sys.frozen``) is cached there too, its sources not being on disk, and its error is numba's
   no-locator one, which gives no reason, so that directory is to be made writable.
   numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk, so the variable changes nothing for either.
