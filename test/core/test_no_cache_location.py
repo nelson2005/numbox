@@ -1339,6 +1339,8 @@ def test_the_probes_source_is_given_under_a_lock_for_a_file_not_on_disk(tmp_path
     paths.get_ipython_cache_dir = lambda: str(ipython_dir)
     monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    with zipfile.ZipFile(tmp_path / "bundle.zip", "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def cell():\n    pass\n")
     py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
     real = configurations.CompileResultCacheImpl
     inside = {"first": threading.Event(), "second": threading.Event()}
@@ -2350,6 +2352,8 @@ def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_t
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     monkeypatch.setitem(sys.modules, "IPython", None)
+    with zipfile.ZipFile(tmp_path / "bundle.zip", "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def cell():\n    pass\n")
     py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
     with pytest.raises(ImportError) as raised:
         configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
@@ -2944,6 +2948,12 @@ def test_a_file_numbas_ipython_locator_alone_takes_and_passes_over_is_told_ipyth
         # numba's IPython locator reads it there.
         source = "def f():\n    pass\n"
         monkeypatch.setitem(linecache.cache, py_file, (len(source), None, source.splitlines(True), py_file))
+    else:
+        # inspect reads a .zip member's source through the module's loader,
+        # which the probe has none of, so the check gives it the probe's
+        # where the archive holds the member's source.
+        with zipfile.ZipFile(tmp_path / "bundle.zip", "w") as zipped:
+            zipped.writestr("ipykernel_123/cell.py", "def cell():\n    pass\n")
     if placement == "a cell":
         monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     elif placement.startswith("a cell"):
@@ -3220,6 +3230,43 @@ def test_a_cell_whose_source_linecache_does_not_hold_raises_inspects_error_as_nu
     assert remedy == (
         f"numba's IPython locator reads a cell's source from linecache, which holds none for {cell} (could not get "
         "source code), and numba caches a cell only while IPython holds its source; or silence"), remedy
+
+
+def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_inspects_error_as_numba_does(
+        tmp_path, monkeypatch):
+    # numba's IPython locator reads the function's source through the module's
+    # loader for a .zip member, and zipimport gives none for a member compiled
+    # to .pyc alone, so numba raises inspect's error at decoration; the check
+    # gave the probe's source to every member a locator of that family takes
+    # and returned, where upstream main's check raised as numba does, and the
+    # remedy told the location numba took as refusing a file where the
+    # archive's remedy, its source files to ship, is the one.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    source = tmp_path / "cell.py"
+    source.write_text("def cell():\n    pass\n")
+    archive = tmp_path / "bundle.zip"
+    compiled = py_compile.compile(str(source), cfile=str(tmp_path / "cell.pyc"),
+                                  dfile=str(archive / "ipykernel_123" / "cell.py"), doraise=True)
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.write(compiled, "ipykernel_123/cell.pyc")
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    assert not configurations._zip_holds_the_source(py_file)
+    with pytest.raises(OSError, match="source code") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert raised.value.errno is None and raised.value.filename is None
+    assert not ipython_dir.exists()
+    assert configurations.is_a_cache_error(raised.value)
+    assert configurations.cache_remedy(py_file, raised.value, "silence") == f"{ARCHIVE_REMEDY}; or silence"
 
 
 A_ZIP_REFUSED = {
