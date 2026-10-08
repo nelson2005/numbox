@@ -2488,16 +2488,18 @@ def test_a_frozen_applications_path_with_zip_in_it_and_no_archive_is_answered_fo
 
 
 @pytest.mark.parametrize("cell_file, order", [
-    pytest.param("empty", "the IPython locator alone", marks=from_062),
+    pytest.param("empty", "the IPython locator alone", marks=[from_062, pytest.mark.skipif(
+        sys.version_info >= (3, 13), reason="linecache gives an empty file a blank line from Python 3.13")]),
     pytest.param("unreadable", "the IPython locator alone", marks=[from_062, needs_a_directory_it_cannot_write]),
-    pytest.param("empty", "numba's order", marks=needs_a_directory_it_cannot_write),
+    pytest.param("unreadable", "numba's order", marks=needs_a_directory_it_cannot_write),
 ])
 def test_the_check_raises_inspects_error_naming_no_file_for_a_cell_file_on_disk_it_reads_no_source_in(
         tmp_path, monkeypatch, cell_file, order):
     # numba's IPython locator reads the function's source, and for a file on
     # disk inspect reads it from the file itself and raises OSError, naming no
-    # file and with no errno, where it reads no source there, an empty file or
-    # one it cannot read; the check raises that error before that locator
+    # file and with no errno, where it reads no source there, a file it cannot
+    # read or, before Python 3.13, an empty one, which linecache gives a blank
+    # line from then on; the check raises that error before that locator
     # tries its location, the locators numba tries before it having passed
     # the file over, and is_a_cache_error admits it as it admits every
     # OSError. The
