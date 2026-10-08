@@ -54,8 +54,8 @@ def _cache_probe():
 LONGEST_CACHE_FILE_NAME = 128
 
 # The probe's source stands in the process-wide linecache under a file's name
-# while numba picks the locator for a file not on disk, one check at a time,
-# so that each puts back what it found there.
+# while numba picks the locator for a file not on disk that its IPython locator
+# takes, one check at a time, so that each puts back what it found there.
 _probe_source = threading.Lock()
 
 
@@ -67,11 +67,13 @@ def check_cache_location(py_file, longest_file_name=0):
     and which stats the archive for a ``.zip``, then the writability check, which decoration runs for every
     location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe is compiled with
     ``py_file`` as its file, which is all a locator reads of it but for numba's IPython locator, which reads the
-    function's source too: inspect reads that from a file on disk itself, and for a file not on disk, a ``.zip``
-    member's, which inspect reads through a module the probe has none of, the probe's source is given it under the
-    file's name while the locator is picked, one check at a time so that each puts back what it found, and a locator
-    reading another function's source from that file meanwhile reads the probe's. Nothing is compiled, and nothing is
-    written but the cache directory itself. An ``OSError`` from the check names the location numba picked.
+    function's source too: inspect reads that from a file on disk itself, and for a file not on disk that a listed
+    locator of that family takes, a ``.zip`` member's in an ipykernel directory, which inspect reads through a module
+    the probe has none of, the probe's source is given it under the file's name while the locator is picked, one
+    check at a time so that each puts back what it found, and a reader of that file's lines meanwhile, in another
+    thread, reads the probe's; every other file not on disk is asked with the linecache untouched. Nothing is
+    compiled, and nothing is written but the cache directory itself. An ``OSError`` from the check names the
+    location numba picked.
 
     numba's writability check makes a temporary file whose name is short, or none at all on Linux, and the
     files it saves have names of up to a hundred bytes and more, so a location within their length of the path
@@ -86,11 +88,12 @@ def check_cache_location(py_file, longest_file_name=0):
     # numba's IPython locator reads the function's source when it takes the
     # file, which inspect reads from the file, or through the module's loader
     # where the file is not on disk, a member of a .zip; the probe has no
-    # module, so for a file not on disk its source is put where inspect reads
-    # first, under the file's name, while numba picks the locator, and what
-    # was there put back, one check at a time.
+    # module, so for a file not on disk that a listed locator of that family
+    # takes, its source is put where inspect reads first, under the file's
+    # name, while numba picks the locator, and what was there put back, one
+    # check at a time. Every other file is asked with the linecache untouched.
     file = probe.__code__.co_filename
-    if os.path.exists(file):
+    if os.path.exists(file) or not _ipython_locator_reads(file):
         locator = CompileResultCacheImpl(probe).locator
     else:
         with _probe_source:
@@ -319,6 +322,16 @@ def _taken_by_ipython(py_file):
     """Whether numba's IPython locator takes ``py_file`` by its name alone, on disk or not: a cell, ``<ipython-...>``, or
     a file in an ipykernel directory. It reads the function's source when it does."""
     return py_file.startswith("<ipython-") or os.path.basename(os.path.dirname(py_file)).startswith("ipykernel_")
+
+
+def _ipython_locator_reads(py_file):
+    """Whether a locator of numba's IPython family, in numba's own order or where ``NUMBA_CACHE_LOCATOR_CLASSES`` lists
+    one, takes ``py_file`` by its name, and so reads the function's source."""
+    from numba import config
+    for_ipython = _numba_locator("IPythonCacheLocator")
+    if for_ipython is None or not _taken_by_ipython(py_file):
+        return False
+    return any(issubclass(cls, for_ipython) for cls in _locators(getattr(config, "CACHE_LOCATOR_CLASSES", "")))
 
 
 def cache_remedy(py_file, failure, silence, package="numbox"):

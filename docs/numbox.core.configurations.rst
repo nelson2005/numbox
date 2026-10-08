@@ -76,8 +76,9 @@ warning instead.
   dotted path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is.
   numba's IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no
   directory per file, and reads the function's source when it takes the file, which the check's probe is given
-  under the file's name for a file not on disk, one check at a time, having no module to read a ``.zip`` member's
-  through, where inspect reads a file on disk itself; that location too long is told as
+  under the file's name for a file not on disk that a listed locator of that family takes, one check at a time,
+  having no module to read a ``.zip`` member's through, where inspect reads a file on disk itself, and the
+  linecache is left alone for every other file; that location too long is told as
   IPython's cache directory at a shorter path, for a cell file on disk and for a member of a ``.zip`` in an ipykernel
   directory alike, where that locator is listed before the ``.zip`` one, which takes a file without trying its
   location, so that none listed after it is reached, with no ``NUMBA_CACHE_DIR`` offered for a source not on
