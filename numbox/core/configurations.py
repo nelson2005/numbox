@@ -67,11 +67,13 @@ def check_cache_location(py_file, longest_file_name=0):
     and which stats the archive for a ``.zip``, then the writability check, which decoration runs for every
     location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe is compiled with
     ``py_file`` as its file, which is all a locator reads of it but for numba's IPython locator, which reads the
-    function's source too: inspect reads that from a file on disk itself, and for a file not on disk that a locator of
-    that family numba reaches takes, a ``.zip`` member's in an ipykernel directory, which inspect reads through a module
-    the probe has none of, the probe's source is given it under the file's name while the locator is picked, one
-    check at a time so that each puts back what it found, and a reader of that file's lines meanwhile, in another
-    thread, reads the probe's; every other file not on disk is asked with the linecache untouched. Nothing is
+    function's source too: inspect reads that from a file on disk itself, from linecache for a cell, which IPython
+    holds there while it runs it, and through the module's loader for a ``.zip`` member in an ipykernel directory,
+    which the probe has no module for, so for such a member that a locator of that family numba reaches takes the
+    probe's source is given it under the file's name while the locator is picked, one check at a time so that each
+    puts back what it found, and a reader of that file's lines meanwhile, in another thread, reads the probe's;
+    every other file is asked with the linecache untouched, and a cell linecache does not hold raises inspect's
+    error, as numba does at decoration. Nothing is
     compiled, and nothing is written but the cache directory itself. An ``OSError`` from the check names the
     location numba picked, but for two: inspect's, which names no file, for a cell file on disk that numba's IPython
     locator takes, where inspect reads the source from the file itself, before that locator tries its location, and
@@ -91,14 +93,17 @@ def check_cache_location(py_file, longest_file_name=0):
     exec(compile(source, os.fspath(py_file), "exec"), namespace)  # nosec B102 - fixed source
     probe = namespace["_cache_probe"]
     # numba's IPython locator reads the function's source when it takes the
-    # file, which inspect reads from the file, or through the module's loader
-    # where the file is not on disk, a member of a .zip; the probe has no
-    # module, so for a file not on disk that a locator of that family numba
-    # reaches takes, its source is put where inspect reads first, under the file's
-    # name, while numba picks the locator, and what was there put back, one
-    # check at a time. Every other file is asked with the linecache untouched.
+    # file, which inspect reads from the file on disk, from linecache for a
+    # cell, where IPython holds it while it runs the cell, or through the
+    # module's loader for a member of a .zip; the probe has no module, so
+    # for a .zip member that a locator of that family numba reaches takes,
+    # its source is put where inspect reads first, under the file's name,
+    # while numba picks the locator, and what was there put back, one check
+    # at a time. Every other file is asked with the linecache untouched: a
+    # cell linecache does not hold raises inspect's error, as numba does.
     file = probe.__code__.co_filename
-    if os.path.exists(file) or not _ipython_locator_reads(file):
+    in_a_zip = any(part.endswith(".zip") for part in pathlib.Path(file).parts)
+    if os.path.exists(file) or not in_a_zip or not _ipython_locator_reads(file):
         locator = CompileResultCacheImpl(probe).locator
     else:
         with _probe_source:
@@ -421,7 +426,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     empty, with no errno
     either, no call of the file system's having raised it, and that error, for a file on disk that a locator of
     IPython's family numba reaches takes, is told as inspect's, that locator having tried no location: the file to
-    make readable, with the source in it. Every other OSError that
+    make readable, with the source in it; and for a cell, whose source numba reads from linecache, where IPython
+    holds it while it runs the cell, as that, numba caching a cell only while IPython holds its source. Every other
+    OSError that
     ``check_cache_location`` raises names a file. An error with no name, or an empty one, is told the locations numba
     could have taken, in numba's order and each once. For a path too long, the remedy is to put whichever of them is too
     long at a shorter path. For a file refused for another reason, such as a full disk, the remedy gives the reason and
@@ -878,6 +885,17 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     # numba took no location, and the list is the remedy, below, for an error
     # a caller passes on as for numba's no-locator one, as for a source on
     # disk.
+    if isinstance(failure, OSError) and failure.errno is None and not filename and any(
+            one_of(cls, for_ipython) for cls in reached):
+        # inspect's error, with no errno and no name, for a cell whose source
+        # linecache does not hold: numba's IPython locator reads a cell's
+        # source from linecache, where IPython holds it while it runs the
+        # cell, and inspect raises before the locator tries its location;
+        # the remedy told the location numba took as refusing a file.
+        return (
+            f"numba's IPython locator reads a cell's source from linecache, which holds none for {py_file} "
+            f"({failure}), and numba caches a cell only while IPython holds its source; or {silence}"
+        )
     if not took_no_location and (isinstance(failure, OSError) or getattr(sys, "frozen", False)):
         if isinstance(failure, ValueError) and zip_at is not None:
             # numba's .zip locator takes a frozen application's file for the

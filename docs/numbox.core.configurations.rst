@@ -92,7 +92,9 @@ warning instead.
   on disk, unreadable or, before Python 3.13, empty, with no errno either, no call of the file system's having raised
   it, and that error,
   for a file on disk that a locator of IPython's family numba reaches takes, is told as inspect's, that locator having
-  tried no location: the file to make readable, with the source in it. Every other OSError that ``check_cache_location``
+  tried no location: the file to make readable, with the source in it; and for a cell, whose source numba reads from
+  linecache, where IPython holds it while it runs the cell, as that, numba caching a cell only while IPython holds
+  its source. Every other OSError that ``check_cache_location``
   raises names a file. An error with no name, or an empty
   one, is told the locations numba could have taken, in numba's order and each once. For a path too long, the remedy is
   to put whichever of them is too long at a shorter path. For a file refused for another reason, such as a full disk,
