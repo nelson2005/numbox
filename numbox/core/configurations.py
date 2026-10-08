@@ -431,7 +431,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     could not use, to be made writable or put at a shorter path; a frozen application's path with ``.zip`` in it and
     no part ending in it gets the ``.zip`` locator's error instead where the list puts that locator before the
     user-wide one, or once the user-wide one passed its location over, and the remedy is the user-wide locator listed
-    before it, or that location made writable or put at a shorter path, as for a source on disk; an error that
+    before it, or that location made writable or put at a shorter path; an error that
     names no file, a caller's, or the first save's on a full disk, is told the locations numba could have taken, as
     for a source on disk, in its order and each once, with the reason, or, for a path too long, to put whichever is
     too long at a shorter path, and for a member in an ipykernel directory where a locator of IPython's family is
