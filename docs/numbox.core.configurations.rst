@@ -104,9 +104,10 @@ warning instead.
   IPython's cache directory at a shorter path, for a cell file on disk and for a ``.zip`` member in an ipykernel
   directory alike, where that locator is listed before the ``.zip`` one, which takes a file without trying its
   location, so that none listed after it is reached, with no ``NUMBA_CACHE_DIR`` offered for a source not on
-  disk; a cell, which no other locator takes, gets numba's no-locator error where that locator passes its location
-  over, and is told that location, to make writable or put at a shorter path, or IPython's cache directory to make a
-  home for where IPython raised for it; the remedy asks IPython for that directory where a locator of that family is
+  disk; a cell, which no other locator of numba's takes, gets numba's no-locator error where that locator passes its
+  location over, and is told that location, to make writable or put at a shorter path, or IPython's cache directory
+  to make a home for where IPython raised for it, with a class of none of numba's families listed with it named as
+  having passed the cell over too; the remedy asks IPython for that directory where a locator of that family is
   listed
   and takes the file, and leaves IPython alone for every other file, a plain ``.zip`` member among them, since
   IPython warns when asked under a home it cannot write and leaves a temporary directory behind; numba

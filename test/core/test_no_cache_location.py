@@ -2873,6 +2873,10 @@ def test_an_error_naming_a_file_descriptor_names_no_file(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("placement", [
     pytest.param("a cell", id="a cell, numba's order"),
+    pytest.param("a cell, a class of none of numba's families listed too", marks=from_062,
+                 id="a cell, the IPython locator and a class of the reader's own"),
+    pytest.param("a cell, a class of none of numba's families listed first", marks=from_062,
+                 id="a cell, a class of the reader's own and the IPython locator"),
     pytest.param("a .zip member in an ipykernel directory", marks=from_062, id="a .zip member, the IPython locator alone"),
 ])
 @pytest.mark.parametrize("ipython", ["cannot make its directory", "raises for its directory"])
@@ -2883,7 +2887,10 @@ def test_a_file_numbas_ipython_locator_alone_takes_and_passes_over_is_told_ipyth
     # no other locator takes, then gets numba's no-locator error, as does a
     # .zip member in an ipykernel directory under a list with no .zip locator
     # after the IPython one; the remedy answered with the archive remedy, the
-    # source files on disk or a .zip holding them, which touch no cell.
+    # source files on disk or a .zip holding them, which touch no cell, and
+    # answered so again for a cell under a list of the IPython locator and a
+    # class of none of numba's families, which passed the cell over too and
+    # is named as having.
     import types
     import numba
     import numbox.core.configurations as configurations
@@ -2900,24 +2907,39 @@ def test_a_file_numbas_ipython_locator_alone_takes_and_passes_over_is_told_ipyth
     monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    py_file = "<ipython-input-3-0123456789ab>" if placement.startswith("a cell") else str(
+        tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
     if placement == "a cell":
         monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
-        py_file = "<ipython-input-3-0123456789ab>"
+    elif placement.startswith("a cell"):
+        from numba.core.caching import _CacheLocator
+
+        class OurLocator(_CacheLocator):
+            @classmethod
+            def from_function(cls, py_func, py_file):
+                return None
+
+        ours = types.ModuleType("our_locators")
+        ours.OurLocator = OurLocator
+        monkeypatch.setitem(sys.modules, "our_locators", ours)
+        listed = ("IPythonCacheLocator,our_locators.OurLocator" if placement.endswith("too")
+                  else "our_locators.OurLocator,IPythonCacheLocator")
+        monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", listed, raising=False)
     else:
         monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "IPythonCacheLocator", raising=False)
-        py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
+    passed_over = ", and OurLocator, listed too, passed the file over" if "none of numba's" in placement else ""
     with pytest.raises(RuntimeError, match="no locator available") as raised:
         configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
     assert configurations.is_a_cache_error(raised.value)
     remedy = configurations.cache_remedy(py_file, raised.value, "silence")
     if ipython == "cannot make its directory":
         assert remedy == (
-            f"numba caches this file in {ipython_dir}/numba_cache, which it could not make or write in: make it "
-            f"writable, or put IPython's cache directory, {ipython_dir}, at a shorter path; or silence"), remedy
+            f"numba caches this file in {ipython_dir}/numba_cache, which it could not make or write in{passed_over}: "
+            f"make it writable, or put IPython's cache directory, {ipython_dir}, at a shorter path; or silence"), remedy
     else:
         assert remedy == (
             "numba caches this file in numba_cache under IPython's cache directory, which IPython raised for, under a "
-            "home it cannot write: make that home writable; or silence"), remedy
+            f"home it cannot write{passed_over}: make that home writable; or silence"), remedy
 
 
 @from_061
