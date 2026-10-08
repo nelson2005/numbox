@@ -397,7 +397,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location numba took as the class's own, with no path to name, among numba's locators' places where those are
     reached. numba's
     IPython locator caches a cell file it takes in ``numba_cache`` under IPython's cache directory, with no directory
-    per file, and that location too long is told as IPython's cache directory at a shorter path, for a cell file on
+    per file, and passes the location over where it cannot make or write in it, so that a cell, which no other
+    locator takes, gets numba's no-locator error and is told that location, to make writable or put at a shorter
+    path, or IPython's cache directory to make a home for where IPython raised for it; that location too long is
+    told as IPython's cache directory at a shorter path, for a cell file on
     disk and for a ``.zip`` member in an ipykernel directory alike, where that locator is listed before the
     ``.zip`` one, which takes a file without trying its location, so that none listed after it is reached, with no
     ``NUMBA_CACHE_DIR`` offered for a source not on disk; IPython is asked for that directory
@@ -885,6 +888,22 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         return (
             f"{opening}numba could not use that directory, {location}: make it writable, or put it at a shorter "
             f"path{_moved_through()}, or {silence}"
+        )
+    if not isinstance(failure, (OSError, ValueError)) and reached and all(one_of(cls, for_ipython) for cls in reached):
+        # numba's no-locator error for a file its IPython locator alone takes,
+        # a cell or a .zip member in an ipykernel directory under a list with
+        # no .zip locator after it: the locator passed its location over, as
+        # numba's user-wide one does a frozen application's, unwritable or too
+        # deep to make, or IPython raised for its directory and gave none.
+        ipython_cache = locations[reached[0]]
+        if ipython_cache:
+            return (
+                f"numba caches this file in {ipython_cache}, which it could not make or write in: make it writable, "
+                f"or put IPython's cache directory, {os.path.dirname(ipython_cache)}, at a shorter path; or {silence}"
+            )
+        return (
+            "numba caches this file in numba_cache under IPython's cache directory, which IPython raised for, under a "
+            f"home it cannot write: make that home writable; or {silence}"
         )
     in_a_zip = any(part.endswith(".zip") for part in pathlib.Path(py_file).parts)
     if in_a_zip and listed_without(for_a_zip):
