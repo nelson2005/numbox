@@ -86,7 +86,8 @@ warning instead.
   file descriptor's, as none. An error can name no file, or carry an
   empty string or empty bytes as its name. A caller can build such an error, and numba's first save raises one where a
   write fails, as on a full disk. So does inspect where, for numba's IPython locator, it reads no source in a cell file
-  on disk, empty or unreadable, with no errno either, no call of the file system's having raised it, and that error,
+  on disk, unreadable or, before Python 3.13, empty, with no errno either, no call of the file system's having raised
+  it, and that error,
   for a file on disk that a locator of IPython's family numba reaches takes, is told as inspect's, that locator having
   tried no location: the file to make readable, with the source in it. Every other OSError that ``check_cache_location``
   raises names a file. An error with no name, or an empty
