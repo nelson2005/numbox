@@ -425,7 +425,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     that location as the error names it, as for a source on disk, with nothing of what moves the user's cache
     directory and nothing of where numba caches the file, which that location is none of; the frozen application's is
     the no-locator one, which gives no reason, numba having passed
-    the location over on its error, so the user's cache directory is named, to be made writable; an error that
+    the location over on its error, unwritable or too deep alike, so the user's cache directory is named as one numba
+    could not use, to be made writable or put at a shorter path; an error that
     names no file, a caller's, or the first save's on a full disk, is told the locations numba could have taken, as
     for a source on disk, in its order and each once, with the reason, or, for a path too long, to put whichever is
     too long at a shorter path, and for a member in an ipykernel directory where a locator of IPython's family is
@@ -819,7 +820,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"{opening}no file can be written in that directory, {location} ({reason}), so make room there, or "
                 f"make it writable, or {silence}"
             )
-        return f"{opening}make that directory, {location}, writable, or {silence}"
+        # numba's no-locator error for a frozen application gives no reason,
+        # numba having passed the user-wide location over on its error, an
+        # unwritable directory or one too deep to make alike.
+        return (
+            f"{opening}numba could not use that directory, {location}: make it writable, or put it at a shorter "
+            f"path{_moved_through()}, or {silence}"
+        )
     in_a_zip = any(part.endswith(".zip") for part in pathlib.Path(py_file).parts)
     if in_a_zip and listed_without(for_a_zip):
         # numba's .zip locator alone takes a source in a .zip, so a list

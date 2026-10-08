@@ -659,9 +659,10 @@ def test_a_frozen_application_is_told_its_user_cache_directory(tmp_path):
         assert run.returncode == 0 and str(site) in run.stdout, run.stderr
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
         assert "frozen application" in run.stderr, run.stderr
-        # The frozen error is the no-locator one, which names no directory,
-        # so the warning names numba's: the user cache directory under the home.
-        named = re.search(r"make that directory, (.+?), writable", run.stderr)
+        # The frozen error is the no-locator one, which names no directory
+        # and gives no reason, so the warning names numba's, the user cache
+        # directory under the home, as one numba could not use.
+        named = re.search(r"numba could not use that directory, (.+?): make it writable", run.stderr)
         assert named and Path(named.group(1)).is_relative_to(home), run.stderr
         assert "install numbox with its source files" not in run.stderr
     finally:
@@ -1801,7 +1802,8 @@ def test_a_zip_import_under_a_locator_list_without_the_zip_locator_is_told_to_li
 @pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
 @pytest.mark.parametrize("locators, expected", [
     ("", "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
-         "effect here, because the source is not a file on disk: make that directory, {user_cache_dir}, writable"),
+         "effect here, because the source is not a file on disk: numba could not use that directory, {user_cache_dir}: "
+         "make it writable, or put it at a shorter path{moved_through}"),
     ("UserProvidedCacheLocator,InTreeCacheLocator",
      "numba caches a frozen application through UserWideCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, "
      "{locators}, leaves it out: list it"),
@@ -1827,7 +1829,8 @@ def test_a_frozen_application_under_a_locator_list_without_the_user_wide_locator
     py_file = str(tmp_path / "frozen" / "numbox" / "module.py")
     failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
     remedy = configurations.cache_remedy(py_file, failure, "silence")
-    expected = expected.format(locators=locators, user_cache_dir=tmp_path / "user-cache" / "numba")
+    expected = expected.format(locators=locators, user_cache_dir=tmp_path / "user-cache" / "numba",
+                               moved_through=configurations._moved_through())
     assert remedy == f"{expected}, or silence", remedy
 
 
@@ -2394,6 +2397,37 @@ def test_a_cell_numbas_ipython_locator_takes_by_its_name_is_asked_and_told_as_a_
     remedy = configurations.cache_remedy(cell, OSError(*error, str(ipython_dir / "numba_cache")), "silence")
     told = told.format(ipython_dir=ipython_dir, numba_cache=ipython_dir / "numba_cache")
     assert remedy == f"{told}; or silence", remedy
+
+
+def test_a_frozen_application_whose_user_cache_directory_is_too_deep_is_told_a_shorter_path(tmp_path, monkeypatch):
+    # numba's user-wide locator passes a location it cannot make over, one too
+    # deep for the file system as an unwritable one, and numba's error for a
+    # frozen application is then its no-locator one, which gives no reason;
+    # the remedy asked for the user's cache directory to be made writable
+    # alone, which cures no path too long.
+    import numba
+    from numba.core import caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheTooDeep:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / ("x" * 300) / "numba")
+
+    monkeypatch.setattr(caching, "AppDirs", UserCacheTooDeep)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheTooDeep)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = str(tmp_path / "frozen" / "numbox" / "module.py")
+    with pytest.raises(RuntimeError, match="no locator available") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert configurations.is_a_cache_error(raised.value)
+    remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    assert remedy == (
+        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+        "effect here, because the source is not a file on disk: numba could not use that directory, "
+        f"{tmp_path / ('x' * 300) / 'numba'}: make it writable, or put it at a shorter "
+        f"path{configurations._moved_through()}, or silence"), remedy
 
 
 A_ZIP_REFUSED = {
