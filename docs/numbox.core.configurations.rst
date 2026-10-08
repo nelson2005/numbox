@@ -79,8 +79,9 @@ warning instead.
   under the file's name for a file not on disk, one check at a time, having no module to read a ``.zip`` member's
   through, where inspect reads a file on disk itself; that location too long is told as
   IPython's cache directory at a shorter path, for a cell file on disk and for a member of a ``.zip`` in an ipykernel
-  directory alike, which that locator takes before the ``.zip`` one is reached, with no ``NUMBA_CACHE_DIR`` offered
-  for a source not on disk; the remedy asks IPython for that directory where a locator of that family is listed
+  directory alike, where that locator is listed before the ``.zip`` one, which takes a file without trying its
+  location, so that none listed after it is reached, with no ``NUMBA_CACHE_DIR`` offered for a source not on
+  disk; the remedy asks IPython for that directory where a locator of that family is listed
   and takes the file, and leaves IPython alone for every other file, a plain ``.zip`` member among them, since
   IPython warns when asked under a home it cannot write and leaves a temporary directory behind; numba
   imports IPython for the location when it makes it and catches only OSError there, so where IPython is not
@@ -106,7 +107,9 @@ warning instead.
 - For a ``.zip``, or a frozen application, it is the user's cache directory made writable, or room made there,
   with the reason the error gives, a full disk or permissions: a ``.zip`` is the one archive numba caches, from
   0.61 on, and it caches it there, taking the directory without checking that it can be written; the error names
-  that location, or a file numba's first save writes in it, and the location is told with the reason; a frozen
+  that location, or a file numba's first save writes in it, and the location is told with the reason; an error
+  naming a location that is none of numba's, under the list and in its order, is told that location as the error
+  names it, as for a source on disk, with nothing of what moves the user's cache directory; a frozen
   application (``sys.frozen``) is cached there too, its sources not being on disk, and its error is numba's
   no-locator one, which gives no reason, so that directory is to be made writable.
   numba reads ``NUMBA_CACHE_DIR`` only for a source file on disk, so the variable changes nothing for either.
