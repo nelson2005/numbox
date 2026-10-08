@@ -3005,6 +3005,8 @@ A_NAME_TOO_LONG = {
         from_062,
     "a frozen application": [],
     "a frozen application, a name that just fits, the user's cache directory too deep": [],
+    "on disk, NUMBA_CACHE_DIR set, the user-provided locator alone, a name of CJK characters": [
+        from_062, pytest.mark.skipif(os.name == "nt", reason="Windows counts a name in UTF-16 units, where it fits")],
 }
 
 
@@ -3021,7 +3023,10 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
     # name and its length, and asks for the file in a directory of a shorter
     # name, with the __pycache__ beside a source on disk, which the in-tree
     # locator names after nothing, made writable or that locator listed; a
-    # name that just fits is told as before.
+    # name that just fits is told as before. The name is counted as the
+    # file system counts it, in bytes, or in UTF-16 units on Windows, where
+    # a name of CJK characters that fits was counted in bytes and told too
+    # long.
     import numba
     from numba.core import caching
     import numbox.core.configurations as configurations
@@ -3047,6 +3052,8 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
         listed = "ZipCacheLocator,UserWideCacheLocator"
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", listed, raising=False)
     directory = "d" * (limit - 41 if just_fits else limit - 35)
+    if "CJK" in case:
+        directory = "\u5b57" * ((limit - 41) // 3 + 1)
     if case.startswith("a .zip"):
         archive = tmp_path / "app.zip"
         with zipfile.ZipFile(archive, "w") as zipped:
@@ -3061,9 +3068,12 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
     else:
         py_file = str(tmp_path / "frozen" / directory / "module.py")
     subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
-    assert len(subpath.encode()) == (limit if just_fits else limit + 6)
+    length = len(subpath.encode())
+    assert length == limit if just_fits else length > limit
+    if "CJK" in case:
+        assert len(subpath) < limit
     clause = (
-        f"numba names the directory it caches this file in after the source's directory, {subpath}, {limit + 6} bytes, "
+        f"numba names the directory it caches this file in after the source's directory, {subpath}, {length} bytes, "
         f"which is longer than a name can be on that file system ({limit})")
     if "unwritable" in case:
         Path(py_file).parent.chmod(0o555)

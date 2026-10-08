@@ -73,7 +73,8 @@ warning instead.
   deep, the warning names it and the remedy is a writable directory at a short path. The directory numba names after
   the source's, under ``NUMBA_CACHE_DIR`` or the user's cache directory, is that directory's name and forty-one
   bytes, and one longer than a name can be on the file system holding the location, which the system is asked for,
-  255 bytes where it cannot say, can be made at no path: an error naming such a location, numba's no-locator error
+  255 where it cannot say, in bytes, or in the UTF-16 units Windows counts a name in, can be made at no path: an
+  error naming such a location, numba's no-locator error
   for a file on disk where every locator it tried that names its directory so found the name too long for its file
   system, the variable's unset by that limit, and a frozen application's are told the name and its length, and the
   file in a directory of a shorter name, with, for a file on disk, the ``__pycache__`` beside the source made

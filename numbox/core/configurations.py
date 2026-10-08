@@ -270,7 +270,9 @@ def _moved_through():
 
 
 def _name_limit(location):
-    """The longest name a file can have where ``location`` is, in bytes: 255 where the system cannot say, or for none.
+    """The longest name a file can have where ``location`` is: 255 where the system cannot say, or for none.
+
+    In bytes, which the file systems elsewhere count a name in, or in the UTF-16 units Windows counts one in.
 
     Asked of the nearest directory above ``location`` that exists, since the location itself may not be there yet.
     """
@@ -400,7 +402,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     location, or, where it is set and numba passed it over, named and made a writable directory at a short path. The
     directory numba names after the source's, under ``NUMBA_CACHE_DIR`` or the user's cache directory, is that
     directory's name and forty-one bytes, and one longer than a name can be on the file system holding the location,
-    which the system is asked for, 255 bytes where it cannot say, can be made at no path: an error naming such a
+    which the system is asked for, 255 where it cannot say, in bytes, or in the UTF-16 units Windows counts a name
+    in, can be made at no path: an error naming such a
     location, numba's no-locator error for a file on disk where every locator it tried that names its directory so
     found the name too long for its file system, the variable's unset by that limit, and a frozen application's are
     told the name and its length, and the file in a directory of a shorter name, with, for a file on disk, the
@@ -561,12 +564,17 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # path, so no shorter one cures it: the clause that says so, or None
         # where the name fits.
         limit = _name_limit(location)
-        length = len(os.fsencode(subpath))
+        if os.name == "nt":
+            # Windows counts a name in UTF-16 units, the file systems
+            # elsewhere in bytes.
+            length, counted_in = len(subpath.encode("utf-16-le")) // 2, "characters"
+        else:
+            length, counted_in = len(os.fsencode(subpath)), "bytes"
         if length <= limit:
             return None
         return (
             f"numba names the directory it caches this file in after the source's directory, {subpath}, {length} "
-            f"bytes, which is longer than a name can be on that file system ({limit})"
+            f"{counted_in}, which is longer than a name can be on that file system ({limit})"
         )
 
     a_file_on_disk = os.path.exists(py_file)
