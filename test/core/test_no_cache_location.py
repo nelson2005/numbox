@@ -2008,6 +2008,32 @@ def test_a_file_on_disk_under_a_zip_directory_with_the_zip_locator_first_is_answ
     assert remedy == f"{told}; or silence", remedy
 
 
+def test_an_empty_path_object_names_the_working_directory_as_pathlib_reads_it(tmp_path, monkeypatch):
+    # An error that names no file, or an empty name, is told the locations
+    # numba could have taken; a path object has no empty name, pathlib
+    # reading an empty string as the working directory, ".", so one built
+    # from it names that directory, which is none of numba's, and is told as
+    # named, as the string "." is.
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("")
+
+    def remedy(name):
+        return configurations.cache_remedy(
+            str(py_file), OSError(errno.ENAMETOOLONG, "File name too long", name), "silence")
+
+    assert Path("") == Path(".") and os.fspath(Path("")) == "."
+    assert remedy(Path("")) == remedy(".") == (
+        "the path is too long for the file system: that location, ., at a shorter path, or NUMBA_CACHE_DIR set to a "
+        "short path; or silence")
+    assert remedy("").startswith("the path is too long for the file system: the location numba took, one of ")
+    assert remedy(b"") == remedy("")
+
+
 A_ZIP_REFUSED = {
     "unwritable": ((errno.EACCES, "Permission denied"),
                    "no file can be written in that directory, {location} (Permission denied), so make room there, or "
