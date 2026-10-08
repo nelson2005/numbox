@@ -1428,10 +1428,14 @@ def test_a_zip_members_error_is_answered_without_asking_ipython_for_its_cache_di
     py_file = str(tmp_path / "bundle.zip" / "package" / "module.py")
     location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
     remedy = configurations.cache_remedy(py_file, OSError(errno.EACCES, "Permission denied", str(location)), "silence")
+    # numba's .zip locator arrived in 0.61; before it, a .zip member has no
+    # location of numba's, and the one the error names is told as named.
+    told = (f"no file can be written in that directory, {location} (Permission denied)" if numba_version >= 61 else
+            f"no file can be written at that location, {location} (Permission denied)")
     assert remedy == (
         "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
-        f"effect here, because the source is not a file on disk: no file can be written in that directory, {location} "
-        "(Permission denied), so make room there, or make it writable, or silence"), remedy
+        f"effect here, because the source is not a file on disk: {told}, so make room there, or make it writable, "
+        "or silence"), remedy
 
 
 @pytest.mark.parametrize("platform, moved_through", [
@@ -1457,6 +1461,10 @@ def test_the_user_cache_directory_is_told_what_moves_it_on_the_platform(tmp_path
         str(py_file), OSError(errno.ENAMETOOLONG, "File name too long", location), "silence")
     assert f"the user's cache directory, {user_cache_dir}, at a shorter path{moved_through}, or NUMBA_CACHE_DIR" in (
         on_disk), on_disk
+    if numba_version < 61:
+        # numba's .zip locator arrived in 0.61; before it, a .zip member has
+        # no location of numba's under the user's cache directory.
+        return
     zip_member = str(tmp_path / "package.zip" / "package" / "module.py")
     zip_location = os.path.join(user_cache_dir, _CacheLocator.get_suitable_cache_subpath(zip_member))
     zipped = configurations.cache_remedy(
@@ -1589,6 +1597,7 @@ def test_a_location_too_long_under_the_zip_locator_listed_first_is_the_users_cac
         f"{configurations._moved_through()}; or silence"), remedy
 
 
+from_061 = pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
 from_062 = pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
 
 
@@ -1900,7 +1909,7 @@ def test_a_zip_members_error_naming_the_zips_location_after_ipythons_locator_pas
 
 @pytest.mark.parametrize("locators, member", [
     pytest.param("", "bundle.zip/package/module.py", id="numba's order, a .zip member in no ipykernel directory",
-                 marks=pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")),
+                 marks=from_061),
     pytest.param("ZipCacheLocator", "bundle.zip/ipykernel_123/cell.py", id="a list without the IPython locator",
                  marks=from_062),
 ])
@@ -1992,6 +2001,7 @@ def test_a_zip_import_refused_its_location_under_a_list_without_the_user_wide_lo
         f"effect here, because the source is not a file on disk: {told}, or silence"), remedy
 
 
+@from_061
 @pytest.mark.parametrize("refused", list(A_ZIP_REFUSED))
 def test_a_zip_error_naming_a_file_numba_writes_in_its_location_is_told_the_location(tmp_path, monkeypatch, refused):
     # The package's own check names the location numba took for a .zip, a
