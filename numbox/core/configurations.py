@@ -282,7 +282,8 @@ def _locators(listed):
     """numba's cache locator classes in the order it tries them.
 
     ``listed`` is ``NUMBA_CACHE_LOCATOR_CLASSES`` as numba 0.62 and later read it, each entry a class of numba's
-    caching module by its name or its dotted path, resolved as numba resolves it; an entry numba could not resolve
+    caching module by its name or its dotted path, resolved as numba resolves it, with the underscore numba put before
+    its locators' names until 0.62 allowed in either; an entry numba could not resolve
     it has refused already, before any location was tried, and one that names no class it fails on at the first
     function it decorates, for want of ``from_function``, so neither is a locator here, and numba's own error for
     either is raised as it was. Empty, the order is numba's own.
@@ -296,7 +297,7 @@ def _locators(listed):
         if "." in entry:
             module_path, class_name = entry.rsplit(".", 1)
             try:
-                cls = getattr(importlib.import_module(module_path), class_name, None)
+                cls = _class_named(importlib.import_module(module_path), class_name)
             except ImportError:
                 cls = None
         else:
