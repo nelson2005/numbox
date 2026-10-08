@@ -2736,7 +2736,10 @@ def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_t
 
 @from_062
 @pytest.mark.parametrize("placement, refused", [
-    ("a source on disk", "too long"), ("a source on disk", "unwritable"), ("a .zip member", "unwritable"),
+    pytest.param("a source on disk", "too long", marks=pytest.mark.skipif(
+        os.name == "nt", reason="Windows refuses a 300-character directory name as invalid, not as too long")),
+    pytest.param("a source on disk", "unwritable", marks=needs_a_directory_it_cannot_write),
+    pytest.param("a .zip member", "unwritable", marks=needs_a_directory_it_cannot_write),
     ("a source on disk", "naming no file"), ("a .zip member", "naming no file"),
     ("a source on disk, the in-tree locator after", "naming no file"),
 ])
@@ -2959,7 +2962,8 @@ def test_a_file_numbas_ipython_locator_alone_takes_and_passes_over_is_told_ipyth
     remedy = configurations.cache_remedy(py_file, raised.value, "silence")
     if ipython == "cannot make its directory":
         assert remedy == (
-            f"numba caches this file in {ipython_dir}/numba_cache, which it could not make or write in{passed_over}: "
+            f"numba caches this file in {os.path.join(ipython_dir, 'numba_cache')}, which it could not make or write "
+            f"in{passed_over}: "
             f"make it writable, or put IPython's cache directory, {ipython_dir}, at a shorter path; or silence"), remedy
     else:
         assert remedy == (
