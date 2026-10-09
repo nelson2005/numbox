@@ -1,0 +1,27 @@
+name: probe-windows-zip
+
+on:
+  push:
+    branches: [ "probe/**" ]
+
+permissions:
+  contents: read
+
+jobs:
+  zip-import:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        numba: ["0.68.0", "0.67.0"]
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Install numba ${{ matrix.numba }} and numbox at 843a85f
+      run: python -m pip install "numba==${{ matrix.numba }}" "git+https://github.com/Goykhman/numbox.git@843a85f7a2298a29665b4ea85290eb7a5494e9a8"
+    - name: Import numbox from a zip holding every .py
+      run: python probes/zip_import.py sources
+    - name: Import numbox from a zip whose bindings are .pyc only
+      run: python probes/zip_import.py pyc
