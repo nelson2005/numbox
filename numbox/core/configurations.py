@@ -393,15 +393,16 @@ def _ipython_numba_cache():
     """numba's cache location for a cell file its IPython locator takes: ``numba_cache`` under IPython's cache
     directory, with no directory per file; None where IPython is not importable, which numba's locator raises
     ImportError for at decoration, no cache error, so the location is then none of numba's, and None where IPython
-    raises OSError for its directory, which numba's locator passes the file over on, as it does a location it cannot
-    make, so that numba took no location of IPython's."""
+    raises for its directory: OSError, which numba's locator passes the file over on, as it does a location it cannot
+    make, so that numba took no location of IPython's, or anything else, which numba's locator would raise at
+    decoration and which the remedy, asked the same for the words of a warning, takes as no location given."""
     try:
         try:
             from IPython.paths import get_ipython_cache_dir
         except ImportError:
             from IPython.utils.path import get_ipython_cache_dir
         return os.path.join(get_ipython_cache_dir(), "numba_cache")
-    except (ImportError, OSError):
+    except Exception:
         return None
 
 

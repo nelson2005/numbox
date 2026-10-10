@@ -1560,6 +1560,32 @@ def test_a_source_on_disk_under_a_directory_named_zip_is_told_the_directory_once
             path.chmod(0o755)
 
 
+def test_an_ipython_that_raises_for_its_cache_directory_leaves_the_remedy_a_remedy(tmp_path, monkeypatch):
+    # The remedy asks IPython for its cache directory as numba's locator does,
+    # and took OSError and ImportError for no directory; anything else escaped,
+    # and the import died with IPython's error where the warning was due.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+
+    def raises():
+        raise RuntimeError("IPython misbehaved")
+
+    paths.get_ipython_cache_dir = raises
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    cell = "<ipython-input-3-0123456789ab>"
+    failure = RuntimeError(f"cannot cache function 'f': no locator available for file '{cell}'")
+    remedy = configurations.cache_remedy(cell, failure, "silence")
+    assert remedy == (
+        "numba caches this file in numba_cache under IPython's cache directory, which IPython raised for, under a "
+        "home it cannot write: make that home writable; or silence"), remedy
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
