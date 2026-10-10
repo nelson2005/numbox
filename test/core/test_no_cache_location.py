@@ -3797,8 +3797,9 @@ def test_a_cell_whose_source_linecache_does_not_hold_raises_inspects_error_as_nu
         "source code), and numba caches a cell only while IPython holds its source; or silence"), remedy
 
 
+@pytest.mark.parametrize("name", ["bundle.zip", "bundle.egg"])
 def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_inspects_error_as_numba_does(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, name):
     # numba's IPython locator reads the function's source through the module's
     # loader for a .zip member, and zipimport gives none for a member compiled
     # to .pyc alone, so numba raises inspect's error at decoration; the check
@@ -3819,7 +3820,7 @@ def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_ins
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
     source = tmp_path / "cell.py"
     source.write_text("def cell():\n    pass\n")
-    archive = tmp_path / "bundle.zip"
+    archive = tmp_path / name
     compiled = py_compile.compile(str(source), cfile=str(tmp_path / "cell.pyc"),
                                   dfile=str(archive / "ipykernel_123" / "cell.py"), doraise=True)
     with zipfile.ZipFile(archive, "w") as zipped:
