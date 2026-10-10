@@ -1597,6 +1597,39 @@ def test_an_ipython_that_raises_for_its_cache_directory_leaves_the_remedy_a_reme
         "home it cannot write: make that home writable; or silence"), remedy
 
 
+def test_an_error_naming_no_file_for_an_ipykernel_source_on_disk_is_not_blamed_on_ipython(tmp_path, monkeypatch):
+    # A cell file on disk in an ipykernel directory that the in-tree locator
+    # took, with an error naming no file, a full disk at the first save, under
+    # an IPython giving temporary directories: the error shows nothing of
+    # which locator took the file, and the remedy, finding no other location
+    # named, blamed IPython's temporary directory and told IPYTHONDIR.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    kernel = tmp_path / "ipykernel_123"
+    kernel.mkdir()
+    py_file = kernel / "cell.py"
+    py_file.write_text("def f():\n    pass\n")
+    remedy = configurations.cache_remedy(str(py_file), OSError(errno.ENOSPC, "No space left on device"), "silence")
+    assert remedy.startswith("the location numba took, one of "), remedy
+    assert str(kernel / "__pycache__") in remedy and "IPYTHONDIR" not in remedy, remedy
+    assert remedy.endswith("where no file can be written (No space left on device): make room there, or make it "
+                           "writable, or NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
