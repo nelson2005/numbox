@@ -1701,6 +1701,45 @@ def test_a_path_too_long_the_user_wide_and_zip_locators_share_is_offered_the_var
         f"path{configurations._moved_through()}, or NUMBA_CACHE_DIR set to a short path; or silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
+def test_a_name_too_long_behind_the_zip_locators_error_for_a_path_with_zip_in_it_is_told_the_name(
+        tmp_path, monkeypatch):
+    # A source on disk in a directory whose name holds .zip without ending in
+    # it, long enough that the directory numba names after it is too long for
+    # the file system: the locators that name theirs so pass the file over,
+    # the in-tree one cannot cache beside the source, and numba's .zip locator
+    # raises for the ".zip" in the path. The remedy read the .zip locator's
+    # error alone and asked for NUMBA_CACHE_DIR, whose directory is named the
+    # same way and cannot be made either.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(numba.core.caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    limit = configurations._name_limit(str(tmp_path))
+    package = tmp_path / ("proj.zip_" + "x" * (limit - 20))
+    package.mkdir()
+    py_file = package / "module.py"
+    py_file.write_text("def f():\n    pass\n")
+    # The in-tree locator cannot make __pycache__ beside the source.
+    (package / "__pycache__").write_text("")
+    with pytest.raises(ValueError, match="No zip file found") as raised:
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    assert configurations.is_a_cache_error(raised.value)
+    remedy = configurations.cache_remedy(str(py_file), raised.value, "silence")
+    assert remedy.startswith("numba names the directory it caches this file in after the source's directory, "), remedy
+    assert remedy.endswith(
+        f": put the file in a directory of a shorter name, or make the __pycache__ beside the source, "
+        f"{package / '__pycache__'}, writable, where InTreeCacheLocator caches it under no such name; or silence"), remedy
+    assert "NUMBA_CACHE_DIR" not in remedy
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
