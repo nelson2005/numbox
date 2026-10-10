@@ -180,14 +180,15 @@ the directory is the only part that can make it so, ``NUMBA_CACHE_DIR``
 or the user's cache directory, and ``NUMBA_CACHE_DIR`` at a shorter
 path moves the anchor out of either. The anchor's check writes names
 shorter than the longest numba writes for a struct, which carry its name
-and its methods', so a user cache directory within about 230 bytes of
-the path limit, 4096 on Linux, passes it and overflows at numba's first
-save instead, where numba's own error names the length; the remedy is
-the same. A ``NUMBA_CACHE_DIR`` that deep is too deep for the package's
-own files first, whose location under it appends their directory's path
-and whose check reserves the length of numba's files, so the package
-answers, with its remedy, and the generated code compiles under its
-answer.
+and its methods', so a user cache directory or a ``NUMBA_CACHE_DIR``
+within about 230 bytes of the path limit, 4096 on Linux, passes it and
+overflows at numba's first save instead, where numba's own error names
+the length; the remedy is the same. The package's own check answers
+first only nearer the limit, within about 175 bytes of it: the package's
+location under ``NUMBA_CACHE_DIR`` is a directory named for its own, by
+its name and a hash of its path, and its check reserves the length of
+numba's files for the package's functions, so it fails only where those
+no longer fit; the generated code then compiles under its answer.
 
 The anchor's name carries the struct's or the function's, and numba
 names its cache files after the anchor and the qualified name of the
