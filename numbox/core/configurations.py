@@ -949,15 +949,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 return f"{too_long}: put the file in a directory of a shorter name{beside_the_source()}; or {silence}"
             if failure.errno == errno.ENAMETOOLONG:
                 if taken is not None and reads_the_variable(taken):
+                    # The variable's location, which numba's own check passed
+                    # and the first save overflows: numba keeps taking the
+                    # variable as it is, so the user's cache directory at a
+                    # shorter path, offered where the variable is set to it,
+                    # moved nothing numba reads.
                     cure = "a shorter NUMBA_CACHE_DIR"
-                    if os.path.abspath(config.CACHE_DIR) == os.path.abspath(user_cache_dir) and any(
-                            caches_under_the_user_cache_dir(cls) for cls in reached):
-                        # Set to the user's cache directory, the variable makes
-                        # one path of two: that directory at a shorter path,
-                        # the variable left as it is, is passed over and the
-                        # locator caching under the directory takes the file.
-                        # The remedy offered the variable alone.
-                        cure += f", or the user's cache directory, which it is set to, at a shorter path{_moved_through()}"
                 elif taken is not None and caches_beside_the_source(taken):
                     cure = f"{package} installed at a shorter path{instead(taken)}"
                 elif taken is not None and caches_under_the_user_cache_dir(taken):
