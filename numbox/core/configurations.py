@@ -841,16 +841,24 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # The in-tree locator caches beside the source, in its __pycache__,
             # under no directory named after the source's: the one of numba's
             # locators for a file on disk that a name too long leaves, made
-            # writable where it is listed and passed the file over, or listed
-            # where NUMBA_CACHE_LOCATOR_CLASSES leaves it out.
-            if any(caches_beside_the_source(cls) for cls in order):
+            # writable where numba reaches it and it passed the file over, or
+            # listed where NUMBA_CACHE_LOCATOR_CLASSES leaves it out, or
+            # before the .zip locator where that one, listed first, took a
+            # path with .zip in it and left it unreached; the offer to make
+            # the __pycache__ writable went to a list numba never reached it
+            # under.
+            if any(caches_beside_the_source(cls) for cls in reached):
                 beside = os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__"))
                 return (
                     f", or make the __pycache__ beside the source, {beside}, writable, where InTreeCacheLocator "
                     "caches it under no such name"
                 )
             if listed:
-                return ", or list InTreeCacheLocator, which caches beside the source, in its __pycache__, under no such name"
+                before = " before ZipCacheLocator" if any(caches_beside_the_source(cls) for cls in order) else ""
+                return (
+                    f", or list InTreeCacheLocator{before}, which caches beside the source, in its __pycache__, under "
+                    "no such name"
+                )
             return ""
 
         def location_of(cls):
