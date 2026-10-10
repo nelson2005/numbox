@@ -19,8 +19,8 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
-    - name: Install numba ${{ matrix.numba }} and numbox at 1af291e
-      run: python -m pip install "numba==${{ matrix.numba }}" "git+https://github.com/Goykhman/numbox.git@1af291eb1e33e20d0c7060fb65ff9da542928d90"
+    - name: Install numba ${{ matrix.numba }} and numbox at e7c4857, the follow-up on the fork
+      run: python -m pip install "numba==${{ matrix.numba }}" "https://github.com/nelson2005/numbox/archive/e7c4857df59df0ffbbb32b2c4b82020092d78840.tar.gz"
     - name: Import numbox from a zip holding every .py
       run: python probes/zip_import.py sources
     - name: Import numbox from a zip whose bindings are .pyc only
