@@ -3621,8 +3621,8 @@ def test_a_zip_members_name_built_with_windows_separator_is_told_numba_0_68_1(tm
     assert remedy == (
         "numba 0.68.0 reads a .zip member's source by a name built with Windows's separator, "
         "numbox\\core\\bindings\\libm.py, which no archive holds (numba issue "
-        "https://github.com/numba/numba/issues/10889, fixed in numba 0.68.1): numba 0.68.1 or later caches this "
-        ".zip as it is; or silence"), remedy
+        "https://github.com/numba/numba/issues/10889, fixed in numba 0.68.1): numba 0.68.1 or later reads the "
+        "member as the archive names it; or silence"), remedy
 
 
 def test_a_pyc_alone_in_a_zip_on_windows_is_told_the_source_files_not_numba_0_68_1(tmp_path, monkeypatch):
