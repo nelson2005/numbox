@@ -128,7 +128,10 @@ warning instead.
   having passed the cell over too; the remedy asks IPython for that directory where a locator of that family is
   listed
   and takes the file, and leaves IPython alone for every other file, a plain ``.zip`` member among them, since
-  IPython warns when asked under a home it cannot write and leaves a temporary directory behind; numba
+  IPython warns when asked under a home it cannot write and leaves a temporary directory behind, a new one on
+  every call where it can write neither its cache directory nor its own, in which case numba makes ``numba_cache``
+  in one and saves in another, the check raises the error numba's first save would, and the warning asks for
+  ``IPYTHONDIR``, or ``XDG_CACHE_HOME`` on Linux, at a writable path; numba
   imports IPython for the location when it makes it and catches only OSError there, so where IPython is not
   importable it raises ImportError at decoration for a file that locator takes, no cache error, and an error a
   caller passes on naming that location is told it as none of numba's where another locator numba reaches has a
