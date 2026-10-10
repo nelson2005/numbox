@@ -619,8 +619,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     module's code gives under the archive's path, and the ``KeyError`` zipfile raises for a name the archive does
     not hold is told the source files, on disk or in a ``.zip``, naming the member, a module shipped as ``.pyc``
     alone; on Windows under numba 0.68.0 every member gets that error, its name built with the platform's
-    separator (numba issue 10889, fixed in 0.68.1), and the remedy is that release where the archive holds the
-    member's source under the name it reads, else the source files as for any member. The first part of the path
+    separator (numba issue 10889, fixed in 0.68.1), and the remedy is the install on disk, or that release, where
+    the archive holds the member's source under the name it reads, else the source files as for any member. The first part of the path
     ending in ``.zip`` is what numba takes for the archive, a directory so named above it included, and from 0.68
     opens to read the source: the ``IsADirectoryError`` is told the directory, to put the archive under a path
     with none such above it. A file in an ipykernel directory that numba's IPython locator takes, a cell file on disk
@@ -1031,13 +1031,16 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # source for it under the name that release reads either.
         member = _missing_member(failure)
         held = member.replace("\\", "/")
+        on_disk, a_zip = the_source_files()
         if os.name == "nt" and "\\" in member and _numbas_archive_holds(py_file, held):
+            # The release that reads the member is the cure once it is
+            # installed; the install on disk is one now.
             return (
                 f"numba 0.68.0 reads a .zip member's source by a name built with Windows's separator, {member}, which "
                 "no archive holds (numba issue https://github.com/numba/numba/issues/10889, fixed in numba 0.68.1): "
-                f"numba 0.68.1 or later reads the member as the archive names it; or {silence}"
+                f"to cache, {on_disk}, which no separator touches, or numba 0.68.1 or later, which reads the member "
+                f"as the archive names it; or {silence}"
             )
-        on_disk, a_zip = the_source_files()
         return (
             f"numba 0.68 and later read a .zip member's source from the archive, and this one holds none under "
             f"{held}, the module shipped as .pyc alone: to cache, {on_disk}, or {a_zip}; or {silence}"
