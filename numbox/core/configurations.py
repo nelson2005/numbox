@@ -1,3 +1,4 @@
+import ast
 import errno
 import importlib.machinery
 import inspect
@@ -5,6 +6,7 @@ import os
 import pathlib
 import json
 import linecache
+import re
 import sys
 import tempfile
 import threading
@@ -68,7 +70,8 @@ def check_cache_location(py_file, longest_file_name=0):
 
     The question is put the way numba puts it: the cache set-up that decoration runs, which picks the location
     for the file or raises ``RuntimeError`` with no locator, then the source's stamp, which decoration reads
-    and which stats the archive for a ``.zip``, then the writability check, which decoration runs for every
+    and which stats the archive for a ``.zip``, reading the member's source from it too from numba 0.68, then the
+    writability check, which decoration runs for every
     location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe is compiled with
     ``py_file`` as its file, which is all a locator reads of it but for numba's IPython locator, which reads the
     function's source too: inspect reads that from a file on disk itself, from linecache for a cell, which IPython
@@ -136,15 +139,17 @@ def check_cache_location(py_file, longest_file_name=0):
 
 
 def is_a_cache_error(error):
-    """Whether ``error`` is numba's for a cache it cannot set up: no locator, a location it cannot use, or
-    missing source files(s) on numba>=0.68.
+    """Whether ``error`` is numba's for a cache it cannot set up: no locator, a location it cannot use, or, from
+    numba 0.68, a ``.zip`` member whose source it cannot read from the archive.
 
     numba itself passes over a location on any ``OSError`` from making its directory or writing a file there,
     permission denied, a read-only file system, a path into a file, a component too long, a full disk, so any
     ``OSError`` counts. So does the ``ValueError`` numba raises for an archive under a directory whose name
-    holds ``.zip``: its ``.zip`` locator takes the file by that substring and then finds no ``.zip`` in it.
-    numba>=0.68 started hashing the source contents of the archive into the archive's cache stamp, therefore
-    missing .py raise KeyError.
+    holds ``.zip``: its ``.zip`` locator takes the file by that substring and then finds no ``.zip`` in it. And
+    so does the ``KeyError`` numba 0.68 and later raise reading a ``.zip`` member's source from the archive,
+    which they hash into the archive's stamp: zipfile's, naming the member, for a name the archive does not
+    hold, a module shipped as ``.pyc`` alone, or, on Windows under numba 0.68.0, any member, the name built with
+    the platform's separator (numba issue 10889, fixed in 0.68.1).
     """
     if isinstance(error, OSError):
         return True
@@ -412,6 +417,22 @@ def _ipython_locator_reads(py_file):
     return False
 
 
+def _missing_member(error):
+    """The member zipfile's ``KeyError`` names, "There is no item named 'x' in the archive", or its whole message.
+
+    zipfile quotes the name as Python does, so a backslash in it, which numba 0.68.0 builds a member's name with on
+    Windows, is doubled there and read back.
+    """
+    message = str(error.args[0]) if error.args else str(error)
+    found = re.search(r"^There is no item named (.+) in the archive$", message)
+    if not found:
+        return message
+    try:
+        return str(ast.literal_eval(found.group(1)))
+    except (ValueError, SyntaxError):
+        return found.group(1)
+
+
 def cache_remedy(py_file, failure, silence, package="numbox"):
     """The remedy for ``failure``, numba's for a function whose file is ``py_file``, ending in ``silence``.
 
@@ -542,13 +563,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     ``check_cache_location`` and ``is_a_cache_error`` passes its own name, as it passes ``check_cache_location`` a
     ``longest_file_name`` for its own functions, ``LONGEST_CACHE_FILE_NAME`` being numbox's.
 
-    On numba==0.68.0, ``KeyError`` caused by the Windows ZIP path separator
-    bug https://github.com/numba/numba/issues/10889 can be worked around by
-    disabling caching. The bug is scheduled to be fixed in 0.68.1.
-
-    On numba>=0.68, ``KeyError`` caused by missing .py source files in the ZIP
-    archive (when only compiled `.pyc` files are present) can be avoided by either
-    disabling caching or including all source files in the archive.
+    From numba 0.68 the archive's stamp hashes the member's source, read from the archive by the name the
+    module's code gives under the archive's path, and the ``KeyError`` zipfile raises for a name the archive does
+    not hold is told the source files, on disk or in a ``.zip``, naming the member, a module shipped as ``.pyc``
+    alone; on Windows under numba 0.68.0 every member gets that error, its name built with the platform's
+    separator (numba issue 10889, fixed in 0.68.1), and the remedy is that release. The first part of the path
+    ending in ``.zip`` is what numba takes for the archive, a directory so named above it included, and from 0.68
+    opens to read the source: the ``IsADirectoryError`` is told the directory, to put the archive under a path
+    with none such above it.
     """
     from numba import config
     from numba.core.caching import _CacheLocator
@@ -875,6 +897,60 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"directory at a short path, or {silence}"
             )
         return f"Set NUMBA_CACHE_DIR to a writable directory, or {silence}"
+
+    def the_source_files():
+        # The source files, on disk or in a .zip, each with the locator it
+        # needs listed where NUMBA_CACHE_LOCATOR_CLASSES leaves it out.
+        on_disk = f"install {package} with its source files on disk, unpacked from any archive"
+        if listed:
+            # The install caches through a locator for a file on disk the list
+            # names: none, and it caches no more than the archive does; the
+            # user-provided one alone, and that takes nothing without
+            # NUMBA_CACHE_DIR.
+            for_a_file_on_disk = [
+                cls for cls in _locators(listed)
+                if any(one_of(cls, base) for base in (user_provided, in_tree, user_wide))
+            ]
+            if not for_a_file_on_disk:
+                on_disk += (
+                    ", and list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or "
+                    f"UserWideCacheLocator in NUMBA_CACHE_LOCATOR_CLASSES, {listed}, which has none of them"
+                )
+            elif all(one_of(cls, user_provided) for cls in for_a_file_on_disk) and not config.CACHE_DIR:
+                on_disk += (
+                    ", with NUMBA_CACHE_DIR set, which UserProvidedCacheLocator, the one locator for a file on disk in "
+                    f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, takes nothing without"
+                )
+        a_zip = (
+            "import it from a .zip holding its source files, which numba 0.61 and later cache in the user's cache "
+            "directory"
+        )
+        if listed_without(for_a_zip):
+            # numba's .zip locator alone takes a .zip, so a list without it
+            # would leave numba no locator for the .zip offered either.
+            a_zip += f" through ZipCacheLocator, once NUMBA_CACHE_LOCATOR_CLASSES, {listed}, lists it"
+        return on_disk, a_zip
+
+    if isinstance(failure, KeyError):
+        # numba 0.68 and later read a .zip member's source from the archive
+        # for the stamp, by the name the module's code gives under the
+        # archive's path, and zipfile raises for a name the archive does not
+        # hold: a module shipped as .pyc alone, or, on Windows under 0.68.0,
+        # any member, the name built with the platform's separator (numba
+        # issue 10889, fixed in 0.68.1). The remedy told the archive's user
+        # to add source files that were there.
+        member = _missing_member(failure)
+        if os.name == "nt" and "\\" in member:
+            return (
+                f"numba 0.68.0 reads a .zip member's source by a name built with Windows's separator, {member}, which "
+                "no archive holds (numba issue https://github.com/numba/numba/issues/10889, fixed in numba 0.68.1): "
+                f"numba 0.68.1 or later caches this .zip as it is; or {silence}"
+            )
+        on_disk, a_zip = the_source_files()
+        return (
+            f"numba 0.68 and later read a .zip member's source from the archive, and this one holds none under "
+            f"{member}, the module shipped as .pyc alone: to cache, {on_disk}, or {a_zip}; or {silence}"
+        )
     # The locators numba reaches for a file not on disk, in its order: its
     # .zip locator takes a file without trying its location, so none listed
     # after it is reached; its IPython and user-wide ones pass a location
@@ -1018,6 +1094,17 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"that path, so {suggestion}ship its source files; "
                 f"or {silence}"
             )
+        if (isinstance(failure, OSError) and failure.errno == errno.EISDIR and filename and os.path.isdir(filename)
+                and filename.endswith(".zip") and py_file.startswith(filename + os.sep)):
+            # numba takes the first part of the path ending in .zip for the
+            # archive, a directory so named above it included, and from 0.68
+            # opens it to read the member's source, which a directory
+            # refuses; the remedy told the reader to make room in it.
+            return (
+                f"{opening}numba takes the first part of the path ending in .zip, {filename}, for the archive, and it "
+                "is a directory, which numba 0.68 and later open to read the member's source: put the archive under "
+                f"a path with no such directory above it, or {silence}"
+            )
         if isinstance(failure, OSError) and filename and taken is None:
             # A location that is none of numba's, under the list and in its
             # order, which an error a caller passes on can name: told as the
@@ -1116,30 +1203,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"numba caches a .zip through ZipCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves "
             f"it out: list it; or {silence}"
         )
-    on_disk = f"install {package} with its source files on disk, unpacked from any archive"
-    if listed:
-        # The install caches through a locator for a file on disk the list
-        # names: none, and it caches no more than the archive does; the
-        # user-provided one alone, and that takes nothing without
-        # NUMBA_CACHE_DIR.
-        for_a_file_on_disk = [
-            cls for cls in _locators(listed) if any(one_of(cls, base) for base in (user_provided, in_tree, user_wide))
-        ]
-        if not for_a_file_on_disk:
-            on_disk += (
-                ", and list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or "
-                f"UserWideCacheLocator in NUMBA_CACHE_LOCATOR_CLASSES, {listed}, which has none of them"
-            )
-        elif all(one_of(cls, user_provided) for cls in for_a_file_on_disk) and not config.CACHE_DIR:
-            on_disk += (
-                ", with NUMBA_CACHE_DIR set, which UserProvidedCacheLocator, the one locator for a file on disk in "
-                f"NUMBA_CACHE_LOCATOR_CLASSES, {listed}, takes nothing without"
-            )
-    a_zip = "import it from a .zip holding its source files, which numba 0.61 and later cache in the user's cache directory"
-    if listed_without(for_a_zip):
-        # numba's .zip locator alone takes a .zip, so a list without it
-        # would leave numba no locator for the .zip offered either.
-        a_zip += f" through ZipCacheLocator, once NUMBA_CACHE_LOCATOR_CLASSES, {listed}, lists it"
+    on_disk, a_zip = the_source_files()
     return (
         f"NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, {on_disk}, or "
         f"{a_zip}; or {silence}"
@@ -1164,7 +1228,10 @@ def uncached_where_no_cache_can_be_written(options):
     path where the path is too long, and the ``.zip`` locator to list where ``NUMBA_CACHE_LOCATOR_CLASSES`` leaves it
     out, numba reading ``NUMBA_CACHE_DIR`` only for a source file on disk; for any other archive,
     or a ``.pyc``-only install, or a ``.pyc`` in a ``.zip``, the source files on disk or a ``.zip`` holding them,
-    which numba 0.61 and later cache in the user's cache directory. ``NUMBOX_JIT_OPTIONS='{"cache": false}'``
+    which numba 0.61 and later cache in the user's cache directory, and so for a ``.zip`` member the archive holds
+    no source for, a ``.pyc`` alone, from numba 0.68, which reads the member's source from the archive for the
+    stamp, the member named; on Windows under numba 0.68.0 every member is such, its name built with the
+    platform's separator (numba issue 10889), and the remedy is numba 0.68.1. ``NUMBOX_JIT_OPTIONS='{"cache": false}'``
     turns caching off and silences the warning. An error that is not the cache's, as ``is_a_cache_error`` draws
     the line, is raised as it was.
 

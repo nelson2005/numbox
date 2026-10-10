@@ -185,6 +185,13 @@ warning instead.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` leaves it out: one of the three locators for a file on disk for the first, the
   ``.zip`` locator for the second, and ``NUMBA_CACHE_DIR`` set where the user-provided locator is the one listed for
   a file on disk, which takes nothing without it.
+- From numba 0.68 the archive's stamp hashes each member's source, read from the archive by the name the
+  module's code gives under the archive's path: a member shipped as ``.pyc`` alone is told the source files, on
+  disk or in a ``.zip``, naming the member; on Windows under numba 0.68.0 every member is refused, its name
+  built with the platform's separator (`numba issue 10889 <https://github.com/numba/numba/issues/10889>`_,
+  fixed in 0.68.1), and the warning names that release; and a directory whose name ends in ``.zip`` above the
+  archive, which numba takes for the archive by the first such part of the path and from 0.68 opens for the
+  source, is told as the directory it is, to put the archive under a path with none such above it.
 - ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in every case, the
   package's options being what it sets; the anchors' warning under a caller's own options, below, is
   silenced by those.

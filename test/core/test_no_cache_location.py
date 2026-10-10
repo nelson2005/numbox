@@ -138,7 +138,7 @@ def test_options_without_a_cache_key_are_asked_for_the_sites_that_cache_under_th
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
 
 
-windows_path_sep_bug = "Numba 0.68's ZIP cache locator uses Windows path separators for ZIP members"
+windows_path_sep_bug = "numba 0.68.0 reads a .zip member's source by a name built with Windows's separator"
 
 
 def test_a_zip_import_is_cached_by_numba_from_0_61(tmp_path):
@@ -572,7 +572,9 @@ def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_ta
     # listing that took a directory so named above it listed nothing. A
     # directory of .pyc members compiled to name the archive, as compileall -d
     # does, stands in the listing like one of .py members: a listing that let
-    # only .py members stand never asked for it.
+    # only .py members stand never asked for it. From numba 0.68 the archive
+    # is opened for each member's source, and the directory so named above
+    # it, or a directory of .pyc members, takes the fallback instead, told so.
     (tmp_path / parent).mkdir(exist_ok=True)
     archive = _archive(tmp_path / parent / "numbox.zip", bytecode)
     home = tmp_path / "home"
@@ -582,10 +584,20 @@ def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_ta
     env.pop("NUMBOX_JIT_OPTIONS", None)
     warm = _run(env, tmp_path)
     assert warm.returncode == 0, warm.stderr
-    if "use a path without a .zip-named directory" in warm.stderr:
-        pytest.skip("numba's caching doesn't distinguish directory with .zip in its name from an archive from 0.68 on")
-    if "put all source .py file(s) in .zip" in warm.stderr:
-        pytest.skip("numba's caching demands .py sources in a .zip from 0.68 on")
+    if numba_version >= 68 and parent:
+        assert warm.stderr.count("compiles without a cache") == 1, warm.stderr
+        assert (f"numba takes the first part of the path ending in .zip, {tmp_path / parent}, for the archive, and it "
+                "is a directory, which numba 0.68 and later open to read the member's source: put the archive under "
+                "a path with no such directory above it, or NUMBOX_JIT_OPTIONS") in warm.stderr, warm.stderr
+        return
+    if numba_version >= 68 and bytecode:
+        assert warm.stderr.count("compiles without a cache") == 1, warm.stderr
+        assert ("numba 0.68 and later read a .zip member's source from the archive, and this one holds none under "
+                "numbox/core/bindings/__init__.py, the module shipped as .pyc alone: to cache, install numbox with "
+                "its source files on disk, unpacked from any archive, or import it from a .zip holding its source "
+                "files, which numba 0.61 and later cache in the user's cache directory; or NUMBOX_JIT_OPTIONS"
+                ) in warm.stderr, warm.stderr
+        return
     if not _zip_is_cached():
         pytest.skip("numba caches a .zip from 0.61 on")
     # Under XDG_CACHE_HOME on Linux, under Library/Caches on macOS.
@@ -3033,9 +3045,12 @@ def test_the_check_raises_the_stamps_error_naming_the_archive_a_moved_zips_membe
     assert configurations.is_a_cache_error(raised.value)
     assert not (tmp_path / "user-cache").exists()
     remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    # Members compiled to name the archive's path now cache under numba 0.67
+    # and earlier; from 0.68 the archive must hold the sources too.
+    recompile = "" if numba_version >= 68 else "compile the archive's .pyc members to name its path now, or "
     assert remedy == (
-        f"the module's code names {archive}, which is not there: its .pyc was compiled to name that path, so compile "
-        "the archive's .pyc members to name its path now, or ship its source files; or silence"), remedy
+        f"the module's code names {archive}, which is not there: its .pyc was compiled to name that path, so "
+        f"{recompile}ship its source files; or silence"), remedy
 
 
 A_NAME_TOO_LONG = {
@@ -3417,6 +3432,89 @@ def test_a_file_not_found_error_that_names_no_file_for_a_source_not_on_disk_gets
     # No locator takes a source neither on disk, in a .zip nor a frozen
     # application's, so the error gets the remedy numba's no-locator one does.
     assert remedy == f"{ARCHIVE_REMEDY}; or silence", remedy
+
+
+def test_a_zip_member_whose_source_the_archive_does_not_hold_is_told_the_source_files_naming_the_member(
+        tmp_path, monkeypatch):
+    # numba 0.68 and later read a member's source from the archive for the
+    # stamp, and zipfile's KeyError names the member it did not find, a module
+    # shipped as .pyc alone: the error was not the cache's, so the import died
+    # at the first decorated function, and the archive remedy told the source
+    # files without the member.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    py_file = str(tmp_path / "numbox.zip" / "numbox" / "core" / "bindings" / "libm.py")
+    failure = KeyError("There is no item named 'numbox/core/bindings/libm.py' in the archive")
+    assert configurations.is_a_cache_error(failure) == (numba_version >= 68)
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert remedy == (
+        "numba 0.68 and later read a .zip member's source from the archive, and this one holds none under "
+        "numbox/core/bindings/libm.py, the module shipped as .pyc alone: to cache, install numbox with its source "
+        "files on disk, unpacked from any archive, or import it from a .zip holding its source files, which numba "
+        "0.61 and later cache in the user's cache directory; or silence"), remedy
+
+
+def test_a_zip_members_name_built_with_windows_separator_is_told_numba_0_68_1(tmp_path, monkeypatch):
+    # numba 0.68.0 builds the member's name with the platform's separator, so
+    # on Windows no archive holds it (numba issue 10889, fixed in 0.68.1): the
+    # archive's user was told to add source files that were there.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setattr(os, "name", "nt")
+    py_file = str(tmp_path / "numbox.zip" / "numbox" / "core" / "bindings" / "libm.py")
+    # zipfile quotes the name as Python does, each backslash doubled.
+    failure = KeyError("There is no item named 'numbox\\\\core\\\\bindings\\\\libm.py' in the archive")
+    assert configurations.is_a_cache_error(failure) == (numba_version >= 68)
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert remedy == (
+        "numba 0.68.0 reads a .zip member's source by a name built with Windows's separator, "
+        "numbox\\core\\bindings\\libm.py, which no archive holds (numba issue "
+        "https://github.com/numba/numba/issues/10889, fixed in numba 0.68.1): numba 0.68.1 or later caches this "
+        ".zip as it is; or silence"), remedy
+
+
+def test_a_directory_named_zip_above_the_archive_is_told_as_the_directory_from_numba_0_68(tmp_path, monkeypatch):
+    # numba takes the first part of the path ending in .zip for the archive, a
+    # directory so named above it included, and from 0.68 opens it to read the
+    # member's source, which the directory refuses; the remedy told the reader
+    # to make room in the directory, or make it writable.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    container = tmp_path / "container.zip"
+    container.mkdir()
+    py_file = str(container / "numbox.zip" / "numbox" / "core" / "configurations.py")
+    failure = IsADirectoryError(errno.EISDIR, "Is a directory", str(container))
+    assert configurations.is_a_cache_error(failure)
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert remedy == (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: numba takes the first part of "
+        f"the path ending in .zip, {container}, for the archive, and it is a directory, which numba 0.68 and later "
+        "open to read the member's source: put the archive under a path with no such directory above it, or silence"
+    ), remedy
 
 
 SUBCLASSED_LOCATORS = (
