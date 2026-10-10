@@ -81,7 +81,9 @@ def check_cache_location(py_file, longest_file_name=0):
     check at a time so that each puts back what it found, and a reader of that file's lines meanwhile, in another
     thread, reads the probe's; every other file is asked with the linecache untouched, and a cell linecache does
     not hold, or a member compiled to ``.pyc`` alone, raises inspect's error, as numba does at decoration. Nothing is
-    compiled, and nothing is written but the cache directory itself. An ``OSError`` from the check names the
+    compiled, and nothing is written but the cache directory itself and, asked for it under an IPython that can write
+    neither its cache directory nor its own, the temporary directories IPython makes, one per call, three for the
+    check, two of them numba's own making the directory. An ``OSError`` from the check names the
     location numba picked, but for two: inspect's, which names no file, for a cell file on disk that numba's IPython
     locator takes, where inspect reads the source from the file itself, before that locator tries its location, and
     finds none there, in a file it cannot read or, before Python 3.13, an empty one, which linecache gives a blank
@@ -131,22 +133,27 @@ def check_cache_location(py_file, longest_file_name=0):
     locator.get_source_stamp()
     try:
         locator.ensure_cache_path()
-        if longest_file_name:
-            # tempfile's name is the prefix and eight characters of its own.
-            with tempfile.NamedTemporaryFile(dir=locator.get_cache_path(), prefix="x" * (longest_file_name - 8)):
-                pass
     except OSError as error:
         # The error names what failed, a temporary file's name among the
         # possibilities; the location it is in is what a reader can act on.
         raise OSError(error.errno, error.strerror, locator.get_cache_path()) from error
+    # The location is asked for once more, as numba asks at every save, and
+    # its IPython locator asks IPython, which gives a new temporary directory
+    # on every call where it can write neither its cache directory nor its
+    # own: numba makes numba_cache in one and saves in another, dying there
+    # past its own check; the check passed the file the same way, and asked
+    # for the location at every step, a temporary directory each, where numba
+    # asks twice making it and the check once more.
     location = locator.get_cache_path()
     if not os.path.isdir(location):
-        # numba asks the locator for its location at every save, and its
-        # IPython locator asks IPython, which gives a new temporary directory
-        # on every call where it can write neither its cache directory nor its
-        # own: numba makes numba_cache in one and saves in another, dying
-        # there past its own check; the check passed the file the same way.
         raise FileNotFoundError(errno.ENOENT, "No such file or directory", location)
+    if longest_file_name:
+        try:
+            # tempfile's name is the prefix and eight characters of its own.
+            with tempfile.NamedTemporaryFile(dir=location, prefix="x" * (longest_file_name - 8)):
+                pass
+        except OSError as error:
+            raise OSError(error.errno, error.strerror, location) from error
 
 
 def is_a_cache_error(error):
@@ -398,11 +405,11 @@ def _ipython_numba_cache():
         return None
 
 
-def _ipython_cache_is_temporary():
+def _ipython_cache_is_temporary(first):
     """Whether IPython gives a new temporary directory as its cache directory on every call, which it does, warning
     so, where it can write neither its cache directory nor its own; numba's IPython locator asks for the directory at
-    every save, so numba makes ``numba_cache`` in one and saves in another."""
-    first = _ipython_numba_cache()
+    every save, so numba makes ``numba_cache`` in one and saves in another. ``first`` is one answer already given,
+    and one more is asked for; each is a directory IPython leaves behind."""
     return first is not None and _ipython_numba_cache() != first
 
 
@@ -748,8 +755,17 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         others.append(os.path.abspath(AppDirs(appname="numba", appauthor=False).user_cache_dir))
         return any(named == other or named.startswith(other + os.sep) for other in others)
 
+    asked = []
+
+    def ipython_numba_cache():
+        # IPython's cache directory, asked for once: under a home it cannot
+        # write IPython makes a temporary directory per call and warns.
+        if not asked:
+            asked.append(_ipython_numba_cache())
+        return asked[0]
+
     if isinstance(failure, OSError) and _ipython_locator_reads(py_file) and (
-            not a_file_on_disk or not names_another_location()) and _ipython_cache_is_temporary():
+            not a_file_on_disk or not names_another_location()) and _ipython_cache_is_temporary(ipython_numba_cache()):
         # numba's IPython locator, reached first for a member in an ipykernel
         # directory and for a cell file on disk there once the locators before
         # it passed the file over, asks IPython for its cache directory at
@@ -839,7 +855,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             if caches_under_the_user_cache_dir(cls):
                 return os.path.abspath(os.path.join(user_cache_dir, subpath)) if subpath else None
             if one_of(cls, for_ipython):
-                ipython_cache = _ipython_numba_cache()
+                ipython_cache = ipython_numba_cache()
                 return os.path.abspath(ipython_cache) if ipython_cache else None
             return None
 
@@ -1067,7 +1083,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # a directory of their own under the user's cache directory; a class
         # of none of numba's families in a place of its own, None here.
         if one_of(cls, for_ipython):
-            ipython_cache = _ipython_numba_cache()
+            ipython_cache = ipython_numba_cache()
             return os.path.abspath(ipython_cache) if ipython_cache else None
         if not of_numbas(cls) or in_the_user_cache is None:
             return None
