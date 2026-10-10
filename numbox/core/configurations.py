@@ -629,8 +629,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     not hold is told the source files, on disk or in a ``.zip``, naming the member, a module shipped as ``.pyc``
     alone; on Windows under numba 0.68.0 every member gets that error, its name built with the platform's
     separator (numba issue 10889, fixed in 0.68.1), and the remedy is the install on disk, or that release, where
-    the archive holds the member's source under the name it reads, else the source files as for any member. The first part of the path
-    ending in ``.zip`` is what numba takes for the archive, a directory so named above it included, and from 0.68
+    the archive holds the member's source under the name it reads, else the source files as for any member. The
+    first part of the path ending in ``.zip`` is what numba takes for the archive, a directory so named above it
+    included, and from 0.68
     opens to read the source: the ``IsADirectoryError`` is told the directory, to put the archive under a path
     with none such above it. A file in an ipykernel directory that numba's IPython locator takes, a cell file on disk
     or a ``.zip`` member, where IPython gives a new temporary directory as its cache directory on every call, able
