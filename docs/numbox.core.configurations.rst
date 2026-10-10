@@ -41,7 +41,9 @@ user's cache directory, the archive's directories are listed and the question pu
 ``.pyc`` in the archive that zipimport would run, which it takes before the ``.py`` beside it unless it is
 stale against it or of another interpreter, and whose code keeps the file it was compiled from, is asked by
 that file, since that is what numba looks up for it, on disk or gone, and one zipimport would pass over is
-passed over; any other archive has no location at all. A directory of the package reached through a symlink
+passed over, and a ``.pyc`` alone, with no ``.py`` beside it in the archive, is asked for itself whichever member
+stands for its directory, since numba 0.68 and later read the member's source from the archive by the name its
+code gives and find none for it; any other archive has no location at all. A directory of the package reached through a symlink
 is walked like the rest, wherever the link points. The check makes the cache directories it asks about, as
 numba would at the first decoration in each; with caching beside the sources that is an empty ``__pycache__``
 per directory of the package, a linked one included. numba's own writability check makes a temporary file,
