@@ -431,19 +431,30 @@ def _zip_holds_the_source(py_file):
     directory for the archive and found no member in it, or found no archive in an ``.egg`` at all, and raised
     inspect's error for a member numba caches. False too where the archive is not there, or is no archive.
     """
+    found = _archive_above(py_file)
+    if found is None:
+        return False
+    zip_path, member = found
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            return member in archive.namelist()
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
+def _archive_above(py_file):
+    """The archive ``py_file`` is a member of and the member's name in it, as zipimport finds them: the first part of
+    the path that is a file, whatever its name, must be a zip archive, and the rest is the member; None where no part
+    is a file, or the first that is one is no archive."""
     parts = pathlib.Path(py_file).parts
     for at in range(len(parts) - 1):
         prefix = str(pathlib.Path(*parts[:at + 1]))
         if os.path.isdir(prefix):
             continue
-        if not zipfile.is_zipfile(prefix):
-            return False
-        try:
-            with zipfile.ZipFile(prefix) as archive:
-                return "/".join(parts[at + 1:]) in archive.namelist()
-        except (OSError, zipfile.BadZipFile):
-            return False
-    return False
+        if zipfile.is_zipfile(prefix):
+            return prefix, "/".join(parts[at + 1:])
+        return None
+    return None
 
 
 def _ipython_locator_reads(py_file):
@@ -1185,16 +1196,22 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     # a caller passes on as for numba's no-locator one, as for a source on
     # disk.
     in_a_zip = any(part.endswith(".zip") for part in pathlib.Path(py_file).parts)
+    # A member of any archive, an .egg or .whl as a .zip, which zipimport runs
+    # and whose source inspect reads through its loader; the .zip is the one
+    # numba's .zip locator takes, and the only one it caches.
+    in_an_archive = in_a_zip or _archive_above(py_file) is not None
     inspects = isinstance(failure, OSError) and failure.errno is None and not filename and any(
         one_of(cls, for_ipython) for cls in reached)
-    if inspects and not in_a_zip:
+    if inspects and not in_an_archive:
         # inspect's error, with no errno and no name, for a cell whose source
         # linecache does not hold: numba's IPython locator reads a cell's
         # source from linecache, where IPython holds it while it runs the
         # cell, and inspect raises before the locator tries its location;
         # the remedy told the location numba took as refusing a file. For a
-        # .zip member whose archive holds no source, a .pyc alone, inspect's
-        # error gets the archive remedy below, the source files to ship.
+        # member of an archive that holds no source for it, a .pyc alone,
+        # inspect's error gets the archive remedy below, the source files to
+        # ship; a member of an .egg got the cell's, the archive unknown by
+        # its name.
         return (
             f"numba's IPython locator reads a cell's source from linecache, which holds none for {py_file} "
             f"({failure}), and numba caches a cell only while IPython holds its source; or {silence}"
