@@ -1769,6 +1769,26 @@ def test_the_name_limit_is_the_file_systems_own_asked_of_the_nearest_directory_t
     assert configurations._name_limit(None) == 255
 
 
+def test_is_a_cache_error_admits_numbas_errors_by_their_text_and_no_other():
+    # The line between numba's cache errors and the rest: any OSError; the
+    # .zip locator's ValueError by its text; numba's no-locator RuntimeError
+    # by its text; and, from numba 0.68, zipfile's KeyError for a member the
+    # archive does not hold, by its text, so that a KeyError of the code's
+    # own, a dictionary's, is raised as it was and not turned into the
+    # warning. Nothing pinned the texts: a classifier admitting every
+    # KeyError passed every test.
+    from numbox.core.configurations import is_a_cache_error
+    assert is_a_cache_error(OSError(errno.EACCES, "Permission denied", "/x"))
+    assert is_a_cache_error(ValueError("No zip file found in path"))
+    assert not is_a_cache_error(ValueError("invalid literal for int()"))
+    assert is_a_cache_error(RuntimeError("cannot cache function 'f': no locator available for file 'x.py'"))
+    assert not is_a_cache_error(RuntimeError("cannot cache function 'f': something else"))
+    assert is_a_cache_error(KeyError("There is no item named 'pkg/m.py' in the archive")) == (numba_version >= 68)
+    assert not is_a_cache_error(KeyError("jit"))
+    assert not is_a_cache_error(KeyError("There is no item named 'pkg/m.py' in the archive")) or numba_version >= 68
+    assert not is_a_cache_error(TypeError("x"))
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
