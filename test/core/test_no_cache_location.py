@@ -1263,7 +1263,8 @@ def test_a_cell_file_numbas_ipython_locator_takes_is_told_ipythons_cache_directo
     assert remedy == f"the path is too long for the file system: {expected}; or silence", remedy
 
 
-def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(tmp_path, monkeypatch):
+@pytest.mark.parametrize("parent", ["", "container.zip"], ids=["the archive", "under a directory named .zip"])
+def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(tmp_path, monkeypatch, parent):
     # numba's IPython locator takes a file in an ipykernel directory, on disk
     # or not, and reads the function's source when it does: from the file, or
     # through the module's loader for a member of a .zip. The probe the check
@@ -1273,7 +1274,9 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     # as the .zip's, answered with the user's cache directory made writable,
     # a directory numba never tried. The probe's source is given to inspect
     # for the time numba picks the locator, and the question goes on to
-    # IPython's cache directory, as numba's does.
+    # IPython's cache directory, as numba's does. zipimport finds the archive
+    # below a directory named .zip; a check that took the first part so named
+    # for the archive found no member in the directory and raised there.
     import linecache
     import types
     import numba
@@ -1285,10 +1288,12 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     paths.get_ipython_cache_dir = lambda: str(ipython_dir)
     monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
-    archive = tmp_path / "bundle.zip"
+    (tmp_path / parent).mkdir(exist_ok=True)
+    archive = tmp_path / parent / "bundle.zip"
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.writestr("ipykernel_123/cell.py", "def f():\n    pass\n")
     py_file = str(archive / "ipykernel_123" / "cell.py")
+    assert configurations._zip_holds_the_source(py_file)
     configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
     assert (ipython_dir / "numba_cache").is_dir()
     # The source is the probe's for the locator's choosing alone.
