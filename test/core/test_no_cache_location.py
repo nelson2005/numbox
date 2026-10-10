@@ -22,7 +22,7 @@ import zipfile
 from pathlib import Path
 
 
-from numbox.core.configurations import numba_version
+from numbox.core.configurations import LONGEST_CACHE_FILE_NAME, numba_version
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
@@ -1300,15 +1300,19 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     assert py_file not in linecache.cache
 
 
+@pytest.mark.parametrize("longest", [LONGEST_CACHE_FILE_NAME, 0],
+                         ids=["with the package's bound on names", "with no bound, as a package may ask"])
 def test_a_zip_member_in_an_ipykernel_directory_under_a_temporary_ipython_directory_takes_the_fallback(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, longest):
     # numba's IPython locator asks IPython for its cache directory at every
     # save, and IPython, able to write neither that directory nor its own,
     # gives a new temporary directory on every call: numba makes numba_cache
     # in one and saves in another, dying with FileNotFoundError at the
     # function's first call. The check made numba_cache the same way and
     # passed the file, where before the probe's source was given it raised
-    # inspect's error and the package fell back.
+    # inspect's error and the package fell back. With a bound on names the
+    # file the check makes in the location raises first, under the next
+    # directory IPython gives; without one the location itself is asked for.
     import tempfile
     import types
     import numba
@@ -1330,7 +1334,7 @@ def test_a_zip_member_in_an_ipykernel_directory_under_a_temporary_ipython_direct
         zipped.writestr("ipykernel_123/cell.py", "def f():\n    pass\n")
     py_file = str(archive / "ipykernel_123" / "cell.py")
     with pytest.raises(FileNotFoundError) as raised:
-        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+        configurations.check_cache_location(py_file, longest)
     assert raised.value.errno == errno.ENOENT
     assert raised.value.filename.startswith(str(tmp_path)) and raised.value.filename.endswith("numba_cache")
     assert not os.path.exists(raised.value.filename)
