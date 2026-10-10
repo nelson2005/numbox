@@ -1339,10 +1339,20 @@ def test_a_zip_member_in_an_ipykernel_directory_under_a_temporary_ipython_direct
     assert raised.value.filename.startswith(str(tmp_path)) and raised.value.filename.endswith("numba_cache")
     assert not os.path.exists(raised.value.filename)
     assert configurations.is_a_cache_error(raised.value)
+
+    def left_behind():
+        return len([path for path in tmp_path.iterdir() if path.name.startswith("tmp")])
+
+    # Each call leaves a directory behind: numba asks IPython twice making
+    # the directory, the check once more for the one numba would save in,
+    # and the remedy twice, the second to tell a new answer from the first.
+    # The check asked at every step, and left four.
+    assert left_behind() == 3
     assert configurations.cache_remedy(py_file, raised.value, "silence") == (
         "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
         "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache in one "
         "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence")
+    assert left_behind() == 5
 
 
 @pytest.mark.parametrize("locators", [
