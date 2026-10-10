@@ -53,7 +53,9 @@ the check here makes a file named as long as the longest numba writes for the pa
 which a test holds every function of the package under), so that location turns caching off with the
 warning instead.
 
-- For a source file on disk the remedy is ``NUMBA_CACHE_DIR`` pointed at a writable directory; where it is
+- For a source file on disk that numba cannot read, which its IPython locator reads for the function's source and
+  every locator reads for the stamp from numba 0.68, the remedy is to make it readable. For one it can, the remedy
+  is ``NUMBA_CACHE_DIR`` pointed at a writable directory; where it is
   set and numba passed it over, the warning names it and asks for a writable directory at a short path, since
   numba passes over one too deep to make its directory in as it does an unwritable one; and where
   ``NUMBA_CACHE_LOCATOR_CLASSES``, from numba 0.62, leaves the user-provided locator out, it is the locations

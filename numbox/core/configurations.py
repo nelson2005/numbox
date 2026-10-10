@@ -70,7 +70,8 @@ def check_cache_location(py_file, longest_file_name=0):
 
     The question is put the way numba puts it: the cache set-up that decoration runs, which picks the location
     for the file or raises ``RuntimeError`` with no locator, then the source's stamp, which decoration reads
-    and which stats the archive for a ``.zip``, reading the member's source from it too from numba 0.68, then the
+    and which stats the archive for a ``.zip``, reading the member's source from it too from numba 0.68, as it then
+    reads a source on disk for its hash, then the
     writability check, which decoration runs for every
     location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe is compiled with
     ``py_file`` as its file, which is all a locator reads of it but for numba's IPython locator, which reads the
@@ -875,6 +876,16 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return (
                 f"numba's IPython locator reads the function's source from its file before trying its location, and "
                 f"read none in {py_file} ({failure}): make the file readable, with the source in it; or {silence}"
+            )
+        if isinstance(failure, OSError) and filename and os.path.abspath(filename) == os.path.abspath(py_file):
+            # numba reads the source itself: its IPython locator for the
+            # function's source, and from 0.68 every locator for the stamp,
+            # which hashes the file; a file that refuses to be read was told
+            # as the location numba took refusing a file, to make writable.
+            reason = failure.strerror or failure
+            return (
+                f"numba reads the function's source from its file, {py_file}, which cannot be read ({reason}): make "
+                f"it readable; or {silence}"
             )
         # Under a list with no locator that takes the file, or none with a
         # place for it, the user-provided one alone with NUMBA_CACHE_DIR unset,

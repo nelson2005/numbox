@@ -1475,6 +1475,40 @@ def test_a_cell_under_a_locator_list_without_the_ipython_locator_is_told_to_list
         "ZipCacheLocator, leaves it out: list it; or silence")
 
 
+@needs_a_directory_it_cannot_write
+def test_a_source_on_disk_numba_cannot_read_is_told_to_make_it_readable(tmp_path, monkeypatch):
+    # numba 0.68 and later read a source on disk for the stamp, and its
+    # IPython locator reads the function's source in every version, so a file
+    # that cannot be read raises PermissionError naming the source; the
+    # remedy told it as the location numba took, to make room in or make
+    # writable.
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    kernel = tmp_path / "ipykernel_123"
+    kernel.mkdir()
+    py_file = kernel / "cell.py"
+    py_file.write_text("def f():\n    pass\n")
+    py_file.chmod(0)
+    try:
+        if numba_version >= 68:
+            with pytest.raises(PermissionError) as raised:
+                configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+            assert raised.value.filename == str(py_file)
+            failure = raised.value
+        else:
+            failure = PermissionError(errno.EACCES, "Permission denied", str(py_file))
+        assert configurations.is_a_cache_error(failure)
+        remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    finally:
+        py_file.chmod(0o644)
+    assert remedy == (
+        f"numba reads the function's source from its file, {py_file}, which cannot be read (Permission denied): make it "
+        "readable; or silence"), remedy
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
