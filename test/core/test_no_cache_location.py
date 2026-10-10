@@ -1402,6 +1402,42 @@ def test_a_cell_file_on_disk_under_a_temporary_ipython_directory_is_told_so(tmp_
         "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence"), remedy
 
 
+def test_a_cell_file_on_disk_refused_its_pycache_is_told_that_under_a_temporary_ipython_directory_too(
+        tmp_path, monkeypatch):
+    # The in-tree locator took the cell file and the __pycache__ beside it
+    # refused a file: that is the remedy, whatever IPython would give for its
+    # directory, which numba never asked; a remedy that asked IPython first
+    # told IPYTHONDIR for an error naming the __pycache__.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    kernel = tmp_path / "ipykernel_123"
+    kernel.mkdir()
+    py_file = kernel / "cell.py"
+    py_file.write_text("def f():\n    pass\n")
+    failure = OSError(errno.EACCES, "Permission denied", str(kernel / "__pycache__"))
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert remedy == (
+        f"numba caches this file in {kernel / '__pycache__'}, where no file can be written (Permission denied): make "
+        "room there, or make it writable, or NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
+    # IPython is asked for its location once, to tell it from the error's,
+    # and never whether it gives a new one on every call.
+    assert len([path for path in tmp_path.iterdir() if path.name.startswith("tmp")]) == 1
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
