@@ -3508,7 +3508,10 @@ def test_a_zip_members_name_built_with_windows_separator_is_told_numba_0_68_1(tm
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     monkeypatch.setattr(os, "name", "nt")
-    py_file = str(tmp_path / "numbox.zip" / "numbox" / "core" / "bindings" / "libm.py")
+    archive = tmp_path / "numbox.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("numbox/core/bindings/libm.py", "")
+    py_file = str(archive / "numbox" / "core" / "bindings" / "libm.py")
     # zipfile quotes the name as Python does, each backslash doubled.
     failure = KeyError("There is no item named 'numbox\\\\core\\\\bindings\\\\libm.py' in the archive")
     assert configurations.is_a_cache_error(failure) == (numba_version >= 68)
@@ -3518,6 +3521,35 @@ def test_a_zip_members_name_built_with_windows_separator_is_told_numba_0_68_1(tm
         "numbox\\core\\bindings\\libm.py, which no archive holds (numba issue "
         "https://github.com/numba/numba/issues/10889, fixed in numba 0.68.1): numba 0.68.1 or later caches this "
         ".zip as it is; or silence"), remedy
+
+
+def test_a_pyc_alone_in_a_zip_on_windows_is_told_the_source_files_not_numba_0_68_1(tmp_path, monkeypatch):
+    # The separator is in the name numba 0.68.0 builds for every member on
+    # Windows, a module shipped as .pyc alone among them, and that one numba
+    # 0.68.1 cannot cache either, the archive holding no source under the name
+    # it reads; the remedy read the backslash alone and promised that release.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setattr(os, "name", "nt")
+    archive = tmp_path / "numbox.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("numbox/core/bindings/libm.pyc", b"")
+    py_file = str(archive / "numbox" / "core" / "bindings" / "libm.py")
+    failure = KeyError("There is no item named 'numbox\\\\core\\\\bindings\\\\libm.py' in the archive")
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert remedy == (
+        "numba 0.68 and later read a .zip member's source from the archive, and this one holds none under "
+        "numbox/core/bindings/libm.py, the module shipped as .pyc alone: to cache, install numbox with its source "
+        "files on disk, unpacked from any archive, or import it from a .zip holding its source files, which numba "
+        "0.61 and later cache in the user's cache directory; or silence"), remedy
 
 
 @pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
