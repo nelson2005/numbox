@@ -1417,7 +1417,8 @@ def uncached_where_no_cache_can_be_written(options):
     which numba 0.61 and later cache in the user's cache directory, and so for a ``.zip`` member the archive holds
     no source for, a ``.pyc`` alone, from numba 0.68, which reads the member's source from the archive for the
     stamp, the member named; on Windows under numba 0.68.0 every member is such, its name built with the
-    platform's separator (numba issue 10889), and the remedy is numba 0.68.1. ``NUMBOX_JIT_OPTIONS='{"cache": false}'``
+    platform's separator (numba issue 10889), and the remedy is the install on disk, or a numba release carrying the
+    fix. ``NUMBOX_JIT_OPTIONS='{"cache": false}'``
     turns caching off and silences the warning. An error that is not the cache's, as ``is_a_cache_error`` draws
     the line, is raised as it was.
 
