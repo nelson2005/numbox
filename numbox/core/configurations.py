@@ -755,6 +755,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         if not filename:
             return False
         named = os.path.abspath(filename)
+        if named == os.path.abspath(py_file):
+            # The source itself, which numba reads: refused, it is told to be
+            # made readable, whatever IPython gives for its directory.
+            return True
         others = [os.path.abspath(config.CACHE_DIR)] if config.CACHE_DIR else []
         others.append(os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__")))
         others.append(os.path.abspath(AppDirs(appname="numba", appauthor=False).user_cache_dir))
