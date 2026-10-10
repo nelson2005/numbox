@@ -398,18 +398,24 @@ def _zip_holds_the_source(py_file):
 
     inspect reads a member's source through the module's loader, zipimport, which gives none for a member compiled to
     ``.pyc`` alone, and numba's IPython locator raises inspect's error for such a member at decoration; so does the
-    check, the probe's source going to a member whose source the archive holds alone. False too where the archive is
-    not there, or is no archive.
+    check, the probe's source going to a member whose source the archive holds alone. The archive is the first part
+    of the path ending in ``.zip`` that is one, as zipimport finds it, a directory so named above it being no
+    archive: that took the directory for the archive and found no member in it, and the check raised inspect's
+    error for a member numba caches. False too where the archive is not there, or is no archive.
     """
     parts = pathlib.Path(py_file).parts
-    at = next((i for i, part in enumerate(parts) if part.endswith(".zip")), None)
-    if at is None or at == len(parts) - 1:
-        return False
-    try:
-        with zipfile.ZipFile(str(pathlib.Path(*parts[:at + 1]))) as archive:
-            return "/".join(parts[at + 1:]) in archive.namelist()
-    except (OSError, zipfile.BadZipFile):
-        return False
+    for at, part in enumerate(parts[:-1]):
+        if not part.endswith(".zip"):
+            continue
+        zip_path = str(pathlib.Path(*parts[:at + 1]))
+        if not zipfile.is_zipfile(zip_path):
+            continue
+        try:
+            with zipfile.ZipFile(zip_path) as archive:
+                return "/".join(parts[at + 1:]) in archive.namelist()
+        except (OSError, zipfile.BadZipFile):
+            return False
+    return False
 
 
 def _ipython_locator_reads(py_file):
