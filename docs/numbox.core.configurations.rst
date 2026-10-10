@@ -200,7 +200,9 @@ warning instead.
   fixed in 0.68.1), and the warning asks for the install on disk, or that release; and a directory whose name
   ends in ``.zip`` above the
   archive, which numba takes for the archive by the first such part of the path and from 0.68 opens for the
-  source, is told as the directory it is, to put the archive under a path with none such above it.
+  source, is told as the directory it is, to put the archive under a path with none such above it; a source
+  file on disk under such a directory, which that locator takes once the locators before it passed the file
+  over, is told to make one of their locations writable or to put the file elsewhere.
 - ``NUMBOX_JIT_OPTIONS='{"cache": false}'`` turns caching off and silences the warning in every case, the
   package's options being what it sets; the anchors' warning under a caller's own options, below, is
   silenced by those.

@@ -630,7 +630,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     first part of the path ending in ``.zip`` is what numba takes for the archive, a directory so named above it
     included, and from 0.68
     opens to read the source: the ``IsADirectoryError`` is told the directory, to put the archive under a path
-    with none such above it. A file in an ipykernel directory that numba's IPython locator takes, a cell file on disk
+    with none such above it; a file on disk under such a directory, which that locator takes once the ones before it
+    passed the file over, is told to make one of their locations writable or to put the file elsewhere. A file in an
+    ipykernel directory that numba's IPython locator takes, a cell file on disk
     or a ``.zip`` member, where IPython gives a new temporary directory as its cache directory on every call, able
     to write neither that directory nor its own, is told so, with ``IPYTHONDIR`` or ``XDG_CACHE_HOME`` at a writable
     path as the remedy: numba makes ``numba_cache`` in one such directory and saves in another.
@@ -933,6 +935,23 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 else:
                     cure = f"that location, {filename}, at a shorter path{instead(None)}"
                 return f"the path is too long for the file system: {cure}; or {silence}"
+            if (failure.errno == errno.EISDIR and filename and os.path.isdir(filename) and filename.endswith(".zip")
+                    and py_file.startswith(filename + os.sep)):
+                # numba's .zip locator takes a file on disk for the ".zip" in
+                # its path once the locators before it passed the file over,
+                # takes the first part of the path ending in .zip for the
+                # archive, a directory so named included, and from 0.68 opens
+                # it to read the source, which a directory refuses; the remedy
+                # told the reader to make room in that directory, no cache
+                # location at all, with the remedy for a member alone knowing
+                # the case.
+                return (
+                    "numba's .zip locator, reached once the locators before it passed this file over, takes the first "
+                    f"part of the path ending in .zip, {filename}, for an archive, and it is a directory, which numba "
+                    "0.68 and later open for the source: make one of those locators' locations writable"
+                    f"{instead(None, 'a writable directory')}, or put the file under a path with no such directory; or "
+                    f"{silence}"
+                )
             # numba took the location, so the variable was not passed over for
             # it; set elsewhere it moves the cache off a disk that is full. A
             # location that is none of numba's is named as the error names it,
