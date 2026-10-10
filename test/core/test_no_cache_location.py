@@ -1253,6 +1253,8 @@ def test_a_cell_file_numbas_ipython_locator_takes_is_told_ipythons_cache_directo
         monkeypatch.setitem(sys.modules, "IPython.utils.path", paths if ipython == "IPython.utils.path" else None)
     else:
         monkeypatch.setitem(sys.modules, "IPython", None)
+        monkeypatch.setitem(sys.modules, "IPython.paths", None)
+        monkeypatch.setitem(sys.modules, "IPython.utils.path", None)
     py_file = tmp_path / "ipykernel_123" / "cell.py"
     py_file.parent.mkdir()
     py_file.write_text("")
@@ -2700,6 +2702,8 @@ def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_t
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     monkeypatch.setitem(sys.modules, "IPython", None)
+    monkeypatch.setitem(sys.modules, "IPython.paths", None)
+    monkeypatch.setitem(sys.modules, "IPython.utils.path", None)
     with zipfile.ZipFile(tmp_path / "bundle.zip", "w") as zipped:
         zipped.writestr("ipykernel_123/cell.py", "def cell():\n    pass\n")
     py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
@@ -3042,6 +3046,8 @@ def test_an_error_naming_no_file_with_ipython_not_importable_says_nothing_of_the
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     monkeypatch.setitem(sys.modules, "IPython", None)
+    monkeypatch.setitem(sys.modules, "IPython.paths", None)
+    monkeypatch.setitem(sys.modules, "IPython.utils.path", None)
     py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
     location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
     error = ((errno.ENOSPC, "No space left on device") if refused == "a full disk" else
@@ -3075,6 +3081,8 @@ def test_an_error_naming_ipythons_location_with_ipython_not_importable_is_told_t
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
     monkeypatch.setitem(sys.modules, "IPython", None)
+    monkeypatch.setitem(sys.modules, "IPython.paths", None)
+    monkeypatch.setitem(sys.modules, "IPython.utils.path", None)
     py_file = tmp_path / "ipykernel_123" / "cell.py"
     py_file.parent.mkdir()
     py_file.write_text("def cell():\n    pass\n")
