@@ -623,10 +623,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     member's source under the name it reads, else the source files as for any member. The first part of the path
     ending in ``.zip`` is what numba takes for the archive, a directory so named above it included, and from 0.68
     opens to read the source: the ``IsADirectoryError`` is told the directory, to put the archive under a path
-    with none such above it. A member in an ipykernel directory that numba's IPython locator takes, where IPython
-    gives a new temporary directory as its cache directory on every call, able to write neither that directory nor
-    its own, is told so, with ``IPYTHONDIR`` or ``XDG_CACHE_HOME`` at a writable path as the remedy: numba makes
-    ``numba_cache`` in one such directory and saves in another.
+    with none such above it. A file in an ipykernel directory that numba's IPython locator takes, a cell file on disk
+    or a ``.zip`` member, where IPython gives a new temporary directory as its cache directory on every call, able
+    to write neither that directory nor its own, is told so, with ``IPYTHONDIR`` or ``XDG_CACHE_HOME`` at a writable
+    path as the remedy: numba makes ``numba_cache`` in one such directory and saves in another.
     """
     from numba import config
     from numba.core.caching import _CacheLocator
@@ -733,6 +733,37 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         if of_numbas(cls):
             return a_file_on_disk
         return True
+
+    def names_another_location():
+        # Whether the error names a location of one of numba's locators for a
+        # file on disk other than IPython's, or a file in it: NUMBA_CACHE_DIR's,
+        # the __pycache__ beside the source, or the user's cache directory;
+        # one that is none of them, a temporary directory IPython gave, is
+        # IPython's locator's.
+        if not filename:
+            return False
+        named = os.path.abspath(filename)
+        others = [os.path.abspath(config.CACHE_DIR)] if config.CACHE_DIR else []
+        others.append(os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__")))
+        others.append(os.path.abspath(AppDirs(appname="numba", appauthor=False).user_cache_dir))
+        return any(named == other or named.startswith(other + os.sep) for other in others)
+
+    if isinstance(failure, OSError) and _ipython_locator_reads(py_file) and (
+            not a_file_on_disk or not names_another_location()) and _ipython_cache_is_temporary():
+        # numba's IPython locator, reached first for a member in an ipykernel
+        # directory and for a cell file on disk there once the locators before
+        # it passed the file over, asks IPython for its cache directory at
+        # every save, and IPython, able to write neither that directory nor
+        # its own, gives a new temporary directory on every call: numba makes
+        # numba_cache in one and saves in another, dying there. The remedy
+        # told the one the error names, a temporary directory, as refusing a
+        # file, and for a file on disk offered NUMBA_CACHE_DIR beside it.
+        return (
+            "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
+            "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache "
+            "in one and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or "
+            f"{silence}"
+        )
 
     if a_file_on_disk:
         def reads_the_variable(cls):
@@ -987,19 +1018,6 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             a_zip += f" through ZipCacheLocator, once NUMBA_CACHE_LOCATOR_CLASSES, {listed}, lists it"
         return on_disk, a_zip
 
-    if isinstance(failure, OSError) and _ipython_locator_reads(py_file) and _ipython_cache_is_temporary():
-        # numba's IPython locator, reached first for a member in an ipykernel
-        # directory, asks IPython for its cache directory at every save, and
-        # IPython, able to write neither that directory nor its own, gives a
-        # new temporary directory on every call: numba makes numba_cache in
-        # one and saves in another, dying there. The remedy told the one the
-        # error names, a temporary directory, as refusing a file.
-        return (
-            "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
-            "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache "
-            "in one and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or "
-            f"{silence}"
-        )
     if isinstance(failure, KeyError):
         # numba 0.68 and later read a .zip member's source from the archive
         # for the stamp, by the name the module's code gives under the

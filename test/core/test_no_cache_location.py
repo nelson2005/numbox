@@ -1345,6 +1345,63 @@ def test_a_zip_member_in_an_ipykernel_directory_under_a_temporary_ipython_direct
         "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence")
 
 
+@pytest.mark.parametrize("locators", [
+    pytest.param("IPythonCacheLocator,InTreeCacheLocator", id="the IPython locator listed first",
+                 marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in 0.62")),
+    pytest.param("", id="numba's order, the locators before IPython's passing the file over",
+                 marks=needs_a_directory_it_cannot_write),
+])
+def test_a_cell_file_on_disk_under_a_temporary_ipython_directory_is_told_so(tmp_path, monkeypatch, locators):
+    # A cell file on disk in an ipykernel directory reaches numba's IPython
+    # locator where it is listed first, or once the in-tree and user-wide
+    # locators passed the file over, and IPython giving a new temporary
+    # directory on every call dies the same way a .zip member does; the
+    # remedy, written for the member alone, told the file on disk to make
+    # room in the temporary directory, and offered NUMBA_CACHE_DIR.
+    import tempfile
+    import types
+    import numba
+    import numba.core.caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "read-only" / "user-cache" / "numba")
+
+    # numba's own user-wide locator reads the directory through its caching
+    # module, the remedy through this one.
+    monkeypatch.setattr(numba.core.caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    kernel = tmp_path / "read-only" / "ipykernel_123"
+    kernel.mkdir(parents=True)
+    py_file = kernel / "cell.py"
+    py_file.write_text("def f():\n    pass\n")
+    read_only = [tmp_path / "read-only", kernel]
+    if not locators:
+        # The in-tree locator cannot make __pycache__ beside the cell, the
+        # user-wide one cannot make the user's cache directory.
+        for path in read_only:
+            path.chmod(0o555)
+    try:
+        with pytest.raises(FileNotFoundError) as raised:
+            configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+        assert raised.value.filename.startswith(str(tmp_path)) and raised.value.filename.endswith("numba_cache")
+        remedy = configurations.cache_remedy(str(py_file), raised.value, "silence")
+    finally:
+        for path in read_only:
+            path.chmod(0o755)
+    assert remedy == (
+        "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
+        "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache in one "
+        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence"), remedy
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
