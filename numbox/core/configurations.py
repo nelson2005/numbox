@@ -1045,7 +1045,16 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # then raised for a path with .zip in it and no part ending in
             # it, asked for the variable without a word of the name.
             too_long = too_long_a_name(locations[named_after_the_source[0]])
-            return f"{too_long}: put the file in a directory of a shorter name{beside_the_source()}; or {silence}"
+            # Under the user-provided locator alone, with the variable unset,
+            # numba took no location at all and never measured the name: the
+            # variable is what it takes nothing without, and the name is what
+            # would stop it once set; the remedy said the name alone.
+            variable = (
+                ", with NUMBA_CACHE_DIR set, which UserProvidedCacheLocator takes nothing without"
+                if not config.CACHE_DIR and all(reads_the_variable(cls) for cls in tried) else "")
+            return (
+                f"{too_long}: put the file in a directory of a shorter name{variable}{beside_the_source()}; or {silence}"
+            )
         if not any(reads_the_variable(cls) for cls in tried):
             if zip_raised:
                 return (

@@ -3701,9 +3701,14 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
             "under no such name; "
             "or silence"), remedy
     elif case.startswith("on disk"):
+        # The user-provided locator alone, with the variable unset, took no
+        # location and measured no name; the variable it takes nothing
+        # without is named beside the shorter name it would then need.
+        variable = (", with NUMBA_CACHE_DIR set, which UserProvidedCacheLocator takes nothing without"
+                    if listed == "UserProvidedCacheLocator" and not cache_dir else "")
         assert remedy == (
-            f"{clause}: put the file in a directory of a shorter name, or list InTreeCacheLocator, which caches beside "
-            "the source, in its __pycache__, under no such name; or silence"), remedy
+            f"{clause}: put the file in a directory of a shorter name{variable}, or list InTreeCacheLocator, which "
+            "caches beside the source, in its __pycache__, under no such name; or silence"), remedy
     else:
         assert remedy == (
             "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
