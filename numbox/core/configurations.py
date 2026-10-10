@@ -630,8 +630,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     module's code gives under the archive's path, and the ``KeyError`` zipfile raises for a name the archive does
     not hold is told the source files, on disk or in a ``.zip``, naming the member, a module shipped as ``.pyc``
     alone; on Windows under numba 0.68.0 every member gets that error, its name built with the platform's
-    separator (numba issue 10889, fixed in 0.68.1), and the remedy is the install on disk, or that release, where
-    the archive holds the member's source under the name it reads, else the source files as for any member. The
+    separator (numba issue 10889, fixed for 0.68.1), and the remedy is the install on disk, or a release carrying
+    the fix, where the archive holds the member's source under the name it reads, else the source files as for any
+    member. The
     first part of the path ending in ``.zip`` is what numba takes for the archive, a directory so named above it
     included, and from 0.68
     opens to read the source: the ``IsADirectoryError`` is told the directory, to put the archive under a path
@@ -1114,13 +1115,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         held = member.replace("\\", "/")
         on_disk, a_zip = the_source_files()
         if os.name == "nt" and "\\" in member and _numbas_archive_holds(py_file, held):
-            # The release that reads the member is the cure once it is
-            # installed; the install on disk is one now.
+            # The install on disk is a cure now; a numba release with the fix,
+            # none out as of 0.68.0, reads the member as the archive names it,
+            # and is named by the fix, not as a release to install.
             return (
                 f"numba 0.68.0 reads a .zip member's source by a name built with Windows's separator, {member}, which "
-                "no archive holds (numba issue https://github.com/numba/numba/issues/10889, fixed in numba 0.68.1): "
-                f"to cache, {on_disk}, which no separator touches, or numba 0.68.1 or later, which reads the member "
-                f"as the archive names it; or {silence}"
+                "no archive holds (numba issue https://github.com/numba/numba/issues/10889, fixed for numba 0.68.1): "
+                f"to cache, {on_disk}, which no separator touches, or a numba release that carries the fix, which "
+                f"reads the member as the archive names it; or {silence}"
             )
         return (
             f"numba 0.68 and later read a .zip member's source from the archive, and this one holds none under "

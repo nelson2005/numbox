@@ -197,7 +197,8 @@ warning instead.
   module's code gives under the archive's path: a member shipped as ``.pyc`` alone is told the source files, on
   disk or in a ``.zip``, naming the member; on Windows under numba 0.68.0 every member is refused, its name
   built with the platform's separator (`numba issue 10889 <https://github.com/numba/numba/issues/10889>`_,
-  fixed in 0.68.1), and the warning asks for the install on disk, or that release; and a directory whose name
+  fixed for 0.68.1), and the warning asks for the install on disk, or a release carrying the fix; and a directory
+  whose name
   ends in ``.zip`` above the
   archive, which numba takes for the archive by the first such part of the path and from 0.68 opens for the
   source, is told as the directory it is, to put the archive under a path with none such above it; a source
