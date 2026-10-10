@@ -1509,6 +1509,57 @@ def test_a_source_on_disk_numba_cannot_read_is_told_to_make_it_readable(tmp_path
         "readable; or silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
+def test_a_source_on_disk_under_a_directory_named_zip_is_told_the_directory_once_the_locators_before_passed(
+        tmp_path, monkeypatch):
+    # numba's .zip locator takes a file on disk for the ".zip" in its path once
+    # the in-tree and user-wide locators passed it over, takes the directory so
+    # named for the archive and, from 0.68, opens it for the source, which a
+    # directory refuses; the remedy told the reader to make room in that
+    # directory, writable already and no cache location, where the member's
+    # remedy knew the case.
+    import numba
+    import numba.core.caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "read-only" / "user-cache" / "numba")
+
+    monkeypatch.setattr(numba.core.caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    container = tmp_path / "read-only" / "data.zip"
+    package = container / "pkg"
+    package.mkdir(parents=True)
+    py_file = package / "m.py"
+    py_file.write_text("x = 1\n")
+    expected = (
+        "numba's .zip locator, reached once the locators before it passed this file over, takes the first part of the "
+        f"path ending in .zip, {container}, for an archive, and it is a directory, which numba 0.68 and later open "
+        "for the source: make one of those locators' locations writable, or NUMBA_CACHE_DIR set to a writable "
+        "directory, or put the file under a path with no such directory; or silence")
+    failure = IsADirectoryError(errno.EISDIR, "Is a directory", str(container))
+    assert configurations.cache_remedy(str(py_file), failure, "silence") == expected
+    if numba_version < 68 or os.name == "nt" or os.geteuid() == 0:
+        return
+    # The in-tree locator cannot make __pycache__ beside the source, the
+    # user-wide one cannot make the user's cache directory.
+    read_only = [tmp_path / "read-only", package]
+    for path in read_only:
+        path.chmod(0o555)
+    try:
+        with pytest.raises(IsADirectoryError) as raised:
+            configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+        assert raised.value.filename == str(container)
+        assert configurations.is_a_cache_error(raised.value)
+        assert configurations.cache_remedy(str(py_file), raised.value, "silence") == expected
+    finally:
+        for path in read_only:
+            path.chmod(0o755)
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
