@@ -3515,6 +3515,7 @@ def test_a_zip_members_name_built_with_windows_separator_is_told_numba_0_68_1(tm
         ".zip as it is; or silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
 def test_a_directory_named_zip_above_the_archive_is_told_as_the_directory_from_numba_0_68(tmp_path, monkeypatch):
     # numba takes the first part of the path ending in .zip for the archive, a
     # directory so named above it included, and from 0.68 opens it to read the
