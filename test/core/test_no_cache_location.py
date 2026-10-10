@@ -1300,6 +1300,47 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     assert py_file not in linecache.cache
 
 
+def test_a_zip_member_in_an_ipykernel_directory_under_a_temporary_ipython_directory_takes_the_fallback(
+        tmp_path, monkeypatch):
+    # numba's IPython locator asks IPython for its cache directory at every
+    # save, and IPython, able to write neither that directory nor its own,
+    # gives a new temporary directory on every call: numba makes numba_cache
+    # in one and saves in another, dying with FileNotFoundError at the
+    # function's first call. The check made numba_cache the same way and
+    # passed the file, where before the probe's source was given it raised
+    # inspect's error and the package fell back.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def f():\n    pass\n")
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    with pytest.raises(FileNotFoundError) as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert raised.value.errno == errno.ENOENT
+    assert raised.value.filename.startswith(str(tmp_path)) and raised.value.filename.endswith("numba_cache")
+    assert not os.path.exists(raised.value.filename)
+    assert configurations.is_a_cache_error(raised.value)
+    assert configurations.cache_remedy(py_file, raised.value, "silence") == (
+        "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
+        "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache in one "
+        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence")
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's

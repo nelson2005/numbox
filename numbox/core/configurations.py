@@ -87,7 +87,10 @@ def check_cache_location(py_file, longest_file_name=0):
     finds none there, in a file it cannot read or, before Python 3.13, an empty one, which linecache gives a blank
     line from then on; and the stamp's, which names the archive a ``.zip``
     member's code names where that has since moved, read once the locator is picked, as numba's own does at
-    decoration.
+    decoration. A location that is not there once made, numba's IPython locator asking IPython for its directory
+    at every save and IPython giving a new temporary one on every call where it can write neither its cache
+    directory nor its own, raises ``FileNotFoundError`` naming the one numba would save in, as numba's first save
+    does.
 
     numba's writability check makes a temporary file whose name is short, or none at all on Linux, and the
     files it saves have names of up to a hundred bytes and more, so a location within their length of the path
@@ -136,6 +139,14 @@ def check_cache_location(py_file, longest_file_name=0):
         # The error names what failed, a temporary file's name among the
         # possibilities; the location it is in is what a reader can act on.
         raise OSError(error.errno, error.strerror, locator.get_cache_path()) from error
+    location = locator.get_cache_path()
+    if not os.path.isdir(location):
+        # numba asks the locator for its location at every save, and its
+        # IPython locator asks IPython, which gives a new temporary directory
+        # on every call where it can write neither its cache directory nor its
+        # own: numba makes numba_cache in one and saves in another, dying
+        # there past its own check; the check passed the file the same way.
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", location)
 
 
 def is_a_cache_error(error):
@@ -387,6 +398,14 @@ def _ipython_numba_cache():
         return None
 
 
+def _ipython_cache_is_temporary():
+    """Whether IPython gives a new temporary directory as its cache directory on every call, which it does, warning
+    so, where it can write neither its cache directory nor its own; numba's IPython locator asks for the directory at
+    every save, so numba makes ``numba_cache`` in one and saves in another."""
+    first = _ipython_numba_cache()
+    return first is not None and _ipython_numba_cache() != first
+
+
 def _taken_by_ipython(py_file):
     """Whether numba's IPython locator takes ``py_file`` by its name alone, on disk or not: a cell, ``<ipython-...>``, or
     a file in an ipykernel directory. It reads the function's source when it does."""
@@ -604,7 +623,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     member's source under the name it reads, else the source files as for any member. The first part of the path
     ending in ``.zip`` is what numba takes for the archive, a directory so named above it included, and from 0.68
     opens to read the source: the ``IsADirectoryError`` is told the directory, to put the archive under a path
-    with none such above it.
+    with none such above it. A member in an ipykernel directory that numba's IPython locator takes, where IPython
+    gives a new temporary directory as its cache directory on every call, able to write neither that directory nor
+    its own, is told so, with ``IPYTHONDIR`` or ``XDG_CACHE_HOME`` at a writable path as the remedy: numba makes
+    ``numba_cache`` in one such directory and saves in another.
     """
     from numba import config
     from numba.core.caching import _CacheLocator
@@ -965,6 +987,19 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             a_zip += f" through ZipCacheLocator, once NUMBA_CACHE_LOCATOR_CLASSES, {listed}, lists it"
         return on_disk, a_zip
 
+    if isinstance(failure, OSError) and _ipython_locator_reads(py_file) and _ipython_cache_is_temporary():
+        # numba's IPython locator, reached first for a member in an ipykernel
+        # directory, asks IPython for its cache directory at every save, and
+        # IPython, able to write neither that directory nor its own, gives a
+        # new temporary directory on every call: numba makes numba_cache in
+        # one and saves in another, dying there. The remedy told the one the
+        # error names, a temporary directory, as refusing a file.
+        return (
+            "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
+            "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache "
+            "in one and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or "
+            f"{silence}"
+        )
     if isinstance(failure, KeyError):
         # numba 0.68 and later read a .zip member's source from the archive
         # for the stamp, by the name the module's code gives under the
