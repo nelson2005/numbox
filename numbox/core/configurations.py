@@ -774,7 +774,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         return asked[0]
 
     if isinstance(failure, OSError) and _ipython_locator_reads(py_file) and (
-            not a_file_on_disk or not names_another_location()) and _ipython_cache_is_temporary(ipython_numba_cache()):
+            not a_file_on_disk or (filename and not names_another_location())
+    ) and _ipython_cache_is_temporary(ipython_numba_cache()):
         # numba's IPython locator, reached first for a member in an ipykernel
         # directory and for a cell file on disk there once the locators before
         # it passed the file over, asks IPython for its cache directory at
@@ -782,7 +783,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # its own, gives a new temporary directory on every call: numba makes
         # numba_cache in one and saves in another, dying there. The remedy
         # told the one the error names, a temporary directory, as refusing a
-        # file, and for a file on disk offered NUMBA_CACHE_DIR beside it.
+        # file, and for a file on disk offered NUMBA_CACHE_DIR beside it; an
+        # error naming no file for a file on disk shows nothing of which
+        # locator took it, and is told the locations numba could have taken.
         return (
             "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
             "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache "
