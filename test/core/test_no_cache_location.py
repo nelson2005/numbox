@@ -1742,6 +1742,33 @@ def test_a_name_too_long_behind_the_zip_locators_error_for_a_path_with_zip_in_it
     assert "NUMBA_CACHE_DIR" not in remedy
 
 
+@pytest.mark.skipif(not hasattr(os, "statvfs"), reason="the file system's name limit is asked through statvfs")
+def test_the_name_limit_is_the_file_systems_own_asked_of_the_nearest_directory_that_exists(tmp_path, monkeypatch):
+    # The longest name a file can have is the file system's to say, 255 nearly
+    # everywhere; the remedy reads it from the nearest directory above the
+    # location that exists, and 255 where the system cannot say. Nothing told
+    # a limit the remedy made up from one the file system gave: the tests
+    # took their expected limit from the remedy's own answer.
+    import numbox.core.configurations as configurations
+    asked = []
+    real = os.statvfs
+
+    class Limit:
+        f_namemax = 80
+
+    def statvfs(path):
+        asked.append(path)
+        return Limit()
+
+    monkeypatch.setattr(os, "statvfs", statvfs)
+    assert configurations._name_limit(str(tmp_path / "not" / "yet" / "made")) == 80
+    assert asked == [str(tmp_path)]
+    monkeypatch.setattr(os, "statvfs", real)
+    monkeypatch.delattr(os, "statvfs")
+    assert configurations._name_limit(str(tmp_path)) == 255
+    assert configurations._name_limit(None) == 255
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
