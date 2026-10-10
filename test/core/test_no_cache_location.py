@@ -903,21 +903,24 @@ def test_a_relative_numba_cache_dir_is_matched_as_the_location_numba_names(tmp_p
 
 
 @pytest.mark.parametrize("locators, cure", [
-    ("", "a shorter NUMBA_CACHE_DIR"),
+    ("", "a shorter NUMBA_CACHE_DIR, or the user's cache directory, which it is set to, at a shorter path{moved_through}"),
     ("UserWideCacheLocator", "the user's cache directory, {user_cache_dir}, at a shorter path{moved_through}"),
     ("UserWideCacheLocator,UserProvidedCacheLocator",
      "the user's cache directory, {user_cache_dir}, at a shorter path{moved_through}"),
-    ("InTreeCacheLocator,UserProvidedCacheLocator,UserWideCacheLocator", "a shorter NUMBA_CACHE_DIR"),
+    ("InTreeCacheLocator,UserProvidedCacheLocator,UserWideCacheLocator",
+     "a shorter NUMBA_CACHE_DIR, or the user's cache directory, which it is set to, at a shorter path{moved_through}"),
 ])
 def test_a_location_too_long_that_is_numba_cache_dirs_and_the_users_cache_directorys_is_told_by_the_locator_order(
         tmp_path, monkeypatch, locators, cure):
     # NUMBA_CACHE_DIR set to the user's cache directory makes one path of two
     # of numba's locations, and which locator took it is the order's to say:
     # numba's own order tries the variable first, so a shorter NUMBA_CACHE_DIR
-    # shortens it; a list that tries the user's cache directory before the
-    # variable, or never reads the variable, took it as the user's cache
-    # directory, and the variable's remedy, matched first whatever the order,
-    # told the reader to shorten a variable numba did not read.
+    # shortens it, as does the user's cache directory at a shorter path, the
+    # variable passed over and the user-wide locator taking the file; a list
+    # that tries the user's cache directory before the variable, or never
+    # reads the variable, took it as the user's cache directory, and the
+    # variable's remedy, matched first whatever the order, told the reader to
+    # shorten a variable numba did not read.
     import numba
     import numbox.core.configurations as configurations
     from numba.core.caching import _CacheLocator
