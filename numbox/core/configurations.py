@@ -426,19 +426,20 @@ def _zip_holds_the_source(py_file):
     inspect reads a member's source through the module's loader, zipimport, which gives none for a member compiled to
     ``.pyc`` alone, and numba's IPython locator raises inspect's error for such a member at decoration; so does the
     check, the probe's source going to a member whose source the archive holds alone. The archive is the first part
-    of the path ending in ``.zip`` that is one, as zipimport finds it, a directory so named above it being no
-    archive: that took the directory for the archive and found no member in it, and the check raised inspect's
-    error for a member numba caches. False too where the archive is not there, or is no archive.
+    of the path that is a file, as zipimport finds it, whatever its name, an ``.egg`` or ``.whl`` as a ``.zip``, a
+    directory named ``.zip`` above it being no archive: a check that knew archives named ``.zip`` alone took the
+    directory for the archive and found no member in it, or found no archive in an ``.egg`` at all, and raised
+    inspect's error for a member numba caches. False too where the archive is not there, or is no archive.
     """
     parts = pathlib.Path(py_file).parts
-    for at, part in enumerate(parts[:-1]):
-        if not part.endswith(".zip"):
+    for at in range(len(parts) - 1):
+        prefix = str(pathlib.Path(*parts[:at + 1]))
+        if os.path.isdir(prefix):
             continue
-        zip_path = str(pathlib.Path(*parts[:at + 1]))
-        if not zipfile.is_zipfile(zip_path):
-            continue
+        if not zipfile.is_zipfile(prefix):
+            return False
         try:
-            with zipfile.ZipFile(zip_path) as archive:
+            with zipfile.ZipFile(prefix) as archive:
                 return "/".join(parts[at + 1:]) in archive.namelist()
         except (OSError, zipfile.BadZipFile):
             return False

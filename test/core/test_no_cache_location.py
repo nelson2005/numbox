@@ -1268,8 +1268,9 @@ def test_a_cell_file_numbas_ipython_locator_takes_is_told_ipythons_cache_directo
     assert remedy == f"the path is too long for the file system: {expected}; or silence", remedy
 
 
-@pytest.mark.parametrize("parent", ["", "container.zip"], ids=["the archive", "under a directory named .zip"])
-def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(tmp_path, monkeypatch, parent):
+@pytest.mark.parametrize("parent, name", [("", "bundle.zip"), ("container.zip", "bundle.zip"), ("", "bundle.egg")],
+                         ids=["the archive", "under a directory named .zip", "an .egg"])
+def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(tmp_path, monkeypatch, parent, name):
     # numba's IPython locator takes a file in an ipykernel directory, on disk
     # or not, and reads the function's source when it does: from the file, or
     # through the module's loader for a member of a .zip. The probe the check
@@ -1280,8 +1281,9 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     # a directory numba never tried. The probe's source is given to inspect
     # for the time numba picks the locator, and the question goes on to
     # IPython's cache directory, as numba's does. zipimport finds the archive
-    # below a directory named .zip; a check that took the first part so named
-    # for the archive found no member in the directory and raised there.
+    # below a directory named .zip, and whatever its name, an .egg as Spark
+    # ships; a check that took the first part named .zip for the archive found
+    # no member in the directory, or no archive in the .egg, and raised there.
     import linecache
     import types
     import numba
@@ -1294,7 +1296,7 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
     (tmp_path / parent).mkdir(exist_ok=True)
-    archive = tmp_path / parent / "bundle.zip"
+    archive = tmp_path / parent / name
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.writestr("ipykernel_123/cell.py", "def f():\n    pass\n")
     py_file = str(archive / "ipykernel_123" / "cell.py")
