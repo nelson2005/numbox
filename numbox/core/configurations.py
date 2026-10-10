@@ -436,6 +436,20 @@ def _ipython_locator_reads(py_file):
     return False
 
 
+def _numbas_archive_holds(py_file, name):
+    """Whether the archive numba's ``.zip`` locator takes for ``py_file``, the first part of the path ending in
+    ``.zip``, holds a member named ``name``; False where that is no archive."""
+    parts = py_file.split(os.sep)
+    at = next((i for i, part in enumerate(parts) if part.endswith(".zip")), None)
+    if at is None:
+        return False
+    try:
+        with zipfile.ZipFile(os.sep.join(parts[:at + 1])) as archive:
+            return name in archive.namelist()
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
 def _missing_member(error):
     """The member zipfile's ``KeyError`` names, "There is no item named 'x' in the archive", or its whole message.
 
@@ -586,7 +600,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     module's code gives under the archive's path, and the ``KeyError`` zipfile raises for a name the archive does
     not hold is told the source files, on disk or in a ``.zip``, naming the member, a module shipped as ``.pyc``
     alone; on Windows under numba 0.68.0 every member gets that error, its name built with the platform's
-    separator (numba issue 10889, fixed in 0.68.1), and the remedy is that release. The first part of the path
+    separator (numba issue 10889, fixed in 0.68.1), and the remedy is that release where the archive holds the
+    member's source under the name it reads, else the source files as for any member. The first part of the path
     ending in ``.zip`` is what numba takes for the archive, a directory so named above it included, and from 0.68
     opens to read the source: the ``IsADirectoryError`` is told the directory, to put the archive under a path
     with none such above it.
@@ -957,9 +972,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # hold: a module shipped as .pyc alone, or, on Windows under 0.68.0,
         # any member, the name built with the platform's separator (numba
         # issue 10889, fixed in 0.68.1). The remedy told the archive's user
-        # to add source files that were there.
+        # to add source files that were there; and one that read a backslash
+        # as the separator's doing alone told a module shipped as .pyc alone
+        # that numba 0.68.1 caches the archive as it is, which holds no
+        # source for it under the name that release reads either.
         member = _missing_member(failure)
-        if os.name == "nt" and "\\" in member:
+        held = member.replace("\\", "/")
+        if os.name == "nt" and "\\" in member and _numbas_archive_holds(py_file, held):
             return (
                 f"numba 0.68.0 reads a .zip member's source by a name built with Windows's separator, {member}, which "
                 "no archive holds (numba issue https://github.com/numba/numba/issues/10889, fixed in numba 0.68.1): "
@@ -968,7 +987,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         on_disk, a_zip = the_source_files()
         return (
             f"numba 0.68 and later read a .zip member's source from the archive, and this one holds none under "
-            f"{member}, the module shipped as .pyc alone: to cache, {on_disk}, or {a_zip}; or {silence}"
+            f"{held}, the module shipped as .pyc alone: to cache, {on_disk}, or {a_zip}; or {silence}"
         )
     # The locators numba reaches for a file not on disk, in its order: its
     # .zip locator takes a file without trying its location, so none listed
