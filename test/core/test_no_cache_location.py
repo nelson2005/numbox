@@ -1448,6 +1448,33 @@ def test_a_cell_file_on_disk_refused_its_pycache_is_told_that_under_a_temporary_
     assert len([path for path in tmp_path.iterdir() if path.name.startswith("tmp")]) == 1
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+def test_a_cell_under_a_locator_list_without_the_ipython_locator_is_told_to_list_it(tmp_path, monkeypatch):
+    # numba's IPython locator alone takes a cell, so a list without it leaves
+    # numba no locator for one, and the remedy offered source files on disk,
+    # locators for a file on disk and a .zip, none of which takes a cell.
+    import linecache
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "ZipCacheLocator", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(tmp_path / "ipython")
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    cell = "<ipython-input-3-0123456789ab>"
+    source = "def f():\n    pass\n"
+    monkeypatch.setitem(linecache.cache, cell, (len(source), None, source.splitlines(True), cell))
+    with pytest.raises(RuntimeError, match="no locator available") as raised:
+        configurations.check_cache_location(cell, configurations.LONGEST_CACHE_FILE_NAME)
+    assert configurations.is_a_cache_error(raised.value)
+    assert configurations.cache_remedy(cell, raised.value, "silence") == (
+        "numba caches a notebook cell through IPythonCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, "
+        "ZipCacheLocator, leaves it out: list it; or silence")
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's

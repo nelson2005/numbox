@@ -612,7 +612,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     the user's cache directory's doing, with the names numba makes bounded, and the remedy is that directory at a
     shorter path, through what moves it on the platform. numba caches a ``.zip`` through its ``.zip`` locator alone, so a
     ``NUMBA_CACHE_LOCATOR_CLASSES`` that leaves that locator out gives numba no locator for a source in a ``.zip``,
-    and the remedy is to list it; so for a frozen application and numba's user-wide locator, which alone takes one;
+    and the remedy is to list it; so for a notebook cell and numba's IPython locator, and for a frozen application and
+    numba's user-wide locator, which alone takes one;
     either is told for an error a caller passes on under such a list as for numba's no-locator one, since numba
     took no location under it, and a source neither in a ``.zip`` nor a frozen application's, which no locator
     takes, is told the source files on disk or a ``.zip`` holding them for any error.
@@ -1304,6 +1305,15 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         return (
             "numba caches this file in numba_cache under IPython's cache directory, which IPython raised for, under a "
             f"home it cannot write{passed_over}: make that home writable; or {silence}"
+        )
+    if _taken_by_ipython(py_file) and not in_a_zip and listed_without(for_ipython):
+        # numba's IPython locator alone takes a cell, or a file in an ipykernel
+        # directory that is not on disk, so a list without it leaves numba no
+        # locator for one; the archive remedy offered source files on disk and
+        # locators that take none of these.
+        return (
+            f"numba caches a notebook cell through IPythonCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, {listed}, "
+            f"leaves it out: list it; or {silence}"
         )
     if in_a_zip and listed_without(for_a_zip):
         # numba's .zip locator alone takes a source in a .zip, so a list
