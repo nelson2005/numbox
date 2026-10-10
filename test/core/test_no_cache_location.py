@@ -1478,17 +1478,26 @@ def test_a_cell_under_a_locator_list_without_the_ipython_locator_is_told_to_list
 
 
 @needs_a_directory_it_cannot_write
-def test_a_source_on_disk_numba_cannot_read_is_told_to_make_it_readable(tmp_path, monkeypatch):
+@pytest.mark.parametrize("ipython", ["left alone", "giving a temporary directory per call"])
+def test_a_source_on_disk_numba_cannot_read_is_told_to_make_it_readable(tmp_path, monkeypatch, ipython):
     # numba 0.68 and later read a source on disk for the stamp, and its
     # IPython locator reads the function's source in every version, so a file
     # that cannot be read raises PermissionError naming the source; the
     # remedy told it as the location numba took, to make room in or make
-    # writable.
+    # writable, and, under an IPython giving temporary directories, told
+    # IPYTHONDIR, the error naming no location of another locator's.
+    import tempfile
+    import types
     import numba
     import numbox.core.configurations as configurations
 
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    if ipython != "left alone":
+        paths = types.ModuleType("IPython.paths")
+        paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+        monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+        monkeypatch.setitem(sys.modules, "IPython.paths", paths)
     kernel = tmp_path / "ipykernel_123"
     kernel.mkdir()
     py_file = kernel / "cell.py"
