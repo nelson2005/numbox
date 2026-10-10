@@ -514,7 +514,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     package at a shorter path for the second; the user's cache directory at a shorter path, through
     ``XDG_CACHE_HOME`` or ``HOME``, ``HOME`` alone on macOS and nothing on Windows, for the third; and for either
     of the last two ``NUMBA_CACHE_DIR`` set to a short path, where numba tries it before the locator that took the
-    location, or, where it is set and numba passed it over, named and made a writable directory at a short path. The
+    location, or before the last of the locators that give the file that one path, where the user-wide and ``.zip``
+    ones do, or, where it is set and numba passed it over, named and made a writable directory at a short path. The
     directory numba names after the source's, under ``NUMBA_CACHE_DIR`` or the user's cache directory, is that
     directory's name and forty-one bytes, and one longer than a name can be on the file system holding the location,
     which the system is asked for, 255 where it cannot say, in bytes, or in the UTF-16 units Windows and macOS count
@@ -811,7 +812,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         variable_at = next((at for at, cls in enumerate(order) if reads_the_variable(cls)), None)
         cache_dir_read = variable_at is not None
 
-        def instead(taken, asks="a short path"):
+        def instead(taken, asks="a short path", shared=None):
             # NUMBA_CACHE_DIR as the alternative to the location numba took,
             # offered where numba tries the variable before that location's
             # locator: set, it was passed over, unwritable or too deep; unset,
@@ -819,12 +820,21 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # is a location that is none of numba's, taken for the first in
             # the order other than the variable's own; it shows nothing of
             # what numba did with the variable, so a set one is named without
-            # the claim that numba passed it over.
+            # the claim that numba passed it over. ``shared`` is the last
+            # locator numba reaches whose place the error names too, where
+            # the user-wide and .zip locators give the file one path under
+            # the user's cache directory: which of them took it the error
+            # cannot show, so the variable is offered where numba tries it
+            # before the last, without the claim; the remedy read the first
+            # as the one, and left the variable out where it sat between.
             if taken in order:
                 position = order.index(taken)
                 passed_over = " and numba could not use"
             else:
                 position = next((at for at, cls in enumerate(order) if not reads_the_variable(cls)), len(order))
+                passed_over = ""
+            if shared is not None and shared is not taken and shared in order:
+                position = max(position, order.index(shared))
                 passed_over = ""
             if not cache_dir_read or variable_at >= position:
                 return ""
@@ -930,6 +940,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 # first save raises one where a write fails, as on a full disk.
                 named = set()
             taken = next((cls for cls in reached if locations[cls] and locations[cls] in named), None)
+            shared = next((cls for cls in reversed(reached) if locations[cls] and locations[cls] in named), None)
             # A name too long is refused whatever the errno, EINVAL on Windows.
             named_after_the_source = taken is not None and (
                 reads_the_variable(taken) or caches_under_the_user_cache_dir(taken))
@@ -952,7 +963,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 elif taken is not None and caches_under_the_user_cache_dir(taken):
                     cure = (
                         f"the user's cache directory, {user_cache_dir}, at a shorter path{_moved_through()}"
-                        f"{instead(taken)}"
+                        f"{instead(taken, shared=shared)}"
                     )
                 elif taken is not None and one_of(taken, for_ipython):
                     cure = f"IPython's cache directory, {os.path.dirname(locations[taken])}, at a shorter path{instead(taken)}"
@@ -986,7 +997,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             if taken is not None and reads_the_variable(taken):
                 alternative = ", or NUMBA_CACHE_DIR set to another writable directory"
             else:
-                alternative = instead(taken, "a writable directory")
+                alternative = instead(taken, "a writable directory", shared=shared)
             if taken:
                 opening = f"numba caches this file in {locations[taken]},"
             elif filename:

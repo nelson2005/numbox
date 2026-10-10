@@ -1666,6 +1666,41 @@ def test_a_name_too_long_under_the_zip_locator_listed_before_the_in_tree_one_is_
     assert "writable" not in remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+def test_a_path_too_long_the_user_wide_and_zip_locators_share_is_offered_the_variable_listed_between_them(
+        tmp_path, monkeypatch):
+    # A source on disk with .zip in its path is one the user-wide and .zip
+    # locators give one path under the user's cache directory; with the
+    # user-provided locator listed between them, a path too long that the
+    # user-wide one passed over and the .zip one took is cured by
+    # NUMBA_CACHE_DIR too, which numba tried between. The remedy read the
+    # location as the user-wide locator's, the first to match, and left the
+    # variable out.
+    import numba
+    from numba.core.caching import _CacheLocator
+    import numbox.core.configurations as configurations
+
+    user_cache_dir = tmp_path / "user-cache" / "numba"
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(user_cache_dir)
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES",
+                        "UserWideCacheLocator,UserProvidedCacheLocator,ZipCacheLocator", raising=False)
+    py_file = tmp_path / "data.zip" / "pkg" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("def f():\n    pass\n")
+    location = user_cache_dir / _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    remedy = configurations.cache_remedy(
+        str(py_file), OSError(errno.ENAMETOOLONG, "File name too long", str(location)), "silence")
+    assert remedy == (
+        f"the path is too long for the file system: the user's cache directory, {user_cache_dir}, at a shorter "
+        f"path{configurations._moved_through()}, or NUMBA_CACHE_DIR set to a short path; or silence"), remedy
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
