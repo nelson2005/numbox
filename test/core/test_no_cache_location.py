@@ -1630,6 +1630,39 @@ def test_an_error_naming_no_file_for_an_ipykernel_source_on_disk_is_not_blamed_o
                            "writable, or NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+def test_a_name_too_long_under_the_zip_locator_listed_before_the_in_tree_one_is_not_offered_the_pycache(
+        tmp_path, monkeypatch):
+    # numba's .zip locator, listed first, takes a source on disk with .zip in
+    # its path and reaches nothing after it, so the in-tree locator listed
+    # after it never caches beside the source; the remedy for a name too long
+    # offered the __pycache__ beside the source all the same, reading the
+    # whole list for the locators numba reaches.
+    import numba
+    from numba.core.caching import _CacheLocator
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "ZipCacheLocator,InTreeCacheLocator", raising=False)
+    limit = configurations._name_limit(str(tmp_path))
+    parent = tmp_path / ("d" * (limit - 34) + ".zip")
+    parent.mkdir()
+    py_file = parent / "module.py"
+    py_file.write_text("def f():\n    pass\n")
+    location = os.path.join(str(tmp_path / "user-cache" / "numba"), _CacheLocator.get_suitable_cache_subpath(str(py_file)))
+    remedy = configurations.cache_remedy(str(py_file), OSError(errno.ENAMETOOLONG, "File name too long", location), "silence")
+    assert remedy.startswith("numba names the directory it caches this file in after the source's directory, "), remedy
+    assert remedy.endswith(
+        ": put the file in a directory of a shorter name, or list InTreeCacheLocator before ZipCacheLocator, which "
+        "caches beside the source, in its __pycache__, under no such name; or silence"), remedy
+    assert "writable" not in remedy
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
