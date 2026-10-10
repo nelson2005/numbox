@@ -54,13 +54,15 @@ ARCHIVE_REMEDY = (
 def _archive(path, bytecode_naming_the_archive=()):
     """numbox's modules zipped into ``path``, which goes on PYTHONPATH as it is.
 
-    A directory named in ``bytecode_naming_the_archive`` goes in as ``.pyc`` alone, each compiled to name its
-    path inside the archive, as ``compileall -d`` and ``py_compile``'s ``dfile`` do.
+    A directory, or a file, named in ``bytecode_naming_the_archive`` goes in as ``.pyc`` alone, each compiled to
+    name its path inside the archive, as ``compileall -d`` and ``py_compile``'s ``dfile`` do.
     """
     with zipfile.ZipFile(path, "w") as zipped:
         for source in sorted((REPO / "numbox").rglob("*.py")):
             member = str(source.relative_to(REPO))
-            if source.parent.relative_to(REPO).as_posix() in bytecode_naming_the_archive:
+            as_bytecode = (source.parent.relative_to(REPO).as_posix() in bytecode_naming_the_archive
+                           or source.relative_to(REPO).as_posix() in bytecode_naming_the_archive)
+            if as_bytecode:
                 compiled = py_compile.compile(str(source), cfile=str(path.parent / (source.name + "c")),
                                               dfile=os.path.join(str(path), member), doraise=True)
                 zipped.write(compiled, member + "c")
@@ -614,6 +616,30 @@ def test_a_zip_import_whose_location_for_one_directory_stopped_being_writable_ta
                 "or make it writable") in run.stderr, run.stderr
     finally:
         locations[0].chmod(0o755)
+
+
+def test_a_pyc_member_alone_beside_sourced_ones_in_a_zip_is_asked_for_itself(tmp_path):
+    # numba 0.68 and later read each member's source from the archive by the
+    # name its code gives, so a module shipped as .pyc alone fails where the
+    # .py members beside it pass: a listing that let one member stand for the
+    # directory never asked for it, and libm died at its first binding.
+    archive = _archive(tmp_path / "numbox.zip", ("numbox/core/bindings/libm.py",))
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"))
+    env.pop("NUMBA_CACHE_DIR", None)
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
+                         env=env, cwd=str(tmp_path))
+    if windows_path_sep_bug in run.stderr:
+        pytest.skip(windows_path_sep_bug)
+    assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+    if numba_version >= 68:
+        assert run.stderr.count("compiles without a cache") == 1, run.stderr
+        assert ("holds none under numbox/core/bindings/libm.py, the module shipped as .pyc alone: to cache, install "
+                "numbox with its source files on disk") in run.stderr, run.stderr
+    else:
+        assert ("compiles without a cache" not in run.stderr) == _zip_is_cached(), run.stderr
 
 
 @pytest.mark.skipif(os.name == "nt", reason="a symlink needs a privilege on Windows")

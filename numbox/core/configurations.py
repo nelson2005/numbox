@@ -216,15 +216,18 @@ def _sourceless_compiled_from(pyc_path):
 
 
 def _archived_module_files(own):
-    """One module per directory of numbox inside the ``.zip`` that holds ``own``, this module as imported, and the
-    file each ``.pyc`` in it that zipimport would run was compiled from; nothing for any other archive.
+    """One module per directory of numbox inside the ``.zip`` that holds ``own``, this module as imported, the
+    file each ``.pyc`` in it that zipimport would run was compiled from, and each ``.pyc`` alone, with no ``.py``
+    beside it in the archive, for itself; nothing for any other archive.
 
     numba caches a ``.zip`` per directory of it, each in a location of its own under the user's cache directory,
     so the directories answer separately there too. A ``.pyc`` run from the archive keeps the file it was compiled
     from as its code's file, and that is what numba looks up for its functions, the archive's own path for the
-    module is not; so such a member asks by that file, there or gone. The archive is the first part of the path
-    named ``.zip`` that is one, a directory so named above it being no archive. Any other archive has no location
-    at all, and the probe's own file has already asked.
+    module is not; so such a member asks by that file, there or gone. numba 0.68 and later read the member's source
+    from the archive by the name its code gives, and a ``.pyc`` alone has none there, so it asks for itself whichever
+    member stands for its directory. The archive is the first part of the path named ``.zip`` that is one, a
+    directory so named above it being no archive. Any other archive has no location at all, and the probe's own
+    file has already asked.
     """
     parts = own.split(os.sep)
     for depth, part in enumerate(parts):
@@ -238,6 +241,7 @@ def _archived_module_files(own):
         names = sorted(name for name in archive.namelist()
                        if name.startswith(package + "/") and name.endswith((".py", ".pyc"))
                        and "/__pycache__/" not in name)
+    held = set(names)
     seen = set()
     for name in names:
         directory, _, file = name.rpartition("/")
@@ -246,6 +250,15 @@ def _archived_module_files(own):
             if member is None:
                 continue
             if not member.startswith(zip_path + os.sep):
+                yield member
+                continue
+            if name[:-1] not in held:
+                # A .pyc alone: numba 0.68 and later read the member's source
+                # from the archive by the name its code gives, and find none,
+                # so it is asked for itself whichever member stands for its
+                # directory; a listing that let a .py member stand for the
+                # directory never asked, and the module died at decoration.
+                seen.add(directory)
                 yield member
                 continue
         else:
