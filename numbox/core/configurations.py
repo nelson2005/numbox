@@ -1027,7 +1027,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # issue 10889, fixed in 0.68.1). The remedy told the archive's user
         # to add source files that were there; and one that read a backslash
         # as the separator's doing alone told a module shipped as .pyc alone
-        # that numba 0.68.1 caches the archive as it is, which holds no
+        # that numba 0.68.1 reads the archive as it is, which holds no
         # source for it under the name that release reads either.
         member = _missing_member(failure)
         held = member.replace("\\", "/")
@@ -1035,7 +1035,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return (
                 f"numba 0.68.0 reads a .zip member's source by a name built with Windows's separator, {member}, which "
                 "no archive holds (numba issue https://github.com/numba/numba/issues/10889, fixed in numba 0.68.1): "
-                f"numba 0.68.1 or later caches this .zip as it is; or {silence}"
+                f"numba 0.68.1 or later reads the member as the archive names it; or {silence}"
             )
         on_disk, a_zip = the_source_files()
         return (
