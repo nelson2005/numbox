@@ -85,12 +85,14 @@ def check_cache_location(py_file, longest_file_name=0):
     compiled, and nothing is written but the cache directory itself and, asked for it under an IPython that can write
     neither its cache directory nor its own, the temporary directories IPython makes, one per call, three for the
     check, two of them numba's own making the directory. An ``OSError`` from the check names the
-    location numba picked, but for two: inspect's, which names no file, for a cell file on disk that numba's IPython
-    locator takes, where inspect reads the source from the file itself, before that locator tries its location, and
-    finds none there, in a file it cannot read or, before Python 3.13, an empty one, which linecache gives a blank
-    line from then on; and the stamp's, which names the archive a ``.zip``
-    member's code names where that has since moved, read once the locator is picked, as numba's own does at
-    decoration. A location that is not there once made, numba's IPython locator asking IPython for its directory
+    location numba picked, but for three: inspect's, which names no file, for a cell file on disk that numba's
+    IPython locator takes, where inspect reads the source from the file itself, before that locator tries its
+    location, and finds none there, in a file it cannot read or, before Python 3.13, an empty one, which linecache
+    gives a blank line from then on; the stamp's, which names the archive a ``.zip`` member's code names where that
+    has since moved, read once the locator is picked, as numba's own does at decoration; and, from numba 0.68, where
+    the stamp hashes the source, the stamp's naming the source itself, which cannot be read, or the directory named
+    ``.zip`` above a file on disk, which numba's ``.zip`` locator takes for the archive and opens. A location that
+    is not there once made, numba's IPython locator asking IPython for its directory
     at every save and IPython giving a new temporary one on every call where it can write neither its cache
     directory nor its own, raises ``FileNotFoundError`` naming the one numba would save in, as numba's first save
     does.
