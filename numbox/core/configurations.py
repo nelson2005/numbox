@@ -1031,8 +1031,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         named_after_the_source = [
             cls for cls in tried
             if cls in locations and (reads_the_variable(cls) or caches_under_the_user_cache_dir(cls))]
-        if not zip_raised and named_after_the_source and all(
-                too_long_a_name(locations[cls]) for cls in named_after_the_source):
+        if named_after_the_source and all(too_long_a_name(locations[cls]) for cls in named_after_the_source):
             # Every locator numba tried, of those it reaches, a class listed
             # after the .zip locator being unreached for a path that locator
             # takes, that names its directory after the source's found the
@@ -1040,7 +1039,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # variable's by that of the directory it is set to or, unset, by
             # the limit nearly every file system has, and passed the file
             # over for that, which no writable directory at a short path
-            # cures; the remedy asked for one.
+            # cures; the remedy asked for one, and, where the .zip locator
+            # then raised for a path with .zip in it and no part ending in
+            # it, asked for the variable without a word of the name.
             too_long = too_long_a_name(locations[named_after_the_source[0]])
             return f"{too_long}: put the file in a directory of a shorter name{beside_the_source()}; or {silence}"
         if not any(reads_the_variable(cls) for cls in tried):
