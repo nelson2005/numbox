@@ -339,9 +339,6 @@ def _name_limit(location):
         return 255
 
 
-numba_version = int(version("numba").split(".")[1])
-
-
 def _class_named(module, name):
     """The class of this name in ``module``, as numba spells its locators from 0.62, or, under 0.60 and 0.61, with the
     underscore it put before them until then; None where the module has no such class. The underscore is tried under
