@@ -2120,6 +2120,75 @@ def test_a_locator_of_none_of_numbas_families_that_passes_the_file_over_leaves_t
         "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+@pytest.mark.parametrize("placement", ["a .zip member", "on disk"])
+def test_a_location_of_a_locator_listed_after_a_class_of_none_of_numbas_families_that_took_the_file_is_none_of_numbas(
+        tmp_path, monkeypatch, placement):
+    # A class of none of numba's families that takes the file, asked with a
+    # probe as numba asks it, is the last locator numba reaches; the remedy
+    # read the ones listed after it as reached too, and told an error naming
+    # IPython's numba_cache as numba caching the file there, a location numba
+    # never reached. It is a location that is none of numba's for the file.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    where = tmp_path / "our-cache"
+
+    class OurLocator(_CacheLocator):
+        def __init__(self, py_func, py_file):
+            self._py_file = py_file
+
+        def get_cache_path(self):
+            return str(where)
+
+        def get_source_stamp(self):
+            return 0
+
+        def get_disambiguator(self):
+            return "x"
+
+        @classmethod
+        def from_function(cls, py_func, py_file):
+            return cls(py_func, py_file)
+
+    ours = types.ModuleType("our_locators")
+    ours.OurLocator = OurLocator
+    monkeypatch.setitem(sys.modules, "our_locators", ours)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "our_locators.OurLocator,IPythonCacheLocator",
+                        raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    if placement == "a .zip member":
+        archive = tmp_path / "bundle.zip"
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+        py_file = archive / "ipykernel_123" / "cell.py"
+    else:
+        py_file = tmp_path / "ipykernel_123" / "cell.py"
+        py_file.parent.mkdir()
+        py_file.write_text("def cell():\n    return 1\n")
+    configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    assert where.is_dir() and not ipython_dir.exists()
+    named = ipython_dir / "numba_cache"
+    remedy = configurations.cache_remedy(str(py_file), PermissionError(errno.EACCES, "Permission denied", str(named)),
+                                         "silence")
+    assert "numba caches this file in" not in remedy, remedy
+    if placement == "a .zip member":
+        assert remedy == (
+            "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: no file can be written at "
+            f"that location, {named} (Permission denied), so make room there, or make it writable, or silence"), remedy
+    else:
+        assert remedy == (
+            f"that location, {named}, where no file can be written (Permission denied): make room there, or make it "
+            "writable; or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
@@ -3778,14 +3847,12 @@ def test_a_listed_class_of_none_of_numbas_families_is_told_the_location_the_erro
         py_file = tmp_path / "bundle.zip" / "package" / "module.py"
     if refused == "naming no file":
         remedy = configurations.cache_remedy(str(py_file), OSError(errno.ENOSPC, "No space left on device"), "silence")
-        if placement == "a source on disk":
+        if placement.startswith("a source on disk"):
+            # OurLocator takes the file, asked, so the in-tree locator listed
+            # after it is not reached: the remedy named its __pycache__ too.
             assert remedy == (
                 "the location numba took, OurLocator's own, where no file can be written (No space left on device): "
                 "make room there, or make it writable; or silence"), remedy
-        elif placement.startswith("a source on disk"):
-            assert remedy == (
-                f"the location numba took, one of OurLocator's own or {py_file.parent / '__pycache__'}, where no file "
-                "can be written (No space left on device): make room there, or make it writable; or silence"), remedy
         else:
             assert remedy == (
                 "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: no file can be written "
