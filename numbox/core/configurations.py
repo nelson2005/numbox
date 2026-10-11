@@ -910,10 +910,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # gives: the one numba's first save raises here names the directory
         # it could not save in, and a caller's with a reason and no name, a
         # full disk's, was told IPYTHONDIR with the reason dropped.
+        # IPython reads XDG_CACHE_HOME for its cache directory on every POSIX
+        # system from IPython 8, macOS included, which IPython 7 left out;
+        # the remedy said Linux, and steered a macOS reader off the variable.
         return (
             "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
             "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache "
-            "in one and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or "
+            "in one and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on a POSIX system, to a writable "
+            "directory; or "
             f"{silence}"
         )
 
