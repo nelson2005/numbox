@@ -895,9 +895,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
 
         order = [cls for cls in _locators(listed) if may_take(cls)]
         # numba's .zip locator takes a path with .zip in it without trying
-        # its location, so none listed after it is reached for such a file.
+        # its location, and a class of none of numba's families in the order
+        # took the file, asked, so none listed after either is reached: the
+        # remedy read the locators after such a class as reached, and told an
+        # error naming IPython's location as numba caching the file there.
         zip_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip)), None)
-        reached = order if zip_at is None else order[:zip_at + 1]
+        stops_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip) or not of_numbas(cls)), None)
+        reached = order if stops_at is None else order[:stops_at + 1]
         variable_at = next((at for at, cls in enumerate(order) if reads_the_variable(cls)), None)
         cache_dir_read = variable_at is not None
 
@@ -1233,12 +1237,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"{held}, the module shipped as .pyc alone: to cache, {on_disk}, or {a_zip}; or {silence}"
         )
     # The locators numba reaches for a file not on disk, in its order: its
-    # .zip locator takes a file without trying its location, so none listed
-    # after it is reached; its IPython and user-wide ones pass a location
-    # they cannot make or write over, and the next is tried.
+    # .zip locator takes a file without trying its location, and a class of
+    # none of numba's families in the order took the file, asked, so none
+    # listed after either is reached; its IPython and user-wide ones pass a
+    # location they cannot make or write over, and the next is tried.
     order = [cls for cls in _locators(listed) if may_take(cls)]
     zip_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip)), None)
-    reached = order if zip_at is None else order[:zip_at + 1]
+    stops_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip) or not of_numbas(cls)), None)
+    reached = order if stops_at is None else order[:stops_at + 1]
     user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
     in_the_user_cache = os.path.join(user_cache_dir, subpath) if subpath else None
 
