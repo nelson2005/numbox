@@ -1532,8 +1532,13 @@ def test_a_source_on_disk_numba_cannot_read_is_told_to_make_it_readable(tmp_path
 
 
 @pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
+@pytest.mark.parametrize("locators", [
+    pytest.param("", id="numba's order"),
+    pytest.param("ZipCacheLocator,InTreeCacheLocator", id="the .zip locator listed first",
+                 marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in 0.62")),
+])
 def test_a_source_on_disk_under_a_directory_named_zip_is_told_the_directory_once_the_locators_before_passed(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, locators):
     # numba's .zip locator takes a file on disk for the ".zip" in its path once
     # the in-tree and user-wide locators passed it over, takes the directory so
     # named for the archive and, from 0.68, opens it for the source, which a
@@ -1551,20 +1556,31 @@ def test_a_source_on_disk_under_a_directory_named_zip_is_told_the_directory_once
     monkeypatch.setattr(numba.core.caching, "AppDirs", UserCacheUnderTmp)
     monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
-    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", locators, raising=False)
     container = tmp_path / "read-only" / "data.zip"
     package = container / "pkg"
     package.mkdir(parents=True)
     py_file = package / "m.py"
     py_file.write_text("x = 1\n")
-    expected = (
-        "numba's .zip locator, reached once the locators before it passed this file over, takes the first part of the "
-        f"path ending in .zip, {container}, for an archive, and it is a directory, which numba 0.68 and later open "
-        "for the source: make one of those locators' locations writable, or NUMBA_CACHE_DIR set to a writable "
-        "directory, or put the file under a path with no such directory; or silence")
+    if locators:
+        # Listed first, the .zip locator takes the file before any locator for
+        # a file on disk; the remedy spoke of locators before it passing the
+        # file over, where there were none.
+        expected = (
+            "numba's .zip locator, which NUMBA_CACHE_LOCATOR_CLASSES puts before every locator for a source file on "
+            f"disk, takes the first part of the path ending in .zip, {container}, for an archive, and it is a "
+            "directory, which numba 0.68 and later open for the source: list UserProvidedCacheLocator, with "
+            "NUMBA_CACHE_DIR set, InTreeCacheLocator or UserWideCacheLocator before it, or put the file under a path "
+            "with no such directory; or silence")
+    else:
+        expected = (
+            "numba's .zip locator, reached once the locators before it passed this file over, takes the first part of "
+            f"the path ending in .zip, {container}, for an archive, and it is a directory, which numba 0.68 and later "
+            "open for the source: make one of those locators' locations writable, or NUMBA_CACHE_DIR set to a "
+            "writable directory, or put the file under a path with no such directory; or silence")
     failure = IsADirectoryError(errno.EISDIR, "Is a directory", str(container))
     assert configurations.cache_remedy(str(py_file), failure, "silence") == expected
-    if numba_version < 68 or os.name == "nt" or os.geteuid() == 0:
+    if numba_version < 68 or os.name == "nt" or os.geteuid() == 0 or locators:
         return
     # The in-tree locator cannot make __pycache__ beside the source, the
     # user-wide one cannot make the user's cache directory.

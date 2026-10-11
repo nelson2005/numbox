@@ -1006,12 +1006,20 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 # told the reader to make room in that directory, no cache
                 # location at all, with the remedy for a member alone knowing
                 # the case.
+                if zip_at:
+                    reached_how = "reached once the locators before it passed this file over"
+                    cure = f"make one of those locators' locations writable{instead(None, 'a writable directory')}, or "
+                else:
+                    # Listed first, the .zip locator takes the file before any
+                    # locator for a file on disk; the remedy spoke of locators
+                    # before it that were not there.
+                    reached_how = "which NUMBA_CACHE_LOCATOR_CLASSES puts before every locator for a source file on disk"
+                    cure = "list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, InTreeCacheLocator or " \
+                           "UserWideCacheLocator before it, or "
                 return (
-                    "numba's .zip locator, reached once the locators before it passed this file over, takes the first "
-                    f"part of the path ending in .zip, {filename}, for an archive, and it is a directory, which numba "
-                    "0.68 and later open for the source: make one of those locators' locations writable"
-                    f"{instead(None, 'a writable directory')}, or put the file under a path with no such directory; or "
-                    f"{silence}"
+                    f"numba's .zip locator, {reached_how}, takes the first part of the path ending in .zip, {filename}, "
+                    "for an archive, and it is a directory, which numba 0.68 and later open for the source: "
+                    f"{cure}put the file under a path with no such directory; or {silence}"
                 )
             # numba took the location, so the variable was not passed over for
             # it; set elsewhere it moves the cache off a disk that is full. A
