@@ -1907,6 +1907,49 @@ def test_a_zip_member_in_an_ipykernel_directory_given_as_bytes_or_a_path_object_
     linecache.cache.pop(str(py_file), None)
 
 
+@pytest.mark.parametrize("placement", ["a .zip member", "on disk"])
+def test_an_error_naming_no_file_under_a_temporary_ipython_directory_is_told_the_locations_with_its_reason(
+        tmp_path, monkeypatch, placement):
+    # An error naming no file is told the locations numba could have taken,
+    # with its reason, as the docstring says; the remedy for an IPython that
+    # gives a new temporary directory on every call, to set IPYTHONDIR, took
+    # a caller's error with a reason and no name too, a full disk's, for a
+    # .zip member in an ipykernel directory, and dropped the reason. The error
+    # numba's first save raises under such an IPython names the directory it
+    # could not save in.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    if placement == "a .zip member":
+        archive = tmp_path / "bundle.zip"
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+        py_file = archive / "ipykernel_123" / "cell.py"
+    else:
+        py_file = tmp_path / "ipykernel_123" / "cell.py"
+        py_file.parent.mkdir()
+        py_file.write_text("def cell():\n    return 1\n")
+    failure = OSError(errno.ENOSPC, "No space left on device")
+    assert failure.filename is None
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert "IPYTHONDIR" not in remedy and "temporary" not in remedy, remedy
+    assert "the location numba took, one of" in remedy and "(No space left on device)" in remedy, remedy
+    assert "numba_cache" in remedy and str(tmp_path / "user-cache" / "numba") in remedy, remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
