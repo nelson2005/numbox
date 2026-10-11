@@ -3770,15 +3770,18 @@ def test_a_source_whose_path_holds_bytes_that_are_not_utf8_is_answered_where_num
     assert configurations.cache_remedy(py_file, failure, "silence") == expected
 
 
-def test_a_cell_whose_source_linecache_does_not_hold_raises_inspects_error_as_numba_does(tmp_path, monkeypatch):
+@pytest.mark.parametrize("ipython", ["giving its directory", "giving a temporary directory per call"])
+def test_a_cell_whose_source_linecache_does_not_hold_raises_inspects_error_as_numba_does(tmp_path, monkeypatch, ipython):
     # numba's IPython locator reads a cell's source from linecache, where
     # IPython holds it while it runs the cell, and inspect raises, with no
     # errno and no name, for a cell linecache does not hold, before the
     # locator tries its location; the check gave the probe's source to every
     # file the locator takes by name and returned for such a cell, where numba
     # raises at decoration, and the remedy told the location numba took as
-    # refusing a file.
+    # refusing a file, or, under an IPython giving temporary directories,
+    # blamed the directory the locator never tried.
     import linecache
+    import tempfile
     import types
     import numba
     import numbox.core.configurations as configurations
@@ -3787,7 +3790,8 @@ def test_a_cell_whose_source_linecache_does_not_hold_raises_inspects_error_as_nu
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     ipython_dir = tmp_path / "ipython"
     paths = types.ModuleType("IPython.paths")
-    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    temporary = ipython != "giving its directory"
+    paths.get_ipython_cache_dir = (lambda: tempfile.mkdtemp(dir=tmp_path)) if temporary else (lambda: str(ipython_dir))
     monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
     cell = "<ipython-input-7-0123456789ab>"
@@ -3795,7 +3799,7 @@ def test_a_cell_whose_source_linecache_does_not_hold_raises_inspects_error_as_nu
     with pytest.raises(OSError, match="could not get source code") as raised:
         configurations.check_cache_location(cell, configurations.LONGEST_CACHE_FILE_NAME)
     assert raised.value.errno is None and raised.value.filename is None
-    assert not ipython_dir.exists()
+    assert temporary or not ipython_dir.exists()
     assert configurations.is_a_cache_error(raised.value)
     remedy = configurations.cache_remedy(cell, raised.value, "silence")
     assert remedy == (
@@ -3803,16 +3807,20 @@ def test_a_cell_whose_source_linecache_does_not_hold_raises_inspects_error_as_nu
         "source code), and numba caches a cell only while IPython holds its source; or silence"), remedy
 
 
+@pytest.mark.parametrize("ipython", ["giving its directory", "giving a temporary directory per call"])
 @pytest.mark.parametrize("name", ["bundle.zip", "bundle.egg"])
 def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_inspects_error_as_numba_does(
-        tmp_path, monkeypatch, name):
+        tmp_path, monkeypatch, name, ipython):
     # numba's IPython locator reads the function's source through the module's
     # loader for a .zip member, and zipimport gives none for a member compiled
     # to .pyc alone, so numba raises inspect's error at decoration; the check
     # gave the probe's source to every member a locator of that family takes
     # and returned, where upstream main's check raised as numba does, and the
     # remedy told the location numba took as refusing a file where the
-    # archive's remedy, its source files to ship, is the one.
+    # archive's remedy, its source files to ship, is the one, and, under an
+    # IPython giving temporary directories, blamed the directory the locator
+    # never tried.
+    import tempfile
     import types
     import numba
     import numbox.core.configurations as configurations
@@ -3821,7 +3829,8 @@ def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_ins
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     ipython_dir = tmp_path / "ipython"
     paths = types.ModuleType("IPython.paths")
-    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    temporary = ipython != "giving its directory"
+    paths.get_ipython_cache_dir = (lambda: tempfile.mkdtemp(dir=tmp_path)) if temporary else (lambda: str(ipython_dir))
     monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
     source = tmp_path / "cell.py"
@@ -3836,7 +3845,7 @@ def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_ins
     with pytest.raises(OSError, match="source code") as raised:
         configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
     assert raised.value.errno is None and raised.value.filename is None
-    assert not ipython_dir.exists()
+    assert temporary or not ipython_dir.exists()
     assert configurations.is_a_cache_error(raised.value)
     assert configurations.cache_remedy(py_file, raised.value, "silence") == f"{ARCHIVE_REMEDY}; or silence"
 
