@@ -1946,8 +1946,13 @@ def test_an_error_naming_no_file_under_a_temporary_ipython_directory_is_told_the
     assert failure.filename is None
     remedy = configurations.cache_remedy(str(py_file), failure, "silence")
     assert "IPYTHONDIR" not in remedy and "temporary" not in remedy, remedy
-    assert "the location numba took, one of" in remedy and "(No space left on device)" in remedy, remedy
-    assert "numba_cache" in remedy and str(tmp_path / "user-cache" / "numba") in remedy, remedy
+    assert "the location numba took, " in remedy and "(No space left on device)" in remedy, remedy
+    assert "numba_cache" in remedy, remedy
+    # The .zip locator's location, under the user's cache directory, is among
+    # them from numba 0.67, where that locator arrived; a file on disk has
+    # the user-wide locator's there under every version.
+    others = placement == "on disk" or numba_version >= 67
+    assert (str(tmp_path / "user-cache" / "numba") in remedy) == others, remedy
 
 
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
