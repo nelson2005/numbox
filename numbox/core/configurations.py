@@ -6,6 +6,7 @@ import itertools
 import os
 import pathlib
 import json
+import linecache
 import re
 import sys
 import tempfile
@@ -99,8 +100,10 @@ def check_cache_location(py_file, longest_file_name=0):
     while it runs the cell, and a ``.zip`` member through the function's module's loader, zipimport's, which gives the
     member's source from the archive; the probe is a function of a module of its own, whose loader reads the member
     as zipimport's does, in ``sys.modules`` while numba picks the locator, and the lines linecache holds from then on
-    are the member's own, as any reader leaves them. A cell linecache does not hold, or a member compiled to ``.pyc``
-    alone, raises inspect's error, as numba does at decoration. Nothing is
+    are the member's own, as any reader leaves them; for a member the archive holds no source for linecache keeps the
+    probe's loader to ask again, and the check takes it out, a loader of its own staying for no file. A cell linecache
+    does not hold, or a member compiled to ``.pyc`` alone, raises inspect's error, as numba does at decoration.
+    Nothing is
     compiled, and nothing is written but the cache directory itself and, asked for it under an IPython that can write
     neither its cache directory nor its own, the temporary directories IPython makes, one per call, three for the
     check, two of them numba's own making the directory. An ``OSError`` from the check names the
@@ -147,11 +150,18 @@ def check_cache_location(py_file, longest_file_name=0):
     module.__loader__ = _MemberSource(file)
     exec(compile(source, file, "exec"), module.__dict__)  # nosec B102 - fixed source
     probe = module._cache_probe
+    held = file in linecache.cache
     sys.modules[module.__name__] = module
     try:
         locator = CompileResultCacheImpl(probe).locator
     finally:
         sys.modules.pop(module.__name__, None)
+        # inspect leaves the member's lines under the file's name, as any
+        # reader does, or, for a member the archive holds no source for, the
+        # probe's loader, which linecache keeps to ask again for the file and
+        # kept for the process: a loader of the check's own stays for no file.
+        if not held and len(linecache.cache.get(file, ())) == 1:
+            linecache.cache.pop(file, None)
     # numba reads the source's stamp at decoration too, the archive's for a
     # .zip, which is not there where the code names an archive since moved.
     locator.get_source_stamp()

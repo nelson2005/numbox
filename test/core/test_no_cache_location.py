@@ -4013,6 +4013,7 @@ def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_ins
     # archive's remedy, its source files to ship, is the one, and, under an
     # IPython giving temporary directories, blamed the directory the locator
     # never tried.
+    import linecache
     import tempfile
     import types
     import numba
@@ -4034,9 +4035,13 @@ def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_ins
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.write(compiled, "ipykernel_123/cell.pyc")
     py_file = str(archive / "ipykernel_123" / "cell.py")
+    linecache.cache.pop(py_file, None)
     with pytest.raises(OSError, match="could not get source code") as raised:
         configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
     assert raised.value.errno is None and raised.value.filename is None
+    # linecache kept the probe's loader under the member's name, to ask again
+    # for a file whose source it found none of; the check takes it out.
+    assert py_file not in linecache.cache
     assert temporary or not ipython_dir.exists()
     assert configurations.is_a_cache_error(raised.value)
     assert configurations.cache_remedy(py_file, raised.value, "silence") == f"{ARCHIVE_REMEDY}; or silence"
