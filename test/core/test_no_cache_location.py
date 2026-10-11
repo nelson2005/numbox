@@ -2027,6 +2027,47 @@ def test_a_locator_of_none_of_numbas_families_listed_before_the_ipython_one_is_t
             "writable; or silence"), remedy
 
 
+@needs_a_directory_it_cannot_write
+@pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
+def test_a_zip_members_location_that_cannot_be_made_is_told_the_directory_refusing_it(tmp_path, monkeypatch):
+    # numba's .zip locator takes a member without making its location, and
+    # the first save makes it under the user's cache directory, as the check
+    # does; where a directory on the way is not writable, the error names the
+    # location, which is not there, and the remedy asked for room in it, or
+    # for it to be made writable, and never named the directory refusing.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderHome:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "home" / ".cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderHome)
+    monkeypatch.setattr(numba.core.caching, "AppDirs", UserCacheUnderHome)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("package/module.py", "def f():\n    pass\n")
+    py_file = str(archive / "package" / "module.py")
+    refusing = tmp_path / "home" / ".cache"
+    refusing.mkdir(parents=True)
+    refusing.chmod(0o555)
+    try:
+        with pytest.raises(PermissionError) as raised:
+            configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+        location = raised.value.filename
+        assert location.startswith(str(refusing / "numba") + os.sep) and not os.path.isdir(location)
+        remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    finally:
+        refusing.chmod(0o755)
+    assert remedy == (
+        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+        f"effect here, because the source is not a file on disk: no file can be written in that directory, {location}, "
+        f"which cannot be made under {refusing} (Permission denied), so make room there, or make it writable, or "
+        "silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
@@ -2311,6 +2352,9 @@ def test_a_zip_members_error_is_answered_without_asking_ipython_for_its_cache_di
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
     py_file = str(tmp_path / "bundle.zip" / "package" / "module.py")
     location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
+    # The location is there and refuses, as a directory made can; one not
+    # there is told the directory it cannot be made under as well.
+    location.mkdir(parents=True)
     remedy = configurations.cache_remedy(py_file, OSError(errno.EACCES, "Permission denied", str(location)), "silence")
     if numba_version < 61:
         # numba's .zip locator arrived in 0.61; before it, no locator takes a
@@ -3062,6 +3106,9 @@ def test_an_ipython_that_raises_for_its_cache_directory_leaves_numba_no_location
         monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
         py_file = tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py"
         location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(str(py_file))
+        # The location is there and refuses, as a directory made can; one not
+        # there is told the directory it cannot be made under as well.
+        location.mkdir(parents=True)
         failure = OSError(errno.EACCES, "Permission denied", str(location))
         remedy = configurations.cache_remedy(str(py_file), failure, "silence")
         assert remedy == (
@@ -4202,6 +4249,9 @@ def test_a_zip_import_refused_its_location_under_a_list_without_the_user_wide_lo
     py_file = str(tmp_path / "bundle.zip" / "package" / "module.py")
     location = tmp_path / "user-cache" / "numba" / _CacheLocator.get_suitable_cache_subpath(py_file)
     error, told = A_ZIP_REFUSED[refused]
+    # The location is there and refuses, as a directory made can; one not
+    # there is told the directory it cannot be made under as well.
+    location.mkdir(parents=True)
     remedy = configurations.cache_remedy(py_file, OSError(*error, str(location)), "silence")
     told = told.format(location=location, moved_through=configurations._moved_through())
     assert remedy == (
