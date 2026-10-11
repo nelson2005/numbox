@@ -416,8 +416,12 @@ def _ipython_cache_is_temporary(first):
     """Whether IPython gives a new temporary directory as its cache directory on every call, which it does, warning
     so, where it can write neither its cache directory nor its own; numba's IPython locator asks for the directory at
     every save, so numba makes ``numba_cache`` in one and saves in another. ``first`` is one answer already given,
-    and one more is asked for; each is a directory IPython leaves behind."""
-    return first is not None and _ipython_numba_cache() != first
+    and one more is asked for; each is a directory IPython leaves behind. An IPython that gives a directory once and
+    raises the next time gives no temporary directory: the second answer, none, counted as a new one."""
+    if first is None:
+        return False
+    second = _ipython_numba_cache()
+    return second is not None and second != first
 
 
 def _taken_by_ipython(py_file):

@@ -1830,6 +1830,45 @@ def test_the_check_leaves_the_lines_a_reader_stored_meanwhile_for_a_file_not_on_
     linecache.cache.pop(py_file, None)
 
 
+def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
+    # The remedy asks IPython for its cache directory twice to tell a new
+    # temporary directory from a steady one; an IPython that answers once and
+    # raises on the second call gave no second directory, and the remedy,
+    # reading the raise as a new answer, blamed a temporary directory.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    answers = [str(tmp_path / "ipython")]
+
+    def once():
+        if answers:
+            return answers.pop()
+        raise RuntimeError("IPython misbehaved")
+
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = once
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def f():\n    pass\n")
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    named = tmp_path / "ipython" / "numba_cache"
+    remedy = configurations.cache_remedy(py_file, OSError(errno.EACCES, "Permission denied", str(named)), "silence")
+    assert "temporary" not in remedy and "IPYTHONDIR" not in remedy, remedy
+    assert remedy == (
+        f"numba caches this file in {named}, where no file can be written (Permission denied): make room there, or "
+        "make it writable; or silence"), remedy
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
