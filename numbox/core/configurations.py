@@ -504,10 +504,15 @@ def _taken_by_ipython(py_file):
 def _archive_above(py_file):
     """The archive ``py_file`` is a member of and the member's name in it, as zipimport finds them: the first part of
     the path that is a file, whatever its name, must be a zip archive, and the rest is the member; None where no part
-    is a file, or the first that is one is no archive."""
-    parts = pathlib.Path(py_file).parts
+    is a file, or the first that is one is no archive.
+
+    The path is read as the platform's, by its separator: a path of the platform ``os.name`` says, which a test sets to
+    Windows's, Python before 3.12 refuses to make on Linux, and the remedy for a member numba names with Windows's
+    separator died on it."""
+    pure = pathlib.PureWindowsPath if os.sep == "\\" else pathlib.PurePosixPath
+    parts = pure(os.fsdecode(py_file)).parts
     for at in range(len(parts) - 1):
-        prefix = str(pathlib.Path(*parts[:at + 1]))
+        prefix = str(pure(*parts[:at + 1]))
         if os.path.isdir(prefix):
             continue
         if zipfile.is_zipfile(prefix):
