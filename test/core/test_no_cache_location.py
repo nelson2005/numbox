@@ -2433,6 +2433,35 @@ def test_a_keyerror_for_a_pyc_compiled_to_name_another_path_in_the_archive_is_to
             "src/pkg/b.py, the module shipped as .pyc alone: to cache, "), remedy
 
 
+@pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
+def test_an_archive_numba_cannot_read_is_told_to_make_it_readable(tmp_path, monkeypatch):
+    # numba reads the archive for the member's stamp, and from 0.68 opens it
+    # for the member's source; one it cannot read raises naming the archive,
+    # and the remedy told the archive as a location that refused a file, to
+    # make room in or make writable, which reads nothing.
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("package/module.py", "def f():\n    pass\n")
+    py_file = str(archive / "package" / "module.py")
+    failure = PermissionError(errno.EACCES, "Permission denied", str(archive))
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert "writable" not in remedy and "make room" not in remedy, remedy
+    assert remedy == (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: numba reads the archive, "
+        f"{archive}, for the member's stamp, and from 0.68 for the member's source, and cannot (Permission denied): "
+        "make it readable, or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and

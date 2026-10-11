@@ -157,7 +157,8 @@ def check_cache_location(py_file, longest_file_name=0):
     IPython locator takes, where inspect reads the source from the file itself, before that locator tries its
     location, and finds none there, in a file it cannot read or, before Python 3.13, an empty one, which linecache
     gives a blank line from then on; the stamp's, which names the archive a ``.zip`` member's code names where that
-    has since moved, read once the locator is picked, as numba's own does at decoration; and, from numba 0.68, where
+    has since moved or cannot be read, read once the locator is picked, as numba's own does at decoration; and, from
+    numba 0.68, where
     the stamp hashes the source, the stamp's naming the source itself, which cannot be read, or the directory named
     ``.zip`` above a file on disk, which numba's ``.zip`` locator takes for the archive and opens. A location that
     is not there once made, numba's IPython locator asking IPython for its directory
@@ -1453,6 +1454,16 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"{opening}numba takes the first part of the path ending in .zip, {filename}, for the archive, and it "
                 "is a directory, which numba 0.68 and later open to read the member's source: put the archive under "
                 f"a path with no such directory above it, or {silence}"
+            )
+        if isinstance(failure, OSError) and filename and py_file.startswith(filename + os.sep):
+            # The archive the member's code names, which numba reads for the
+            # stamp, and from 0.68 opens for the member's source, and cannot:
+            # the remedy told it as a location refusing a file, to be made
+            # writable, which reads nothing.
+            reason = failure.strerror or failure
+            return (
+                f"{opening}numba reads the archive, {filename}, for the member's stamp, and from 0.68 for the "
+                f"member's source, and cannot ({reason}): make it readable, or {silence}"
             )
         if isinstance(failure, OSError) and filename and taken is None:
             # A location that is none of numba's, under the list and in its
