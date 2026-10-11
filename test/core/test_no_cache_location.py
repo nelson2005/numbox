@@ -642,6 +642,40 @@ def test_a_pyc_member_alone_beside_sourced_ones_in_a_zip_is_asked_for_itself(tmp
         assert ("compiles without a cache" not in run.stderr) == _zip_is_cached(), run.stderr
 
 
+def test_a_pyc_beside_its_source_in_a_zip_compiled_to_name_another_path_in_it_is_asked_for_itself(tmp_path):
+    # zipimport runs a .pyc before the .py beside it, a hash-based one it
+    # does not check whatever the .py's age, and numba reads the member's
+    # source by the name the .pyc's code gives, from numba 0.68 the source
+    # too; compiled to name another path in the archive, compileall's -d
+    # with a path the archive does not hold, that name is of no member. The
+    # listing took a .pyc naming the archive for one standing for its
+    # directory, like its .py, and never asked: libm died at decoration.
+    archive = tmp_path / "numbox.zip"
+    libm = REPO / "numbox" / "core" / "bindings" / "libm.py"
+    compiled = py_compile.compile(str(libm), cfile=str(tmp_path / "libm.pyc"),
+                                  dfile=os.path.join(str(archive), "src", "numbox", "core", "bindings", "libm.py"),
+                                  doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for source in sorted((REPO / "numbox").rglob("*.py")):
+            zipped.write(source, str(source.relative_to(REPO)))
+        zipped.write(compiled, "numbox/core/bindings/libm.pyc")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(os.environ, PYTHONPATH=str(archive), HOME=str(home), XDG_CACHE_HOME=str(home / "cache"))
+    env.pop("NUMBA_CACHE_DIR", None)
+    env.pop("NUMBOX_JIT_OPTIONS", None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
+                         env=env, cwd=str(tmp_path))
+    if windows_path_sep_bug in run.stderr:
+        pytest.skip(windows_path_sep_bug)
+    assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
+    if numba_version >= 68:
+        assert run.stderr.count("compiles without a cache") == 1, run.stderr
+        assert "src/numbox/core/bindings/libm.py" in run.stderr, run.stderr
+    else:
+        assert ("compiles without a cache" not in run.stderr) == _zip_is_cached(), run.stderr
+
+
 @pytest.mark.skipif(os.name == "nt", reason="a symlink needs a privilege on Windows")
 def test_symlinks_that_cycle_inside_the_package_are_walked_once(tmp_path):
     # Two links pointing up the package, followed with no memory of where the
