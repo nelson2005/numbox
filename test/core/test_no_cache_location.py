@@ -1955,6 +1955,78 @@ def test_an_error_naming_no_file_under_a_temporary_ipython_directory_is_told_the
     assert (str(tmp_path / "user-cache" / "numba") in remedy) == others, remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+@pytest.mark.parametrize("placement", ["a .zip member", "on disk"])
+def test_a_locator_of_none_of_numbas_families_listed_before_the_ipython_one_is_told_its_own_location(
+        tmp_path, monkeypatch, placement):
+    # A class of none of numba's families takes any file for the remedy, so
+    # numba reaches none listed after it; the remedy for an IPython that gives
+    # a new temporary directory on every call, to set IPYTHONDIR, asked only
+    # whether a locator of IPython's family was listed before the .zip one,
+    # and blamed IPython for the error such a class raised naming its own
+    # location, for a file in an ipykernel directory, where the location the
+    # error names is the remedy.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    where = tmp_path / "our-cache"
+
+    class OurLocator(_CacheLocator):
+        def __init__(self, py_func, py_file):
+            self._py_file = py_file
+
+        def get_cache_path(self):
+            return str(where)
+
+        def get_source_stamp(self):
+            return 0
+
+        def get_disambiguator(self):
+            return "x"
+
+        def ensure_cache_path(self):
+            raise PermissionError(errno.EACCES, "Permission denied", str(where))
+
+        @classmethod
+        def from_function(cls, py_func, py_file):
+            return cls(py_func, py_file)
+
+    ours = types.ModuleType("our_locators")
+    ours.OurLocator = OurLocator
+    monkeypatch.setitem(sys.modules, "our_locators", ours)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "our_locators.OurLocator,IPythonCacheLocator",
+                        raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    if placement == "a .zip member":
+        archive = tmp_path / "bundle.zip"
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+        py_file = archive / "ipykernel_123" / "cell.py"
+    else:
+        py_file = tmp_path / "ipykernel_123" / "cell.py"
+        py_file.parent.mkdir()
+        py_file.write_text("def cell():\n    return 1\n")
+    with pytest.raises(PermissionError) as raised:
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    assert raised.value.filename == str(where)
+    remedy = configurations.cache_remedy(str(py_file), raised.value, "silence")
+    if placement == "a .zip member":
+        assert remedy == (
+            "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: no file can be written at "
+            f"that location, {where} (Permission denied), so make room there, or make it writable, or silence"), remedy
+    else:
+        assert remedy == (
+            f"that location, {where}, where no file can be written (Permission denied): make room there, or make it "
+            "writable; or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
