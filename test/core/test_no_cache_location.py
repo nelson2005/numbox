@@ -671,7 +671,12 @@ def test_a_pyc_beside_its_source_in_a_zip_compiled_to_name_another_path_in_it_is
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     if numba_version >= 68:
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
-        assert "src/numbox/core/bindings/libm.py" in run.stderr, run.stderr
+        assert ("holds none under src/numbox/core/bindings/libm.py" not in run.stderr
+                or "shipped as .pyc alone" not in run.stderr), run.stderr
+        assert ("by the name the module's code gives, src/numbox/core/bindings/libm.py, which "
+                "numbox/core/bindings/libm.pyc was compiled to name, and this one holds none so named, while it holds "
+                "the module's source, numbox/core/bindings/libm.py: to cache, compile the .pyc to name its path in the "
+                "archive, or leave it out") in run.stderr, run.stderr
     else:
         assert ("compiles without a cache" not in run.stderr) == _zip_is_cached(), run.stderr
 
@@ -2381,6 +2386,43 @@ def test_the_zip_locators_errors_after_a_class_of_none_of_numbas_families_that_t
             f"that location, {container}, where no file can be written (Is a directory): make room there, or make it "
             "writable; or silence"), remedy
     assert where.is_dir()
+
+
+@pytest.mark.parametrize("beside", ["its source beside it", "alone"])
+def test_a_keyerror_for_a_pyc_compiled_to_name_another_path_in_the_archive_is_told_the_pyc(tmp_path, beside):
+    # numba 0.68 and later read a .zip member's source by the name the
+    # module's code gives, and zipfile raises for a name the archive does not
+    # hold; the remedy read every such error as a module shipped as .pyc
+    # alone and asked for source files, where the archive held the module's
+    # source beside a .pyc compiled to name another path in it, compileall's
+    # -d, which zipimport runs: the .pyc is what to recompile or leave out.
+    import numbox.core.configurations as configurations
+
+    archive = tmp_path / "bundle.zip"
+    source = tmp_path / "b.py"
+    source.write_text("def f():\n    pass\n")
+    compiled = py_compile.compile(str(source), cfile=str(tmp_path / "b.pyc"),
+                                  dfile=os.path.join(str(archive), "src", "pkg", "b.py"), doraise=True,
+                                  invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("pkg/__init__.py", "")
+        if beside == "its source beside it":
+            zipped.write(source, "pkg/b.py")
+        zipped.write(compiled, "pkg/b.pyc")
+    py_file = str(archive / "src" / "pkg" / "b.py")
+    assert configurations._compiled_from(str(archive), "pkg", "b") == py_file
+    failure = KeyError("There is no item named 'src/pkg/b.py' in the archive")
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    if beside == "its source beside it":
+        assert remedy == (
+            "numba 0.68 and later read a .zip member's source from the archive by the name the module's code gives, "
+            "src/pkg/b.py, which pkg/b.pyc was compiled to name, and this one holds none so named, while it holds the "
+            "module's source, pkg/b.py: to cache, compile the .pyc to name its path in the archive, or leave it out, "
+            "so that Python compiles the source and numba reads it under that name; or silence"), remedy
+    else:
+        assert remedy.startswith(
+            "numba 0.68 and later read a .zip member's source from the archive, and this one holds none under "
+            "src/pkg/b.py, the module shipped as .pyc alone: to cache, "), remedy
 
 
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
