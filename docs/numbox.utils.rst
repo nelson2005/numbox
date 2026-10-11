@@ -141,11 +141,14 @@ opcode encodes an *index* into ``co_consts`` rather than the value
 itself, so two methods differing only in a numeric literal
 (``return self.x + 1`` vs ``return self.x + 1000``) produce identical
 ``co_code``. With a shared anchor file both would resolve to the same
-``cache_subpath`` (numba's
-``_CacheLocator.get_suitable_cache_subpath`` derives the cache subdir
-from a hash of ``co_filename``) and the second to compile would
-silently load the first's binary. Per-content anchors segregate the
-two by ``cache_subpath`` so the collision never arises.
+cache files: numba names them after the anchor file's stem and the
+function's qualified name (``CacheImpl.get_filename_base``), in one
+subdirectory it derives from a hash of the anchor's *directory*
+(``_CacheLocator.get_suitable_cache_subpath``), so the second to
+compile would silently load the first's binary. Per-content anchors
+segregate the two by the anchor's stem, which numba puts in the cache
+files' names, so the collision never arises; every anchor shares the
+one subdirectory.
 
 Structural body changes -- different operators, additional
 statements, renamed variables -- produce different ``co_code`` and
