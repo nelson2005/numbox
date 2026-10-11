@@ -79,8 +79,9 @@ def check_cache_location(py_file, longest_file_name=0):
     holds there while it runs it, and through the module's loader for a ``.zip`` member in an ipykernel directory
     whose source the archive holds, which the probe has no module for, so for such a member that a locator of that
     family numba reaches takes the probe's source is given it under the file's name while the locator is picked, one
-    check at a time so that each puts back what it found, and a reader of that file's lines meanwhile, in another
-    thread, reads the probe's; every other file is asked with the linecache untouched, and a cell linecache does
+    check at a time so that each puts back what it found, unless a reader of that file's lines meanwhile, in another
+    thread, which reads the probe's, stored lines of its own, which stay; every other file is asked with the
+    linecache untouched, and a cell linecache does
     not hold, or a member compiled to ``.pyc`` alone, raises inspect's error, as numba does at decoration. Nothing is
     compiled, and nothing is written but the cache directory itself and, asked for it under an IPython that can write
     neither its cache directory nor its own, the temporary directories IPython makes, one per call, three for the
@@ -123,14 +124,19 @@ def check_cache_location(py_file, longest_file_name=0):
     else:
         with _probe_source:
             was_cached = linecache.cache.get(file)
-            linecache.cache[file] = (len(source), None, source.splitlines(True), file)
+            planted = (len(source), None, source.splitlines(True), file)
+            linecache.cache[file] = planted
             try:
                 locator = CompileResultCacheImpl(probe).locator
             finally:
-                if was_cached is None:
-                    linecache.cache.pop(file, None)
-                else:
-                    linecache.cache[file] = was_cached
+                # What was there goes back, unless a reader of the file's
+                # lines in another thread stored its own meanwhile, which
+                # stays: putting the old entry back lost it.
+                if linecache.cache.get(file) is planted:
+                    if was_cached is None:
+                        linecache.cache.pop(file, None)
+                    else:
+                        linecache.cache[file] = was_cached
     # numba reads the source's stamp at decoration too, the archive's for a
     # .zip, which is not there where the code names an archive since moved.
     locator.get_source_stamp()
