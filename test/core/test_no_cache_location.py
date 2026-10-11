@@ -2283,6 +2283,72 @@ def test_a_zip_members_location_under_a_file_is_told_the_file_in_its_path(tmp_pa
         "elsewhere, or silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+@pytest.mark.parametrize("error", ["no archive in the path", "a directory named .zip"])
+def test_the_zip_locators_errors_after_a_class_of_none_of_numbas_families_that_took_the_file_are_a_callers(
+        tmp_path, monkeypatch, error):
+    # numba's .zip locator listed after a class of none of numba's families
+    # that takes the file, asked, is not reached, so its errors under the
+    # list are a caller's: the ValueError for a path with .zip in it and no
+    # part ending in it, and the IsADirectoryError for a directory named
+    # .zip above a source on disk. The remedy told both as the .zip
+    # locator's, the locators before it having passed the file over, where
+    # one of them took it.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    where = tmp_path / "our-cache"
+
+    class OurLocator(_CacheLocator):
+        def __init__(self, py_func, py_file):
+            self._py_file = py_file
+
+        def get_cache_path(self):
+            return str(where)
+
+        def get_source_stamp(self):
+            return 0
+
+        def get_disambiguator(self):
+            return "x"
+
+        @classmethod
+        def from_function(cls, py_func, py_file):
+            return cls(py_func, py_file)
+
+    ours = types.ModuleType("our_locators")
+    ours.OurLocator = OurLocator
+    monkeypatch.setitem(sys.modules, "our_locators", ours)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "our_locators.OurLocator,ZipCacheLocator",
+                        raising=False)
+    if error == "no archive in the path":
+        py_file = tmp_path / "not.zipped" / "module.py"
+        py_file.parent.mkdir()
+        py_file.write_text("x = 1\n")
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+        remedy = configurations.cache_remedy(str(py_file), ValueError("No zip file found in path"), "silence")
+        assert "passed the file over" not in remedy and ".zip locator" not in remedy, remedy
+        assert remedy == (
+            "numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, our_locators.OurLocator,ZipCacheLocator, says: make "
+            "one of those locations writable, or silence"), remedy
+    else:
+        container = tmp_path / "data.zip"
+        py_file = container / "package" / "module.py"
+        py_file.parent.mkdir(parents=True)
+        py_file.write_text("x = 1\n")
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+        remedy = configurations.cache_remedy(str(py_file), OSError(errno.EISDIR, "Is a directory", str(container)),
+                                             "silence")
+        assert "passed this file over" not in remedy and ".zip locator" not in remedy, remedy
+        assert remedy == (
+            f"that location, {container}, where no file can be written (Is a directory): make room there, or make it "
+            "writable; or silence"), remedy
+    assert where.is_dir()
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
