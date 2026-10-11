@@ -2538,6 +2538,31 @@ def test_the_archive_above_a_file_is_found_with_os_name_set_to_windows(tmp_path,
     assert configurations._archive_above(str(tmp_path / "elsewhere" / "mod.py")) is None
 
 
+def test_a_relative_members_moved_archive_under_a_temporary_ipython_directory_is_the_archives(tmp_path, monkeypatch):
+    # The file numba names can be relative, run from the archive's directory,
+    # and the error naming the archive above it relative too; the remedy for
+    # an IPython giving a temporary directory per call compared the file as
+    # given against the archive's name made absolute, matched nothing, and
+    # said IPYTHONDIR, where the archive's remedy is the one.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    monkeypatch.chdir(tmp_path)
+    py_file = os.path.join("bundle.zip", "ipykernel_123", "cell.py")
+    failure = FileNotFoundError(errno.ENOENT, "No such file or directory", "bundle.zip")
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert "IPYTHONDIR" not in remedy, remedy
+    assert remedy.startswith("the module's code names bundle.zip, which is not there: its .pyc was compiled to name "
+                             "that path, so "), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
