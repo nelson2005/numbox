@@ -420,6 +420,17 @@ def _locators(listed):
     return classes
 
 
+def _existing_above(path):
+    """The first directory at or above ``path`` that is there: the one a directory on the way to ``path`` is made
+    under, which refused where the location is not there; the root at the last."""
+    while not os.path.isdir(path):
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+    return path
+
+
 def _ipython_numba_cache():
     """numba's cache location for a cell file its IPython locator takes: ``numba_cache`` under IPython's cache
     directory, with no directory per file; None where IPython is not importable, which numba's locator raises
@@ -1415,9 +1426,15 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                     f"{opening}no file can be written in {could_have_taken(locations)} ({reason}), so make room "
                     f"there, or make it writable, or {silence}"
                 )
+            # numba's .zip locator takes the file without making its
+            # location, and the first save makes it, or the check does, under
+            # the first directory above it that is there, which refused: the
+            # remedy asked for room in a directory that was not there, or for
+            # it to be made writable, and never named the one refusing.
+            made_under = f", which cannot be made under {_existing_above(location)}" if not os.path.isdir(location) else ""
             return (
-                f"{opening}no file can be written in that directory, {location} ({reason}), so make room there, or "
-                f"make it writable, or {silence}"
+                f"{opening}no file can be written in that directory, {location}{made_under} ({reason}), so make room "
+                f"there, or make it writable, or {silence}"
             )
         # numba's no-locator error for a frozen application gives no reason,
         # numba having passed the user-wide location over on its error, an
