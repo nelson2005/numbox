@@ -1249,6 +1249,18 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             "import it from a .zip holding its source files, which numba 0.61 and later cache in the user's cache "
             "directory"
         )
+        found = _archive_above(py_file)
+        if found is not None and for_a_zip is not None and ".zip" not in py_file:
+            # The file is in an archive already, APP.ZIP or an .egg, which
+            # numba's .zip locator never takes, looking for ".zip" in the
+            # path, lower-case: the remedy offered a .zip holding the source
+            # files to a reader importing from one, and never named the
+            # extension numba does not read.
+            a_zip = (
+                f"rename the archive, {found[0]}, to end in .zip, lower-case, which numba's .zip locator looks for in "
+                "the path, with its source files in it, so that numba 0.61 and later cache it in the user's cache "
+                "directory"
+            )
         if listed_without(for_a_zip):
             # numba's .zip locator alone takes a .zip, so a list without it
             # would leave numba no locator for the .zip offered either.
