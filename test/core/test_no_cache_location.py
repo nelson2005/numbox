@@ -1795,6 +1795,41 @@ def test_is_a_cache_error_admits_numbas_errors_by_their_text_and_no_other():
     assert not is_a_cache_error(TypeError("x"))
 
 
+def test_the_check_leaves_the_lines_a_reader_stored_meanwhile_for_a_file_not_on_disk(tmp_path, monkeypatch):
+    # A reader of the member's lines in another thread, while the probe's
+    # source stands under the member's name, may store the member's own lines
+    # over it; the check put back what it had found before, nothing, and the
+    # reader's lines were lost. What stands after the check is the reader's.
+    import linecache
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    linecache.cache.pop(py_file, None)
+    stored = (24, None, ["def cell():\n", "    return 1\n"], py_file)
+    real = configurations.CompileResultCacheImpl
+
+    def storing(probe):
+        locator = real(probe)
+        linecache.cache[py_file] = stored
+        return locator
+
+    monkeypatch.setattr(configurations, "CompileResultCacheImpl", storing)
+    configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert linecache.cache.get(py_file) is stored
+    linecache.cache.pop(py_file, None)
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
