@@ -85,7 +85,8 @@ class _MemberSource:
 
 
 def check_cache_location(py_file, longest_file_name=0):
-    """Raise as numba would where a function whose source is ``py_file`` cannot be cached; else return.
+    """Raise as numba would where a function whose source is ``py_file``, a string, bytes or a path object, read as a
+    string, cannot be cached; else return.
 
     The question is put the way numba puts it: the cache set-up that decoration runs, which picks the location
     for the file or raises ``RuntimeError`` with no locator, then the source's stamp, which decoration reads
@@ -122,7 +123,11 @@ def check_cache_location(py_file, longest_file_name=0):
     ``LONGEST_CACHE_FILE_NAME``, the bound on numba's names for its own files.
     """
     source = "def _cache_probe():\n    pass\n"
-    file = os.fspath(py_file)
+    # The name the probe's code carries is a string, as compile makes it of
+    # bytes; the module's file and its loader's take the same string, where
+    # os.fspath left bytes as bytes for the loader to raise TypeError on,
+    # through inspect, for a member given as bytes.
+    file = os.fsdecode(py_file)
     # numba's IPython locator reads the function's source when it takes the
     # file, as inspect reads it: a file on disk itself, a cell from linecache,
     # where IPython holds it while it runs the cell, and a .zip member through

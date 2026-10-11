@@ -1876,6 +1876,37 @@ def test_a_reader_of_the_member_meanwhile_reads_the_members_own_lines_for_a_file
     linecache.cache.pop(py_file, None)
 
 
+@pytest.mark.parametrize("given", ["Path", "bytes"])
+def test_a_zip_member_in_an_ipykernel_directory_given_as_bytes_or_a_path_object_is_checked_as_its_string_is(
+        tmp_path, monkeypatch, given):
+    # check_cache_location takes any path-like, bytes too, and the probe's
+    # code carries the name as a string, as compile makes it; the probe's
+    # module and loader were given the path as os.fspath left it, bytes for
+    # bytes, and the loader raised TypeError, through inspect, at the first
+    # path operation asked of it for a member numba's IPython locator reads.
+    import linecache
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+    py_file = archive / "ipykernel_123" / "cell.py"
+    linecache.cache.pop(str(py_file), None)
+    as_given = py_file if given == "Path" else os.fsencode(py_file)
+    configurations.check_cache_location(as_given, configurations.LONGEST_CACHE_FILE_NAME)
+    assert (ipython_dir / "numba_cache").is_dir()
+    assert linecache.getlines(str(py_file)) == ["def cell():\n", "    return 1\n"]
+    linecache.cache.pop(str(py_file), None)
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
