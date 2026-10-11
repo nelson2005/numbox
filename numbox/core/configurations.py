@@ -561,6 +561,29 @@ def _numbas_archive_holds(py_file, name):
         return False
 
 
+def _pyc_naming(py_file):
+    """The ``.pyc`` member of the archive numba's ``.zip`` locator takes for ``py_file`` whose code zipimport runs
+    names ``py_file``, and whether a ``.py`` stands beside it, or None where no member's does: a ``.pyc`` compiled to
+    name another path in the archive, ``compileall -d``, which numba 0.68 and later read the source by, and find none
+    under, while the archive holds the source beside the ``.pyc``."""
+    parts = py_file.split(os.sep)
+    at = next((i for i, part in enumerate(parts) if part.endswith(".zip")), None)
+    if at is None:
+        return None
+    zip_path = os.sep.join(parts[:at + 1])
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            names = set(archive.namelist())
+    except (OSError, zipfile.BadZipFile):
+        return None
+    for name in sorted(names):
+        if name.endswith(".pyc") and "/__pycache__/" not in name:
+            directory, _, file = name.rpartition("/")
+            if _compiled_from(zip_path, directory, file[:-4]) == py_file:
+                return name, name[:-1] in names
+    return None
+
+
 def _missing_member(error):
     """The member zipfile's ``KeyError`` names, "There is no item named 'x' in the archive", or its whole message.
 
@@ -1246,6 +1269,20 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 "no archive holds (numba issue https://github.com/numba/numba/issues/10889, fixed for numba 0.68.1): "
                 f"to cache, {on_disk}, which no separator touches, or a numba release that carries the fix, which "
                 f"reads the member as the archive names it; or {silence}"
+            )
+        naming = _pyc_naming(py_file)
+        if naming is not None and naming[1]:
+            # The archive holds the module's source, beside a .pyc compiled
+            # to name another path in the archive, which zipimport runs and
+            # numba reads the source by: the remedy told the module as
+            # shipped as .pyc alone, and asked for source files that were
+            # there.
+            compiled, source = naming[0], naming[0][:-1]
+            return (
+                f"numba 0.68 and later read a .zip member's source from the archive by the name the module's code "
+                f"gives, {held}, which {compiled} was compiled to name, and this one holds none so named, while it "
+                f"holds the module's source, {source}: to cache, compile the .pyc to name its path in the archive, "
+                f"or leave it out, so that Python compiles the source and numba reads it under that name; or {silence}"
             )
         return (
             f"numba 0.68 and later read a .zip member's source from the archive, and this one holds none under "
