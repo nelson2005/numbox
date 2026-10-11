@@ -2493,6 +2493,35 @@ def test_an_error_naming_a_members_moved_archive_under_a_temporary_ipython_direc
                              "that path, so "), remedy
 
 
+@pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
+@pytest.mark.parametrize("name", ["APP.ZIP", "bundle.egg"])
+def test_an_archive_numbas_zip_locator_does_not_read_is_told_to_be_named_zip(tmp_path, monkeypatch, name):
+    # numba's .zip locator takes a path with ".zip" in it, lower-case, so an
+    # archive named APP.ZIP, or an .egg, which Python imports from all the
+    # same, leaves numba no locator; the remedy told the reader to import
+    # from a .zip holding the source files, which they did, and never named
+    # the extension numba does not read.
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    archive = tmp_path / name
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("pkg/__init__.py", "")
+        zipped.writestr("pkg/mod.py", "def f():\n    pass\n")
+    py_file = str(archive / "pkg" / "mod.py")
+    with pytest.raises(RuntimeError, match="no locator available") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert configurations.is_a_cache_error(raised.value)
+    remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    assert "import it from a .zip" not in remedy, remedy
+    assert remedy == (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, install numbox with "
+        f"its source files on disk, unpacked from any archive, or rename the archive, {archive}, to end in .zip, "
+        "lower-case, which numba's .zip locator looks for in the path, with its source files in it, so that numba "
+        "0.61 and later cache it in the user's cache directory; or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
@@ -4634,7 +4663,17 @@ def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_ins
     assert py_file not in linecache.cache
     assert temporary or not ipython_dir.exists()
     assert configurations.is_a_cache_error(raised.value)
-    assert configurations.cache_remedy(py_file, raised.value, "silence") == f"{ARCHIVE_REMEDY}; or silence"
+    remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    if name.endswith(".egg"):
+        # An archive numba's .zip locator never takes is told to be renamed
+        # to end in .zip, with its source files in it.
+        assert remedy == (
+            "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, install numbox "
+            f"with its source files on disk, unpacked from any archive, or rename the archive, {archive}, to end in "
+            ".zip, lower-case, which numba's .zip locator looks for in the path, with its source files in it, so that "
+            "numba 0.61 and later cache it in the user's cache directory; or silence"), remedy
+    else:
+        assert remedy == f"{ARCHIVE_REMEDY}; or silence", remedy
 
 
 A_ZIP_REFUSED = {
