@@ -996,8 +996,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 else:
                     cure = f"that location, {filename}, at a shorter path{instead(None)}"
                 return f"the path is too long for the file system: {cure}; or {silence}"
-            if (failure.errno == errno.EISDIR and filename and os.path.isdir(filename) and filename.endswith(".zip")
-                    and py_file.startswith(filename + os.sep)):
+            if (failure.errno == errno.EISDIR and zip_at is not None and filename and os.path.isdir(filename)
+                    and filename.endswith(".zip") and py_file.startswith(filename + os.sep)):
                 # numba's .zip locator takes a file on disk for the ".zip" in
                 # its path once the locators before it passed the file over,
                 # takes the first part of the path ending in .zip for the
@@ -1005,7 +1005,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 # it to read the source, which a directory refuses; the remedy
                 # told the reader to make room in that directory, no cache
                 # location at all, with the remedy for a member alone knowing
-                # the case.
+                # the case; under a list with no .zip locator the error is a
+                # caller's, and is told as the location it names.
                 if zip_at:
                     reached_how = "reached once the locators before it passed this file over"
                     cure = f"make one of those locators' locations writable{instead(None, 'a writable directory')}, or "
