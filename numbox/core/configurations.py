@@ -2,14 +2,14 @@ import ast
 import errno
 import importlib.machinery
 import inspect
+import itertools
 import os
 import pathlib
 import json
-import linecache
 import re
 import sys
 import tempfile
-import threading
+import types
 import warnings
 import zipfile
 import zipimport
@@ -59,10 +59,29 @@ def _cache_probe():
 # this bound.
 LONGEST_CACHE_FILE_NAME = 128
 
-# The probe's source stands in the process-wide linecache under a file's name
-# while numba picks the locator for a file not on disk that its IPython locator
-# takes, one check at a time, so that each puts back what it found there.
-_probe_source = threading.Lock()
+# The probe's module, one per check, named apart from every other's, stands in
+# sys.modules while numba picks the locator.
+_probes = itertools.count()
+
+
+class _MemberSource:
+    """The loader of the check's probe's module, which inspect reads a ``.zip`` member's source through, as zipimport
+    for the member's own module: the member's bytes decoded as zipimport decodes them, as UTF-8, or None where no
+    archive above the file holds the member."""
+
+    def __init__(self, py_file):
+        self._py_file = py_file
+
+    def get_source(self, name):
+        found = _archive_above(self._py_file)
+        if found is None:
+            return None
+        zip_path, member = found
+        try:
+            with zipfile.ZipFile(zip_path) as archive:
+                return archive.read(member).decode()
+        except (KeyError, OSError, zipfile.BadZipFile):
+            return None
 
 
 def check_cache_location(py_file, longest_file_name=0):
@@ -75,14 +94,12 @@ def check_cache_location(py_file, longest_file_name=0):
     writability check, which decoration runs for every
     location but a ``.zip``'s and the first save runs for all, raising ``OSError``. The probe is compiled with
     ``py_file`` as its file, which is all a locator reads of it but for numba's IPython locator, which reads the
-    function's source too: inspect reads that from a file on disk itself, from linecache for a cell, which IPython
-    holds there while it runs it, and through the module's loader for a ``.zip`` member in an ipykernel directory
-    whose source the archive holds, which the probe has no module for, so for such a member that a locator of that
-    family numba reaches takes the probe's source is given it under the file's name while the locator is picked, one
-    check at a time so that each puts back what it found, unless a reader of that file's lines meanwhile, in another
-    thread, which reads the probe's, stored lines of its own, which stay; every other file is asked with the
-    linecache untouched, and a cell linecache does
-    not hold, or a member compiled to ``.pyc`` alone, raises inspect's error, as numba does at decoration. Nothing is
+    function's source too, as inspect reads it: a file on disk itself, a cell from linecache, where IPython holds it
+    while it runs the cell, and a ``.zip`` member through the function's module's loader, zipimport's, which gives the
+    member's source from the archive; the probe is a function of a module of its own, whose loader reads the member
+    as zipimport's does, in ``sys.modules`` while numba picks the locator, and the lines linecache holds from then on
+    are the member's own, as any reader leaves them. A cell linecache does not hold, or a member compiled to ``.pyc``
+    alone, raises inspect's error, as numba does at decoration. Nothing is
     compiled, and nothing is written but the cache directory itself and, asked for it under an IPython that can write
     neither its cache directory nor its own, the temporary directories IPython makes, one per call, three for the
     check, two of them numba's own making the directory. An ``OSError`` from the check names the
@@ -105,38 +122,31 @@ def check_cache_location(py_file, longest_file_name=0):
     ``LONGEST_CACHE_FILE_NAME``, the bound on numba's names for its own files.
     """
     source = "def _cache_probe():\n    pass\n"
-    namespace = {}
-    exec(compile(source, os.fspath(py_file), "exec"), namespace)  # nosec B102 - fixed source
-    probe = namespace["_cache_probe"]
+    file = os.fspath(py_file)
     # numba's IPython locator reads the function's source when it takes the
-    # file, which inspect reads from the file on disk, from linecache for a
-    # cell, where IPython holds it while it runs the cell, or through the
-    # module's loader for a member of a .zip whose source the archive holds;
-    # the probe has no module, so for such a member that a locator of that
-    # family numba reaches takes, its source is put where inspect reads
-    # first, under the file's name, while numba picks the locator, and what
-    # was there put back, one check at a time. Every other file is asked with
-    # the linecache untouched: a cell linecache does not hold, or a member
-    # compiled to .pyc alone, raises inspect's error, as numba does.
-    file = probe.__code__.co_filename
-    if os.path.exists(file) or not _zip_holds_the_source(file) or not _ipython_locator_reads(file):
+    # file, as inspect reads it: a file on disk itself, a cell from linecache,
+    # where IPython holds it while it runs the cell, and a .zip member through
+    # the function's module's loader, zipimport's, which gives the member's
+    # source from the archive, or None for a member compiled to .pyc alone.
+    # The probe is a function of a module of its own, whose loader reads the
+    # member as zipimport's does, in sys.modules while numba picks the
+    # locator, where inspect looks the function's module up; the lines
+    # linecache holds from then on are the member's own, as any reader leaves
+    # them. The probe's own two lines, put there under the member's name
+    # instead while numba picked the locator, were what a reader of the
+    # member meanwhile, in another thread, read for it. A cell linecache does
+    # not hold, or a member compiled to .pyc alone, raises inspect's error, as
+    # numba does.
+    module = types.ModuleType(f"_numbox_cache_probe_{next(_probes)}")
+    module.__file__ = file
+    module.__loader__ = _MemberSource(file)
+    exec(compile(source, file, "exec"), module.__dict__)  # nosec B102 - fixed source
+    probe = module._cache_probe
+    sys.modules[module.__name__] = module
+    try:
         locator = CompileResultCacheImpl(probe).locator
-    else:
-        with _probe_source:
-            was_cached = linecache.cache.get(file)
-            planted = (len(source), None, source.splitlines(True), file)
-            linecache.cache[file] = planted
-            try:
-                locator = CompileResultCacheImpl(probe).locator
-            finally:
-                # What was there goes back, unless a reader of the file's
-                # lines in another thread stored its own meanwhile, which
-                # stays: putting the old entry back lost it.
-                if linecache.cache.get(file) is planted:
-                    if was_cached is None:
-                        linecache.cache.pop(file, None)
-                    else:
-                        linecache.cache[file] = was_cached
+    finally:
+        sys.modules.pop(module.__name__, None)
     # numba reads the source's stamp at decoration too, the archive's for a
     # .zip, which is not there where the code names an archive since moved.
     locator.get_source_stamp()
@@ -413,7 +423,7 @@ def _ipython_numba_cache():
 
 
 # What inspect says where it reads no source: a cell linecache does not hold, a member the archive holds no source
-# for, and a function whose line the lines it read do not reach.
+# for, a function whose line the lines it read do not reach, and a function of no module.
 _INSPECTS_ERRORS = ("could not get source code", "source code not available", "lineno is out of bounds")
 
 
@@ -440,28 +450,6 @@ def _taken_by_ipython(py_file):
     """Whether numba's IPython locator takes ``py_file`` by its name alone, on disk or not: a cell, ``<ipython-...>``, or
     a file in an ipykernel directory. It reads the function's source when it does."""
     return py_file.startswith("<ipython-") or os.path.basename(os.path.dirname(py_file)).startswith("ipykernel_")
-
-
-def _zip_holds_the_source(py_file):
-    """Whether ``py_file`` names a member of a ``.zip`` whose source the archive holds.
-
-    inspect reads a member's source through the module's loader, zipimport, which gives none for a member compiled to
-    ``.pyc`` alone, and numba's IPython locator raises inspect's error for such a member at decoration; so does the
-    check, the probe's source going to a member whose source the archive holds alone. The archive is the first part
-    of the path that is a file, as zipimport finds it, whatever its name, an ``.egg`` or ``.whl`` as a ``.zip``, a
-    directory named ``.zip`` above it being no archive: a check that knew archives named ``.zip`` alone took the
-    directory for the archive and found no member in it, or found no archive in an ``.egg`` at all, and raised
-    inspect's error for a member numba caches. False too where the archive is not there, or is no archive.
-    """
-    found = _archive_above(py_file)
-    if found is None:
-        return False
-    zip_path, member = found
-    try:
-        with zipfile.ZipFile(zip_path) as archive:
-            return member in archive.namelist()
-    except (OSError, zipfile.BadZipFile):
-        return False
 
 
 def _archive_above(py_file):
