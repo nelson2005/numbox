@@ -1397,7 +1397,7 @@ def test_a_zip_member_in_an_ipykernel_directory_under_a_temporary_ipython_direct
     assert configurations.cache_remedy(py_file, raised.value, "silence") == (
         "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
         "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache in one "
-        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence")
+        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on a POSIX system, to a writable directory; or silence")
     assert left_behind() == 5
 
 
@@ -1455,7 +1455,8 @@ def test_a_cell_file_on_disk_under_a_temporary_ipython_directory_is_told_so(tmp_
     assert remedy == (
         "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
         "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache in one "
-        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence"), remedy
+        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on a POSIX system, "
+        "to a writable directory; or silence"), remedy
 
 
 @pytest.mark.parametrize("named", ["the directory", "a file numba writes in it"])
@@ -2164,7 +2165,8 @@ def test_a_locator_of_none_of_numbas_families_that_passes_the_file_over_leaves_t
     assert remedy == (
         "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
         "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache in one "
-        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence"), remedy
+        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on a POSIX system, "
+        "to a writable directory; or silence"), remedy
 
 
 @pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
