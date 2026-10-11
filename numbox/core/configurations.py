@@ -1257,12 +1257,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             "directory"
         )
         found = _archive_above(py_file)
-        if found is not None and for_a_zip is not None and ".zip" not in py_file:
+        if found is not None and for_a_zip is not None and not found[0].endswith(".zip"):
             # The file is in an archive already, APP.ZIP or an .egg, which
-            # numba's .zip locator never takes, looking for ".zip" in the
-            # path, lower-case: the remedy offered a .zip holding the source
-            # files to a reader importing from one, and never named the
-            # extension numba does not read.
+            # numba's .zip locator never takes, looking for a part of the path
+            # ending in ".zip", lower-case: the remedy offered a .zip holding
+            # the source files to a reader importing from one, and never named
+            # the extension numba does not read; and it held the rename back
+            # where a directory above the archive had ".zip" in its name, the
+            # locator taking the file for that and finding no archive.
             a_zip = (
                 f"rename the archive, {found[0]}, to end in .zip, lower-case, which numba's .zip locator looks for in "
                 "the path, with its source files in it, so that numba 0.61 and later cache it in the user's cache "

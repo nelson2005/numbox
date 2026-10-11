@@ -2494,23 +2494,28 @@ def test_an_error_naming_a_members_moved_archive_under_a_temporary_ipython_direc
 
 
 @pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
-@pytest.mark.parametrize("name", ["APP.ZIP", "bundle.egg"])
+@pytest.mark.parametrize("name", ["APP.ZIP", "bundle.egg", "my.zipdir/bundle.egg"])
 def test_an_archive_numbas_zip_locator_does_not_read_is_told_to_be_named_zip(tmp_path, monkeypatch, name):
     # numba's .zip locator takes a path with ".zip" in it, lower-case, so an
     # archive named APP.ZIP, or an .egg, which Python imports from all the
     # same, leaves numba no locator; the remedy told the reader to import
     # from a .zip holding the source files, which they did, and never named
-    # the extension numba does not read.
+    # the extension numba does not read. An .egg under a directory with
+    # ".zip" in its name is taken by that locator, which finds no part ending
+    # in .zip and raises its ValueError; the remedy held the rename back for
+    # the ".zip" in the path, and told the same.
     import numba
     import numbox.core.configurations as configurations
     monkeypatch.setattr(numba.config, "CACHE_DIR", "")
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
     archive = tmp_path / name
+    archive.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.writestr("pkg/__init__.py", "")
         zipped.writestr("pkg/mod.py", "def f():\n    pass\n")
     py_file = str(archive / "pkg" / "mod.py")
-    with pytest.raises(RuntimeError, match="no locator available") as raised:
+    error, text = (ValueError, "No zip file found") if ".zip" in name else (RuntimeError, "no locator available")
+    with pytest.raises(error, match=text) as raised:
         configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
     assert configurations.is_a_cache_error(raised.value)
     remedy = configurations.cache_remedy(py_file, raised.value, "silence")
