@@ -2068,6 +2068,58 @@ def test_a_zip_members_location_that_cannot_be_made_is_told_the_directory_refusi
         "silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+@pytest.mark.parametrize("placement", ["a .zip member", "on disk"])
+def test_a_locator_of_none_of_numbas_families_that_passes_the_file_over_leaves_the_ipython_one_reached(
+        tmp_path, monkeypatch, placement):
+    # A class of none of numba's families takes what its from_function takes,
+    # which the remedy asks it with a probe as numba does; the remedy took
+    # such a class for taking any file, so for one listed before
+    # IPythonCacheLocator that passed the file over, numba going on to
+    # IPython's locator, it read IPython's locator as never reached, and told
+    # the error numba's first save raises under an IPython giving a temporary
+    # directory per call as a location that is none of numba's, to make
+    # writable, where IPYTHONDIR is the remedy.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class OurPasser(_CacheLocator):
+        @classmethod
+        def from_function(cls, py_func, py_file):
+            return None
+
+    ours = types.ModuleType("our_locators")
+    ours.OurPasser = OurPasser
+    monkeypatch.setitem(sys.modules, "our_locators", ours)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "our_locators.OurPasser,IPythonCacheLocator",
+                        raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    if placement == "a .zip member":
+        archive = tmp_path / "bundle.zip"
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+        py_file = archive / "ipykernel_123" / "cell.py"
+    else:
+        py_file = tmp_path / "ipykernel_123" / "cell.py"
+        py_file.parent.mkdir()
+        py_file.write_text("def cell():\n    return 1\n")
+    with pytest.raises(FileNotFoundError) as raised:
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    assert raised.value.filename.endswith(os.sep + "numba_cache")
+    remedy = configurations.cache_remedy(str(py_file), raised.value, "silence")
+    assert remedy == (
+        "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
+        "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache in one "
+        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
