@@ -412,6 +412,18 @@ def _ipython_numba_cache():
         return None
 
 
+# What inspect says where it reads no source: a cell linecache does not hold, a member the archive holds no source
+# for, and a function whose line the lines it read do not reach.
+_INSPECTS_ERRORS = ("could not get source code", "source code not available", "lineno is out of bounds")
+
+
+def _is_inspects(failure):
+    """Whether ``failure`` is inspect's, for a source it could not read: an ``OSError`` with no errno and no name and
+    one of inspect's own messages; a caller's error with no errno and no name is not, though it looks the same."""
+    return (isinstance(failure, OSError) and failure.errno is None and not getattr(failure, "filename", None)
+            and str(failure) in _INSPECTS_ERRORS)
+
+
 def _ipython_cache_is_temporary(first):
     """Whether IPython gives a new temporary directory as its cache directory on every call, which it does, warning
     so, where it can write neither its cache directory nor its own; numba's IPython locator asks for the directory at
@@ -917,8 +929,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return None
 
         locations = {cls: location_of(cls) for cls in reached}
-        if isinstance(failure, OSError) and failure.errno is None and not filename and any(
-                one_of(cls, for_ipython) for cls in reached):
+        if _is_inspects(failure) and any(one_of(cls, for_ipython) for cls in reached):
             # inspect's error, which no call of the file system's raised, so
             # with no errno and no name: numba's IPython locator reads the
             # function's source, from the file itself for one on disk, and
@@ -1223,8 +1234,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     # and whose source inspect reads through its loader; the .zip is the one
     # numba's .zip locator takes, and the only one it caches.
     in_an_archive = in_a_zip or _archive_above(py_file) is not None
-    inspects = isinstance(failure, OSError) and failure.errno is None and not filename and any(
-        one_of(cls, for_ipython) for cls in reached)
+    # A caller's error with no errno and no name looked like inspect's and
+    # was told to make the file readable; inspect's are known by their words.
+    inspects = _is_inspects(failure) and any(one_of(cls, for_ipython) for cls in reached)
     if inspects and not in_an_archive:
         # inspect's error, with no errno and no name, for a cell whose source
         # linecache does not hold: numba's IPython locator reads a cell's

@@ -1894,6 +1894,44 @@ def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as
         "make it writable; or silence"), remedy
 
 
+@pytest.mark.parametrize("placement", ["on disk", "a .zip member"])
+def test_a_callers_error_with_no_errno_and_no_name_is_not_read_as_inspects(tmp_path, monkeypatch, placement):
+    # inspect's error for a source it cannot read has no errno and no name,
+    # and so can a caller's, OSError("Disk quota exceeded on /home"); the
+    # remedy read every such error for a file numba's IPython locator takes
+    # as inspect's and told the reader to make the file readable. inspect's
+    # are known by their words.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(tmp_path / "ipython")
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    if placement == "on disk":
+        py_file = tmp_path / "ipykernel_123" / "cell.py"
+        py_file.parent.mkdir()
+        py_file.write_text("def f():\n    pass\n")
+    else:
+        archive = tmp_path / "bundle.zip"
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("ipykernel_123/cell.py", "def f():\n    pass\n")
+        py_file = archive / "ipykernel_123" / "cell.py"
+    failure = OSError("Disk quota exceeded on /home")
+    assert failure.errno is None and failure.filename is None
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert "readable" not in remedy and "linecache" not in remedy, remedy
+    assert "the location numba took" in remedy and "Disk quota exceeded on /home" in remedy, remedy
+
+
 def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
     # in the process-wide linecache under its name; the check gives the probe's
