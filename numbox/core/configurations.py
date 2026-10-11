@@ -482,11 +482,21 @@ def _archive_above(py_file):
     return None
 
 
+_FAMILIES = ("UserProvidedCacheLocator", "InTreeCacheLocator", "UserWideCacheLocator", "IPythonCacheLocator",
+             "ZipCacheLocator")
+
+
+def _of_numbas(cls):
+    """Whether ``cls`` is of one of numba's locator families, whose places the remedy knows; a class of none of them,
+    with a ``from_function`` and a place of its own, takes any file for the remedy and caches where it alone can say."""
+    return any(base is not None and issubclass(cls, base) for base in map(_numba_locator, _FAMILIES))
+
+
 def _ipython_locator_reads(py_file):
     """Whether a locator of numba's IPython family that numba reaches, in its own order or where
     ``NUMBA_CACHE_LOCATOR_CLASSES`` lists one, takes ``py_file`` by its name, and so reads the function's source; numba
     reaches none listed after its ``.zip`` locator for a path with ``.zip`` in it, which that locator takes without
-    trying its location."""
+    trying its location, nor after a class of none of its families, which takes any file for the remedy."""
     from numba import config
     for_ipython = _numba_locator("IPythonCacheLocator")
     for_a_zip = _numba_locator("ZipCacheLocator")
@@ -496,6 +506,8 @@ def _ipython_locator_reads(py_file):
         if issubclass(cls, for_ipython):
             return True
         if for_a_zip is not None and issubclass(cls, for_a_zip) and ".zip" in py_file:
+            return False
+        if not _of_numbas(cls):
             return False
     return False
 
