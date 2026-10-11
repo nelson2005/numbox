@@ -2464,6 +2464,35 @@ def test_an_archive_numba_cannot_read_is_told_to_make_it_readable(tmp_path, monk
         "make it readable, or silence"), remedy
 
 
+def test_an_error_naming_a_members_moved_archive_under_a_temporary_ipython_directory_is_the_archives(
+        tmp_path, monkeypatch):
+    # The error numba's first save raises under an IPython giving a temporary
+    # directory per call names a numba_cache under that directory; one naming
+    # the archive a member's code names, where that has since moved, is the
+    # stamp's, told as the archive's, and the remedy for the temporary
+    # directory took it, for a member in an ipykernel directory, and said
+    # IPYTHONDIR. In the flow itself inspect reads no source from an archive
+    # that is gone, and that error is told first; a caller's error can name
+    # the archive.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    failure = FileNotFoundError(errno.ENOENT, "No such file or directory", str(archive))
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert "IPYTHONDIR" not in remedy, remedy
+    assert remedy.startswith(f"the module's code names {archive}, which is not there: its .pyc was compiled to name "
+                             "that path, so "), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
