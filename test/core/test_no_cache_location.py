@@ -1536,6 +1536,8 @@ def test_a_source_on_disk_numba_cannot_read_is_told_to_make_it_readable(tmp_path
     pytest.param("", id="numba's order"),
     pytest.param("ZipCacheLocator,InTreeCacheLocator", id="the .zip locator listed first",
                  marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in 0.62")),
+    pytest.param("UserProvidedCacheLocator,InTreeCacheLocator,UserWideCacheLocator", id="no .zip locator listed",
+                 marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in 0.62")),
 ])
 def test_a_source_on_disk_under_a_directory_named_zip_is_told_the_directory_once_the_locators_before_passed(
         tmp_path, monkeypatch, locators):
@@ -1562,7 +1564,14 @@ def test_a_source_on_disk_under_a_directory_named_zip_is_told_the_directory_once
     package.mkdir(parents=True)
     py_file = package / "m.py"
     py_file.write_text("x = 1\n")
-    if locators:
+    if locators and "ZipCacheLocator" not in locators:
+        # Under a list with no .zip locator the error naming the directory is
+        # a caller's, and is told as the location it names; the remedy spoke
+        # of the list putting the .zip locator first.
+        expected = (
+            f"that location, {container}, where no file can be written (Is a directory): make room there, or make it "
+            "writable, or NUMBA_CACHE_DIR set to a writable directory; or silence")
+    elif locators:
         # Listed first, the .zip locator takes the file before any locator for
         # a file on disk; the remedy spoke of locators before it passing the
         # file over, where there were none.
