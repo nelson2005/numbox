@@ -2245,6 +2245,44 @@ def test_a_locator_of_none_of_numbas_families_whose_from_function_raises_takes_t
             "writable; or silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
+def test_a_zip_members_location_under_a_file_is_told_the_file_in_its_path(tmp_path, monkeypatch):
+    # The user's cache directory can lie under a file, XDG_CACHE_HOME set to
+    # a path through one; numba's first save, making the member's location,
+    # raises for it, and the remedy named the first directory above the
+    # location that is there, writable, and asked for room in it: the file
+    # in the way is what to move.
+    import numba
+    import numbox.core.configurations as configurations
+
+    a_file = tmp_path / "home" / "afile"
+    a_file.parent.mkdir()
+    a_file.write_text("not a directory\n")
+
+    class UserCacheUnderTheFile:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(a_file / "c" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTheFile)
+    monkeypatch.setattr(numba.core.caching, "AppDirs", UserCacheUnderTheFile)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("package/module.py", "def f():\n    pass\n")
+    py_file = str(archive / "package" / "module.py")
+    with pytest.raises(OSError) as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    location = raised.value.filename
+    assert location.startswith(str(a_file) + os.sep) and not os.path.exists(location)
+    remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    assert remedy == (
+        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+        f"effect here, because the source is not a file on disk: no file can be written in that directory, {location}, "
+        f"which cannot be made, {a_file} being a file in its path ({raised.value.strerror}), so put that file "
+        "elsewhere, or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and

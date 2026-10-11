@@ -433,9 +433,10 @@ def _locators(listed):
 
 
 def _existing_above(path):
-    """The first directory at or above ``path`` that is there: the one a directory on the way to ``path`` is made
-    under, which refused where the location is not there; the root at the last."""
-    while not os.path.isdir(path):
+    """The first path at or above ``path`` that is there: the directory a directory on the way to ``path`` is made
+    under, which refused where the location is not there, or a file in the way, which no directory can be made under;
+    the root at the last."""
+    while not os.path.exists(path):
         parent = os.path.dirname(path)
         if parent == path:
             break
@@ -1457,7 +1458,15 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # error naming a file in the location found the location there.
             made_under = ""
             if os.path.abspath(filename) == locations[taken] and not os.path.isdir(location):
-                made_under = f", which cannot be made under {_existing_above(location)}"
+                above = _existing_above(location)
+                if not os.path.isdir(above):
+                    # A file in the way, which the remedy passed over for the
+                    # directory above it, writable, and asked for room in.
+                    return (
+                        f"{opening}no file can be written in that directory, {location}, which cannot be made, "
+                        f"{above} being a file in its path ({reason}), so put that file elsewhere, or {silence}"
+                    )
+                made_under = f", which cannot be made under {above}"
             return (
                 f"{opening}no file can be written in that directory, {location}{made_under} ({reason}), so make room "
                 f"there, or make it writable, or {silence}"
