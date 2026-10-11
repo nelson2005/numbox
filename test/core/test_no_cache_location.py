@@ -1278,9 +1278,9 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     # and the check raised the OSError from reading it, which is no cache
     # error and which the remedy, taking an OSError for a source not on disk
     # as the .zip's, answered with the user's cache directory made writable,
-    # a directory numba never tried. The probe's source is given to inspect
-    # for the time numba picks the locator, and the question goes on to
-    # IPython's cache directory, as numba's does. zipimport finds the archive
+    # a directory numba never tried. The probe's module reads the member's
+    # source for inspect, as the member's own does, and the question goes on
+    # to IPython's cache directory, as numba's does. zipimport finds the archive
     # below a directory named .zip, and whatever its name, an .egg as Spark
     # ships; a check that took the first part named .zip for the archive found
     # no member in the directory, or no archive in the .egg, and raised there.
@@ -1300,11 +1300,11 @@ def test_a_zip_member_in_an_ipykernel_directory_is_asked_with_the_probes_source(
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.writestr("ipykernel_123/cell.py", "def f():\n    pass\n")
     py_file = str(archive / "ipykernel_123" / "cell.py")
-    assert configurations._zip_holds_the_source(py_file)
     configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
     assert (ipython_dir / "numba_cache").is_dir()
-    # The source is the probe's for the locator's choosing alone.
-    assert py_file not in linecache.cache
+    # What linecache holds from then on is the member's own, as any reader leaves it.
+    assert linecache.getlines(py_file) == ["def f():\n", "    pass\n"]
+    linecache.cache.pop(py_file, None)
 
 
 @pytest.mark.parametrize("longest", [LONGEST_CACHE_FILE_NAME, 0],
@@ -1820,11 +1820,16 @@ def test_is_a_cache_error_admits_numbas_errors_by_their_text_and_no_other():
     assert not is_a_cache_error(TypeError("x"))
 
 
-def test_the_check_leaves_the_lines_a_reader_stored_meanwhile_for_a_file_not_on_disk(tmp_path, monkeypatch):
-    # A reader of the member's lines in another thread, while the probe's
-    # source stands under the member's name, may store the member's own lines
-    # over it; the check put back what it had found before, nothing, and the
-    # reader's lines were lost. What stands after the check is the reader's.
+def test_a_reader_of_the_member_meanwhile_reads_the_members_own_lines_for_a_file_not_on_disk(tmp_path, monkeypatch):
+    # The probe's two lines stood in the process-wide linecache under the
+    # member's name while numba picked the locator, and numba's IPython
+    # locator reading another function's source from the member meanwhile, in
+    # another thread, read the probe's two lines for it and raised inspect's
+    # error for a function past them, "lineno is out of bounds". The probe is
+    # a function of a module of its own, whose loader reads the member's
+    # source from the archive as the member's own module's does, and the lines
+    # linecache holds from then on are the member's own.
+    import inspect
     import linecache
     import types
     import numba
@@ -1836,22 +1841,38 @@ def test_the_check_leaves_the_lines_a_reader_stored_meanwhile_for_a_file_not_on_
     paths.get_ipython_cache_dir = lambda: str(ipython_dir)
     monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
     monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    source = "import os\n\n\ndef cell():\n    return os.sep\n"
     archive = tmp_path / "bundle.zip"
     with zipfile.ZipFile(archive, "w") as zipped:
-        zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+        zipped.writestr("ipykernel_123/cell.py", source)
     py_file = str(archive / "ipykernel_123" / "cell.py")
     linecache.cache.pop(py_file, None)
-    stored = (24, None, ["def cell():\n", "    return 1\n"], py_file)
+
+    class ReadingTheMember:
+        # zipimport, for the member's own module.
+        def get_source(self, name):
+            return source
+
+    member = types.ModuleType("ipykernel_123_cell")
+    member.__file__ = py_file
+    member.__loader__ = ReadingTheMember()
+    exec(compile(source, py_file, "exec"), member.__dict__)
+    monkeypatch.setitem(sys.modules, member.__name__, member)
+    assert member.cell.__code__.co_firstlineno == 4
+    seen = []
     real = configurations.CompileResultCacheImpl
 
-    def storing(probe):
+    def reading_meanwhile(probe):
+        seen.append(inspect.getsource(member.cell))
         locator = real(probe)
-        linecache.cache[py_file] = stored
+        seen.append(inspect.getsource(member.cell))
         return locator
 
-    monkeypatch.setattr(configurations, "CompileResultCacheImpl", storing)
+    monkeypatch.setattr(configurations, "CompileResultCacheImpl", reading_meanwhile)
     configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
-    assert linecache.cache.get(py_file) is stored
+    assert seen == ["def cell():\n    return os.sep\n"] * 2, seen
+    assert linecache.getlines(py_file) == source.splitlines(True)
+    assert (ipython_dir / "numba_cache").is_dir()
     linecache.cache.pop(py_file, None)
 
 
@@ -1932,12 +1953,12 @@ def test_a_callers_error_with_no_errno_and_no_name_is_not_read_as_inspects(tmp_p
     assert "the location numba took" in remedy and "Disk quota exceeded on /home" in remedy, remedy
 
 
-def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp_path, monkeypatch):
+def test_the_check_reads_the_lines_linecache_holds_for_a_file_not_on_disk(tmp_path, monkeypatch):
     # A traceback through a .zip member, or inspect, leaves the member's lines
-    # in the process-wide linecache under its name; the check gives the probe's
-    # source to inspect under that name for the time numba picks the locator,
-    # and what was there is owed back. Nothing failed with the entry discarded
-    # instead, every check so far asking about a file nothing had read.
+    # in the process-wide linecache under its name, and inspect reads those
+    # for the probe before it asks the module's loader; the check gave the
+    # probe's source to inspect under that name instead for the time numba
+    # picked the locator, and owed what was there back.
     import linecache
     import types
     import numba
@@ -1964,7 +1985,7 @@ def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp
 
     monkeypatch.setattr(configurations, "CompileResultCacheImpl", recording)
     configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
-    assert seen == [["def _cache_probe():\n", "    pass\n"]], seen
+    assert seen == [["def cell():\n", "    return 1\n"]], seen
     assert linecache.cache[py_file] is held
     assert (ipython_dir / "numba_cache").is_dir()
 
@@ -1975,8 +1996,9 @@ def test_the_check_puts_back_the_lines_linecache_held_for_a_file_not_on_disk(tmp
                  marks=pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in 0.62")),
 ])
 def test_a_cell_file_on_disk_is_asked_without_touching_linecache(tmp_path, monkeypatch, locators, made):
-    # inspect reads a file on disk itself, so the probe's source is given it
-    # for a file not on disk alone. Given for every file, it stood in for the
+    # inspect reads a file on disk itself, and asks the probe's module's
+    # loader, which reads a .zip member from the archive, for no file on disk.
+    # The probe's source, given to inspect for every file once, stood in for the
     # real file's lines in the process-wide linecache while numba picked the
     # locator, and a locator reading another function's source from the file
     # meanwhile, as numba's IPython locator reads the function's own, read the
@@ -2013,13 +2035,13 @@ def test_a_cell_file_on_disk_is_asked_without_touching_linecache(tmp_path, monke
     assert location.is_dir()
 
 
-def test_the_probes_source_is_given_under_a_lock_for_a_file_not_on_disk(tmp_path, monkeypatch):
-    # Two checks of one file not on disk that overlapped put the probe's
-    # source back for each other, and the process-wide linecache then held it
-    # for the file for good, an entry with no file to check it against. The
-    # source is given under a lock, one check at a time, so that each check
-    # puts back what it found: a second check waits at the lock while the
-    # first holds it.
+def test_two_checks_of_a_file_not_on_disk_overlap_and_each_reads_the_members_source(tmp_path, monkeypatch):
+    # The probe's source was given under a lock, one check at a time, so that
+    # each check put back what it had found in the process-wide linecache,
+    # and a second check waited at the lock while the first held it. Each
+    # probe reads the member's source through a module of its own now, and
+    # leaves the member's lines, so there is nothing to put back and nothing
+    # to wait for.
     import inspect
     import linecache
     import threading
@@ -2036,6 +2058,7 @@ def test_the_probes_source_is_given_under_a_lock_for_a_file_not_on_disk(tmp_path
     with zipfile.ZipFile(tmp_path / "bundle.zip", "w") as zipped:
         zipped.writestr("ipykernel_123/cell.py", "def cell():\n    pass\n")
     py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
+    linecache.cache.pop(py_file, None)
     real = configurations.CompileResultCacheImpl
     inside = {"first": threading.Event(), "second": threading.Event()}
     hold = threading.Event()
@@ -2043,7 +2066,7 @@ def test_the_probes_source_is_given_under_a_lock_for_a_file_not_on_disk(tmp_path
 
     def holding(probe):
         name = threading.current_thread().name
-        seen[name] = (configurations._probe_source.locked(), inspect.getsource(probe))
+        seen[name] = inspect.getsource(probe)
         inside[name].set()
         if name == "first":
             hold.wait(5)
@@ -2055,15 +2078,15 @@ def test_the_probes_source_is_given_under_a_lock_for_a_file_not_on_disk(tmp_path
     checks[0].start()
     assert inside["first"].wait(5)
     checks[1].start()
-    # The second check waits at the lock while the first holds it.
-    assert not inside["second"].wait(0.5)
+    # The second check goes in while the first is still there.
+    assert inside["second"].wait(5)
     hold.set()
     for check in checks:
         check.join(5)
-    assert inside["second"].is_set()
-    assert seen["first"] == (True, "def _cache_probe():\n    pass\n"), seen
-    assert seen["second"] == (True, "def _cache_probe():\n    pass\n"), seen
-    assert py_file not in linecache.cache
+    assert seen == {"first": "def cell():\n    pass\n", "second": "def cell():\n    pass\n"}, seen
+    assert linecache.getlines(py_file) == ["def cell():\n", "    pass\n"]
+    assert not [name for name in sys.modules if name.startswith("_numbox_cache_probe_")]
+    linecache.cache.pop(py_file, None)
 
 
 @pytest.mark.parametrize("refused, told", [
@@ -2632,14 +2655,15 @@ def test_a_zip_members_error_naming_the_zips_location_after_ipythons_locator_pas
 ])
 def test_a_file_not_on_disk_numbas_ipython_locator_does_not_read_is_asked_without_touching_linecache(
         tmp_path, monkeypatch, locators, member):
-    # The probe's source stands in for the file's in the process-wide
-    # linecache while numba picks the locator, for numba's IPython locator,
-    # which reads the function's source when it takes the file; it stood
-    # there for every file not on disk, and a reader in another thread,
-    # formatting a traceback through that file meanwhile, got the probe's two
-    # lines for it, for a .zip member in no ipykernel directory too, which
-    # that locator never takes. It stands there for a file a listed locator of
-    # that family takes, and for no other.
+    # numba's IPython locator reads the function's source when it takes the
+    # file, through the probe's module's loader for a .zip member, which
+    # leaves the member's lines in the process-wide linecache; the probe's own
+    # source stood there instead, for every file not on disk, while numba
+    # picked the locator, and a reader in another thread, formatting a
+    # traceback through that file meanwhile, got the probe's two lines for it,
+    # for a .zip member in no ipykernel directory too, which that locator
+    # never takes. The linecache is untouched for a file no locator of that
+    # family numba reaches takes.
     import linecache
     import types
     import numba
@@ -2672,6 +2696,7 @@ def test_a_file_not_on_disk_numbas_ipython_locator_does_not_read_is_asked_withou
     monkeypatch.setattr(configurations, "CompileResultCacheImpl", recording)
     configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
     assert seen == [(False, [])], seen
+    assert py_file not in linecache.cache
     assert (tmp_path / "user-cache" / "numba").is_dir()
     assert not ipython_dir.exists()
 
@@ -3978,8 +4003,7 @@ def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_ins
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.write(compiled, "ipykernel_123/cell.pyc")
     py_file = str(archive / "ipykernel_123" / "cell.py")
-    assert not configurations._zip_holds_the_source(py_file)
-    with pytest.raises(OSError, match="source code") as raised:
+    with pytest.raises(OSError, match="could not get source code") as raised:
         configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
     assert raised.value.errno is None and raised.value.filename is None
     assert temporary or not ipython_dir.exists()
