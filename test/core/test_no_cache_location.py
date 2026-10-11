@@ -2522,6 +2522,22 @@ def test_an_archive_numbas_zip_locator_does_not_read_is_told_to_be_named_zip(tmp
         "0.61 and later cache it in the user's cache directory; or silence"), remedy
 
 
+def test_the_archive_above_a_file_is_found_with_os_name_set_to_windows(tmp_path, monkeypatch):
+    # The archive above a file was found through pathlib.Path, which makes a
+    # path of the platform os.name says: set to Windows's, as the tests for
+    # numba's separator bug set it, Python before 3.12 refuses to make one on
+    # Linux, and the remedy for such a member, finding the archive for the
+    # rename it offers, died on it. The path is read by the separator in use.
+    import numbox.core.configurations as configurations
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("pkg/mod.py", "x = 1\n")
+    py_file = str(archive / "pkg" / "mod.py")
+    monkeypatch.setattr(os, "name", "nt")
+    assert configurations._archive_above(py_file) == (str(archive), "pkg/mod.py")
+    assert configurations._archive_above(str(tmp_path / "elsewhere" / "mod.py")) is None
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
