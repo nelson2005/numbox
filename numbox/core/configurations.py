@@ -888,7 +888,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             asked.append(_ipython_numba_cache())
         return asked[0]
 
-    if isinstance(failure, OSError) and filename and _ipython_locator_reads(py_file) and (
+    if isinstance(failure, OSError) and filename and not py_file.startswith(
+            os.path.abspath(filename) + os.sep) and _ipython_locator_reads(py_file) and (
             not a_file_on_disk or not names_another_location()
     ) and _ipython_cache_is_temporary(ipython_numba_cache()):
         # numba's IPython locator, reached first for a member in an ipykernel
@@ -909,7 +910,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # taken, with its reason, as the docstring says, whatever IPython
         # gives: the one numba's first save raises here names the directory
         # it could not save in, and a caller's with a reason and no name, a
-        # full disk's, was told IPYTHONDIR with the reason dropped.
+        # full disk's, was told IPYTHONDIR with the reason dropped. An error
+        # naming a path above the file, the archive a member's code names
+        # where that has since moved, is the stamp's, and is told below; the
+        # temporary directory's error names a numba_cache under it.
         # IPython reads XDG_CACHE_HOME for its cache directory on every POSIX
         # system from IPython 8, macOS included, which IPython 7 left out;
         # the remedy said Linux, and steered a macOS reader off the variable.
