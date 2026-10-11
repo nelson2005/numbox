@@ -107,8 +107,9 @@ warning instead.
   reads an empty string as the working directory, which the remedy names as a location that is none of numba's.
   ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its
   dotted path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is, or a
-  class of none of numba's families, with a ``from_function`` and a place of its own, which takes any file for the
-  warning, what it takes and where it caches being its own to say: an error naming a location that no locator of
+  class of none of numba's families, with a ``from_function`` and a place of its own, which takes what its
+  ``from_function``, asked with a probe as numba asks it, takes, where it caches being its own to say: an error
+  naming a location that no locator of
   numba's gives the file is told that location as the error names it, which is then that class's, and one naming no
   file is told the location numba took as the class's own, with no path to name, among numba's locators' places where
   those are reached; an

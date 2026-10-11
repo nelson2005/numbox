@@ -1,4 +1,5 @@
 import ast
+import contextlib
 import errno
 import importlib.machinery
 import inspect
@@ -85,6 +86,51 @@ class _MemberSource:
             return None
 
 
+@contextlib.contextmanager
+def _probing(py_file):
+    """A probe, a function never compiled whose code names ``py_file``, in ``sys.modules`` as a function of a module
+    of its own for the block, which asks a locator about the file as numba asks it at decoration.
+
+    ``py_file``, a string, bytes or a path object, is read as a string, the name the probe's code carries, as compile
+    makes it of bytes. numba's IPython locator reads the function's source when it takes the file, as inspect reads
+    it: a file on disk itself, a cell from linecache, where IPython holds it while it runs the cell, and a ``.zip``
+    member through the function's module's loader, zipimport's, which gives the member's source from the archive, or
+    None for a member compiled to ``.pyc`` alone; the probe's module's loader reads the member as zipimport's does,
+    and inspect looks the function's module up in ``sys.modules``. The lines linecache holds from then on are the
+    member's own, as any reader leaves them; for a member the archive holds no source for linecache keeps the probe's
+    loader to ask again, and the block takes it out at its end, a loader of the probe's own staying for no file.
+    """
+    file = os.fsdecode(py_file)
+    # The probe's own two lines, put in linecache under the member's name
+    # instead while numba picked the locator, were what a reader of the
+    # member meanwhile, in another thread, read for it.
+    module = types.ModuleType(f"_numbox_cache_probe_{next(_probes)}")
+    module.__file__ = file
+    module.__loader__ = _MemberSource(file)
+    exec(compile("def _cache_probe():\n    pass\n", file, "exec"), module.__dict__)  # nosec B102 - fixed source
+    held = file in linecache.cache
+    sys.modules[module.__name__] = module
+    try:
+        yield module._cache_probe
+    finally:
+        sys.modules.pop(module.__name__, None)
+        if not held and len(linecache.cache.get(file, ())) == 1:
+            linecache.cache.pop(file, None)
+
+
+def _takes(cls, py_file):
+    """Whether ``cls``, a locator class of none of numba's families, takes ``py_file``: its ``from_function``, asked
+    with a probe as numba asks it at decoration, gives a locator for a file it takes and None for one it passes over.
+    A class whose ``from_function`` raises takes the file, the error being its own, as numba raises it at decoration;
+    the remedy took such a class for taking any file, and read the file as its own where it had passed it over and
+    numba had gone on to the locators listed after it."""
+    with _probing(py_file) as probe:
+        try:
+            return cls.from_function(probe, os.fsdecode(py_file)) is not None
+        except Exception:
+            return True
+
+
 def check_cache_location(py_file, longest_file_name=0):
     """Raise as numba would where a function whose source is ``py_file``, a string, bytes or a path object, read as a
     string, cannot be cached; else return.
@@ -125,43 +171,9 @@ def check_cache_location(py_file, longest_file_name=0):
     is made and removed in the location too, and the ``OSError`` is the location's: the package asks with
     ``LONGEST_CACHE_FILE_NAME``, the bound on numba's names for its own files.
     """
-    source = "def _cache_probe():\n    pass\n"
-    # The name the probe's code carries is a string, as compile makes it of
-    # bytes; the module's file and its loader's take the same string, where
-    # os.fspath left bytes as bytes for the loader to raise TypeError on,
-    # through inspect, for a member given as bytes.
-    file = os.fsdecode(py_file)
-    # numba's IPython locator reads the function's source when it takes the
-    # file, as inspect reads it: a file on disk itself, a cell from linecache,
-    # where IPython holds it while it runs the cell, and a .zip member through
-    # the function's module's loader, zipimport's, which gives the member's
-    # source from the archive, or None for a member compiled to .pyc alone.
-    # The probe is a function of a module of its own, whose loader reads the
-    # member as zipimport's does, in sys.modules while numba picks the
-    # locator, where inspect looks the function's module up; the lines
-    # linecache holds from then on are the member's own, as any reader leaves
-    # them. The probe's own two lines, put there under the member's name
-    # instead while numba picked the locator, were what a reader of the
-    # member meanwhile, in another thread, read for it. A cell linecache does
-    # not hold, or a member compiled to .pyc alone, raises inspect's error, as
-    # numba does.
-    module = types.ModuleType(f"_numbox_cache_probe_{next(_probes)}")
-    module.__file__ = file
-    module.__loader__ = _MemberSource(file)
-    exec(compile(source, file, "exec"), module.__dict__)  # nosec B102 - fixed source
-    probe = module._cache_probe
-    held = file in linecache.cache
-    sys.modules[module.__name__] = module
-    try:
+    # What a locator is asked about: a probe, in a module of its own.
+    with _probing(py_file) as probe:
         locator = CompileResultCacheImpl(probe).locator
-    finally:
-        sys.modules.pop(module.__name__, None)
-        # inspect leaves the member's lines under the file's name, as any
-        # reader does, or, for a member the archive holds no source for, the
-        # probe's loader, which linecache keeps to ask again for the file and
-        # kept for the process: a loader of the check's own stays for no file.
-        if not held and len(linecache.cache.get(file, ())) == 1:
-            linecache.cache.pop(file, None)
     # numba reads the source's stamp at decoration too, the archive's for a
     # .zip, which is not there where the code names an archive since moved.
     locator.get_source_stamp()
@@ -499,7 +511,8 @@ _FAMILIES = ("UserProvidedCacheLocator", "InTreeCacheLocator", "UserWideCacheLoc
 
 def _of_numbas(cls):
     """Whether ``cls`` is of one of numba's locator families, whose places the remedy knows; a class of none of them,
-    with a ``from_function`` and a place of its own, takes any file for the remedy and caches where it alone can say."""
+    with a ``from_function`` and a place of its own, takes what its ``from_function``, asked with a probe as numba asks
+    it, takes, and caches where it alone can say."""
     return any(base is not None and issubclass(cls, base) for base in map(_numba_locator, _FAMILIES))
 
 
@@ -507,7 +520,8 @@ def _ipython_locator_reads(py_file):
     """Whether a locator of numba's IPython family that numba reaches, in its own order or where
     ``NUMBA_CACHE_LOCATOR_CLASSES`` lists one, takes ``py_file`` by its name, and so reads the function's source; numba
     reaches none listed after its ``.zip`` locator for a path with ``.zip`` in it, which that locator takes without
-    trying its location, nor after a class of none of its families, which takes any file for the remedy."""
+    trying its location, nor after a class of none of its families that takes the file, asked with a probe as numba
+    asks it; one that passes the file over leaves the ones after it reached."""
     from numba import config
     for_ipython = _numba_locator("IPythonCacheLocator")
     for_a_zip = _numba_locator("ZipCacheLocator")
@@ -518,7 +532,7 @@ def _ipython_locator_reads(py_file):
             return True
         if for_a_zip is not None and issubclass(cls, for_a_zip) and ".zip" in py_file:
             return False
-        if not _of_numbas(cls):
+        if not _of_numbas(cls) and _takes(cls, py_file):
             return False
     return False
 
@@ -607,8 +621,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     working directory, ``.``, which the remedy names as a location that is none of numba's.
     ``NUMBA_CACHE_LOCATOR_CLASSES`` decides that order, each entry a class of numba's caching module or, by its dotted
     path, a subclass of one, which takes what its parent takes, caches where it does and is told as it is, or a class of
-    none of numba's families, with a ``from_function`` and a place of its own, which takes any file for the remedy, what
-    it takes and where it caches being its own to say: an error naming a location that no locator of numba's gives the
+    none of numba's families, with a ``from_function`` and a place of its own, which takes what its ``from_function``,
+    asked with a probe as numba asks it, takes, where it caches being its own to say: an error naming a location that
+    no locator of numba's gives the
     file is told that location as the error names it, which is then that class's, and one naming no file is told the
     location numba took as the class's own, with no path to name, among numba's locators' places where those are
     reached. numba's
@@ -798,8 +813,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # and raises for where none does; its user-wide one a frozen
         # application's file besides any on disk; the rest any file on disk;
         # and a class of none of numba's families, with a from_function and
-        # a place of its own, any file, what it takes being its own to say,
-        # as is where it caches.
+        # a place of its own, what its from_function takes, asked with a
+        # probe as numba asks it, where it caches being its own to say: the
+        # remedy took such a class for taking any file, and told a file it
+        # passed over as its own, where numba went on to the next listed.
         if one_of(cls, for_ipython):
             return _taken_by_ipython(py_file)
         if one_of(cls, for_a_zip):
@@ -808,7 +825,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return a_file_on_disk or bool(getattr(sys, "frozen", False))
         if of_numbas(cls):
             return a_file_on_disk
-        return True
+        return _takes(cls, py_file)
 
     def names_another_location():
         # Whether the error names a location of one of numba's locators for a
@@ -1430,8 +1447,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # location, and the first save makes it, or the check does, under
             # the first directory above it that is there, which refused: the
             # remedy asked for room in a directory that was not there, or for
-            # it to be made writable, and never named the one refusing.
-            made_under = f", which cannot be made under {_existing_above(location)}" if not os.path.isdir(location) else ""
+            # it to be made writable, and never named the one refusing. An
+            # error naming a file in the location found the location there.
+            made_under = ""
+            if os.path.abspath(filename) == locations[taken] and not os.path.isdir(location):
+                made_under = f", which cannot be made under {_existing_above(location)}"
             return (
                 f"{opening}no file can be written in that directory, {location}{made_under} ({reason}), so make room "
                 f"there, or make it writable, or {silence}"
@@ -1457,10 +1477,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # location over, as numba's user-wide one does a frozen application's,
         # unwritable or too deep to make, or IPython raised for its directory
         # and gave none; a class of none of numba's families listed with it
-        # passed the file over too, and is named, where the remedy, taking it
-        # for one of numba's, answered with the archive remedy.
+        # passed the file over too, numba having found no locator, and is
+        # named, where the remedy, taking it for one of numba's, answered
+        # with the archive remedy; asked, it is in the order no longer.
         ipython_cache = locations[of_ipythons[0]]
-        passed_over = [cls.__name__ for cls in reached if not of_numbas(cls)]
+        passed_over = [cls.__name__ for cls in _locators(listed) if not of_numbas(cls)]
         passed_over = f", and {' and '.join(passed_over)}, listed too, passed the file over" if passed_over else ""
         if ipython_cache:
             return (
