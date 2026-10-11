@@ -4680,9 +4680,10 @@ def test_a_zip_member_in_an_ipykernel_directory_compiled_to_pyc_alone_raises_ins
     assert temporary or not ipython_dir.exists()
     assert configurations.is_a_cache_error(raised.value)
     remedy = configurations.cache_remedy(py_file, raised.value, "silence")
-    if name.endswith(".egg"):
+    if name.endswith(".egg") and numba_version >= 61:
         # An archive numba's .zip locator never takes is told to be renamed
-        # to end in .zip, with its source files in it.
+        # to end in .zip, with its source files in it; before 0.61 numba has
+        # no .zip locator, and no archive caches.
         assert remedy == (
             "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, install numbox "
             f"with its source files on disk, unpacked from any archive, or rename the archive, {archive}, to end in "
