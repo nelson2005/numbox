@@ -1836,6 +1836,14 @@ def test_the_name_limit_is_the_file_systems_own_asked_of_the_nearest_directory_t
     monkeypatch.setattr(os, "statvfs", real)
     monkeypatch.delattr(os, "statvfs")
     assert configurations._name_limit(str(tmp_path)) == 255
+
+    def refusing(path):
+        raise OSError(errno.EACCES, "Permission denied", path)
+
+    # A statvfs that raises, for a directory the user cannot search, leaves
+    # 255 too; no test held the fallback, and one answering 0 passed.
+    monkeypatch.setattr(os, "statvfs", refusing, raising=False)
+    assert configurations._name_limit(str(tmp_path)) == 255
     assert configurations._name_limit(None) == 255
 
 
