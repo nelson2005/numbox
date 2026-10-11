@@ -1419,12 +1419,15 @@ def test_a_cell_file_on_disk_under_a_temporary_ipython_directory_is_told_so(tmp_
         "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on Linux, to a writable directory; or silence"), remedy
 
 
+@pytest.mark.parametrize("named", ["the directory", "a file numba writes in it"])
 def test_a_cell_file_on_disk_refused_its_pycache_is_told_that_under_a_temporary_ipython_directory_too(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, named):
     # The in-tree locator took the cell file and the __pycache__ beside it
     # refused a file: that is the remedy, whatever IPython would give for its
     # directory, which numba never asked; a remedy that asked IPython first
-    # told IPYTHONDIR for an error naming the __pycache__.
+    # told IPYTHONDIR for an error naming the __pycache__, or a file in it,
+    # as the first save's error does, which nothing told apart from one
+    # naming the directory itself.
     import tempfile
     import types
     import numba
@@ -1445,7 +1448,10 @@ def test_a_cell_file_on_disk_refused_its_pycache_is_told_that_under_a_temporary_
     kernel.mkdir()
     py_file = kernel / "cell.py"
     py_file.write_text("def f():\n    pass\n")
-    failure = OSError(errno.EACCES, "Permission denied", str(kernel / "__pycache__"))
+    refused = kernel / "__pycache__"
+    if named != "the directory":
+        refused = refused / "cell-1.py312.nbi.tmp.0123456789ab"
+    failure = OSError(errno.EACCES, "Permission denied", str(refused))
     remedy = configurations.cache_remedy(str(py_file), failure, "silence")
     assert remedy == (
         f"numba caches this file in {kernel / '__pycache__'}, where no file can be written (Permission denied): make "
