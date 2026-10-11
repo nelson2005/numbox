@@ -903,6 +903,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         zip_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip)), None)
         stops_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip) or not of_numbas(cls)), None)
         reached = order if stops_at is None else order[:stops_at + 1]
+        # The .zip locator listed after such a class is not reached, and the
+        # errors it raises are a caller's under the list: the remedy told them
+        # as the .zip locator's, the locators before it having passed the
+        # file over, where one of them took it.
+        zip_at = zip_at if zip_at == stops_at else None
         variable_at = next((at for at, cls in enumerate(order) if reads_the_variable(cls)), None)
         cache_dir_read = variable_at is not None
 
@@ -1246,6 +1251,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     zip_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip)), None)
     stops_at = next((at for at, cls in enumerate(order) if one_of(cls, for_a_zip) or not of_numbas(cls)), None)
     reached = order if stops_at is None else order[:stops_at + 1]
+    # The .zip locator listed after such a class is not reached, and its
+    # error for a path with no part ending in .zip is a caller's under the list.
+    zip_at = zip_at if zip_at == stops_at else None
     user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
     in_the_user_cache = os.path.join(user_cache_dir, subpath) if subpath else None
 
