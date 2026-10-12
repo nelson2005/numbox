@@ -936,11 +936,6 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         return clause, length <= 255
 
     a_file_on_disk = os.path.exists(py_file)
-    # numba's .zip locator raises ValueError for a path with .zip in it and
-    # no part ending in it; a UnicodeEncodeError is a ValueError too, numba's
-    # for a path it cannot hash, and the remedy read it as the .zip
-    # locator's for a source under a directory named .zip.
-    the_zip_locators_error = isinstance(failure, ValueError) and not isinstance(failure, UnicodeEncodeError)
 
     def may_take(cls):
         # What a locator takes by the file's name alone, before any location
@@ -1313,7 +1308,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # .zip in it and no part ending in it, which numba raises where it
         # reaches that locator: the locators before it passed the file over,
         # and none after it was tried.
-        zip_raised = the_zip_locators_error and zip_at is not None
+        zip_raised = isinstance(failure, ValueError) and zip_at is not None
         tried = order[:zip_at] if zip_raised else order
         if not tried:
             if zip_raised:
@@ -1629,7 +1624,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"{silence}"
         )
     if not took_no_location and not inspects and (isinstance(failure, OSError) or getattr(sys, "frozen", False)):
-        if the_zip_locators_error and zip_at is not None:
+        if isinstance(failure, ValueError) and zip_at is not None:
             # numba's .zip locator takes a frozen application's file for the
             # ".zip" in its path, without trying its location, and raises
             # where no part of the path ends in .zip, an archive or a
