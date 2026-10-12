@@ -5447,8 +5447,8 @@ def test_numbas_longest_file_name_for_the_package_is_within_the_probes_bound():
     # number, written under a 21-byte temporary name. Every function of the
     # package must fit, decorated or not, and so must the builder's generated
     # kernel, anchored to its file under a name of 64 hex characters.
-    from numbox.core.configurations import LONGEST_CACHE_FILE_NAME
-    tag = f".py{sys.version_info[0]}{sys.version_info[1]}t.99.nbc.tmp.0123456789abcdef"
+    from numbox.core.configurations import LONGEST_CACHE_FILE_NAME, _OVERLOAD_DIGITS
+    tag = f".py{sys.version_info[0]}{sys.version_info[1]}t.{'9' * _OVERLOAD_DIGITS}.nbc.tmp.0123456789abcdef"
     names = [f"{path.stem}.{qualname}-{lineno}{tag}"
              for path in sorted((REPO / "numbox").rglob("*.py"))
              for qualname, lineno in _function_names(ast.parse(path.read_text(encoding="utf-8")))]
@@ -6505,16 +6505,18 @@ def test_an_egg_under_a_directory_named_zip_is_told_to_put_the_renamed_archive_o
     configurations.check_cache_location(str(moved / "pkg" / "m.py"), configurations.LONGEST_CACHE_FILE_NAME)
 
 
-@pytest.mark.parametrize("units", [231, 232, 252, 253])
+@pytest.mark.parametrize("units", [230, 231, 251, 252])
 def test_the_offer_of_a_file_system_that_takes_a_cache_file_name_holds_at_the_usual_limit(tmp_path, monkeypatch, units):
     # NUMBA_CACHE_DIR on a file system that takes the name is offered where
     # the longest name numba writes for the function fits 255, the file
-    # systems in use's limit: the index's base, ".99.nbc" for a ninety-ninth
-    # overload's data file and the 21 of the temporary name numba writes each
-    # file through, ".tmp." and sixteen hex digits; and not for one over. No
-    # test held the boundary, and a count of less than 255 passed them all;
-    # then the offer went to a name of 255, whose temporary name numba's save
-    # of it failed on; then to an index of 234, whose data file's did.
+    # systems in use's limit: the index's base, ".999.nbc" for a data file
+    # with the three digits reserved for its number, and the 21 of the
+    # temporary name numba writes each file through, ".tmp." and sixteen hex
+    # digits; and not for one over. No test held the boundary, and a count of
+    # less than 255 passed them all; then the offer went to a name of 255,
+    # whose temporary name numba's save of it failed on; then to an index of
+    # 234, whose data file's did; then two digits left a hundredth
+    # signature's data file a byte over.
     import numba
     import numbox.core.configurations as configurations
 
@@ -6536,8 +6538,8 @@ def test_the_offer_of_a_file_system_that_takes_a_cache_file_name_holds_at_the_us
     failure = OSError(errno.ENAMETOOLONG, "File name too long", str(site / "__pycache__" / name))
     remedy = configurations.cache_remedy(py_file, failure, "silence")
     base = units - len(".nbi") - (len(".tmp.0123456789abcdef") if units > 240 else 0)
-    fits = base + len(".99.nbc") + 21 <= 255
-    assert fits == (units in (231, 252))
+    fits = base + len(".999.nbc") + 21 <= 255
+    assert fits == (units in (230, 251))
     offer = ", or NUMBA_CACHE_DIR set to a directory on a file system that takes a name that long" if fits else ""
     assert remedy == (
         "numba names the cache files for a function after the source's name and the function's qualified name, "
@@ -6803,10 +6805,47 @@ def test_the_anchors_check_asks_for_the_longest_name_the_code_gets_not_a_bound_f
                 "        return 2\n\n\n@overload(S, strict=False, jit_options=jit_options)\ndef ol_s(x):\n"
                 "    def a_constructor_named_" + "c" * 60 + "(x):\n        return 3\n    return ctor\n\n\n"
                 "@_cres\ndef derive_" + "d" * 50 + "(x):\n    return 4\n")
-    counted = [f"stem.C.m-3.{version}.99.nbc.tmp.", f"stem.C.m.locals.inner-4.{version}.99.nbc.tmp.",
-               f"stem.ol_s-13.{version}.99.nbc.tmp.",
-               f"stem.ol_s.locals.a_constructor_named_{'c' * 60}-14.{version}.99.nbc.tmp.",
-               f"stem.derive_{'d' * 50}-20.{version}.99.nbc.tmp."]
+    counted = [f"stem.C.m-3.{version}.999.nbc.tmp.", f"stem.C.m.locals.inner-4.{version}.999.nbc.tmp.",
+               f"stem.ol_s-13.{version}.999.nbc.tmp.",
+               f"stem.ol_s.locals.a_constructor_named_{'c' * 60}-14.{version}.999.nbc.tmp.",
+               f"stem.derive_{'d' * 50}-20.{version}.999.nbc.tmp."]
     assert preprocessing._longest_cache_file_name("stem", code_txt) == max(len(each) for each in counted) + 16
     assert preprocessing._longest_cache_file_name("stem", "x = 1\n") == 0
     assert preprocessing._longest_cache_file_name("stem", "def plain():\n    return 1\n") == 0
+
+
+@pytest.mark.parametrize("number, base, offered", [
+    pytest.param(1, 226, True, id="a one-digit number, three reserved, the base at the limit"),
+    pytest.param(100, 227, False, id="a hundredth signature at the base two digits left room for"),
+    pytest.param(1000, 226, False, id="a thousandth signature, wider than the reserve, read by its width"),
+])
+def test_a_cache_file_name_with_a_number_wider_than_the_reserve_is_read_by_its_own_width(
+        tmp_path, monkeypatch, number, base, offered):
+    # numba numbers a function's data files from one without bound, so a
+    # hundredth signature's name is a byte longer than two reserved digits
+    # allowed for, and the offer of a file system that takes the name went to
+    # a name whose data file that file system then refused; three digits are
+    # reserved now, and a number the error names that is wider is read by its
+    # own width.
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setattr(configurations, "_name_limit", lambda location: 143)
+    site = tmp_path / "site"
+    site.mkdir()
+    py_file = str(site / "module.py")
+    with open(py_file, "w", encoding="utf-8") as handle:
+        handle.write("x = 1\n")
+    name = f"module.{'f' * (base - len('module.'))}.{number}.nbc.tmp.0123456789abcdef"
+    counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
+    units = len(name)
+    assert (base + len(".") + max(3, len(str(number))) + len(".nbc") + 21 <= 255) == offered
+    remedy = configurations.cache_remedy(
+        py_file, OSError(errno.ENAMETOOLONG, "File name too long", str(site / "__pycache__" / name)), "silence")
+    offer = ", or NUMBA_CACHE_DIR set to a directory on a file system that takes a name that long" if offered else ""
+    assert remedy == (
+        "numba names the cache files for a function after the source's name and the function's qualified name, "
+        f"{name}, {units} {counted_in}, which is longer than a name can be on that file system (143), and no shorter "
+        f"path cures it: a shorter name for the function or its file, which is numbox's to give{offer}; or silence")

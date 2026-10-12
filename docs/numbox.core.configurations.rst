@@ -92,8 +92,9 @@ warning instead.
   and the check's error for a name as long as the package's functions get, which that file system takes no name
   as long as, is told the length, with
   ``NUMBA_CACHE_DIR`` pointed at a directory on a file system that takes a name that long offered where a file
-  system in use takes the name, 255 being their limit, less the 28 of the longest name numba writes for the
-  function, a data file's for a ninety-ninth overload through the temporary name it writes each file through,
+  system in use takes the name, 255 being their limit, less the 29 of the longest name numba writes for the
+  function, a data file's with three digits for its number, numba numbering them from one without bound, through
+  the temporary name it writes each file through,
   and numba tries the variable before the locator that took
   the file, as it is offered at a short path for a path too long, and nothing offered for a ``.zip`` member, which
   the variable does nothing for.
