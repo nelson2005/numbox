@@ -1470,10 +1470,21 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # the extension numba does not read; and it held the rename back
             # where a directory above the archive had ".zip" in its name, the
             # locator taking the file for that and finding no archive.
+            # numba takes the first part of the path ending in .zip for the
+            # archive, so a directory so named above it is in the way, and the
+            # rename alone left numba opening the directory: the remedy
+            # offered the rename under one.
+            archive_parts = pathlib.Path(found[0]).parts
+            in_the_way = next(
+                (str(pathlib.Path(*archive_parts[:at + 1])) for at, part in enumerate(archive_parts[:-1])
+                 if part.endswith(".zip")), None)
+            moved = (
+                f", and put it under a path with no part ending in .zip above it, {in_the_way} being one, which that "
+                "locator takes for the archive first" if in_the_way else "")
             a_zip = (
                 f"rename the archive, {found[0]}, to end in .zip, lower-case, which numba's .zip locator looks for in "
-                "the path, with its source files in it, so that numba 0.61 and later cache it in the user's cache "
-                "directory"
+                f"the path, with its source files in it{moved}, so that numba 0.61 and later cache it in the user's "
+                "cache directory"
             )
         if listed_without(for_a_zip):
             # numba's .zip locator alone takes a .zip, so a list without it
