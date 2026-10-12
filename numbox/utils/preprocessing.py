@@ -141,7 +141,17 @@ def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
     error = _anchor_or_error(path, code_txt)
     if error is None:
         return jit_options
-    if isinstance(error, OSError) and error.errno == errno.ENAMETOOLONG:
+    if isinstance(error, OSError) and getattr(error, "longest_file_name", 0):
+        # The file system takes no name as long as numba's longest for the
+        # anchor's functions, which the check asked for: no shorter path cures
+        # it, and the warning offered one.
+        from numbox.core.configurations import _name_limit
+        remedy = (
+            f"numba's cache files for a struct's functions have names of up to {error.longest_file_name} bytes, "
+            f"longer than a name can be on that file system ({_name_limit(error.filename)}): NUMBA_CACHE_DIR at a "
+            f"directory on a file system that takes a name that long, or {_SILENCE}"
+        )
+    elif isinstance(error, OSError) and error.errno == errno.ENAMETOOLONG:
         # The names numbox makes are bounded, so the long part is the
         # directory, NUMBA_CACHE_DIR or the user's cache directory; a short
         # NUMBA_CACHE_DIR moves the anchor out of either.
