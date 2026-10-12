@@ -5,9 +5,11 @@ when two exec'd code blocks differ only in ``co_consts``. See the
 "Cache-anchor mechanism" section in ``docs/numbox.utils.rst`` for
 the rationale and references.
 """
+import ast
 import errno
 import hashlib
 import os
+import sys
 import tempfile
 import time
 import warnings
@@ -26,15 +28,50 @@ def _anchor_root(subdir: str = "numbox-structref") -> Path:
 
 _STEM_MAX = 40
 
-# The longest name numba writes for an anchor's functions, a method thunk's,
-# under 230 bytes with the stems bounded, as ``bounded_stem`` says, and the 21
-# of the temporary name numba writes each file through: the anchor's check
-# asks numba's location for a name this long, as the package's asks for its
-# own with ``LONGEST_CACHE_FILE_NAME``, so that a cache directory within that
-# of the path limit answers here, uncached after one warning, where numba's
-# own check passed a name of eight and the first save raised through the
-# struct's making.
-_LONGEST_ANCHOR_CACHE_FILE_NAME = 251
+
+def _longest_cache_file_name(stem: str, code_txt: str) -> int:
+    """The longest name numba writes for a function of the code anchored at a file of this stem, in bytes.
+
+    numba names a function's cache files after the file's stem and the function's qualified name, with the angle
+    brackets of ``<locals>`` dropped, its line, Python's version and ABI flags, and, for a data file, the overload's
+    number, and writes each through a temporary name 21 bytes longer, ``.tmp.`` and sixteen hex digits: the longest
+    of the functions the code jits, decorated with ``njit``, ``jit``, ``cfunc``, ``vectorize`` or ``guvectorize``,
+    nested ones and methods included, with two digits for the overload, a ninety-ninth's; a plain function, a
+    struct's method under its own name, which calls the jitted thunk, or an ``overload``'s, gets no cache file, and
+    counted, a method named with two hundred characters put the longest over the file system's 255, and the struct
+    compiled uncached. The anchor's check asks numba's location for a name this long, as the package's asks for its
+    own with ``LONGEST_CACHE_FILE_NAME``, so that a cache directory within that of the path limit answers here,
+    uncached after one warning, where numba's own check passed a name of eight and the first save raised through
+    the struct's making; a bound for any struct, 251, turned caching off on a file system whose name limit is
+    under it, eCryptfs's 143, for a struct whose names were 58.
+    """
+    names = []
+
+    def decorated_with(node):
+        for decorator in node.decorator_list:
+            base = decorator.func if isinstance(decorator, ast.Call) else decorator
+            name = getattr(base, "id", None) or getattr(base, "attr", None)
+            if name in ("njit", "jit", "cfunc", "vectorize", "guvectorize"):
+                return True
+        return False
+
+    def walk(node, outer):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                qualname = f"{outer}{child.name}"
+                if not isinstance(child, ast.ClassDef) and decorated_with(child):
+                    names.append((qualname, child.lineno))
+                walk(child, f"{qualname}.<locals>." if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                     else f"{qualname}.")
+            else:
+                walk(child, outer)
+
+    walk(ast.parse(code_txt), "")
+    version = f"py{sys.version_info[0]}{sys.version_info[1]}{getattr(sys, 'abiflags', '')}"
+    return max(
+        (len(f"{stem}.{qualname.replace('<', '').replace('>', '')}-{lineno}.{version}.99.nbc.tmp.".encode("utf-8")) + 16
+         for qualname, lineno in names), default=0)
+
 
 # The options generated code compiles under are the package's unless the caller
 # gave its own, as make_structref, compile_kernel and the builder take, and
@@ -105,8 +142,8 @@ def _anchor_or_error(path: Path, code_txt: str):
     and no locator, or a location it cannot use, is the cache's; the answer may be the user's cache directory
     where the anchor's own cannot be written. So is numba's ``UnicodeEncodeError`` for the anchor's directory path,
     which numba hashes as UTF-8 to name its cache directory and raises for where it is not. The question is put
-    with the longest name numba writes for an anchor's functions, ``_LONGEST_ANCHOR_CACHE_FILE_NAME``, so that a
-    location within that of the path limit, which numba's own check passes with a name of eight, answers here.
+    with the longest name numba writes for the code's functions, read off the code, so that a location within that
+    of the path limit, which numba's own check passes with a name of eight, answers here.
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +151,7 @@ def _anchor_or_error(path: Path, code_txt: str):
     except OSError as error:
         return error
     try:
-        check_cache_location(path, _LONGEST_ANCHOR_CACHE_FILE_NAME)
+        check_cache_location(path, _longest_cache_file_name(path.stem, code_txt))
     except (RuntimeError, OSError, ValueError) as error:
         if not is_a_cache_error(error):
             raise
@@ -147,9 +184,9 @@ def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
         # it, and the warning offered one.
         from numbox.core.configurations import _name_limit
         remedy = (
-            f"numba's cache files for a struct's functions have names of up to {error.longest_file_name} bytes, "
-            f"longer than a name can be on that file system ({_name_limit(error.filename)}): NUMBA_CACHE_DIR at a "
-            f"directory on a file system that takes a name that long, or {_SILENCE}"
+            f"numba's cache files for the functions anchored here have names of up to {error.longest_file_name} "
+            f"bytes, longer than a name can be on that file system ({_name_limit(error.filename)}): NUMBA_CACHE_DIR "
+            f"at a directory on a file system that takes a name that long, or {_SILENCE}"
         )
     elif isinstance(error, OSError) and error.errno == errno.ENAMETOOLONG:
         # The names numbox makes are bounded, so the long part is the
