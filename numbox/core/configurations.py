@@ -697,7 +697,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     raises for bytes that are not, at decoration, where a locator that names its directory so reaches the file, so
     for such a path the remedy names no location under ``NUMBA_CACHE_DIR`` or the user's cache directory, and a
     ``.zip`` under such a path, whose archive's path numba's ``.zip`` locator hashes the same way for its directory
-    under the user's cache directory, is told the archive under a UTF-8 path. A
+    under the user's cache directory, is told the archive under a UTF-8 path, and a file on disk under one is told
+    the ``__pycache__`` beside it too, which numba's in-tree locator hashes no path for: ``NUMBA_CACHE_DIR``, set,
+    hashed for before that locator is reached, to unset, or that directory to make writable, or that locator to
+    list where the list leaves it out. A
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
     any other locator, named as set or asked for at a short path, and nothing said of numba passing it over, which
     that location cannot show. An error can name no file, or carry an empty string or empty bytes as its name, or a name of
@@ -1105,21 +1108,22 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
 
         user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
 
-        def beside_the_source():
+        def beside_the_source(how="under no such name"):
             # The in-tree locator caches beside the source, in its __pycache__,
             # under no directory named after the source's: the one of numba's
-            # locators for a file on disk that a name too long leaves, made
-            # writable where numba reaches it and it passed the file over, or
+            # locators for a file on disk that a name too long, or a path
+            # numba cannot hash, leaves, made writable where numba reaches it
+            # and it passed the file over, or
             # listed where NUMBA_CACHE_LOCATOR_CLASSES leaves it out, or
             # before the .zip locator where that one, listed first, took a
             # path with .zip in it and left it unreached; the offer to make
             # the __pycache__ writable went to a list numba never reached it
-            # under.
+            # under. ``how`` says what that locator spares the file.
             if any(caches_beside_the_source(cls) for cls in reached):
                 beside = os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__"))
                 return (
                     f", or make the __pycache__ beside the source, {beside}, writable, where InTreeCacheLocator "
-                    "caches it under no such name"
+                    f"caches it {how}"
                 )
             if listed:
                 # Listed after the locator that took the file, the .zip one
@@ -1130,8 +1134,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                     stopper = order[stops_at]
                     before = f" before {'ZipCacheLocator' if one_of(stopper, for_a_zip) else stopper.__name__}"
                 return (
-                    f", or list InTreeCacheLocator{before}, which caches beside the source, in its __pycache__, under "
-                    "no such name"
+                    f", or list InTreeCacheLocator{before}, which caches beside the source, in its __pycache__, {how}"
                 )
             return ""
 
@@ -1354,12 +1357,28 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"writable, or {silence}"
             )
         if subpath is None:
-            # The variable cures nothing for a directory numba cannot hash.
-            return (
+            # numba hashes the source's directory path as UTF-8 for its
+            # directory under NUMBA_CACHE_DIR or the user's cache directory,
+            # and the locator that names it so raises: the variable's, set,
+            # before the in-tree locator is reached, which caches beside the
+            # source and hashes no path, or the user-wide one once the in-tree
+            # locator passed an unwritable __pycache__ over. The remedy said
+            # the variable cures nothing and asked for a UTF-8 path alone,
+            # where the variable unset, the same install imports cached.
+            hashed = (
                 "numba hashes the source's directory as UTF-8 for the directory it caches this file in under "
-                f"NUMBA_CACHE_DIR or the user's cache directory, and {os.path.dirname(py_file)} is not: put the file "
-                f"under a UTF-8 path, or {silence}"
+                f"NUMBA_CACHE_DIR or the user's cache directory, and {os.path.dirname(py_file)} is not"
             )
+            variable_at = next((at for at, cls in enumerate(order) if reads_the_variable(cls)), None)
+            in_tree_at = next((at for at, cls in enumerate(order) if caches_beside_the_source(cls)), None)
+            if config.CACHE_DIR and variable_at is not None and in_tree_at is not None and variable_at < in_tree_at:
+                beside = os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__"))
+                return (
+                    f"{hashed}, and NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR}, is hashed for first: unset "
+                    f"it, and numba caches beside the source, in its __pycache__, {beside}, hashing no path, where "
+                    f"that directory can be written; or put the file under a UTF-8 path; or {silence}"
+                )
+            return f"{hashed}: put the file under a UTF-8 path{beside_the_source('hashing no path')}; or {silence}"
         if config.CACHE_DIR:
             # Set and passed over: unwritable, or too deep for numba to make
             # its directory there, which a writable one as deep would not cure.

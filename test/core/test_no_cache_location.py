@@ -2680,10 +2680,14 @@ def test_a_source_under_a_directory_that_is_not_utf8_is_not_offered_numba_cache_
             "make room there, or make it writable, and NUMBA_CACHE_DIR cures nothing, numba hashing the source's "
             "directory as UTF-8 for its directory there, which this one is not; or silence"), remedy
     else:
+        # numba's no-locator error here is the in-tree locator passing an
+        # unwritable __pycache__ over before the user-wide one raised, so
+        # that directory writable is a cure too, hashing no path.
         assert remedy == (
             "numba hashes the source's directory as UTF-8 for the directory it caches this file in under "
             f"NUMBA_CACHE_DIR or the user's cache directory, and {directory} is not: put the file under a UTF-8 "
-            "path, or silence"), remedy
+            f"path, or make the __pycache__ beside the source, {directory / '__pycache__'}, writable, where "
+            "InTreeCacheLocator caches it hashing no path; or silence"), remedy
 
 
 def test_a_zip_member_in_an_ipykernel_directory_that_is_not_utf8_is_told_so(tmp_path, monkeypatch):
@@ -6041,7 +6045,9 @@ def test_a_source_under_a_directory_that_is_not_utf8_whose_pycache_is_unwritable
         pycache.chmod(0o755)
     assert remedy == (
         "numba hashes the source's directory as UTF-8 for the directory it caches this file in under NUMBA_CACHE_DIR "
-        f"or the user's cache directory, and {directory} is not: put the file under a UTF-8 path, or silence"), remedy
+        f"or the user's cache directory, and {directory} is not: put the file under a UTF-8 path, or make the "
+        f"__pycache__ beside the source, {pycache}, writable, where InTreeCacheLocator caches it hashing no path; or "
+        "silence"), remedy
     assert not configurations.is_a_cache_error(UnicodeEncodeError("ascii", "\u00e9", 0, 1, "ordinal not in range(128)"))
 
 
@@ -6144,3 +6150,39 @@ def test_an_anchor_under_a_cache_directory_that_is_not_utf8_compiles_uncached_an
     assert message.endswith(
         f"numba hashes the anchor's directory path as UTF-8 to name its cache directory, and {path.parent} is not: "
         f"NUMBA_CACHE_DIR at a UTF-8 path, or {preprocessing._SILENCE}"), message
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")
+def test_a_source_under_a_directory_that_is_not_utf8_with_numba_cache_dir_set_is_told_to_unset_it(
+        tmp_path, monkeypatch):
+    # With NUMBA_CACHE_DIR set, numba's user-provided locator hashes the
+    # source's directory path as UTF-8 for its directory under the variable
+    # and raises for bytes that are not, before the in-tree locator is
+    # reached, which caches beside the source and hashes no path: the same
+    # install imports cached with the variable unset. The remedy said the
+    # variable cures nothing and asked for a UTF-8 path alone.
+    import numba
+    import numbox.core.configurations as configurations
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    directory = tmp_path / os.fsdecode(b"site\xff")
+    directory.mkdir()
+    py_file = str(directory / "module.py")
+    with open(py_file, "w", encoding="utf-8") as handle:
+        handle.write("x = 1\n")
+    with pytest.raises(UnicodeEncodeError) as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    failure = raised.value
+    assert configurations.is_a_cache_error(failure)
+    assert configurations.cache_remedy(py_file, failure, "silence") == (
+        "numba hashes the source's directory as UTF-8 for the directory it caches this file in under NUMBA_CACHE_DIR "
+        f"or the user's cache directory, and {directory} is not, and NUMBA_CACHE_DIR, which is set to {cache_dir}, is "
+        f"hashed for first: unset it, and numba caches beside the source, in its __pycache__, {directory / '__pycache__'}, "
+        "hashing no path, where that directory can be written; or put the file under a UTF-8 path; or silence")
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert (directory / "__pycache__").is_dir()
