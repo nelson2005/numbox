@@ -5811,3 +5811,137 @@ def test_an_anchor_path_too_long_for_the_file_system_compiles_uncached_and_the_w
     assert run.returncode == 0 and "made" in run.stdout, run.stderr
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
     assert remedy in run.stderr, run.stderr
+
+
+A_CACHE_FILE_NAME_TOO_LONG = {
+    "on disk, numba's order": [],
+    "on disk, numba's order, an invalid name": [],
+    "on disk, NUMBA_CACHE_DIR set": [],
+    "on disk, the in-tree locator alone": from_062,
+    "a .zip member in an ipykernel directory": [],
+    "a .zip member, numba's order": from_061,
+}
+
+
+@pytest.mark.parametrize(
+    "case", [pytest.param(case, marks=marks, id=case) for case, marks in A_CACHE_FILE_NAME_TOO_LONG.items()])
+def test_a_cache_file_whose_name_is_too_long_for_the_file_system_is_told_the_name_which_no_shorter_path_cures(
+        tmp_path, monkeypatch, case):
+    # numba names the files it caches a function in after the source's name
+    # and the function's qualified name, and a name longer than the file
+    # system takes can be made at no path: numba's first read of the index
+    # dies on it, and the remedy told the path as too long, asking for the
+    # package, the user's cache directory, IPython's or NUMBA_CACHE_DIR at a
+    # shorter path, which move nothing of the name. It tells the name and its
+    # length, counted as the file system counts it, and that no shorter path
+    # cures it, with the variable, where numba tries it before the locator
+    # that took the file, pointed at a directory on a file system that takes
+    # the name, and the variable's own location named where it took the file;
+    # Windows refuses a name too long as an invalid one, errno EINVAL, and the
+    # check runs whatever the errno.
+    import types
+    import numba
+    from numba.core import caching
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    cache_dir = str(tmp_path / "cache") if "NUMBA_CACHE_DIR set" in case else ""
+    if cache_dir:
+        os.mkdir(cache_dir)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", cache_dir)
+    listed = "InTreeCacheLocator" if "the in-tree locator alone" in case else ""
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", listed, raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    if case.startswith("on disk"):
+        py_file = str(tmp_path / "site" / "module.py")
+        os.makedirs(os.path.dirname(py_file))
+        with open(py_file, "w", encoding="utf-8") as handle:
+            handle.write("x = 1\n")
+    elif "ipykernel" in case:
+        py_file = str(tmp_path / "bundle.zip" / "ipykernel_123" / "cell.py")
+    else:
+        py_file = str(tmp_path / "bundle.zip" / "package" / "module.py")
+    subpath = _CacheLocator.get_suitable_cache_subpath(py_file)
+    if "ipykernel" in case:
+        location = ipython_dir / "numba_cache"
+    elif case.startswith("on disk") and not cache_dir:
+        location = Path(py_file).parent / "__pycache__"
+    else:
+        location = Path(cache_dir or str(tmp_path / "user-cache" / "numba")) / subpath
+    limit = configurations._name_limit(str(location))
+    name = f"{Path(py_file).stem}.{'f' * (limit + 5)}-1.py{sys.version_info[0]}{sys.version_info[1]}.nbi"
+    counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
+    length = len(name.encode("utf-16-le")) // 2 if counted_in == "characters" else len(os.fsencode(name))
+    assert length > limit
+    refused = ((errno.EINVAL, "Invalid argument") if "invalid name" in case
+               else (errno.ENAMETOOLONG, "File name too long"))
+    failure = OSError(*refused, str(location / name))
+    assert configurations.is_a_cache_error(failure)
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    clause = (
+        f"numba names the cache files for a function after the source's name and the function's qualified name, "
+        f"{name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit})")
+    fits = "directory on a file system that takes a name that long"
+    if case.startswith("on disk, numba's order"):
+        assert remedy == (
+            f"{clause}, so no shorter path cures it, or NUMBA_CACHE_DIR set to a {fits}; or silence"), remedy
+    elif cache_dir:
+        assert remedy == (
+            f"{clause}, so no shorter path cures it, or NUMBA_CACHE_DIR, which is set to {cache_dir}, pointed at a "
+            f"{fits}; or silence"), remedy
+    elif case.startswith("on disk") or "ipykernel" in case:
+        assert remedy == f"{clause}, so no shorter path cures it; or silence", remedy
+    else:
+        assert remedy == (
+            "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+            f"effect here, because the source is not a file on disk: {clause}, so no shorter path cures it, or "
+            "silence"), remedy
+
+
+def test_a_function_whose_cache_file_name_is_too_long_for_the_file_system_is_told_the_name_by_numbas_own_error(
+        tmp_path, monkeypatch):
+    # numba's own error for a cache file whose name is too long, which its
+    # first read of the index raises at the first call, names the file, and
+    # the remedy told the path as too long and asked for the package installed
+    # at a shorter path, or NUMBA_CACHE_DIR set to a short one, which cure
+    # nothing of the name. Windows refuses the name as an invalid one, errno
+    # EINVAL, and the remedy reads the name whatever the errno.
+    import importlib
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    limit = configurations._name_limit(str(tmp_path))
+    function = "f" * (limit + 5)
+    source = tmp_path / "module_named_long.py"
+    source.write_text(
+        f"from numba import njit\n\n\n@njit(cache=True)\ndef {function}(x):\n    return x + 1\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "module_named_long", raising=False)
+    module = importlib.import_module("module_named_long")
+    with pytest.raises(OSError) as raised:
+        getattr(module, function)(1)
+    failure = raised.value
+    assert configurations.is_a_cache_error(failure)
+    assert Path(failure.filename).parent == tmp_path / "__pycache__"
+    name = Path(failure.filename).name
+    assert name.startswith(f"module_named_long.{function}-")
+    counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
+    length = len(name.encode("utf-16-le")) // 2 if counted_in == "characters" else len(os.fsencode(name))
+    assert length > limit
+    assert configurations.cache_remedy(str(source), failure, "silence") == (
+        f"numba names the cache files for a function after the source's name and the function's qualified name, "
+        f"{name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit}), so no "
+        "shorter path cures it, or NUMBA_CACHE_DIR set to a directory on a file system that takes a name that long; "
+        "or silence")
