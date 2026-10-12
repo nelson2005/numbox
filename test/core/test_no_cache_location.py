@@ -6264,3 +6264,38 @@ def test_a_source_under_a_zip_named_directory_on_a_path_that_is_not_utf8_is_told
         f"or the user's cache directory, and {directory} is not: put the file under a UTF-8 path, or make the "
         f"__pycache__ beside the source, {pycache}, writable, where InTreeCacheLocator caches it hashing no path; or "
         "silence"), remedy
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")
+def test_a_frozen_application_under_a_path_that_is_not_utf8_is_told_the_application_under_a_utf8_path(
+        tmp_path, monkeypatch):
+    # numba's user-wide locator, the one of numba's that takes a frozen
+    # application's file, hashes the file's directory path as UTF-8 for its
+    # directory under the user's cache directory and raises for bytes that
+    # are not; the remedy took the error for a caller's with no place for
+    # the file and offered the source files on disk, or a .zip holding them,
+    # with nothing of the path.
+    import numba
+    from numba.core import caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    directory = tmp_path / os.fsdecode(b"app\xff") / "numbox" / "core"
+    py_file = str(directory / "configurations.py")
+    with pytest.raises(UnicodeEncodeError) as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    failure = raised.value
+    assert configurations.is_a_cache_error(failure)
+    assert configurations.cache_remedy(py_file, failure, "silence") == (
+        "numba caches a frozen application in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, "
+        "because the source is not a file on disk: numba hashes the source's directory as UTF-8 for the directory it "
+        f"caches this file in there, and {directory} is not: put the application under a UTF-8 path, or silence")
