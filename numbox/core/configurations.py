@@ -930,7 +930,17 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             asked.append(_ipython_numba_cache())
         return asked[0]
 
-    if isinstance(failure, OSError) and filename and not names_a_path_above() and _ipython_locator_reads(py_file) and (
+    def names_a_numba_cache():
+        # Whether the error names IPython's location for numba, a numba_cache
+        # directory, or a file in one: the error numba's first save raises
+        # under an IPython giving a temporary directory per call names the
+        # numba_cache it could not save in, and so does the check's; a
+        # caller's naming another location shows nothing of that locator,
+        # and was told IPYTHONDIR for a cell on disk the in-tree locator took.
+        return bool(filename) and "numba_cache" in os.path.abspath(filename).split(os.sep)
+
+    if isinstance(failure, OSError) and names_a_numba_cache() and not names_a_path_above() and (
+            _ipython_locator_reads(py_file)) and (
             not a_file_on_disk or not names_another_location()
     ) and _ipython_cache_is_temporary(ipython_numba_cache()):
         # numba's IPython locator, reached first for a member in an ipykernel
