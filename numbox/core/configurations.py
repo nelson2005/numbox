@@ -697,7 +697,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     raises for bytes that are not, at decoration, where a locator that names its directory so reaches the file, so
     for such a path the remedy names no location under ``NUMBA_CACHE_DIR`` or the user's cache directory, and a
     ``.zip`` under such a path, whose archive's path numba's ``.zip`` locator hashes the same way for its directory
-    under the user's cache directory, is told the archive under a UTF-8 path, and a file on disk under one is told
+    under the user's cache directory, is told the archive under a UTF-8 path, a frozen
+    application under one, whose path numba's user-wide locator hashes the same way, the application under a UTF-8
+    path, and a file on disk under one is told
     the ``__pycache__`` beside it too, which numba's in-tree locator hashes no path for: ``NUMBA_CACHE_DIR``, set,
     hashed for before that locator is reached, to unset, or that directory to make writable, or that locator to
     list where the list leaves it out. A
@@ -1576,17 +1578,20 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"numba's IPython locator reads the member's source as UTF-8, which {py_file} is not ({not_utf8}): ship "
             f"it as UTF-8; or {silence}"
         )
-    if isinstance(failure, UnicodeEncodeError) and in_a_zip:
+    if isinstance(failure, UnicodeEncodeError) and (in_a_zip or getattr(sys, "frozen", False)):
         # numba's .zip locator names its directory under the user's cache
         # directory after the source's directory, the archive's path in it,
         # hashed as UTF-8, and raises for bytes that are not, at decoration
-        # and in the check alike; the remedy, taking the error for a caller's
+        # and in the check alike, as the user-wide locator does for a frozen
+        # application's file; the remedy, taking the error for a caller's
         # with no place for the file, offered the .zip the reader was
-        # importing from, and said nothing of the path.
+        # importing from, or the source files on disk, and said nothing of
+        # the path.
+        what, where = ("a .zip", "the archive") if in_a_zip else ("a frozen application", "the application")
         return (
-            "numba caches a .zip in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, because the "
+            f"numba caches {what} in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, because the "
             "source is not a file on disk: numba hashes the source's directory as UTF-8 for the directory it caches "
-            f"this file in there, and {os.path.dirname(py_file)} is not: put the archive under a UTF-8 path, or "
+            f"this file in there, and {os.path.dirname(py_file)} is not: put {where} under a UTF-8 path, or "
             f"{silence}"
         )
     if not took_no_location and not inspects and (isinstance(failure, OSError) or getattr(sys, "frozen", False)):
