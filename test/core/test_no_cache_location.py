@@ -6223,7 +6223,8 @@ def test_a_source_under_a_directory_that_is_not_utf8_under_the_user_wide_locator
     assert configurations.cache_remedy(py_file, failure, "silence") == (
         "numba hashes the source's directory as UTF-8 for the directory it caches this file in under NUMBA_CACHE_DIR "
         f"or the user's cache directory, and {directory} is not: put the file under a UTF-8 path, or list "
-        "InTreeCacheLocator, which caches beside the source, in its __pycache__, hashing no path; or silence")
+        "InTreeCacheLocator before UserWideCacheLocator, and numba caches beside the source, in its __pycache__, "
+        f"{directory / '__pycache__'}, hashing no path, where that directory can be written; or silence")
 
 
 @from_062
@@ -6299,3 +6300,64 @@ def test_a_frozen_application_under_a_path_that_is_not_utf8_is_told_the_applicat
         "numba caches a frozen application in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, "
         "because the source is not a file on disk: numba hashes the source's directory as UTF-8 for the directory it "
         f"caches this file in there, and {directory} is not: put the application under a UTF-8 path, or silence")
+
+
+@from_062
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")
+@pytest.mark.parametrize("listed", [
+    pytest.param("UserProvidedCacheLocator,UserWideCacheLocator", id="the in-tree locator left out, the variable set"),
+    pytest.param("UserWideCacheLocator,InTreeCacheLocator", id="the in-tree locator after the user-wide one"),
+])
+def test_a_source_under_a_directory_that_is_not_utf8_is_told_the_in_tree_locator_before_the_first_that_hashes(
+        tmp_path, monkeypatch, listed):
+    # The in-tree locator caches beside the source hashing no path, and
+    # listed after one that hashes, the variable's set or the user-wide one,
+    # it is never reached: the remedy asked for it to be listed, with no
+    # place, where appended it leaves numba raising the same error, and, for
+    # one listed after the user-wide locator, for its __pycache__ to be made
+    # writable, which it was.
+    import numba
+    from numba.core import caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(cache_dir) if "UserProvided" in listed else "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", listed, raising=False)
+    directory = tmp_path / os.fsdecode(b"site\xff")
+    directory.mkdir()
+    (directory / "__pycache__").mkdir()
+    py_file = str(directory / "module.py")
+    with open(py_file, "w", encoding="utf-8") as handle:
+        handle.write("x = 1\n")
+    with pytest.raises(UnicodeEncodeError) as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    failure = raised.value
+    assert configurations.is_a_cache_error(failure)
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    hashed = (
+        "numba hashes the source's directory as UTF-8 for the directory it caches this file in under NUMBA_CACHE_DIR "
+        f"or the user's cache directory, and {directory} is not")
+    beside = (f"numba caches beside the source, in its __pycache__, {directory / '__pycache__'}, hashing no path, "
+              "where that directory can be written")
+    if "UserProvided" in listed:
+        assert remedy == (
+            f"{hashed}: put the file under a UTF-8 path, or list InTreeCacheLocator before UserProvidedCacheLocator, "
+            f"and {beside}; or silence"), remedy
+        monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator," + listed, raising=False)
+    else:
+        assert remedy == (
+            f"{hashed}, and NUMBA_CACHE_LOCATOR_CLASSES puts UserWideCacheLocator, which hashes it, before "
+            f"InTreeCacheLocator: list InTreeCacheLocator before it, and {beside}; or put the file under a UTF-8 path; "
+            "or silence"), remedy
+        monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator,UserWideCacheLocator",
+                            raising=False)
+    # Listed as the remedy says, numba caches the file.
+    configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
