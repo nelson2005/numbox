@@ -2639,11 +2639,14 @@ def test_a_name_too_long_names_the_locator_the_in_tree_one_is_to_be_listed_befor
     failure = OSError(errno.ENAMETOOLONG, "File name too long", named)
     remedy = configurations.cache_remedy(str(py_file), failure, "silence")
     assert "ZipCacheLocator" not in remedy, remedy
+    # The name is counted as the file system counts it, in UTF-16 units on
+    # Windows and macOS, bytes elsewhere; the test said bytes everywhere.
+    counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
     assert remedy == (
         f"numba names the directory it caches this file in after the source's directory, {subpath}, "
-        f"{len(subpath.encode())} bytes, which is longer than a name can be on that file system (20): put the file in "
-        "a directory of a shorter name, or list InTreeCacheLocator before OurLocator, which caches beside the source, "
-        "in its __pycache__, under no such name; or silence"), remedy
+        f"{len(subpath.encode())} {counted_in}, which is longer than a name can be on that file system (20): put the "
+        "file in a directory of a shorter name, or list InTreeCacheLocator before OurLocator, which caches beside the "
+        "source, in its __pycache__, under no such name; or silence"), remedy
 
 
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
