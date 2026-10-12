@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from importlib.metadata import version
 from pathlib import Path
 
 
@@ -141,6 +142,15 @@ def test_options_without_a_cache_key_are_asked_for_the_sites_that_cache_under_th
 
 
 windows_path_sep_bug = "numba 0.68.0 reads a .zip member's source by a name built with Windows's separator"
+
+
+# numba 0.68.0 on Windows reads a .zip member's source by a name built with
+# Windows's separator and raises KeyError before any location is tried, numba
+# issue 10889, fixed for 0.68.1: a check of a member there meets the bug, not
+# the case under test, where the fork's matrix runs Windows on 0.67.0 and
+# upstream's on the latest numba.
+on_windows_under_numba_0_68_0 = pytest.mark.skipif(
+    os.name == "nt" and version("numba") == "0.68.0", reason=windows_path_sep_bug)
 
 
 def _skip_for_windows_separator_bug(stderr):
@@ -2303,6 +2313,7 @@ def test_a_locator_of_none_of_numbas_families_whose_from_function_raises_takes_t
 
 
 @pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
+@on_windows_under_numba_0_68_0
 def test_a_zip_members_location_under_a_file_is_told_the_file_in_its_path(tmp_path, monkeypatch):
     # The user's cache directory can lie under a file, XDG_CACHE_HOME set to
     # a path through one; numba's first save, making the member's location,
@@ -3606,6 +3617,7 @@ def test_a_zip_members_error_naming_the_zips_location_after_ipythons_locator_pas
                  id="the .zip locator listed first, which takes the member before the IPython one is reached",
                  marks=from_062),
 ])
+@on_windows_under_numba_0_68_0
 def test_a_file_not_on_disk_numbas_ipython_locator_does_not_read_is_asked_without_touching_linecache(
         tmp_path, monkeypatch, locators, member):
     # numba's IPython locator reads the function's source when it takes the
@@ -4702,7 +4714,7 @@ def test_the_check_raises_the_stamps_error_naming_the_archive_a_moved_zips_membe
 
 
 A_NAME_TOO_LONG = {
-    "a .zip member, numba's order": from_061,
+    "a .zip member, numba's order": [from_061, on_windows_under_numba_0_68_0],
     "on disk, NUMBA_CACHE_DIR set, the user-provided locator alone": from_062,
     "on disk, numba's order, the __pycache__ unwritable": needs_a_directory_it_cannot_write,
     "on disk, an error naming the location under NUMBA_CACHE_DIR, the user-provided locator alone": from_062,
@@ -4716,7 +4728,8 @@ A_NAME_TOO_LONG = {
     "on disk, NUMBA_CACHE_DIR set, the user-provided locator alone, a name of CJK characters": [
         from_062, pytest.mark.skipif(os.name == "nt" or sys.platform == "darwin",
                                      reason="Windows and macOS count a name in UTF-16 units, where it fits")],
-    "a .zip member, numba's order, a name of astral characters, counted as macOS counts": from_061,
+    "a .zip member, numba's order, a name of astral characters, counted as macOS counts": [
+        from_061, on_windows_under_numba_0_68_0],
 }
 
 
@@ -6459,6 +6472,7 @@ def test_a_cell_under_a_directory_named_zip_whose_source_linecache_does_not_hold
 
 
 @from_062
+@on_windows_under_numba_0_68_0
 def test_an_egg_under_a_directory_named_zip_is_told_to_put_the_renamed_archive_out_from_under_it(tmp_path, monkeypatch):
     # numba's .zip locator takes the first part of the path ending in .zip for
     # the archive, a directory so named above an .egg included, and opens it:
