@@ -86,7 +86,12 @@ warning instead.
   system, the variable's unset by that limit, and a frozen application's are told the name and its length, and the
   file in a directory of a shorter name, with, for a file on disk, the ``__pycache__`` beside the source made
   writable where the in-tree locator is listed, or that locator listed where it is not, which caches under no such
-  name. numba hashes the source's directory path as UTF-8 for that name and raises for bytes that are not, at
+  name. A cache file numba could not make or open in the location it took, whose name, given after the source's name
+  and the function's qualified name, is longer than a name can be on that file system, is told the name and its
+  length, which no shorter path cures, with ``NUMBA_CACHE_DIR`` pointed at a directory on a file system that takes a
+  name that long offered where numba tries the variable before the locator that took the file, as it is offered at a
+  short path for a path too long, and nothing offered for a ``.zip`` member, which the variable does nothing for.
+  numba hashes the source's directory path as UTF-8 for that name and raises for bytes that are not, at
   decoration, where a locator that names its directory so reaches the file, so for such a path the remedy names no
   location under ``NUMBA_CACHE_DIR`` or the user's cache directory. A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
@@ -172,7 +177,9 @@ warning instead.
   application (``sys.frozen``) is cached there too, its sources not being on disk, and its error is numba's
   no-locator one, which gives no reason, numba having passed the location over on its error, unwritable or too deep
   alike, so that directory is named as one numba could not use, to be made writable or put at a shorter path, or,
-  where the name numba gives the directory after the source's is too long for the file system, told so.
+  where the name numba gives the directory after the source's is too long for the file system, told so, as is a
+  cache file's name in that location, or in IPython's ``numba_cache`` for a member in an ipykernel directory, too
+  long for the file system, which no shorter path cures.
   A frozen application's path with ``.zip`` in it and no part ending in it gets the ``.zip`` locator's error instead,
   where the list puts that locator before the user-wide one or once the user-wide one passed its location over, and
   the warning asks for the user-wide locator listed before it, or for that location made writable or put at a
