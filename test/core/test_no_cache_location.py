@@ -6111,3 +6111,36 @@ def test_a_zip_under_a_directory_that_is_not_utf8_is_a_cache_error_told_the_arch
         "numba caches a .zip in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, because the "
         "source is not a file on disk: numba hashes the source's directory as UTF-8 for the directory it caches this "
         f"file in there, and {archive / 'package'} is not: put the archive under a UTF-8 path, or silence")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")
+def test_an_anchor_under_a_cache_directory_that_is_not_utf8_compiles_uncached_and_the_warning_asks_for_a_utf8_path(
+        tmp_path, monkeypatch):
+    # numba hashes the anchor's directory path as UTF-8 to name its cache
+    # directory under NUMBA_CACHE_DIR or the user's cache directory, and
+    # raises UnicodeEncodeError for bytes that are not, which is a cache
+    # error; the anchor's warning offered a writable directory, which the
+    # anchor's is, and said nothing of the path.
+    import warnings
+    import numba
+    from numbox.utils import preprocessing
+
+    cache_dir = tmp_path / os.fsdecode(b"caf\xe9")
+    cache_dir.mkdir()
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    code_txt = "def f():\n    return 1\n"
+    path = preprocessing._structref_anchor_path("S", code_txt)
+    assert path.parent == cache_dir / "numbox-structref"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        options = preprocessing._anchored_or_uncached(path, code_txt, {"cache": True})
+    assert options == {"cache": False}
+    assert path.is_file()
+    assert len(caught) == 1, [str(w.message) for w in caught]
+    message = str(caught[0].message)
+    assert "surrogates not allowed" in message
+    assert message.endswith(
+        f"numba hashes the anchor's directory path as UTF-8 to name its cache directory, and {path.parent} is not: "
+        f"NUMBA_CACHE_DIR at a UTF-8 path, or {preprocessing._SILENCE}"), message

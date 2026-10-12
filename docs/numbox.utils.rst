@@ -183,7 +183,10 @@ reports a component too long as a syntax error, and the warning then
 offers the directory, quoting the error); with the names bounded, as below,
 the directory is the only part that can make it so, ``NUMBA_CACHE_DIR``
 or the user's cache directory, and ``NUMBA_CACHE_DIR`` at a shorter
-path moves the anchor out of either. The anchor's check writes names
+path moves the anchor out of either. A cache directory whose path is
+not UTF-8 is another: numba hashes the anchor's directory path as UTF-8
+to name its cache directory, and the warning asks for ``NUMBA_CACHE_DIR``
+at a UTF-8 path. The anchor's check writes names
 shorter than the longest numba writes for a struct, which carry its name
 and its methods', so a user cache directory or a ``NUMBA_CACHE_DIR``
 within about 230 bytes of the path limit, 4096 on Linux, passes it and

@@ -93,7 +93,8 @@ def _anchor_or_error(path: Path, code_txt: str):
     the directory makes it so or the name numbox made from a struct's or a function's; numba itself passes a
     location over on any ``OSError``. Then numba is asked, the question the package puts for its own modules,
     and no locator, or a location it cannot use, is the cache's; the answer may be the user's cache directory
-    where the anchor's own cannot be written.
+    where the anchor's own cannot be written. So is numba's ``UnicodeEncodeError`` for the anchor's directory path,
+    which numba hashes as UTF-8 to name its cache directory and raises for where it is not.
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +134,15 @@ def _anchored_or_uncached(path: Path, code_txt: str, jit_options: dict) -> dict:
         # directory, NUMBA_CACHE_DIR or the user's cache directory; a short
         # NUMBA_CACHE_DIR moves the anchor out of either.
         remedy = f"The path is too long for the file system: NUMBA_CACHE_DIR at a shorter path, or {_SILENCE}"
+    elif isinstance(error, UnicodeEncodeError):
+        # numba hashes the anchor's directory path as UTF-8 to name its cache
+        # directory under NUMBA_CACHE_DIR or the user's cache directory, and
+        # raises for bytes that are not; the warning offered a writable
+        # directory, which the anchor's is.
+        remedy = (
+            f"numba hashes the anchor's directory path as UTF-8 to name its cache directory, and {path.parent} is "
+            f"not: NUMBA_CACHE_DIR at a UTF-8 path, or {_SILENCE}"
+        )
     else:
         remedy = f"Set NUMBA_CACHE_DIR to a writable directory, or {_SILENCE}"
     warnings.warn(
