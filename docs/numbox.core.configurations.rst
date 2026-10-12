@@ -103,7 +103,8 @@ warning instead.
   ``__pycache__`` beside it too,
   which numba's in-tree locator hashes no path for: that locator to list before the first that hashes, where the
   list leaves it out or puts it after one, ``NUMBA_CACHE_DIR`` to unset where its locator alone hashes before the
-  in-tree one, or that directory to make writable where the in-tree locator came first and passed it over.
+  in-tree one, or that directory to make writable where the in-tree locator came first and passed it over, and
+  with any of these where it cannot be written.
   A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
