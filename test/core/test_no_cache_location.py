@@ -6224,3 +6224,43 @@ def test_a_source_under_a_directory_that_is_not_utf8_under_the_user_wide_locator
         "numba hashes the source's directory as UTF-8 for the directory it caches this file in under NUMBA_CACHE_DIR "
         f"or the user's cache directory, and {directory} is not: put the file under a UTF-8 path, or list "
         "InTreeCacheLocator, which caches beside the source, in its __pycache__, hashing no path; or silence")
+
+
+@from_062
+@needs_a_directory_it_cannot_write
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")
+def test_a_source_under_a_zip_named_directory_on_a_path_that_is_not_utf8_is_told_the_path_not_a_missing_archive(
+        tmp_path, monkeypatch):
+    # numba's .zip locator, listed after the in-tree one, takes a source on
+    # disk under a directory named .zip once an unwritable __pycache__ left
+    # it, and hashes the source's directory path as UTF-8 for its directory,
+    # raising UnicodeEncodeError for bytes that are not; the remedy read
+    # every ValueError the .zip locator reaches as its own for a path with
+    # no archive, and told a missing archive and locations to make writable.
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator,ZipCacheLocator", raising=False)
+    directory = tmp_path / os.fsdecode(b"site\xff") / "proj.zip"
+    directory.mkdir(parents=True)
+    py_file = str(directory / "module.py")
+    with open(py_file, "w", encoding="utf-8") as handle:
+        handle.write("x = 1\n")
+    pycache = directory / "__pycache__"
+    pycache.mkdir()
+    pycache.chmod(0o555)
+    try:
+        with pytest.raises(UnicodeEncodeError) as raised:
+            configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+        failure = raised.value
+        assert configurations.is_a_cache_error(failure)
+        remedy = configurations.cache_remedy(py_file, failure, "silence")
+    finally:
+        pycache.chmod(0o755)
+    assert remedy == (
+        "numba hashes the source's directory as UTF-8 for the directory it caches this file in under NUMBA_CACHE_DIR "
+        f"or the user's cache directory, and {directory} is not: put the file under a UTF-8 path, or make the "
+        f"__pycache__ beside the source, {pycache}, writable, where InTreeCacheLocator caches it hashing no path; or "
+        "silence"), remedy
