@@ -6696,7 +6696,7 @@ def test_a_name_limit_below_the_longest_name_the_check_asks_for_is_told_the_leng
     real = tempfile.NamedTemporaryFile
 
     def refusing_a_long_name(*args, **kwargs):
-        if len(kwargs.get("prefix", "")) > 100 - 8:
+        if len(kwargs.get("prefix", "")) + 8 > configurations._name_limit(kwargs["dir"]):
             raise OSError(errno.ENAMETOOLONG, "File name too long", os.path.join(kwargs["dir"], kwargs["prefix"]))
         return real(*args, **kwargs)
 
@@ -6710,21 +6710,79 @@ def test_a_name_limit_below_the_longest_name_the_check_asks_for_is_told_the_leng
     assert failure.errno == errno.ENAMETOOLONG and failure.filename == str(py_file.parent / "__pycache__")
     assert failure.longest_file_name == configurations.LONGEST_CACHE_FILE_NAME
     assert configurations.is_a_cache_error(failure)
+    counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
     assert configurations.cache_remedy(str(py_file), failure, "silence") == (
         f"numba's cache files for numbox's functions have names of up to {configurations.LONGEST_CACHE_FILE_NAME} "
-        "bytes, longer than a name can be on that file system (100), so no shorter path cures it, or NUMBA_CACHE_DIR "
-        "set to a directory on a file system that takes a name that long; or silence")
-    # The anchor, whose check asks for numba's longest name for a struct.
+        f"{counted_in}, longer than a name can be on that file system (100), so no shorter path cures it, or "
+        "NUMBA_CACHE_DIR set to a directory on a file system that takes a name that long; or silence")
+    # The anchor, whose check asks for numba's longest name for the code's
+    # functions, read off the code.
     monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
-    code_txt = "def f():\n    return 1\n"
+    code_txt = "@njit(**jit_options)\ndef f():\n    return 1\n"
     path = preprocessing._structref_anchor_path("S", code_txt)
+    longest = preprocessing._longest_cache_file_name(path.stem, code_txt)
+    assert 40 < longest < 100
+    monkeypatch.setattr(configurations, "_name_limit", lambda location: 40)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         options = preprocessing._anchored_or_uncached(path, code_txt, {"cache": True})
     assert options == {"cache": False}
     assert len(caught) == 1, [str(w.message) for w in caught]
     assert str(caught[0].message).endswith(
-        f"numba's cache files for a struct's functions have names of up to "
-        f"{preprocessing._LONGEST_ANCHOR_CACHE_FILE_NAME} bytes, longer than a name can be on that file system (100): "
-        f"NUMBA_CACHE_DIR at a directory on a file system that takes a name that long, or {preprocessing._SILENCE}"), \
-        str(caught[0].message)
+        f"numba's cache files for the functions anchored here have names of up to {longest} bytes, longer than a "
+        f"name can be on that file system (40): NUMBA_CACHE_DIR at a directory on a file system that takes a name "
+        f"that long, or {preprocessing._SILENCE}"), str(caught[0].message)
+
+
+def test_the_anchors_check_asks_for_the_longest_name_the_code_gets_not_a_bound_for_any_struct(tmp_path, monkeypatch):
+    # The anchor's check asked numba's location for a name of 251, a bound
+    # for any struct, so a file system whose name limit is under it, eCryptfs's
+    # 143, turned caching off for every struct, one whose names were 58
+    # included; the check asks for the longest name numba writes for the
+    # code's own functions, read off the code: the stem, the qualified name
+    # with the angle brackets numba drops, the line, Python's version, two
+    # digits for the overload and the temporary name, of the functions the
+    # code jits alone, a struct's method under its own name, which calls the
+    # jitted thunk, and an overload's getting no cache file.
+    import tempfile
+    import warnings
+    import numba
+    import numbox.core.configurations as configurations
+    from numbox.utils import preprocessing
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setattr(configurations, "_name_limit", lambda location: 143)
+    real = tempfile.NamedTemporaryFile
+
+    def refusing_a_long_name(*args, **kwargs):
+        if len(kwargs.get("prefix", "")) + 8 > 143:
+            raise OSError(errno.ENAMETOOLONG, "File name too long", os.path.join(kwargs["dir"], kwargs["prefix"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(configurations.tempfile, "NamedTemporaryFile", refusing_a_long_name)
+    short = "@njit(**jit_options)\ndef f():\n    return 1\n"
+    path = preprocessing._structref_anchor_path("Point", short)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert preprocessing._anchored_or_uncached(path, short, {"cache": True}) == {"cache": True}
+    assert not caught, [str(w.message) for w in caught]
+    assert preprocessing._longest_cache_file_name(path.stem, short) < 143
+    long = f"@njit(**jit_options)\ndef {'f' * 120}():\n    return 1\n"
+    path = preprocessing._structref_anchor_path("Point", long)
+    longest = preprocessing._longest_cache_file_name(path.stem, long)
+    assert longest > 143
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert preprocessing._anchored_or_uncached(path, long, {"cache": True}) == {"cache": False}
+    assert len(caught) == 1 and f"names of up to {longest} bytes, longer than a name can be on that file system (143)" in str(
+        caught[0].message), [str(w.message) for w in caught]
+    # The names counted: a jitted method's and a jitted nested function's,
+    # with numba's "locals" for the nesting, and not a plain function's.
+    version = f"py{sys.version_info[0]}{sys.version_info[1]}{getattr(sys, 'abiflags', '')}"
+    code_txt = ("class C:\n    @njit(**jit_options)\n    def m(self):\n        @cfunc(sig)\n        def inner():\n"
+                "            return 1\n        return inner\n\n    def plain_but_long_" + "p" * 200 + "(self):\n"
+                "        return 2\n\n\n@overload(f)\ndef ol_f():\n    def impl():\n        return 3\n    return impl\n")
+    assert preprocessing._longest_cache_file_name("stem", code_txt) == (
+        len(f"stem.C.m.locals.inner-5.{version}.99.nbc.tmp.") + 16)
+    assert preprocessing._longest_cache_file_name("stem", "x = 1\n") == 0
