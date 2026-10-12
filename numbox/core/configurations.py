@@ -1015,7 +1015,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                     "caches it under no such name"
                 )
             if listed:
-                before = " before ZipCacheLocator" if any(caches_beside_the_source(cls) for cls in order) else ""
+                # Listed after the locator that took the file, the .zip one
+                # or a class of none of numba's families, the in-tree locator
+                # goes before it; the remedy named the .zip locator for any.
+                before = ""
+                if stops_at is not None and any(caches_beside_the_source(cls) for cls in order):
+                    stopper = order[stops_at]
+                    before = f" before {'ZipCacheLocator' if one_of(stopper, for_a_zip) else stopper.__name__}"
                 return (
                     f", or list InTreeCacheLocator{before}, which caches beside the source, in its __pycache__, under "
                     "no such name"

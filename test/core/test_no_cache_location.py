@@ -2588,6 +2588,63 @@ def test_a_relative_members_archive_named_absolute_by_the_error_is_told_as_moved
                              "that path, so "), remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+def test_a_name_too_long_names_the_locator_the_in_tree_one_is_to_be_listed_before(tmp_path, monkeypatch):
+    # The in-tree locator caches beside the source under no directory named
+    # after the source's, so a name too long for the user's cache directory
+    # is told to list it before the locator that took the file; the remedy
+    # named numba's .zip locator for any, where a class of none of numba's
+    # families, listed before the in-tree one, took the file and the .zip
+    # locator was not listed at all.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    class OurLocator(_CacheLocator):
+        def __init__(self, py_func, py_file):
+            self._py_file = py_file
+
+        def get_cache_path(self):
+            return str(tmp_path / "our-cache")
+
+        def get_source_stamp(self):
+            return 0
+
+        def get_disambiguator(self):
+            return "x"
+
+        @classmethod
+        def from_function(cls, py_func, py_file):
+            return cls(py_func, py_file)
+
+    ours = types.ModuleType("our_locators")
+    ours.OurLocator = OurLocator
+    monkeypatch.setitem(sys.modules, "our_locators", ours)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES",
+                        "UserWideCacheLocator,our_locators.OurLocator,InTreeCacheLocator", raising=False)
+    monkeypatch.setattr(configurations, "_name_limit", lambda location: 20)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("x = 1\n")
+    subpath = _CacheLocator.get_suitable_cache_subpath(str(py_file))
+    named = str(tmp_path / "user-cache" / "numba" / subpath)
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", named)
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert "ZipCacheLocator" not in remedy, remedy
+    assert remedy == (
+        f"numba names the directory it caches this file in after the source's directory, {subpath}, "
+        f"{len(subpath.encode())} bytes, which is longer than a name can be on that file system (20): put the file in "
+        "a directory of a shorter name, or list InTreeCacheLocator before OurLocator, which caches beside the source, "
+        "in its __pycache__, under no such name; or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
