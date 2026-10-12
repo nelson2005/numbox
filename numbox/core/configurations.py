@@ -69,7 +69,8 @@ _probes = itertools.count()
 class _MemberSource:
     """The loader of the check's probe's module, which inspect reads a ``.zip`` member's source through, as zipimport
     for the member's own module: the member's bytes decoded as zipimport decodes them, as UTF-8, or None where no
-    archive above the file holds the member."""
+    archive above the file holds the member, or it is not UTF-8, which zipimport raises for and linecache lets
+    through: inspect's error tells such a member, and the remedy reads why."""
 
     def __init__(self, py_file):
         self._py_file = py_file
@@ -82,7 +83,7 @@ class _MemberSource:
         try:
             with zipfile.ZipFile(zip_path) as archive:
                 return archive.read(member).decode()
-        except (KeyError, OSError, zipfile.BadZipFile):
+        except (KeyError, OSError, zipfile.BadZipFile, UnicodeDecodeError):
             return None
 
 
@@ -587,6 +588,26 @@ def _pyc_naming(py_file):
             directory, _, file = name.rpartition("/")
             if _compiled_from(zip_path, directory, file[:-4]) == py_file:
                 return name, name[:-1] in names
+    return None
+
+
+def _member_not_utf8(py_file):
+    """Why the member of the archive above ``py_file`` is not UTF-8, which zipimport decodes a member's source as and
+    numba's IPython locator reads it by: the byte and the reason; None where no archive above holds the member, or it
+    decodes."""
+    found = _archive_above(py_file)
+    if found is None:
+        return None
+    zip_path, member = found
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            data = archive.read(member)
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return None
+    try:
+        data.decode()
+    except UnicodeDecodeError as error:
+        return f"{error.reason} at byte {error.start}"
     return None
 
 
@@ -1417,6 +1438,17 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         return (
             f"numba's IPython locator reads a cell's source from linecache, which holds none for {py_file} "
             f"({failure}), and numba caches a cell only while IPython holds its source; or {silence}"
+        )
+    not_utf8 = _member_not_utf8(py_file) if inspects else None
+    if not_utf8:
+        # inspect's error for a member of an archive that holds its source,
+        # not UTF-8: zipimport decodes a member's source as UTF-8 and raises
+        # for one that is not, and the probe's loader read it as zipimport
+        # does; the error came out of the check as its own, no cache error,
+        # and the import died where numba would die at decoration.
+        return (
+            f"numba's IPython locator reads the member's source as UTF-8, which {py_file} is not ({not_utf8}): ship "
+            f"it as UTF-8; or {silence}"
         )
     if not took_no_location and not inspects and (isinstance(failure, OSError) or getattr(sys, "frozen", False)):
         if isinstance(failure, ValueError) and zip_at is not None:
