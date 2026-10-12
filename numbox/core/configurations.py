@@ -377,6 +377,14 @@ def _moved_through():
     return ", through XDG_CACHE_HOME or HOME"
 
 
+def _measured(name):
+    """``name``'s length as the file system counts it, in bytes, or in the UTF-16 units Windows and macOS count a name
+    in, and the unit's name."""
+    if os.name == "nt" or sys.platform == "darwin":
+        return len(name.encode("utf-16-le")) // 2, "characters"
+    return len(os.fsencode(name)), "bytes"
+
+
 def _name_limit(location):
     """The longest name a file can have where ``location`` is: 255 where the system cannot say, or for none.
 
@@ -663,7 +671,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     found the name too long for its file system, the variable's unset by that limit, and a frozen application's are
     told the name and its length, and the file in a directory of a shorter name, with, for a file on disk, the
     ``__pycache__`` beside the source made writable where the in-tree locator is listed, or that locator listed where
-    it is not, which caches under no such name. numba hashes the source's directory path as UTF-8 for that name and
+    it is not, which caches under no such name. A cache file numba could not make or open in the location it took,
+    whose name, given after the source's name and the function's qualified name, is longer than a name can be on that
+    file system, is told the name and its length, which no shorter path cures, with ``NUMBA_CACHE_DIR`` pointed at a
+    directory on a file system that takes a name that long offered where numba tries the variable before the locator
+    that took the file, as it is offered at a short path for a path too long, and nothing offered for a ``.zip``
+    member, which the variable does nothing for. numba hashes the source's directory path as UTF-8 for that name and
     raises for bytes that are not, at decoration, where a locator that names its directory so reaches the file, so
     for such a path the remedy names no location under ``NUMBA_CACHE_DIR`` or the user's cache directory. A
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
@@ -737,7 +750,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     the no-locator one, which gives no reason, numba having passed
     the location over on its error, unwritable or too deep alike, so the user's cache directory is named as one numba
     could not use, to be made writable or put at a shorter path, or, where the name numba gives the directory after
-    the source's is too long for the file system, told so; a frozen application's path with ``.zip`` in it and
+    the source's is too long for the file system, told so, as is a cache file's name in that location, or in
+    IPython's ``numba_cache`` for a member in an ipykernel directory, too long for the file system, which no shorter
+    path cures; a frozen application's path with ``.zip`` in it and
     no part ending in it gets the ``.zip`` locator's error instead where the list puts that locator before the
     user-wide one, or once the user-wide one passed its location over, and the remedy is the user-wide locator listed
     before it, or that location made writable or put at a shorter path; an error that
@@ -855,17 +870,36 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         if subpath is None:
             return None
         limit = _name_limit(location)
-        if os.name == "nt" or sys.platform == "darwin":
-            # Windows and macOS count a name in UTF-16 units, the file
-            # systems elsewhere in bytes.
-            length, counted_in = len(subpath.encode("utf-16-le")) // 2, "characters"
-        else:
-            length, counted_in = len(os.fsencode(subpath)), "bytes"
+        length, counted_in = _measured(subpath)
         if length <= limit:
             return None
         return (
             f"numba names the directory it caches this file in after the source's directory, {subpath}, {length} "
             f"{counted_in}, which is longer than a name can be on that file system ({limit})"
+        )
+
+    def too_long_a_file_name(location):
+        # numba names the files it caches a function in after the source's
+        # name and the function's qualified name, and a name longer than the
+        # file system holding ``location`` takes can be made at no path, so
+        # no shorter one cures it: the clause that says so for the file the
+        # error names in ``location``, or None where the error names no such
+        # file, or its name fits. The remedy asked for the package, the
+        # user's cache directory, IPython's or the variable at a shorter
+        # path, which move nothing of the name.
+        if not filename or location is None:
+            return None
+        named = os.path.abspath(filename)
+        if os.path.dirname(named) != os.path.abspath(location):
+            return None
+        name = os.path.basename(named)
+        length, counted_in = _measured(name)
+        limit = _name_limit(location)
+        if length <= limit:
+            return None
+        return (
+            f"numba names the cache files for a function after the source's name and the function's qualified "
+            f"name, {name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit})"
         )
 
     a_file_on_disk = os.path.exists(py_file)
@@ -1003,10 +1037,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         variable_at = next((at for at, cls in enumerate(order) if reads_the_variable(cls)), None)
         cache_dir_read = variable_at is not None
 
-        def instead(taken, asks="a short path", shared=None):
+        def instead(taken, asks="a short path", shared=None, made="a writable directory at a short path"):
             # NUMBA_CACHE_DIR as the alternative to the location numba took,
             # offered where numba tries the variable before that location's
-            # locator: set, it was passed over, unwritable or too deep; unset,
+            # locator: set, it was passed over, unwritable or too deep, and
+            # ``made`` is what it is asked to be made; unset,
             # it would be taken, and ``asks`` is what it is asked to be. None
             # is a location that is none of numba's, taken for the first in
             # the order other than the variable's own; it shows nothing of
@@ -1039,10 +1074,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             if not cache_dir_read or variable_at >= position:
                 return ""
             if config.CACHE_DIR:
-                return (
-                    f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR}{passed_over}, made a writable "
-                    "directory at a short path"
-                )
+                return f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR}{passed_over}, made {made}"
             return f", or NUMBA_CACHE_DIR set to {asks}"
 
         user_cache_dir = AppDirs(appname="numba", appauthor=False).user_cache_dir
@@ -1152,6 +1184,19 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             too_long = too_long_a_name(locations[taken]) if named_after_the_source else None
             if too_long:
                 return f"{too_long}: put the file in a directory of a shorter name{beside_the_source()}; or {silence}"
+            too_long_file = too_long_a_file_name(locations[taken]) if taken is not None else None
+            if too_long_file:
+                # The variable, where numba tries it before the locator that
+                # took the file, pointed at a directory whose file system
+                # takes the name, as it is offered at a short path for a path
+                # too long; the variable's own location took the file only
+                # set, so it is named.
+                fits = "directory on a file system that takes a name that long"
+                if reads_the_variable(taken):
+                    offer = f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR}, pointed at a {fits}"
+                else:
+                    offer = instead(taken, asks=f"a {fits}", shared=shared, made=f"a writable {fits}")
+                return f"{too_long_file}, so no shorter path cures it{offer}; or {silence}"
             if failure.errno == errno.ENAMETOOLONG:
                 if taken is not None and reads_the_variable(taken):
                     # The variable's location, which numba's own check passed
@@ -1505,6 +1550,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # directory: the remedy a cell file on disk gets there, with no
             # NUMBA_CACHE_DIR to offer for a source not on disk.
             ipython_cache = locations[taken]
+            too_long_file = too_long_a_file_name(ipython_cache)
+            if too_long_file:
+                return f"{too_long_file}, so no shorter path cures it; or {silence}"
             if failure.errno == errno.ENAMETOOLONG:
                 return (
                     f"the path is too long for the file system: IPython's cache directory, "
@@ -1596,6 +1644,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # cures nothing of, refused whatever the errno, EINVAL on
             # Windows; the remedy asked for one.
             return f"{opening}{too_long}, so put the file in a directory of a shorter name, or {silence}"
+        too_long_file = (
+            too_long_a_file_name(locations[taken]) if isinstance(failure, OSError) and taken is not None else None)
+        if too_long_file:
+            return f"{opening}{too_long_file}, so no shorter path cures it, or {silence}"
         if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
             if taken is None:
                 # The error names no file, and which of the locations is too
