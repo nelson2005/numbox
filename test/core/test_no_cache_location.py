@@ -2568,6 +2568,7 @@ def test_a_relative_members_moved_archive_under_a_temporary_ipython_directory_is
                              "that path, so "), remedy
 
 
+@pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
 def test_a_relative_members_archive_named_absolute_by_the_error_is_told_as_moved(tmp_path, monkeypatch):
     # The file numba names can be relative, run from the archive's directory,
     # while the error names the archive absolute, as the stamp's does; the
