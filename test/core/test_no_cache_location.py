@@ -6072,3 +6072,42 @@ def test_an_error_naming_a_file_with_a_byte_that_is_not_utf8_is_answered_where_n
     assert remedy == (
         f"numba caches this file in {site / '__pycache__'}, where no file can be written (Permission denied): make "
         "room there, or make it writable, or NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
+
+
+@from_061
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")
+def test_a_zip_under_a_directory_that_is_not_utf8_is_a_cache_error_told_the_archive_under_a_utf8_path(
+        tmp_path, monkeypatch):
+    # numba's .zip locator names its directory under the user's cache
+    # directory after the source's directory, the archive's path in it, hashed
+    # as UTF-8, and raises UnicodeEncodeError for bytes that are not, at
+    # decoration and in the check alike; the remedy took the error for a
+    # caller's with no place for the file, and offered the .zip the reader was
+    # importing from, with nothing of the path.
+    import numba
+    from numba.core import caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    directory = tmp_path / os.fsdecode(b"caf\xe9")
+    directory.mkdir()
+    archive = directory / "app.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("package/module.py", "x = 1\n")
+    py_file = str(archive / "package" / "module.py")
+    with pytest.raises(UnicodeEncodeError) as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    failure = raised.value
+    assert configurations.is_a_cache_error(failure)
+    assert configurations.cache_remedy(py_file, failure, "silence") == (
+        "numba caches a .zip in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, because the "
+        "source is not a file on disk: numba hashes the source's directory as UTF-8 for the directory it caches this "
+        f"file in there, and {archive / 'package'} is not: put the archive under a UTF-8 path, or silence")
