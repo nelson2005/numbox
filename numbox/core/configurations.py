@@ -897,7 +897,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # member's code names or a directory on the way, both read absolute:
         # a relative file against a name given absolute matched nothing, and
         # a member's moved archive was told as a location refusing a file.
-        return bool(filename) and os.path.abspath(py_file).startswith(os.path.abspath(filename) + os.sep)
+        # The working directory is none: a path object built from an empty
+        # string names it, which the remedy tells as a location that is none
+        # of numba's, and it stood above a file under it as a moved archive.
+        above = os.path.abspath(filename) if filename else ""
+        return bool(above) and above != os.getcwd() and os.path.abspath(py_file).startswith(above + os.sep)
 
     def names_another_location():
         # Whether the error names a location of one of numba's locators for a

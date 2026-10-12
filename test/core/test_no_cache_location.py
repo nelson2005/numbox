@@ -2740,6 +2740,29 @@ def test_a_listed_locator_whose_module_raises_on_import_is_no_locator_for_the_re
         configurations._numba_locator("InTreeCacheLocator")]
 
 
+@pytest.mark.skipif(numba_version < 61, reason="numba's .zip locator arrived in 0.61")
+def test_an_empty_path_object_as_an_errors_name_is_the_working_directory_not_an_archive_above(tmp_path, monkeypatch):
+    # A path object built from an empty string names the working directory,
+    # which the remedy tells as a location that is none of numba's; for a
+    # member under that directory it stood as a path above the file, and a
+    # FileNotFoundError naming it was told as the member's moved archive.
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.chdir(tmp_path)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("pkg/mod.py", "x = 1\n")
+    py_file = str(archive / "pkg" / "mod.py")
+    failure = FileNotFoundError(errno.ENOENT, "No such file or directory", Path(""))
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert "which is not there" not in remedy and "compiled to name" not in remedy, remedy
+    assert remedy == (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: no file can be written at "
+        "that location, . (No such file or directory), so make room there, or make it writable, or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
