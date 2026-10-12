@@ -97,7 +97,10 @@ warning instead.
   decoration, where a locator that names its directory so reaches the file, so for such a path the remedy names no
   location under ``NUMBA_CACHE_DIR`` or the user's cache directory, and a ``.zip`` under such a path, whose
   archive's path numba's ``.zip`` locator hashes the same way for its directory under the user's cache directory,
-  is told the archive under a UTF-8 path. A location that is none of
+  is told the archive under a UTF-8 path, and a file on disk under one is told the ``__pycache__`` beside it too,
+  which numba's in-tree locator hashes no path for: ``NUMBA_CACHE_DIR``, set, hashed for before that locator is
+  reached, to unset, or that directory to make writable, or that locator to list where the list leaves it out.
+  A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
   The name an error carries is read as a string, bytes or a path object alike, and a name of another kind, an integer
