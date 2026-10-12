@@ -215,10 +215,17 @@ def is_a_cache_error(error):
     so does the ``KeyError`` numba 0.68 and later raise reading a ``.zip`` member's source from the archive,
     which they hash into the archive's stamp: zipfile's, naming the member, for a name the archive does not
     hold, a module shipped as ``.pyc`` alone, or, on Windows under numba 0.68.0, any member, the name built with
-    the platform's separator (numba issue 10889, fixed in 0.68.1).
+    the platform's separator (numba issue 10889, fixed in 0.68.1). And so does the ``UnicodeEncodeError`` numba
+    raises hashing the source's directory path as UTF-8 for the name of its directory under ``NUMBA_CACHE_DIR`` or
+    the user's cache directory, for a path holding bytes that are not, decoded with surrogates: a locator that
+    names its directory so raises it at decoration where it is reached, the ones before it having passed the file
+    over, and no location takes the file; a package installed under such a directory, its ``__pycache__``
+    unwritable, died at import on it where, with caching off, it imports.
     """
     if isinstance(error, OSError):
         return True
+    if isinstance(error, UnicodeEncodeError):
+        return error.reason == "surrogates not allowed"
     if isinstance(error, ValueError):
         return "No zip file found" in str(error)
     if isinstance(error, KeyError):

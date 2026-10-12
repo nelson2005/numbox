@@ -5978,3 +5978,53 @@ def test_a_cell_file_on_disk_the_in_tree_locator_takes_is_not_told_ipythondir_fo
     assert remedy == (
         f"that location, {unrelated}, where no file can be written (Permission denied): make room there, or make it "
         "writable, or NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")
+@needs_a_directory_it_cannot_write
+def test_a_source_under_a_directory_that_is_not_utf8_whose_pycache_is_unwritable_is_a_cache_error_told_a_utf8_path(
+        tmp_path, monkeypatch):
+    # numba hashes the source's directory path as UTF-8 for the name of its
+    # directory under NUMBA_CACHE_DIR or the user's cache directory, and
+    # raises UnicodeEncodeError for bytes that are not, decoded with
+    # surrogates, at decoration, where a locator that names its directory so
+    # reaches the file: the user-wide one, once the in-tree locator passed an
+    # unwritable __pycache__ over. The check raises it as numba does, and
+    # is_a_cache_error did not admit it, a ValueError that is not the .zip
+    # locator's, so a package installed under such a directory died at import
+    # on it, where with caching off it imports, and the remedy for it stood
+    # unreached. A UnicodeEncodeError of another reason is no cache error.
+    import numba
+    from numba.core import caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    directory = tmp_path / os.fsdecode(b"site\xff")
+    directory.mkdir()
+    py_file = str(directory / "module.py")
+    with open(py_file, "w", encoding="utf-8") as handle:
+        handle.write("x = 1\n")
+    pycache = directory / "__pycache__"
+    pycache.mkdir()
+    pycache.chmod(0o555)
+    try:
+        with pytest.raises(UnicodeEncodeError) as raised:
+            configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+        failure = raised.value
+        assert failure.reason == "surrogates not allowed"
+        assert configurations.is_a_cache_error(failure)
+        remedy = configurations.cache_remedy(py_file, failure, "silence")
+    finally:
+        pycache.chmod(0o755)
+    assert remedy == (
+        "numba hashes the source's directory as UTF-8 for the directory it caches this file in under NUMBA_CACHE_DIR "
+        f"or the user's cache directory, and {directory} is not: put the file under a UTF-8 path, or silence"), remedy
+    assert not configurations.is_a_cache_error(UnicodeEncodeError("ascii", "\u00e9", 0, 1, "ordinal not in range(128)"))
