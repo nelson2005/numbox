@@ -795,7 +795,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     the user's cache directory's doing, with the names numba makes bounded, and the remedy is that directory at a
     shorter path, through what moves it on the platform. numba caches a ``.zip`` through its ``.zip`` locator alone, so a
     ``NUMBA_CACHE_LOCATOR_CLASSES`` that leaves that locator out gives numba no locator for a source in a ``.zip``,
-    and the remedy is to list it; so for a notebook cell and numba's IPython locator, and for a frozen application and
+    and the remedy is to list it, for a member of an archive that is there, a directory named ``.zip`` above a source
+    that is nowhere being no archive; so for a notebook cell and numba's IPython locator, and for a frozen application and
     numba's user-wide locator, which alone takes one;
     either is told for an error a caller passes on under such a list as for numba's no-locator one, since numba
     took no location under it, and a source neither in a ``.zip`` nor a frozen application's, which no locator
@@ -1574,7 +1575,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     # numba took no location, and the list is the remedy, below, for an error
     # a caller passes on as for numba's no-locator one, as for a source on
     # disk.
-    in_a_zip = any(part.endswith(".zip") for part in pathlib.Path(py_file).parts)
+    parts = pathlib.Path(py_file).parts
+    in_a_zip = any(part.endswith(".zip") for part in parts)
+    # A directory named .zip above the file, which numba's .zip locator takes
+    # for an archive all the same, and caches nothing under.
+    a_directory_named_zip = any(
+        os.path.isdir(os.path.join(*parts[:at + 1])) for at, part in enumerate(parts) if part.endswith(".zip"))
     # A member of any archive, an .egg or .whl as a .zip, which zipimport runs
     # and whose source inspect reads through its loader; the .zip is the one
     # numba's .zip locator takes, and the only one it caches.
@@ -1855,10 +1861,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"numba caches a notebook cell through IPythonCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, {listed}, "
             f"leaves it out: list it; or {silence}"
         )
-    if in_a_zip and listed_without(for_a_zip):
+    if in_a_zip and not a_directory_named_zip and listed_without(for_a_zip):
         # numba's .zip locator alone takes a source in a .zip, so a list
         # without it leaves numba no locator for one, and the archive remedy
-        # offered the .zip the reader was importing from.
+        # offered the .zip the reader was importing from; a source that is
+        # nowhere under a directory named .zip was told to list it too, where
+        # that locator takes the directory for an archive and caches nothing.
         return (
             f"numba caches a .zip through ZipCacheLocator alone, and NUMBA_CACHE_LOCATOR_CLASSES, {listed}, leaves "
             f"it out: list it; or {silence}"

@@ -6395,3 +6395,28 @@ def test_a_frozen_application_under_a_zip_named_directory_on_a_path_that_is_not_
         "numba caches a frozen application in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, "
         "because the source is not a file on disk: numba hashes the source's directory as UTF-8 for the directory it "
         f"caches this file in there, and {directory} is not: put the application under a UTF-8 path, or silence")
+
+
+@from_062
+def test_a_source_that_is_nowhere_under_a_directory_named_zip_is_not_told_to_list_the_zip_locator(tmp_path, monkeypatch):
+    # A list without numba's .zip locator was told to list it for any path
+    # with .zip in it, where a directory so named above a source that is
+    # nowhere is no archive: listed, that locator takes the directory for one
+    # and caches nothing, numba's check raising for it. Such a source is told
+    # the source files, on disk or in a .zip.
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator", raising=False)
+    directory = tmp_path / "proj.zip" / "numbox" / "core"
+    directory.mkdir(parents=True)
+    py_file = str(directory / "module.py")
+    with pytest.raises(RuntimeError, match="no locator available") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    failure = raised.value
+    assert configurations.is_a_cache_error(failure)
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert "list it" not in remedy and "ZipCacheLocator alone" not in remedy, remedy
+    assert remedy.startswith("NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, ")
+    assert "install numbox with its source files on disk" in remedy and remedy.endswith("; or silence"), remedy
