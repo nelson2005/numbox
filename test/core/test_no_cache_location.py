@@ -2686,6 +2686,36 @@ def test_a_source_under_a_directory_that_is_not_utf8_is_not_offered_numba_cache_
             "path, or silence"), remedy
 
 
+def test_a_zip_member_in_an_ipykernel_directory_that_is_not_utf8_is_told_so(tmp_path, monkeypatch):
+    # numba's IPython locator reads a member's source through zipimport,
+    # which decodes it as UTF-8 and raises for one that is not, as numba then
+    # does at decoration; the probe's loader read it the same way, and the
+    # UnicodeDecodeError came out of the check as its own, no cache error, so
+    # the import died where the warning should have stood. inspect's error
+    # tells such a member, and the remedy reads why.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    ipython_dir = tmp_path / "ipython"
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(ipython_dir)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", b"x = 'caf\xe9'\n")
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    with pytest.raises(OSError, match="could not get source code") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert configurations.is_a_cache_error(raised.value)
+    remedy = configurations.cache_remedy(py_file, raised.value, "silence")
+    assert remedy == (
+        f"numba's IPython locator reads the member's source as UTF-8, which {py_file} is not (invalid continuation "
+        "byte at byte 8): ship it as UTF-8; or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
