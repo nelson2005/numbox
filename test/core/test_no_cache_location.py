@@ -6642,3 +6642,35 @@ def test_an_anchor_within_numbas_longest_name_of_the_path_limit_compiles_uncache
     assert run.returncode == 0 and "made" in run.stdout, run.stderr
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
     assert "The path is too long for the file system: NUMBA_CACHE_DIR at a shorter path" in run.stderr, run.stderr
+
+
+@from_061
+def test_an_error_naming_a_zips_location_by_a_relative_path_under_nothing_yet_names_the_directory_it_is_made_under(
+        tmp_path, monkeypatch):
+    # The first path at or above the location that is there is the directory
+    # it cannot be made under; walked up a relative path with no ancestor on
+    # the way, it came to nothing, and the remedy said a file with no name
+    # was in the way.
+    import numba
+    import numbox.core.configurations as configurations
+    from numba.core.caching import _CacheLocator
+
+    class UserCacheUnderNothingYet:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "home" / ".cache" / "numba")
+
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderNothingYet)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.chdir(tmp_path)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("package/module.py", "def f():\n    pass\n")
+    py_file = str(archive / "package" / "module.py")
+    location = os.path.join("home", ".cache", "numba", _CacheLocator.get_suitable_cache_subpath(py_file))
+    remedy = configurations.cache_remedy(py_file, OSError(errno.EACCES, "Permission denied", location), "silence")
+    assert remedy == (
+        "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
+        f"effect here, because the source is not a file on disk: no file can be written in that directory, {location}, "
+        f"which cannot be made under {tmp_path} (Permission denied), so make room there, or make it writable, or "
+        "silence"), remedy
