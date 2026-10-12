@@ -470,7 +470,9 @@ def _locators(listed):
 def _existing_above(path):
     """The first path at or above ``path`` that is there: the directory a directory on the way to ``path`` is made
     under, which refused where the location is not there, or a file in the way, which no directory can be made under;
-    the root at the last."""
+    the root at the last. ``path`` is read absolute: a relative one with no ancestor on the way walked up to nothing,
+    and the remedy said a file with no name was in the way."""
+    path = os.path.abspath(path)
     while not os.path.exists(path):
         parent = os.path.dirname(path)
         if parent == path:
