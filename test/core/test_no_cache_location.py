@@ -6491,15 +6491,16 @@ def test_an_egg_under_a_directory_named_zip_is_told_to_put_the_renamed_archive_o
     configurations.check_cache_location(str(moved / "pkg" / "m.py"), configurations.LONGEST_CACHE_FILE_NAME)
 
 
-@pytest.mark.parametrize("units", [234, 235, 255, 256])
+@pytest.mark.parametrize("units", [231, 232, 252, 253])
 def test_the_offer_of_a_file_system_that_takes_a_cache_file_name_holds_at_the_usual_limit(tmp_path, monkeypatch, units):
-    # NUMBA_CACHE_DIR on a file system that takes the name is offered for a
-    # name the file systems in use take, 255 units, less the 21 of the
-    # temporary name numba writes each file through, ".tmp." and sixteen hex
-    # digits after it, and not for one over: no test held the boundary, and a
-    # count of less than 255 passed them all, a name of 255 on a file system
-    # with a smaller limit losing the offer; then the offer went to a name
-    # of 255, whose temporary name numba's save of it failed on.
+    # NUMBA_CACHE_DIR on a file system that takes the name is offered where
+    # the longest name numba writes for the function fits 255, the file
+    # systems in use's limit: the index's base, ".99.nbc" for a ninety-ninth
+    # overload's data file and the 21 of the temporary name numba writes each
+    # file through, ".tmp." and sixteen hex digits; and not for one over. No
+    # test held the boundary, and a count of less than 255 passed them all;
+    # then the offer went to a name of 255, whose temporary name numba's save
+    # of it failed on; then to an index of 234, whose data file's did.
     import numba
     import numbox.core.configurations as configurations
 
@@ -6520,8 +6521,9 @@ def test_the_offer_of_a_file_system_that_takes_a_cache_file_name_holds_at_the_us
     assert configurations._measured(name) == (units, counted_in)
     failure = OSError(errno.ENAMETOOLONG, "File name too long", str(site / "__pycache__" / name))
     remedy = configurations.cache_remedy(py_file, failure, "silence")
-    fits = units + (0 if name.endswith(".tmp.0123456789abcdef") else 21) <= 255
-    assert fits == (units in (234, 255))
+    base = units - len(".nbi") - (len(".tmp.0123456789abcdef") if units > 240 else 0)
+    fits = base + len(".99.nbc") + 21 <= 255
+    assert fits == (units in (231, 252))
     offer = ", or NUMBA_CACHE_DIR set to a directory on a file system that takes a name that long" if fits else ""
     assert remedy == (
         "numba names the cache files for a function after the source's name and the function's qualified name, "
