@@ -88,9 +88,11 @@ warning instead.
   writable where the in-tree locator is listed, or that locator listed where it is not, which caches under no such
   name. A cache file numba could not make or open in the location it took, whose name, given after the source's name
   and the function's qualified name, is longer than a name can be on that file system, is told the name and its
-  length, which no shorter path cures, with ``NUMBA_CACHE_DIR`` pointed at a directory on a file system that takes a
-  name that long offered where numba tries the variable before the locator that took the file, as it is offered at a
-  short path for a path too long, and nothing offered for a ``.zip`` member, which the variable does nothing for.
+  length, which no shorter path cures, and a shorter name for the function or its file, the package's to give, with
+  ``NUMBA_CACHE_DIR`` pointed at a directory on a file system that takes a name that long offered where a file
+  system in use takes the name, 255 being their limit, and numba tries the variable before the locator that took
+  the file, as it is offered at a short path for a path too long, and nothing offered for a ``.zip`` member, which
+  the variable does nothing for.
   numba hashes the source's directory path as UTF-8 for that name and raises for bytes that are not, at
   decoration, where a locator that names its directory so reaches the file, so for such a path the remedy names no
   location under ``NUMBA_CACHE_DIR`` or the user's cache directory. A location that is none of
