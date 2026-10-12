@@ -26,6 +26,16 @@ def _anchor_root(subdir: str = "numbox-structref") -> Path:
 
 _STEM_MAX = 40
 
+# The longest name numba writes for an anchor's functions, a method thunk's,
+# under 230 bytes with the stems bounded, as ``bounded_stem`` says, and the 21
+# of the temporary name numba writes each file through: the anchor's check
+# asks numba's location for a name this long, as the package's asks for its
+# own with ``LONGEST_CACHE_FILE_NAME``, so that a cache directory within that
+# of the path limit answers here, uncached after one warning, where numba's
+# own check passed a name of eight and the first save raised through the
+# struct's making.
+_LONGEST_ANCHOR_CACHE_FILE_NAME = 251
+
 # The options generated code compiles under are the package's unless the caller
 # gave its own, as make_structref, compile_kernel and the builder take, and
 # compile_kernel's cache argument overrides them all; the variable reaches only
@@ -94,7 +104,9 @@ def _anchor_or_error(path: Path, code_txt: str):
     location over on any ``OSError``. Then numba is asked, the question the package puts for its own modules,
     and no locator, or a location it cannot use, is the cache's; the answer may be the user's cache directory
     where the anchor's own cannot be written. So is numba's ``UnicodeEncodeError`` for the anchor's directory path,
-    which numba hashes as UTF-8 to name its cache directory and raises for where it is not.
+    which numba hashes as UTF-8 to name its cache directory and raises for where it is not. The question is put
+    with the longest name numba writes for an anchor's functions, ``_LONGEST_ANCHOR_CACHE_FILE_NAME``, so that a
+    location within that of the path limit, which numba's own check passes with a name of eight, answers here.
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +114,7 @@ def _anchor_or_error(path: Path, code_txt: str):
     except OSError as error:
         return error
     try:
-        check_cache_location(path)
+        check_cache_location(path, _LONGEST_ANCHOR_CACHE_FILE_NAME)
     except (RuntimeError, OSError, ValueError) as error:
         if not is_a_cache_error(error):
             raise

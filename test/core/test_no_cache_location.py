@@ -6615,3 +6615,30 @@ def test_a_source_under_a_directory_that_is_not_utf8_with_the_variable_set_and_i
     finally:
         pycache.chmod(0o755)
     configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+
+
+MAKE_A_STRUCTREF_OF_FORTY_CHARACTER_NAMES = MAKE_A_STRUCTREF.replace(
+    "make_structref('Struct', {'value': float32}, TypeClass)",
+    "make_structref('S' * 40, {'v' * 40: float32}, TypeClass)").replace(
+    "assert Struct(2.5).value == 2.5", "assert getattr(Struct(2.5), 'v' * 40) == 2.5")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="a path of 4096 bytes is Linux's limit")
+@pytest.mark.parametrize("short_of_the_limit", [230, 190])
+def test_an_anchor_within_numbas_longest_name_of_the_path_limit_compiles_uncached_and_the_warning_says_so(
+        tmp_path, short_of_the_limit):
+    # The anchor's check asked numba's location for a name of eight, which
+    # numba's own check makes too, so a NUMBA_CACHE_DIR within the longest
+    # name numba writes for a struct of the path limit passed both, and the
+    # struct's making died at numba's first save with no warning; the check
+    # asks for a name as long as that, and the code compiles without a cache
+    # after the warning naming the remedy.
+    deep = _directory_of_length(tmp_path, 4096 - short_of_the_limit)
+    env = dict(os.environ, PYTHONPATH=str(REPO), NUMBA_CACHE_DIR=str(deep))
+    for name in ("NUMBOX_JIT_OPTIONS", "XDG_CACHE_HOME"):
+        env.pop(name, None)
+    run = subprocess.run([sys.executable, "-W", "always", "-c", MAKE_A_STRUCTREF_OF_FORTY_CHARACTER_NAMES],
+                         capture_output=True, text=True, env=env, cwd=str(tmp_path))
+    assert run.returncode == 0 and "made" in run.stdout, run.stderr
+    assert run.stderr.count("compiles without a cache") == 1, run.stderr
+    assert "The path is too long for the file system: NUMBA_CACHE_DIR at a shorter path" in run.stderr, run.stderr

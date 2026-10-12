@@ -186,12 +186,15 @@ or the user's cache directory, and ``NUMBA_CACHE_DIR`` at a shorter
 path moves the anchor out of either. A cache directory whose path is
 not UTF-8 is another: numba hashes the anchor's directory path as UTF-8
 to name its cache directory, and the warning asks for ``NUMBA_CACHE_DIR``
-at a UTF-8 path. The anchor's check writes names
-shorter than the longest numba writes for a struct, which carry its name
-and its methods', so a user cache directory or a ``NUMBA_CACHE_DIR``
-within about 230 bytes of the path limit, 4096 on Linux, passes it and
-overflows at numba's first save instead, where numba's own error names
-the length; the remedy is the same. The package's own check answers
+at a UTF-8 path. The anchor's check writes a name as long as the
+longest numba writes for a struct, which carry its name and its
+methods', under 230 bytes with the stems bounded and the 21 of the
+temporary name numba writes each file through, so a user cache directory
+or a ``NUMBA_CACHE_DIR`` within that of the path limit, 4096 on Linux,
+fails it and the generated code compiles without a cache after the
+warning; the check wrote a short name there, which numba's own check
+passes too, and numba's first save died through the struct's making
+with no warning at all. The package's own check answers
 first only nearer the limit, within about 175 bytes of it: the package's
 location under ``NUMBA_CACHE_DIR`` is a directory named for its own, by
 its name and a hash of its path, and its check reserves the length of
