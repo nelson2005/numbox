@@ -387,9 +387,11 @@ def _moved_through():
 
 def _measured(name):
     """``name``'s length as the file system counts it, in bytes, or in the UTF-16 units Windows and macOS count a name
-    in, and the unit's name."""
+    in, and the unit's name. A surrogate, which a name decoded with surrogateescape carries for a byte that is not
+    UTF-8, and which Windows takes in a name, is one unit; the count raised on it, and the remedy died on a name
+    numba's error carried instead of answering."""
     if os.name == "nt" or sys.platform == "darwin":
-        return len(name.encode("utf-16-le")) // 2, "characters"
+        return len(name.encode("utf-16-le", "surrogatepass")) // 2, "characters"
     return len(os.fsencode(name)), "bytes"
 
 

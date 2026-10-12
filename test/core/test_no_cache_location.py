@@ -6043,3 +6043,32 @@ def test_a_source_under_a_directory_that_is_not_utf8_whose_pycache_is_unwritable
         "numba hashes the source's directory as UTF-8 for the directory it caches this file in under NUMBA_CACHE_DIR "
         f"or the user's cache directory, and {directory} is not: put the file under a UTF-8 path, or silence"), remedy
     assert not configurations.is_a_cache_error(UnicodeEncodeError("ascii", "\u00e9", 0, 1, "ordinal not in range(128)"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+def test_an_error_naming_a_file_with_a_byte_that_is_not_utf8_is_answered_where_names_are_counted_in_utf16(
+        tmp_path, monkeypatch):
+    # A name an error carries decoded with surrogateescape holds a surrogate
+    # for a byte that is not UTF-8, and Windows takes a lone surrogate in a
+    # name of its own; counting the name in UTF-16 units, as Windows and
+    # macOS count one, raised UnicodeEncodeError on it, and the remedy died on
+    # an error it admits instead of answering it.
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    site = tmp_path / "site"
+    site.mkdir()
+    py_file = str(site / "module.py")
+    with open(py_file, "w", encoding="utf-8") as handle:
+        handle.write("x = 1\n")
+    named = str(site / "__pycache__" / os.fsdecode(b"module.f-1.py312.nbi\xff"))
+    with pytest.raises(UnicodeEncodeError):
+        os.path.basename(named).encode("utf-16-le")
+    assert configurations._measured(os.path.basename(named)) == (21, "characters")
+    remedy = configurations.cache_remedy(py_file, OSError(errno.EACCES, "Permission denied", named), "silence")
+    assert remedy == (
+        f"numba caches this file in {site / '__pycache__'}, where no file can be written (Permission denied): make "
+        "room there, or make it writable, or NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
