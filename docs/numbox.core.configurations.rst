@@ -100,8 +100,9 @@ warning instead.
   is told the archive under a UTF-8 path, a frozen application under one, whose path numba's user-wide locator
   hashes the same way, the application under a UTF-8 path, and a file on disk under one is told the
   ``__pycache__`` beside it too,
-  which numba's in-tree locator hashes no path for: ``NUMBA_CACHE_DIR``, set, hashed for before that locator is
-  reached, to unset, or that directory to make writable, or that locator to list where the list leaves it out.
+  which numba's in-tree locator hashes no path for: that locator to list before the first that hashes, where the
+  list leaves it out or puts it after one, ``NUMBA_CACHE_DIR`` to unset where its locator alone hashes before the
+  in-tree one, or that directory to make writable where the in-tree locator came first and passed it over.
   A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
