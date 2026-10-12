@@ -6361,3 +6361,37 @@ def test_a_source_under_a_directory_that_is_not_utf8_is_told_the_in_tree_locator
                             raising=False)
     # Listed as the remedy says, numba caches the file.
     configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")
+def test_a_frozen_application_under_a_zip_named_directory_on_a_path_that_is_not_utf8_is_told_the_application(
+        tmp_path, monkeypatch):
+    # numba's user-wide locator, before the .zip one in numba's order, takes
+    # a frozen application's file and hashes its directory path as UTF-8,
+    # raising for bytes that are not; the remedy read the .zip in the path
+    # and told an archive to put under a UTF-8 path, where there is none.
+    import numba
+    from numba.core import caching
+    import numbox.core.configurations as configurations
+
+    class UserCacheUnderTmp:
+        def __init__(self, appname, appauthor):
+            self.user_cache_dir = str(tmp_path / "user-cache" / "numba")
+
+    monkeypatch.setattr(caching, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(configurations, "AppDirs", UserCacheUnderTmp)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    directory = tmp_path / os.fsdecode(b"app\xff.zip") / "frozen" / "numbox" / "core"
+    directory.mkdir(parents=True)
+    py_file = str(directory / "module.py")
+    with pytest.raises(UnicodeEncodeError) as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    failure = raised.value
+    assert configurations.is_a_cache_error(failure)
+    assert configurations.cache_remedy(py_file, failure, "silence") == (
+        "numba caches a frozen application in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, "
+        "because the source is not a file on disk: numba hashes the source's directory as UTF-8 for the directory it "
+        f"caches this file in there, and {directory} is not: put the application under a UTF-8 path, or silence")

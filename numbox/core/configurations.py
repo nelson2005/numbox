@@ -1607,7 +1607,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"numba's IPython locator reads the member's source as UTF-8, which {py_file} is not ({not_utf8}): ship "
             f"it as UTF-8; or {silence}"
         )
-    if isinstance(failure, UnicodeEncodeError) and (in_a_zip or getattr(sys, "frozen", False)):
+    hashed_by = next((cls for cls in reached if (one_of(cls, user_wide) and getattr(sys, "frozen", False))
+                      or (one_of(cls, for_a_zip) and in_a_zip)), None)
+    if isinstance(failure, UnicodeEncodeError) and hashed_by is not None:
         # numba's .zip locator names its directory under the user's cache
         # directory after the source's directory, the archive's path in it,
         # hashed as UTF-8, and raises for bytes that are not, at decoration
@@ -1615,8 +1617,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # application's file; the remedy, taking the error for a caller's
         # with no place for the file, offered the .zip the reader was
         # importing from, or the source files on disk, and said nothing of
-        # the path.
-        what, where = ("a .zip", "the archive") if in_a_zip else ("a frozen application", "the application")
+        # the path. The first of the two numba reaches is the one that
+        # raised: the user-wide locator, before the .zip one in numba's
+        # order, for a frozen application under a directory named .zip,
+        # which the remedy told as an archive.
+        what, where = (("a .zip", "the archive") if one_of(hashed_by, for_a_zip)
+                       else ("a frozen application", "the application"))
         return (
             f"numba caches {what} in the user's cache directory, and NUMBA_CACHE_DIR has no effect here, because the "
             "source is not a file on disk: numba hashes the source's directory as UTF-8 for the directory it caches "
