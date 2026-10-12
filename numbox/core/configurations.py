@@ -706,7 +706,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     the first that hashes,
     where the list leaves it out or puts it after one, ``NUMBA_CACHE_DIR`` to unset where its locator alone hashes
     before the in-tree one, or that directory to make writable where the in-tree locator came first and passed it
-    over. A
+    over, and with any of these where it cannot be written. A
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
     any other locator, named as set or asked for at a short path, and nothing said of numba passing it over, which
     that location cannot show. An error can name no file, or carry an empty string or empty bytes as its name, or a name of
@@ -1402,9 +1402,16 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             beside = os.path.abspath(os.path.join(os.path.dirname(py_file), "__pycache__"))
             in_tree_at = next((at for at, cls in enumerate(order) if caches_beside_the_source(cls)), None)
             before_in_tree = [cls for cls in (order if in_tree_at is None else order[:in_tree_at]) if hashes(cls)]
-            caches_beside = (
-                f"numba caches beside the source, in its __pycache__, {beside}, hashing no path, where that directory "
-                "can be written")
+            # Whether the in-tree locator takes the file, asked as numba asks
+            # it: the __pycache__ it can write; the remedy hedged "where that
+            # directory can be written" and never asked for it, so the
+            # variable unset as told left numba raising the same error.
+            if in_tree is not None and _takes(in_tree, py_file):
+                caches_beside = f"numba caches beside the source, in its __pycache__, {beside}, hashing no path"
+            else:
+                caches_beside = (
+                    f"make the __pycache__ beside the source, {beside}, writable, and numba caches there, hashing no "
+                    "path")
             if in_tree_at is None:
                 where = f" before {before_in_tree[0].__name__}" if before_in_tree else ""
                 return (
