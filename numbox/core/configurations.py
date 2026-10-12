@@ -164,8 +164,9 @@ def check_cache_location(py_file, longest_file_name=0):
     ``.zip`` above a file on disk, which numba's ``.zip`` locator takes for the archive and opens. A location that
     is not there once made, numba's IPython locator asking IPython for its directory
     at every save and IPython giving a new temporary one on every call where it can write neither its cache
-    directory nor its own, raises ``FileNotFoundError`` naming the one numba would save in, as numba's first save
-    does.
+    directory nor its own, raises ``FileNotFoundError`` naming the last directory IPython gave the check, which is
+    not there, as numba's first save names the one IPython gave it, a temporary directory in either case and a
+    different one.
 
     numba's writability check makes a temporary file whose name is short, or none at all on Linux, and the
     files it saves have names of up to a hundred bytes and more, so a location within their length of the path
