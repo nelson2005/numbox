@@ -1344,19 +1344,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return (
                 f"{too_long}: put the file in a directory of a shorter name{variable}{beside_the_source()}; or {silence}"
             )
-        if not any(reads_the_variable(cls) for cls in tried):
-            if zip_raised:
-                return (
-                    'numba\'s .zip locator takes this file for the ".zip" in its path and finds no archive there, after '
-                    f"every locator NUMBA_CACHE_LOCATOR_CLASSES, {listed}, puts before it passed the file over: make "
-                    "one of those locations writable, or list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, "
-                    f"InTreeCacheLocator or UserWideCacheLocator before it, or {silence}"
-                )
-            return (
-                f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says: make one of those locations "
-                f"writable, or {silence}"
-            )
-        if subpath is None:
+        hashing = [
+            cls for cls in tried if (reads_the_variable(cls) and config.CACHE_DIR) or caches_under_the_user_cache_dir(cls)]
+        if subpath is None and (isinstance(failure, UnicodeEncodeError) or hashing):
             # numba hashes the source's directory path as UTF-8 for its
             # directory under NUMBA_CACHE_DIR or the user's cache directory,
             # and the locator that names it so raises: the variable's, set,
@@ -1364,7 +1354,14 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # source and hashes no path, or the user-wide one once the in-tree
             # locator passed an unwritable __pycache__ over. The remedy said
             # the variable cures nothing and asked for a UTF-8 path alone,
-            # where the variable unset, the same install imports cached.
+            # where the variable unset, the same install imports cached;
+            # under a list without the variable's locator it told the list,
+            # and its locations to make writable, which hashing refuses
+            # whatever they are. numba hashed where the error is its
+            # UnicodeEncodeError, or where a locator that names its
+            # directory so was tried: the variable's, set, or the user-wide
+            # one; the in-tree locator alone hashes nothing, and its
+            # no-locator error is the __pycache__ refused.
             hashed = (
                 "numba hashes the source's directory as UTF-8 for the directory it caches this file in under "
                 f"NUMBA_CACHE_DIR or the user's cache directory, and {os.path.dirname(py_file)} is not"
@@ -1379,6 +1376,18 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                     f"that directory can be written; or put the file under a UTF-8 path; or {silence}"
                 )
             return f"{hashed}: put the file under a UTF-8 path{beside_the_source('hashing no path')}; or {silence}"
+        if not any(reads_the_variable(cls) for cls in tried):
+            if zip_raised:
+                return (
+                    'numba\'s .zip locator takes this file for the ".zip" in its path and finds no archive there, after '
+                    f"every locator NUMBA_CACHE_LOCATOR_CLASSES, {listed}, puts before it passed the file over: make "
+                    "one of those locations writable, or list UserProvidedCacheLocator, with NUMBA_CACHE_DIR set, "
+                    f"InTreeCacheLocator or UserWideCacheLocator before it, or {silence}"
+                )
+            return (
+                f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says: make one of those locations "
+                f"writable, or {silence}"
+            )
         if config.CACHE_DIR:
             # Set and passed over: unwritable, or too deep for numba to make
             # its directory there, which a writable one as deep would not cure.
