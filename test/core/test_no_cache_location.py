@@ -6449,3 +6449,36 @@ def test_a_cell_under_a_directory_named_zip_whose_source_linecache_does_not_hold
     assert configurations.cache_remedy(py_file, failure, "silence") == (
         f"numba's IPython locator reads a cell's source from linecache, which holds none for {py_file} ({failure}), "
         "and numba caches a cell only while IPython holds its source; or silence")
+
+
+@from_062
+def test_an_egg_under_a_directory_named_zip_is_told_to_put_the_renamed_archive_out_from_under_it(tmp_path, monkeypatch):
+    # numba's .zip locator takes the first part of the path ending in .zip for
+    # the archive, a directory so named above an .egg included, and opens it:
+    # the remedy told the .egg renamed to end in .zip, under that directory
+    # still, where numba then raises IsADirectoryError for the directory.
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator", raising=False)
+    in_the_way = tmp_path / "dir.zip"
+    in_the_way.mkdir()
+    egg = in_the_way / "numbox.egg"
+    with zipfile.ZipFile(egg, "w") as zipped:
+        zipped.writestr("pkg/m.py", "x = 1\n")
+    py_file = str(egg / "pkg" / "m.py")
+    with pytest.raises(RuntimeError, match="no locator available") as raised:
+        configurations.check_cache_location(py_file, configurations.LONGEST_CACHE_FILE_NAME)
+    assert configurations.cache_remedy(py_file, raised.value, "silence") == (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, install numbox with "
+        f"its source files on disk, unpacked from any archive, or rename the archive, {egg}, to end in .zip, "
+        "lower-case, which numba's .zip locator looks for in the path, with its source files in it, and put it under a "
+        f"path with no part ending in .zip above it, {in_the_way} being one, which that locator takes for the archive "
+        "first, so that numba 0.61 and later cache it in the user's cache directory through ZipCacheLocator, once "
+        "NUMBA_CACHE_LOCATOR_CLASSES, InTreeCacheLocator, lists it; or silence")
+    # Done as told, numba caches the member.
+    moved = tmp_path / "numbox.zip"
+    egg.rename(moved)
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator,ZipCacheLocator", raising=False)
+    configurations.check_cache_location(str(moved / "pkg" / "m.py"), configurations.LONGEST_CACHE_FILE_NAME)
