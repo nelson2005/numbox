@@ -4535,6 +4535,7 @@ A_NAME_TOO_LONG = {
     "on disk, NUMBA_CACHE_DIR set, the user-provided locator alone, a name of CJK characters": [
         from_062, pytest.mark.skipif(os.name == "nt" or sys.platform == "darwin",
                                      reason="Windows and macOS count a name in UTF-16 units, where it fits")],
+    "a .zip member, numba's order, a name of astral characters, counted as macOS counts": from_061,
 }
 
 
@@ -4555,13 +4556,18 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
     # file system counts it, in bytes, or in UTF-16 units on Windows and
     # macOS, where a name of CJK characters that fits was counted in bytes
     # and told too long; Windows refuses a name too long as an invalid one,
-    # errno EINVAL, and the check runs whatever the errno.
+    # errno EINVAL, and the check runs whatever the errno. A name of astral
+    # characters, each one code point, two UTF-16 units and four bytes, is
+    # too long in units where it fits in code points: the count by units
+    # was held by no test, and one by code points passed them all.
     import numba
     from numba.core import caching
     import numbox.core.configurations as configurations
     from numba.core.caching import _CacheLocator
 
     just_fits = "just fits" in case
+    if "astral" in case:
+        monkeypatch.setattr(sys, "platform", "darwin")
     limit = os.statvfs(tmp_path).f_namemax if hasattr(os, "statvfs") else 255
     too_deep = tmp_path / ("x" * 300) / "numba" if "too deep" in case else None
 
@@ -4583,6 +4589,8 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
     directory = "d" * (limit - 41 if just_fits else limit - 35)
     if "CJK" in case:
         directory = "\u5b57" * ((limit - 41) // 3 + 1)
+    if "astral" in case:
+        directory = "\U0001f600" * ((limit - 41) // 2 + 1)
     if case.startswith("a .zip"):
         archive = tmp_path / "app.zip"
         with zipfile.ZipFile(archive, "w") as zipped:
@@ -4600,7 +4608,7 @@ def test_a_source_directory_whose_name_is_too_long_for_numbas_cache_directory_na
     counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
     length = len(subpath.encode("utf-16-le")) // 2 if counted_in == "characters" else len(subpath.encode())
     assert length == limit if just_fits else length > limit
-    if "CJK" in case:
+    if "CJK" in case or "astral" in case:
         assert len(subpath) < limit
     clause = (
         f"numba names the directory it caches this file in after the source's directory, {subpath}, {length} "
