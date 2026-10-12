@@ -95,7 +95,9 @@ warning instead.
   the variable does nothing for.
   numba hashes the source's directory path as UTF-8 for that name and raises for bytes that are not, at
   decoration, where a locator that names its directory so reaches the file, so for such a path the remedy names no
-  location under ``NUMBA_CACHE_DIR`` or the user's cache directory. A location that is none of
+  location under ``NUMBA_CACHE_DIR`` or the user's cache directory, and a ``.zip`` under such a path, whose
+  archive's path numba's ``.zip`` locator hashes the same way for its directory under the user's cache directory,
+  is told the archive under a UTF-8 path. A location that is none of
   numba's is named as the error names it, with the variable, where numba tries it before any other locator, named
   as set or asked for at a short path, and nothing said of numba passing it over, which that location cannot show.
   The name an error carries is read as a string, bytes or a path object alike, and a name of another kind, an integer
