@@ -978,6 +978,15 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # cannot show, so the variable is offered where numba tries it
             # before the last, without the claim; the remedy read the first
             # as the one, and left the variable out where it sat between.
+            if subpath is None:
+                # numba names its directory under the variable by hashing
+                # the source's directory as UTF-8, and raises for one that is
+                # not: the remedy offered the variable, and the import died
+                # on it where the warning had stood.
+                return (
+                    ", and NUMBA_CACHE_DIR cures nothing, numba hashing the source's directory as UTF-8 for its "
+                    "directory there, which this one is not"
+                )
             if taken in order:
                 position = order.index(taken)
                 passed_over = " and numba could not use"
@@ -1157,7 +1166,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             # and an error that names none is told the ones numba could have
             # taken.
             if taken is not None and reads_the_variable(taken):
-                alternative = ", or NUMBA_CACHE_DIR set to another writable directory"
+                alternative = "" if subpath is None else ", or NUMBA_CACHE_DIR set to another writable directory"
             else:
                 alternative = instead(taken, "a writable directory", shared=shared)
             if taken:
@@ -1229,6 +1238,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return (
                 f"numba looks only where NUMBA_CACHE_LOCATOR_CLASSES, {listed}, says: make one of those locations "
                 f"writable, or {silence}"
+            )
+        if subpath is None:
+            # The variable cures nothing for a directory numba cannot hash.
+            return (
+                "numba hashes the source's directory as UTF-8 for the directory it caches this file in under "
+                f"NUMBA_CACHE_DIR or the user's cache directory, and {os.path.dirname(py_file)} is not: put the file "
+                f"under a UTF-8 path, or {silence}"
             )
         if config.CACHE_DIR:
             # Set and passed over: unwritable, or too deep for numba to make

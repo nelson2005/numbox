@@ -2649,6 +2649,43 @@ def test_a_name_too_long_names_the_locator_the_in_tree_one_is_to_be_listed_befor
         "source, in its __pycache__, under no such name; or silence"), remedy
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows decodes any byte of a path")
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS takes no name that is not UTF-8")
+@pytest.mark.parametrize("error", ["a full __pycache__", "numba's no-locator error"])
+def test_a_source_under_a_directory_that_is_not_utf8_is_not_offered_numba_cache_dir(tmp_path, monkeypatch, error):
+    # numba names the directory it caches a file in under NUMBA_CACHE_DIR by
+    # hashing the source's directory as UTF-8, and raises UnicodeEncodeError
+    # for one that is not, no cache error; the remedy offered the variable
+    # for such a source, and set as advised, the import died where the
+    # warning had stood.
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    directory = tmp_path / os.fsdecode(b"caf\xe9") / "package"
+    directory.mkdir(parents=True)
+    py_file = str(directory / "module.py")
+    with open(py_file, "w", encoding="utf-8") as handle:
+        handle.write("x = 1\n")
+    with pytest.raises(UnicodeEncodeError):
+        py_file.encode()
+    if error == "a full __pycache__":
+        failure = OSError(errno.ENOSPC, "No space left on device", str(directory / "__pycache__"))
+    else:
+        failure = RuntimeError(f"cannot cache function '_cache_probe': no locator available for file '{py_file}'")
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert "NUMBA_CACHE_DIR set to" not in remedy and "Set NUMBA_CACHE_DIR" not in remedy, remedy
+    if error == "a full __pycache__":
+        assert remedy.endswith(
+            "make room there, or make it writable, and NUMBA_CACHE_DIR cures nothing, numba hashing the source's "
+            "directory as UTF-8 for its directory there, which this one is not; or silence"), remedy
+    else:
+        assert remedy == (
+            "numba hashes the source's directory as UTF-8 for the directory it caches this file in under "
+            f"NUMBA_CACHE_DIR or the user's cache directory, and {directory} is not: put the file under a UTF-8 "
+            "path, or silence"), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
