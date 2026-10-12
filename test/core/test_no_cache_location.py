@@ -6482,3 +6482,33 @@ def test_an_egg_under_a_directory_named_zip_is_told_to_put_the_renamed_archive_o
     egg.rename(moved)
     monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "InTreeCacheLocator,ZipCacheLocator", raising=False)
     configurations.check_cache_location(str(moved / "pkg" / "m.py"), configurations.LONGEST_CACHE_FILE_NAME)
+
+
+@pytest.mark.parametrize("units", [255, 256])
+def test_the_offer_of_a_file_system_that_takes_a_cache_file_name_holds_at_the_usual_limit(tmp_path, monkeypatch, units):
+    # NUMBA_CACHE_DIR on a file system that takes the name is offered for a
+    # name the file systems in use take, 255 units, and not for one over: no
+    # test held the boundary, and a count of less than 255 passed them all,
+    # a name of 255 on a file system with a smaller limit losing the offer.
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setattr(configurations, "_name_limit", lambda location: 143)
+    site = tmp_path / "site"
+    site.mkdir()
+    py_file = str(site / "module.py")
+    with open(py_file, "w", encoding="utf-8") as handle:
+        handle.write("x = 1\n")
+    tail = f"-1.py{sys.version_info[0]}{sys.version_info[1]}.nbi"
+    name = f"module.{'f' * (units - len('module.') - len(tail))}{tail}"
+    counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
+    assert configurations._measured(name) == (units, counted_in)
+    failure = OSError(errno.ENAMETOOLONG, "File name too long", str(site / "__pycache__" / name))
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    offer = ", or NUMBA_CACHE_DIR set to a directory on a file system that takes a name that long" if units == 255 else ""
+    assert remedy == (
+        "numba names the cache files for a function after the source's name and the function's qualified name, "
+        f"{name}, {units} {counted_in}, which is longer than a name can be on that file system (143), and no shorter "
+        f"path cures it: a shorter name for the function or its file, which is numbox's to give{offer}; or silence"), remedy
