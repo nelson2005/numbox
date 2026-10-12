@@ -5820,6 +5820,11 @@ A_CACHE_FILE_NAME_TOO_LONG = {
     "on disk, the in-tree locator alone": from_062,
     "a .zip member in an ipykernel directory": [],
     "a .zip member, numba's order": from_061,
+    "on disk, numba's order, a name a file system in use takes": [],
+    "on disk, NUMBA_CACHE_DIR set, a name a file system in use takes": [],
+    "on disk, the in-tree locator alone, a name a file system in use takes": from_062,
+    "a .zip member in an ipykernel directory, a name a file system in use takes": [],
+    "a .zip member, numba's order, a name a file system in use takes": from_061,
 }
 
 
@@ -5833,12 +5838,15 @@ def test_a_cache_file_whose_name_is_too_long_for_the_file_system_is_told_the_nam
     # dies on it, and the remedy told the path as too long, asking for the
     # package, the user's cache directory, IPython's or NUMBA_CACHE_DIR at a
     # shorter path, which move nothing of the name. It tells the name and its
-    # length, counted as the file system counts it, and that no shorter path
-    # cures it, with the variable, where numba tries it before the locator
-    # that took the file, pointed at a directory on a file system that takes
-    # the name, and the variable's own location named where it took the file;
-    # Windows refuses a name too long as an invalid one, errno EINVAL, and the
-    # check runs whatever the errno.
+    # length, counted as the file system counts it, that no shorter path
+    # cures it, and the cure, a shorter name for the function or its file,
+    # the package's to give, with the variable, where numba tries it before
+    # the locator that took the file and a file system in use takes the name,
+    # 255 being their limit, pointed at a directory on one, and the
+    # variable's own location named where it took the file; the remedy
+    # offered such a file system for a name none takes, and never the
+    # shorter name. Windows refuses a name too long as an invalid one, errno
+    # EINVAL, and the check runs whatever the errno.
     import types
     import numba
     from numba.core import caching
@@ -5878,11 +5886,16 @@ def test_a_cache_file_whose_name_is_too_long_for_the_file_system_is_told_the_nam
         location = Path(py_file).parent / "__pycache__"
     else:
         location = Path(cache_dir or str(tmp_path / "user-cache" / "numba")) / subpath
+    if "a file system in use takes" in case:
+        # A limit the directory numba names after the source's, its name and
+        # forty-one bytes, fits, and the file's name does not.
+        monkeypatch.setattr(configurations, "_name_limit", lambda location: 60)
     limit = configurations._name_limit(str(location))
     name = f"{Path(py_file).stem}.{'f' * (limit + 5)}-1.py{sys.version_info[0]}{sys.version_info[1]}.nbi"
     counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
     length = len(name.encode("utf-16-le")) // 2 if counted_in == "characters" else len(os.fsencode(name))
     assert length > limit
+    assert (length <= 255) == ("a file system in use takes" in case)
     refused = ((errno.EINVAL, "Invalid argument") if "invalid name" in case
                else (errno.ENAMETOOLONG, "File name too long"))
     failure = OSError(*refused, str(location / name))
@@ -5892,20 +5905,21 @@ def test_a_cache_file_whose_name_is_too_long_for_the_file_system_is_told_the_nam
         f"numba names the cache files for a function after the source's name and the function's qualified name, "
         f"{name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit})")
     fits = "directory on a file system that takes a name that long"
-    if case.startswith("on disk, numba's order"):
-        assert remedy == (
-            f"{clause}, so no shorter path cures it, or NUMBA_CACHE_DIR set to a {fits}; or silence"), remedy
+    cure = f"{clause}, and no shorter path cures it: a shorter name for the function or its file, which is numbox's to give"
+    if length > 255:
+        offer = ""
+    elif case.startswith("on disk, numba's order"):
+        offer = f", or NUMBA_CACHE_DIR set to a {fits}"
     elif cache_dir:
-        assert remedy == (
-            f"{clause}, so no shorter path cures it, or NUMBA_CACHE_DIR, which is set to {cache_dir}, pointed at a "
-            f"{fits}; or silence"), remedy
-    elif case.startswith("on disk") or "ipykernel" in case:
-        assert remedy == f"{clause}, so no shorter path cures it; or silence", remedy
+        offer = f", or NUMBA_CACHE_DIR, which is set to {cache_dir}, pointed at a {fits}"
+    else:
+        offer = ""
+    if case.startswith("on disk") or "ipykernel" in case:
+        assert remedy == f"{cure}{offer}; or silence", remedy
     else:
         assert remedy == (
             "numba caches a .zip, or a frozen application, in the user's cache directory, and NUMBA_CACHE_DIR has no "
-            f"effect here, because the source is not a file on disk: {clause}, so no shorter path cures it, or "
-            "silence"), remedy
+            f"effect here, because the source is not a file on disk: {cure}, or silence"), remedy
 
 
 def test_a_function_whose_cache_file_name_is_too_long_for_the_file_system_is_told_the_name_by_numbas_own_error(
@@ -5940,11 +5954,12 @@ def test_a_function_whose_cache_file_name_is_too_long_for_the_file_system_is_tol
     counted_in = "characters" if os.name == "nt" or sys.platform == "darwin" else "bytes"
     length = len(name.encode("utf-16-le")) // 2 if counted_in == "characters" else len(os.fsencode(name))
     assert length > limit
+    offer = ", or NUMBA_CACHE_DIR set to a directory on a file system that takes a name that long" if length <= 255 else ""
     assert configurations.cache_remedy(str(source), failure, "silence") == (
         f"numba names the cache files for a function after the source's name and the function's qualified name, "
-        f"{name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit}), so no "
-        "shorter path cures it, or NUMBA_CACHE_DIR set to a directory on a file system that takes a name that long; "
-        "or silence")
+        f"{name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit}), and no "
+        f"shorter path cures it: a shorter name for the function or its file, which is numbox's to give{offer}; or "
+        "silence")
 
 
 def test_a_cell_file_on_disk_the_in_tree_locator_takes_is_not_told_ipythondir_for_an_error_naming_another_numba_cache(

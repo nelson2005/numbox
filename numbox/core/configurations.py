@@ -685,10 +685,12 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     ``__pycache__`` beside the source made writable where the in-tree locator is listed, or that locator listed where
     it is not, which caches under no such name. A cache file numba could not make or open in the location it took,
     whose name, given after the source's name and the function's qualified name, is longer than a name can be on that
-    file system, is told the name and its length, which no shorter path cures, with ``NUMBA_CACHE_DIR`` pointed at a
-    directory on a file system that takes a name that long offered where numba tries the variable before the locator
-    that took the file, as it is offered at a short path for a path too long, and nothing offered for a ``.zip``
-    member, which the variable does nothing for. numba hashes the source's directory path as UTF-8 for that name and
+    file system, is told the name and its length, which no shorter path cures, and a shorter name for the function
+    or its file, the package's to give, with ``NUMBA_CACHE_DIR`` pointed at a directory on a file system that takes a
+    name that long offered where a file system in use takes the name, 255 being their limit, and numba tries the
+    variable before the locator that took the file, as it is offered at a short path for a path too long, and
+    nothing offered for a ``.zip`` member, which the variable does nothing for. numba hashes the source's directory
+    path as UTF-8 for that name and
     raises for bytes that are not, at decoration, where a locator that names its directory so reaches the file, so
     for such a path the remedy names no location under ``NUMBA_CACHE_DIR`` or the user's cache directory. A
     location that is none of numba's is named as the error names it, with the variable, where numba tries it before
@@ -890,15 +892,21 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"{counted_in}, which is longer than a name can be on that file system ({limit})"
         )
 
+    a_shorter_name = f"a shorter name for the function or its file, which is {package}'s to give"
+
     def too_long_a_file_name(location):
         # numba names the files it caches a function in after the source's
         # name and the function's qualified name, and a name longer than the
         # file system holding ``location`` takes can be made at no path, so
-        # no shorter one cures it: the clause that says so for the file the
-        # error names in ``location``, or None where the error names no such
-        # file, or its name fits. The remedy asked for the package, the
-        # user's cache directory, IPython's or the variable at a shorter
-        # path, which move nothing of the name.
+        # no shorter one cures it, a shorter name alone: the clause that says
+        # so for the file the error names in ``location``, and whether a file
+        # system in use takes the name at all, 255 being the limit of ext4,
+        # NTFS and APFS alike, in the units each counts, or None where the
+        # error names no such file, or its name fits. The remedy asked for
+        # the package, the user's cache directory, IPython's or the variable
+        # at a shorter path, which move nothing of the name, and then offered
+        # a file system that takes the name where none in use does, never
+        # naming the shorter name.
         if not filename or location is None:
             return None
         named = os.path.abspath(filename)
@@ -909,10 +917,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         limit = _name_limit(location)
         if length <= limit:
             return None
-        return (
+        clause = (
             f"numba names the cache files for a function after the source's name and the function's qualified "
             f"name, {name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit})"
         )
+        return clause, length <= 255
 
     a_file_on_disk = os.path.exists(py_file)
 
@@ -1199,16 +1208,19 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             too_long_file = too_long_a_file_name(locations[taken]) if taken is not None else None
             if too_long_file:
                 # The variable, where numba tries it before the locator that
-                # took the file, pointed at a directory whose file system
-                # takes the name, as it is offered at a short path for a path
-                # too long; the variable's own location took the file only
-                # set, so it is named.
-                fits = "directory on a file system that takes a name that long"
-                if reads_the_variable(taken):
-                    offer = f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR}, pointed at a {fits}"
-                else:
-                    offer = instead(taken, asks=f"a {fits}", shared=shared, made=f"a writable {fits}")
-                return f"{too_long_file}, so no shorter path cures it{offer}; or {silence}"
+                # took the file and a file system in use takes the name,
+                # pointed at a directory on one, as it is offered at a short
+                # path for a path too long; the variable's own location took
+                # the file only set, so it is named.
+                clause, a_file_system_takes_it = too_long_file
+                offer = ""
+                if a_file_system_takes_it:
+                    fits = "directory on a file system that takes a name that long"
+                    if reads_the_variable(taken):
+                        offer = f", or NUMBA_CACHE_DIR, which is set to {config.CACHE_DIR}, pointed at a {fits}"
+                    else:
+                        offer = instead(taken, asks=f"a {fits}", shared=shared, made=f"a writable {fits}")
+                return f"{clause}, and no shorter path cures it: {a_shorter_name}{offer}; or {silence}"
             if failure.errno == errno.ENAMETOOLONG:
                 if taken is not None and reads_the_variable(taken):
                     # The variable's location, which numba's own check passed
@@ -1564,7 +1576,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             ipython_cache = locations[taken]
             too_long_file = too_long_a_file_name(ipython_cache)
             if too_long_file:
-                return f"{too_long_file}, so no shorter path cures it; or {silence}"
+                return f"{too_long_file[0]}, and no shorter path cures it: {a_shorter_name}; or {silence}"
             if failure.errno == errno.ENAMETOOLONG:
                 return (
                     f"the path is too long for the file system: IPython's cache directory, "
@@ -1659,7 +1671,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         too_long_file = (
             too_long_a_file_name(locations[taken]) if isinstance(failure, OSError) and taken is not None else None)
         if too_long_file:
-            return f"{opening}{too_long_file}, so no shorter path cures it, or {silence}"
+            return f"{opening}{too_long_file[0]}, and no shorter path cures it: {a_shorter_name}, or {silence}"
         if isinstance(failure, OSError) and failure.errno == errno.ENAMETOOLONG:
             if taken is None:
                 # The error names no file, and which of the locations is too
