@@ -90,8 +90,9 @@ warning instead.
   and the function's qualified name, is longer than a name can be on that file system, is told the name and its
   length, which no shorter path cures, and a shorter name for the function or its file, the package's to give, with
   ``NUMBA_CACHE_DIR`` pointed at a directory on a file system that takes a name that long offered where a file
-  system in use takes the name, 255 being their limit, less the 21 of the temporary name numba writes each file
-  through, and numba tries the variable before the locator that took
+  system in use takes the name, 255 being their limit, less the 28 of the longest name numba writes for the
+  function, a data file's for a ninety-ninth overload through the temporary name it writes each file through,
+  and numba tries the variable before the locator that took
   the file, as it is offered at a short path for a path too long, and nothing offered for a ``.zip`` member, which
   the variable does nothing for.
   numba hashes the source's directory path as UTF-8 for that name and raises for bytes that are not, at
