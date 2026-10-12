@@ -866,6 +866,13 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             return a_file_on_disk
         return _takes(cls, py_file)
 
+    def names_a_path_above():
+        # Whether the error names a path above the file, the archive a
+        # member's code names or a directory on the way, both read absolute:
+        # a relative file against a name given absolute matched nothing, and
+        # a member's moved archive was told as a location refusing a file.
+        return bool(filename) and os.path.abspath(py_file).startswith(os.path.abspath(filename) + os.sep)
+
     def names_another_location():
         # Whether the error names a location of one of numba's locators for a
         # file on disk other than IPython's, or a file in it: NUMBA_CACHE_DIR's,
@@ -893,8 +900,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             asked.append(_ipython_numba_cache())
         return asked[0]
 
-    if isinstance(failure, OSError) and filename and not os.path.abspath(py_file).startswith(
-            os.path.abspath(filename) + os.sep) and _ipython_locator_reads(py_file) and (
+    if isinstance(failure, OSError) and filename and not names_a_path_above() and _ipython_locator_reads(py_file) and (
             not a_file_on_disk or not names_another_location()
     ) and _ipython_cache_is_temporary(ipython_numba_cache()):
         # numba's IPython locator, reached first for a member in an ipykernel
@@ -918,9 +924,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # full disk's, was told IPYTHONDIR with the reason dropped. An error
         # naming a path above the file, the archive a member's code names
         # where that has since moved, is the stamp's, and is told below; the
-        # temporary directory's error names a numba_cache under it. Both
-        # paths are read absolute: a relative file against the name made
-        # absolute matched nothing, and was told IPYTHONDIR.
+        # temporary directory's error names a numba_cache under it.
         # IPython reads XDG_CACHE_HOME for its cache directory on every POSIX
         # system from IPython 8, macOS included, which IPython 7 left out;
         # the remedy said Linux, and steered a macOS reader off the variable.
@@ -1116,7 +1120,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                     cure = f"that location, {filename}, at a shorter path{instead(None)}"
                 return f"the path is too long for the file system: {cure}; or {silence}"
             if (failure.errno == errno.EISDIR and zip_at is not None and filename and os.path.isdir(filename)
-                    and filename.endswith(".zip") and py_file.startswith(filename + os.sep)):
+                    and filename.endswith(".zip") and names_a_path_above()):
                 # numba's .zip locator takes a file on disk for the ".zip" in
                 # its path once the locators before it passed the file over,
                 # takes the first part of the path ending in .zip for the
@@ -1462,7 +1466,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             "numba caches a .zip, or a frozen application, in the user's cache directory, and "
             if in_the_user_cache_alone else "")
         opening = f"{where}NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: "
-        if isinstance(failure, FileNotFoundError) and filename and py_file.startswith(filename + os.sep):
+        if isinstance(failure, FileNotFoundError) and names_a_path_above():
             # The stamp numba reads at decoration, of the archive the code
             # names: .pyc members compiled to name an archive since moved. A
             # location that cannot be made, under a dangling link, is ENOENT
@@ -1474,7 +1478,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 f"or {silence}"
             )
         if (isinstance(failure, OSError) and failure.errno == errno.EISDIR and filename and os.path.isdir(filename)
-                and filename.endswith(".zip") and py_file.startswith(filename + os.sep)):
+                and filename.endswith(".zip") and names_a_path_above()):
             # numba takes the first part of the path ending in .zip for the
             # archive, a directory so named above it included, and from 0.68
             # opens it to read the member's source, which a directory
@@ -1484,7 +1488,7 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
                 "is a directory, which numba 0.68 and later open to read the member's source: put the archive under "
                 f"a path with no such directory above it, or {silence}"
             )
-        if isinstance(failure, OSError) and filename and py_file.startswith(filename + os.sep):
+        if isinstance(failure, OSError) and names_a_path_above():
             # The archive the member's code names, which numba reads for the
             # stamp, and from 0.68 opens for the member's source, and cannot:
             # the remedy told it as a location refusing a file, to be made
