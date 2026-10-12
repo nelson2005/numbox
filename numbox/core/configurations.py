@@ -691,7 +691,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     whose name, given after the source's name and the function's qualified name, is longer than a name can be on that
     file system, is told the name and its length, which no shorter path cures, and a shorter name for the function
     or its file, the package's to give, with ``NUMBA_CACHE_DIR`` pointed at a directory on a file system that takes a
-    name that long offered where a file system in use takes the name, 255 being their limit, and numba tries the
+    name that long offered where a file system in use takes the name, 255 being their limit, less the 21 of the
+    temporary name numba writes each file through, and numba tries the
     variable before the locator that took the file, as it is offered at a short path for a path too long, and
     nothing offered for a ``.zip`` member, which the variable does nothing for. numba hashes the source's directory
     path as UTF-8 for that name and
@@ -917,12 +918,15 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # no shorter one cures it, a shorter name alone: the clause that says
         # so for the file the error names in ``location``, and whether a file
         # system in use takes the name at all, 255 being the limit of ext4,
-        # NTFS and APFS alike, in the units each counts, or None where the
-        # error names no such file, or its name fits. The remedy asked for
-        # the package, the user's cache directory, IPython's or the variable
-        # at a shorter path, which move nothing of the name, and then offered
-        # a file system that takes the name where none in use does, never
-        # naming the shorter name.
+        # NTFS and APFS alike, in the units each counts, less the 21 of the
+        # temporary name numba writes each file through, ".tmp." and sixteen
+        # hex digits after the name, unless the error names that one; or
+        # None where the error names no such file, or its name fits. The
+        # remedy asked for the package, the user's cache directory, IPython's
+        # or the variable at a shorter path, which move nothing of the name,
+        # then offered a file system that takes the name where none in use
+        # does, never naming the shorter name, and then one that takes the
+        # name where numba's save through the temporary name failed on it.
         if not filename or location is None:
             return None
         named = os.path.abspath(filename)
@@ -937,7 +941,8 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"numba names the cache files for a function after the source's name and the function's qualified "
             f"name, {name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit})"
         )
-        return clause, length <= 255
+        through_a_temporary_name = 0 if re.search(r"\.tmp\.[0-9a-f]{16}$", name) else 21
+        return clause, length + through_a_temporary_name <= 255
 
     a_file_on_disk = os.path.exists(py_file)
 
