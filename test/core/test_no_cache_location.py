@@ -2716,6 +2716,30 @@ def test_a_zip_member_in_an_ipykernel_directory_that_is_not_utf8_is_told_so(tmp_
         "byte at byte 8): ship it as UTF-8; or silence"), remedy
 
 
+@pytest.mark.skipif(numba_version < 62, reason="NUMBA_CACHE_LOCATOR_CLASSES arrived in numba 0.62")
+def test_a_listed_locator_whose_module_raises_on_import_is_no_locator_for_the_remedy(tmp_path, monkeypatch):
+    # An entry of NUMBA_CACHE_LOCATOR_CLASSES whose module raises on import,
+    # anything, not importlib's error alone, numba raises as its own at
+    # decoration, and the check before any remedy; the remedy, reached for
+    # an error of the cache's, imported the module for the entry and raised
+    # the module's error in place of the remedy.
+    import numba
+    import numbox.core.configurations as configurations
+    (tmp_path / "badmod.py").write_text("raise RuntimeError('boom on import')\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "badmod", raising=False)
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "badmod.SomeClass,InTreeCacheLocator", raising=False)
+    py_file = tmp_path / "site" / "package" / "module.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("x = 1\n")
+    failure = OSError(errno.EACCES, "Permission denied", str(py_file.parent / "__pycache__"))
+    remedy = configurations.cache_remedy(str(py_file), failure, "silence")
+    assert "boom" not in remedy and remedy.endswith("; or silence"), remedy
+    assert configurations._locators("badmod.SomeClass,InTreeCacheLocator") == [
+        configurations._numba_locator("InTreeCacheLocator")]
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
