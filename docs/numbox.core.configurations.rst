@@ -150,7 +150,9 @@ warning instead.
   and takes the file, and leaves IPython alone for every other file, a plain ``.zip`` member among them, since
   IPython warns when asked under a home it cannot write and leaves a temporary directory behind, a new one on
   every call where it can write neither its cache directory nor its own, in which case numba makes ``numba_cache``
-  in one and saves in another, the check raises the error numba's first save would, and the warning asks for
+  in one and saves in another, the check raises the error numba's first save would, ``FileNotFoundError`` naming
+  the directory, an error of another errno naming a ``numba_cache`` being a caller's, told as the location it
+  names, and the warning asks for
   ``IPYTHONDIR``, or ``XDG_CACHE_HOME`` on a POSIX system, where IPython 8 and later read it, at a writable path;
   numba
   imports IPython for the location when it makes it and catches only OSError there, so where IPython is not

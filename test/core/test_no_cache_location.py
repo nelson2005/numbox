@@ -6512,3 +6512,44 @@ def test_the_offer_of_a_file_system_that_takes_a_cache_file_name_holds_at_the_us
         "numba names the cache files for a function after the source's name and the function's qualified name, "
         f"{name}, {units} {counted_in}, which is longer than a name can be on that file system (143), and no shorter "
         f"path cures it: a shorter name for the function or its file, which is numbox's to give{offer}; or silence"), remedy
+
+
+def test_a_callers_error_naming_another_numba_cache_for_a_member_is_told_that_location_under_a_temporary_ipython_too(
+        tmp_path, monkeypatch):
+    # The error numba's first save raises under an IPython giving a temporary
+    # directory per call is FileNotFoundError, naming the numba_cache it could
+    # not save in; the remedy for it took any OSError naming a numba_cache,
+    # a caller's refused directory of its own among them, for a member in an
+    # ipykernel directory, and told IPYTHONDIR where, with IPython giving its
+    # directory, the same error is told as the location it names.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    stable = tmp_path / "stable-cache"
+    stable.mkdir()
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(stable)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    archive = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+    py_file = str(archive / "ipykernel_123" / "cell.py")
+    unrelated = str(tmp_path / "elsewhere" / "numba_cache")
+    refused = OSError(errno.EACCES, "Permission denied", unrelated)
+    told = (
+        "NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: no file can be written at that "
+        f"location, {unrelated} (Permission denied), so make room there, or make it writable, or silence")
+    assert configurations.cache_remedy(py_file, refused, "silence") == told
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    assert configurations.cache_remedy(py_file, refused, "silence") == told
+    # The shape numba's own first save has there is told IPYTHONDIR still.
+    missing = FileNotFoundError(errno.ENOENT, "No such file or directory", unrelated)
+    assert configurations.cache_remedy(py_file, missing, "silence") == (
+        "numba caches this file in numba_cache under IPython's cache directory, and IPython, able to write neither "
+        "that directory nor its own, gives a new temporary directory on every call, so numba makes numba_cache in one "
+        "and saves in another: set IPYTHONDIR, or XDG_CACHE_HOME on a POSIX system, to a writable directory; or silence")
