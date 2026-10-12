@@ -550,8 +550,9 @@ def _ipython_locator_reads(py_file):
     """Whether a locator of numba's IPython family that numba reaches, in its own order or where
     ``NUMBA_CACHE_LOCATOR_CLASSES`` lists one, takes ``py_file`` by its name, and so reads the function's source; numba
     reaches none listed after its ``.zip`` locator for a path with ``.zip`` in it, which that locator takes without
-    trying its location, nor after a class of none of its families that takes the file, asked with a probe as numba
-    asks it; one that passes the file over leaves the ones after it reached."""
+    trying its location, nor after a locator of its own, or a class of none of its families, that takes the file,
+    asked with a probe as numba asks it, the in-tree one for a cell file on disk whose ``__pycache__`` it can write
+    among them; one that passes the file over leaves the ones after it reached."""
     from numba import config
     for_ipython = _numba_locator("IPythonCacheLocator")
     for_a_zip = _numba_locator("ZipCacheLocator")
@@ -562,7 +563,11 @@ def _ipython_locator_reads(py_file):
             return True
         if for_a_zip is not None and issubclass(cls, for_a_zip) and ".zip" in py_file:
             return False
-        if not _of_numbas(cls) and _takes(cls, py_file):
+        if _takes(cls, py_file):
+            # The remedy read IPython's locator as reached past a locator of
+            # numba's own that took the file, and told a caller's error
+            # naming another numba_cache, for a cell file on disk whose
+            # __pycache__ the in-tree locator writes, as IPython's.
             return False
     return False
 

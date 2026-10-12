@@ -5945,3 +5945,36 @@ def test_a_function_whose_cache_file_name_is_too_long_for_the_file_system_is_tol
         f"{name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit}), so no "
         "shorter path cures it, or NUMBA_CACHE_DIR set to a directory on a file system that takes a name that long; "
         "or silence")
+
+
+def test_a_cell_file_on_disk_the_in_tree_locator_takes_is_not_told_ipythondir_for_an_error_naming_another_numba_cache(
+        tmp_path, monkeypatch):
+    # numba's in-tree locator takes a cell file on disk in an ipykernel
+    # directory whose __pycache__ it can write, and IPython's locator, listed
+    # after it, is never reached; the remedy read IPython's as reached for any
+    # file its locator takes by name, and told a caller's error naming another
+    # numba_cache, a location that is none of numba's, as IPython giving a
+    # temporary directory per call, with IPYTHONDIR for it.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    kernel = tmp_path / "ipykernel_123"
+    kernel.mkdir()
+    py_file = str(kernel / "cell.py")
+    with open(py_file, "w", encoding="utf-8") as handle:
+        handle.write("def cell():\n    return 1\n")
+    configurations.check_cache_location(py_file, 0)
+    assert (kernel / "__pycache__").is_dir()
+    unrelated = str(tmp_path / "elsewhere" / "numba_cache")
+    remedy = configurations.cache_remedy(py_file, OSError(errno.EACCES, "Permission denied", unrelated), "silence")
+    assert remedy == (
+        f"that location, {unrelated}, where no file can be written (Permission denied): make room there, or make it "
+        "writable, or NUMBA_CACHE_DIR set to a writable directory; or silence"), remedy
