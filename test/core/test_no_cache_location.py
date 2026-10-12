@@ -2568,6 +2568,26 @@ def test_a_relative_members_moved_archive_under_a_temporary_ipython_directory_is
                              "that path, so "), remedy
 
 
+def test_a_relative_members_archive_named_absolute_by_the_error_is_told_as_moved(tmp_path, monkeypatch):
+    # The file numba names can be relative, run from the archive's directory,
+    # while the error names the archive absolute, as the stamp's does; the
+    # archive's remedy compared the file as given against the name, matched
+    # nothing, and told the archive that is gone as a location refusing a
+    # file, to make room in or make writable.
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.chdir(tmp_path)
+    py_file = os.path.join("build", "numbox.zip", "numbox", "module.py")
+    archive = str(tmp_path / "build" / "numbox.zip")
+    failure = FileNotFoundError(errno.ENOENT, "No such file or directory", archive)
+    remedy = configurations.cache_remedy(py_file, failure, "silence")
+    assert "make room" not in remedy and "writable" not in remedy, remedy
+    assert remedy.startswith(f"the module's code names {archive}, which is not there: its .pyc was compiled to name "
+                             "that path, so "), remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
