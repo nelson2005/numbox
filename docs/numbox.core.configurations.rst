@@ -88,7 +88,9 @@ warning instead.
   writable where the in-tree locator is listed, or that locator listed where it is not, which caches under no such
   name. A cache file numba could not make or open in the location it took, whose name, given after the source's name
   and the function's qualified name, is longer than a name can be on that file system, is told the name and its
-  length, which no shorter path cures, and a shorter name for the function or its file, the package's to give, with
+  length, which no shorter path cures, and a shorter name for the function or its file, the package's to give,
+  and the check's error for a name as long as the package's functions get, which that file system takes no name
+  as long as, is told the length, with
   ``NUMBA_CACHE_DIR`` pointed at a directory on a file system that takes a name that long offered where a file
   system in use takes the name, 255 being their limit, less the 28 of the longest name numba writes for the
   function, a data file's for a ninety-ninth overload through the temporary name it writes each file through,

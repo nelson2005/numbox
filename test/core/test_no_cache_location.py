@@ -6674,3 +6674,57 @@ def test_an_error_naming_a_zips_location_by_a_relative_path_under_nothing_yet_na
         f"effect here, because the source is not a file on disk: no file can be written in that directory, {location}, "
         f"which cannot be made under {tmp_path} (Permission denied), so make room there, or make it writable, or "
         "silence"), remedy
+
+
+def test_a_name_limit_below_the_longest_name_the_check_asks_for_is_told_the_length_not_a_shorter_path(
+        tmp_path, monkeypatch):
+    # The check makes a file of the longest name the package's functions get
+    # in the location, and where the file system takes no name as long, its
+    # error, re-raised as the location's, was read as a path too long and a
+    # shorter NUMBA_CACHE_DIR offered, which cures nothing of a name; the
+    # error carries the length now, and the remedy asks for a file system
+    # that takes it. The anchor's warning does the same for a struct's.
+    import tempfile
+    import warnings
+    import numba
+    import numbox.core.configurations as configurations
+    from numbox.utils import preprocessing
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    monkeypatch.setattr(configurations, "_name_limit", lambda location: 100)
+    real = tempfile.NamedTemporaryFile
+
+    def refusing_a_long_name(*args, **kwargs):
+        if len(kwargs.get("prefix", "")) > 100 - 8:
+            raise OSError(errno.ENAMETOOLONG, "File name too long", os.path.join(kwargs["dir"], kwargs["prefix"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(configurations.tempfile, "NamedTemporaryFile", refusing_a_long_name)
+    py_file = tmp_path / "site" / "module.py"
+    py_file.parent.mkdir()
+    py_file.write_text("x = 1\n")
+    with pytest.raises(OSError) as raised:
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+    failure = raised.value
+    assert failure.errno == errno.ENAMETOOLONG and failure.filename == str(py_file.parent / "__pycache__")
+    assert failure.longest_file_name == configurations.LONGEST_CACHE_FILE_NAME
+    assert configurations.is_a_cache_error(failure)
+    assert configurations.cache_remedy(str(py_file), failure, "silence") == (
+        f"numba's cache files for numbox's functions have names of up to {configurations.LONGEST_CACHE_FILE_NAME} "
+        "bytes, longer than a name can be on that file system (100), so no shorter path cures it, or NUMBA_CACHE_DIR "
+        "set to a directory on a file system that takes a name that long; or silence")
+    # The anchor, whose check asks for numba's longest name for a struct.
+    monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
+    code_txt = "def f():\n    return 1\n"
+    path = preprocessing._structref_anchor_path("S", code_txt)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        options = preprocessing._anchored_or_uncached(path, code_txt, {"cache": True})
+    assert options == {"cache": False}
+    assert len(caught) == 1, [str(w.message) for w in caught]
+    assert str(caught[0].message).endswith(
+        f"numba's cache files for a struct's functions have names of up to "
+        f"{preprocessing._LONGEST_ANCHOR_CACHE_FILE_NAME} bytes, longer than a name can be on that file system (100): "
+        f"NUMBA_CACHE_DIR at a directory on a file system that takes a name that long, or {preprocessing._SILENCE}"), \
+        str(caught[0].message)
