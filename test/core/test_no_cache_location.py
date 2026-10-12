@@ -143,6 +143,14 @@ def test_options_without_a_cache_key_are_asked_for_the_sites_that_cache_under_th
 windows_path_sep_bug = "numba 0.68.0 reads a .zip member's source by a name built with Windows's separator"
 
 
+def _skip_for_windows_separator_bug(stderr):
+    """Skip a test whose import met numba issue 10889, which numba 0.68.0 has on Windows alone: the remedy's text for
+    it in ``stderr`` on any other platform is a regression, which the skip hid wherever it keyed on the text alone."""
+    if windows_path_sep_bug in stderr:
+        assert os.name == "nt", f"the Windows separator remedy on {os.name}: {stderr}"
+        pytest.skip(windows_path_sep_bug)
+
+
 def test_a_zip_import_is_cached_by_numba_from_0_61(tmp_path):
     # The warning sends an archive's user to a .zip, which numba caches from
     # 0.61 on, in the user's cache directory whatever NUMBA_CACHE_DIR says.
@@ -155,8 +163,7 @@ def test_a_zip_import_is_cached_by_numba_from_0_61(tmp_path):
                NUMBA_CACHE_DIR=str(tmp_path / "cache"))
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = _run(env, tmp_path)
-    if windows_path_sep_bug in run.stderr:
-        pytest.skip(windows_path_sep_bug)
+    _skip_for_windows_separator_bug(run.stderr)
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     cached = tuple(int(part) for part in numba.__version__.split(".")[:2]) >= (0, 61)
     assert ("compiles without a cache" not in run.stderr) == cached, run.stderr
@@ -312,8 +319,7 @@ def test_a_pyc_in_a_zip_asks_by_the_file_it_was_compiled_from(tmp_path, tree):
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
                          env=env, cwd=str(tmp_path))
-    if windows_path_sep_bug in run.stderr:
-        pytest.skip(windows_path_sep_bug)
+    _skip_for_windows_separator_bug(run.stderr)
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
     assert "source is not a file on disk" in run.stderr and "holding its source files" in run.stderr, run.stderr
@@ -348,8 +354,7 @@ def test_a_stale_pyc_beside_its_source_in_a_zip_is_passed_over_as_zipimport_pass
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
                          env=env, cwd=str(tmp_path))
-    if windows_path_sep_bug in run.stderr:
-        pytest.skip(windows_path_sep_bug)
+    _skip_for_windows_separator_bug(run.stderr)
     assert run.returncode == 0 and run.stdout.strip().endswith("libm.py"), run.stderr
     if _zip_is_cached():
         assert "compiles without a cache" not in run.stderr, run.stderr
@@ -376,8 +381,7 @@ def test_a_stale_pyc_whose_source_in_the_zip_does_not_compile_is_passed_over(tmp
                NUMBA_CACHE_DIR=str(tmp_path / "cache"))
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = _run(env, tmp_path)
-    if windows_path_sep_bug in run.stderr:
-        pytest.skip(windows_path_sep_bug)
+    _skip_for_windows_separator_bug(run.stderr)
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     if _zip_is_cached():
         assert "compiles without a cache" not in run.stderr, run.stderr
@@ -403,8 +407,7 @@ def test_a_stray_pyc_in_a_zip_that_nothing_imports_is_passed_over(tmp_path, dama
                NUMBA_CACHE_DIR=str(tmp_path / "cache"))
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = _run(env, tmp_path)
-    if windows_path_sep_bug in run.stderr:
-        pytest.skip(windows_path_sep_bug)
+    _skip_for_windows_separator_bug(run.stderr)
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     if _zip_is_cached():
         assert "compiles without a cache" not in run.stderr, run.stderr
@@ -504,8 +507,7 @@ def test_a_moved_zip_whose_pyc_members_name_its_old_path_compiles_uncached_and_i
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
                          env=env, cwd=str(tmp_path))
-    if windows_path_sep_bug in run.stderr:
-        pytest.skip(windows_path_sep_bug)
+    _skip_for_windows_separator_bug(run.stderr)
     assert run.returncode == 0 and str(moved) in run.stdout, run.stderr
     assert run.stderr.count("compiles without a cache") == 1, run.stderr
     if _zip_is_cached():
@@ -631,8 +633,7 @@ def test_a_pyc_member_alone_beside_sourced_ones_in_a_zip_is_asked_for_itself(tmp
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
                          env=env, cwd=str(tmp_path))
-    if windows_path_sep_bug in run.stderr:
-        pytest.skip(windows_path_sep_bug)
+    _skip_for_windows_separator_bug(run.stderr)
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     if numba_version >= 68:
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
@@ -666,8 +667,7 @@ def test_a_pyc_beside_its_source_in_a_zip_compiled_to_name_another_path_in_it_is
     env.pop("NUMBOX_JIT_OPTIONS", None)
     run = subprocess.run([sys.executable, "-W", "always", "-c", IMPORT_LIBM], capture_output=True, text=True,
                          env=env, cwd=str(tmp_path))
-    if windows_path_sep_bug in run.stderr:
-        pytest.skip(windows_path_sep_bug)
+    _skip_for_windows_separator_bug(run.stderr)
     assert run.returncode == 0 and str(archive) in run.stdout, run.stderr
     if numba_version >= 68:
         assert run.stderr.count("compiles without a cache") == 1, run.stderr
@@ -2797,6 +2797,21 @@ def test_an_error_naming_no_numba_cache_under_a_temporary_ipython_directory_is_n
     remedy = configurations.cache_remedy(str(py_file), OSError(errno.EACCES, "Permission denied", elsewhere), "silence")
     assert "IPYTHONDIR" not in remedy and "temporary" not in remedy, remedy
     assert f"that location, {elsewhere}" in remedy and "(Permission denied)" in remedy, remedy
+
+
+def test_the_windows_separator_skip_fails_the_test_on_any_other_platform(monkeypatch):
+    # The end-to-end .zip tests skip where the import met numba issue 10889,
+    # numba 0.68.0's on Windows alone; keyed on the remedy's text in stderr,
+    # the skip hid that remedy wrongly given on Linux, to a module shipped
+    # as .pyc alone for one, as a skip. The skip holds on Windows alone.
+    stderr = f"RuntimeWarning: numba cannot cache numbox here (...). {windows_path_sep_bug}, x, which no archive holds"
+    monkeypatch.setattr(os, "name", "posix")
+    with pytest.raises(AssertionError, match="the Windows separator remedy on posix"):
+        _skip_for_windows_separator_bug(stderr)
+    monkeypatch.setattr(os, "name", "nt")
+    with pytest.raises(pytest.skip.Exception):
+        _skip_for_windows_separator_bug(stderr)
+    _skip_for_windows_separator_bug("RuntimeWarning: numba cannot cache numbox here, another remedy")
 
 
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
