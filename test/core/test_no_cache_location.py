@@ -2763,6 +2763,42 @@ def test_an_empty_path_object_as_an_errors_name_is_the_working_directory_not_an_
         "that location, . (No such file or directory), so make room there, or make it writable, or silence"), remedy
 
 
+@pytest.mark.parametrize("placement", ["on disk", "a .zip member"])
+def test_an_error_naming_no_numba_cache_under_a_temporary_ipython_directory_is_not_told_ipythondir(
+        tmp_path, monkeypatch, placement):
+    # The error numba's first save raises under an IPython giving a temporary
+    # directory per call names the numba_cache it could not save in, as the
+    # check's does; the remedy for that case took any error naming a location
+    # that is none of numba's, and told IPYTHONDIR for a cell file on disk
+    # that the in-tree locator took, IPython never reached, on a caller's
+    # error naming an unrelated place.
+    import tempfile
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: tempfile.mkdtemp(dir=tmp_path)
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    if placement == "on disk":
+        py_file = tmp_path / "ipykernel_123" / "cell.py"
+        py_file.parent.mkdir()
+        py_file.write_text("def cell():\n    return 1\n")
+        configurations.check_cache_location(str(py_file), configurations.LONGEST_CACHE_FILE_NAME)
+        assert (py_file.parent / "__pycache__").is_dir()
+    else:
+        archive = tmp_path / "bundle.zip"
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("ipykernel_123/cell.py", "def cell():\n    return 1\n")
+        py_file = archive / "ipykernel_123" / "cell.py"
+    elsewhere = str(tmp_path / "elsewhere" / "x")
+    remedy = configurations.cache_remedy(str(py_file), OSError(errno.EACCES, "Permission denied", elsewhere), "silence")
+    assert "IPYTHONDIR" not in remedy and "temporary" not in remedy, remedy
+    assert f"that location, {elsewhere}" in remedy and "(Permission denied)" in remedy, remedy
+
+
 def test_an_ipython_that_gives_its_directory_once_and_then_raises_is_not_read_as_temporary(tmp_path, monkeypatch):
     # The remedy asks IPython for its cache directory twice to tell a new
     # temporary directory from a steady one; an IPython that answers once and
