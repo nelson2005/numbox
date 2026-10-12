@@ -822,8 +822,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     ipykernel directory that numba's IPython locator takes, a cell file on disk
     or a ``.zip`` member, where IPython gives a new temporary directory as its cache directory on every call, able
     to write neither that directory nor its own, is told so for an error naming a file, as the one numba's first save
-    raises there names the directory it could not save in, with ``IPYTHONDIR`` or ``XDG_CACHE_HOME`` at a writable
-    path as the remedy: numba makes ``numba_cache`` in one such directory and saves in another; an error naming no
+    raises there is ``FileNotFoundError`` naming the directory it could not save in, with ``IPYTHONDIR`` or
+    ``XDG_CACHE_HOME`` at a writable path as the remedy, and an error of another errno naming a ``numba_cache`` is a
+    caller's, told as the location it names: numba makes ``numba_cache`` in one such directory and saves in another;
+    an error naming no
     file is told the locations numba could have taken, with its reason, as above.
     """
     from numba import config
@@ -1000,12 +1002,17 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
 
     def names_a_numba_cache():
         # Whether the error names IPython's location for numba, a numba_cache
-        # directory, or a file in one: the error numba's first save raises
-        # under an IPython giving a temporary directory per call names the
-        # numba_cache it could not save in, and so does the check's; a
-        # caller's naming another location shows nothing of that locator,
-        # and was told IPYTHONDIR for a cell on disk the in-tree locator took.
-        return bool(filename) and "numba_cache" in os.path.abspath(filename).split(os.sep)
+        # directory, or a file in one, as not there: the error numba's first
+        # save raises under an IPython giving a temporary directory per call
+        # is FileNotFoundError, naming the numba_cache it could not save in,
+        # a directory made in another, and so is the check's; a caller's
+        # naming another location shows nothing of that locator, and was told
+        # IPYTHONDIR for a cell on disk the in-tree locator took, and for a
+        # member under such an IPython on any errno, a refused directory of
+        # its own among them.
+        return (
+            bool(filename) and failure.errno == errno.ENOENT
+            and "numba_cache" in os.path.abspath(filename).split(os.sep))
 
     if isinstance(failure, OSError) and names_a_numba_cache() and not names_a_path_above() and (
             _ipython_locator_reads(py_file)) and (
