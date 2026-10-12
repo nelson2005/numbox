@@ -396,7 +396,8 @@ def _measured(name):
 
 
 def _name_limit(location):
-    """The longest name a file can have where ``location`` is: 255 where the system cannot say, or for none.
+    """The longest name a file can have where ``location`` is: 255 where the system cannot say, or says 0, as a file
+    system with no limit of its own reports it, or for none.
 
     In bytes, which the file systems elsewhere count a name in, or in the UTF-16 units Windows and macOS count one in.
 
@@ -408,7 +409,7 @@ def _name_limit(location):
     while not os.path.exists(path) and os.path.dirname(path) != path:
         path = os.path.dirname(path)
     try:
-        return os.statvfs(path).f_namemax
+        return os.statvfs(path).f_namemax or 255
     except OSError:
         return 255
 

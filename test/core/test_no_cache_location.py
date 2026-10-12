@@ -1847,6 +1847,14 @@ def test_the_name_limit_is_the_file_systems_own_asked_of_the_nearest_directory_t
     assert configurations._name_limit(str(tmp_path)) == 255
     assert configurations._name_limit(None) == 255
 
+    class NoLimit:
+        f_namemax = 0
+
+    # A file system that reports 0, no limit of its own, left 0 for the
+    # limit, and every name was too long for it.
+    monkeypatch.setattr(os, "statvfs", lambda path: NoLimit())
+    assert configurations._name_limit(str(tmp_path)) == 255
+
 
 def test_is_a_cache_error_admits_numbas_errors_by_their_text_and_no_other():
     # The line between numba's cache errors and the rest: any OSError; the
