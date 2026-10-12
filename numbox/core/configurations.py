@@ -434,7 +434,12 @@ def _locators(listed):
             module_path, class_name = entry.rsplit(".", 1)
             try:
                 cls = _class_named(importlib.import_module(module_path), class_name)
-            except (ImportError, TypeError, ValueError):
+            except Exception:
+                # importlib's errors, a relative path's TypeError, and
+                # whatever the module raises on import, which numba raises
+                # as its own at decoration and the check as its own before
+                # any remedy: the remedy, reached for an error of the
+                # cache's, raised the module's for the entry.
                 cls = None
         else:
             cls = _numba_locator(entry)
