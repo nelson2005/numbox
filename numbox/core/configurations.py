@@ -1578,13 +1578,15 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     parts = pathlib.Path(py_file).parts
     in_a_zip = any(part.endswith(".zip") for part in parts)
     # A directory named .zip above the file, which numba's .zip locator takes
-    # for an archive all the same, and caches nothing under.
+    # for an archive all the same, and caches nothing under; a cell under one,
+    # whose source linecache does not hold, was told the archive remedy, the
+    # source files to ship.
     a_directory_named_zip = any(
         os.path.isdir(os.path.join(*parts[:at + 1])) for at, part in enumerate(parts) if part.endswith(".zip"))
     # A member of any archive, an .egg or .whl as a .zip, which zipimport runs
     # and whose source inspect reads through its loader; the .zip is the one
     # numba's .zip locator takes, and the only one it caches.
-    in_an_archive = in_a_zip or _archive_above(py_file) is not None
+    in_an_archive = (in_a_zip and not a_directory_named_zip) or _archive_above(py_file) is not None
     # A caller's error with no errno and no name looked like inspect's and
     # was told to make the file readable; inspect's are known by their words.
     inspects = _is_inspects(failure) and any(one_of(cls, for_ipython) for cls in reached)

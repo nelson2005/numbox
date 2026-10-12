@@ -6420,3 +6420,32 @@ def test_a_source_that_is_nowhere_under_a_directory_named_zip_is_not_told_to_lis
     assert "list it" not in remedy and "ZipCacheLocator alone" not in remedy, remedy
     assert remedy.startswith("NUMBA_CACHE_DIR has no effect here, because the source is not a file on disk: to cache, ")
     assert "install numbox with its source files on disk" in remedy and remedy.endswith("; or silence"), remedy
+
+
+def test_a_cell_under_a_directory_named_zip_whose_source_linecache_does_not_hold_is_told_the_cell_remedy(
+        tmp_path, monkeypatch):
+    # inspect raises for a cell whose source linecache does not hold, before
+    # numba's IPython locator tries its location, and the remedy tells it as
+    # such, but for a member of an archive, told the source files to ship: a
+    # directory named .zip above the cell was read as an archive, and the
+    # cell was told to ship source files.
+    import types
+    import numba
+    import numbox.core.configurations as configurations
+
+    monkeypatch.setattr(numba.config, "CACHE_DIR", "")
+    monkeypatch.setattr(numba.config, "CACHE_LOCATOR_CLASSES", "", raising=False)
+    paths = types.ModuleType("IPython.paths")
+    paths.get_ipython_cache_dir = lambda: str(tmp_path / "ipython")
+    monkeypatch.setitem(sys.modules, "IPython", types.ModuleType("IPython"))
+    monkeypatch.setitem(sys.modules, "IPython.paths", paths)
+    directory = tmp_path / "proj.zip" / "ipykernel_123"
+    directory.mkdir(parents=True)
+    py_file = str(directory / "cell.py")
+    with pytest.raises(OSError, match="could not get source code") as raised:
+        configurations.check_cache_location(py_file, 0)
+    failure = raised.value
+    assert failure.errno is None and failure.filename is None
+    assert configurations.cache_remedy(py_file, failure, "silence") == (
+        f"numba's IPython locator reads a cell's source from linecache, which holds none for {py_file} ({failure}), "
+        "and numba caches a cell only while IPython holds its source; or silence")
