@@ -6777,12 +6777,22 @@ def test_the_anchors_check_asks_for_the_longest_name_the_code_gets_not_a_bound_f
         assert preprocessing._anchored_or_uncached(path, long, {"cache": True}) == {"cache": False}
     assert len(caught) == 1 and f"names of up to {longest} bytes, longer than a name can be on that file system (143)" in str(
         caught[0].message), [str(w.message) for w in caught]
-    # The names counted: a jitted method's and a jitted nested function's,
-    # with numba's "locals" for the nesting, and not a plain function's.
+    # The names counted: a function decorated itself, with njit or a decorator
+    # of the package's own that jits, or defined within a decorated one, an
+    # overload's constructor among them, with numba's "locals" for the
+    # nesting; and not a plain method's under its own name. Counted by five
+    # decorators' names alone, the builder's derive function and the
+    # constructor overload's inner function were left out.
     version = f"py{sys.version_info[0]}{sys.version_info[1]}{getattr(sys, 'abiflags', '')}"
-    code_txt = ("class C:\n    @njit(**jit_options)\n    def m(self):\n        @cfunc(sig)\n        def inner():\n"
+    code_txt = ("class C:\n    @njit(**jit_options)\n    def m(self):\n        def inner():\n"
                 "            return 1\n        return inner\n\n    def plain_but_long_" + "p" * 200 + "(self):\n"
-                "        return 2\n\n\n@overload(f)\ndef ol_f():\n    def impl():\n        return 3\n    return impl\n")
-    assert preprocessing._longest_cache_file_name("stem", code_txt) == (
-        len(f"stem.C.m.locals.inner-5.{version}.99.nbc.tmp.") + 16)
+                "        return 2\n\n\n@overload(S, strict=False, jit_options=jit_options)\ndef ol_s(x):\n"
+                "    def a_constructor_named_" + "c" * 60 + "(x):\n        return 3\n    return ctor\n\n\n"
+                "@_cres\ndef derive_" + "d" * 50 + "(x):\n    return 4\n")
+    counted = [f"stem.C.m-3.{version}.99.nbc.tmp.", f"stem.C.m.locals.inner-4.{version}.99.nbc.tmp.",
+               f"stem.ol_s-13.{version}.99.nbc.tmp.",
+               f"stem.ol_s.locals.a_constructor_named_{'c' * 60}-14.{version}.99.nbc.tmp.",
+               f"stem.derive_{'d' * 50}-20.{version}.99.nbc.tmp."]
+    assert preprocessing._longest_cache_file_name("stem", code_txt) == max(len(each) for each in counted) + 16
     assert preprocessing._longest_cache_file_name("stem", "x = 1\n") == 0
+    assert preprocessing._longest_cache_file_name("stem", "def plain():\n    return 1\n") == 0

@@ -35,11 +35,15 @@ def _longest_cache_file_name(stem: str, code_txt: str) -> int:
     numba names a function's cache files after the file's stem and the function's qualified name, with the angle
     brackets of ``<locals>`` dropped, its line, Python's version and ABI flags, and, for a data file, the overload's
     number, and writes each through a temporary name 21 bytes longer, ``.tmp.`` and sixteen hex digits: the longest
-    of the functions the code jits, decorated with ``njit``, ``jit``, ``cfunc``, ``vectorize`` or ``guvectorize``,
-    nested ones and methods included, with two digits for the overload, a ninety-ninth's; a plain function, a
-    struct's method under its own name, which calls the jitted thunk, or an ``overload``'s, gets no cache file, and
+    of the functions the code jits, decorated themselves, with ``njit`` or a decorator of the package's own that
+    jits, or defined within a decorated one, as an ``overload``'s constructor is, which numba compiles with the
+    overload's options and writes cache files for under the overload's name and ``locals``; nested ones and
+    methods included, with two digits for the overload, a ninety-ninth's. A plain function at the top or in a
+    class body, a struct's method under its own name, which calls the jitted thunk, gets no cache file, and
     counted, a method named with two hundred characters put the longest over the file system's 255, and the struct
-    compiled uncached. The anchor's check asks numba's location for a name this long, as the package's asks for its
+    compiled uncached; counted by five decorators' names alone, the builder's derive function, jitted through the
+    package's own decorator, and the constructor overload's inner function were left out, and numba's save died
+    past the check. The anchor's check asks numba's location for a name this long, as the package's asks for its
     own with ``LONGEST_CACHE_FILE_NAME``, so that a cache directory within that of the path limit answers here,
     uncached after one warning, where numba's own check passed a name of eight and the first save raised through
     the struct's making; a bound for any struct, 251, turned caching off on a file system whose name limit is
@@ -47,26 +51,20 @@ def _longest_cache_file_name(stem: str, code_txt: str) -> int:
     """
     names = []
 
-    def decorated_with(node):
-        for decorator in node.decorator_list:
-            base = decorator.func if isinstance(decorator, ast.Call) else decorator
-            name = getattr(base, "id", None) or getattr(base, "attr", None)
-            if name in ("njit", "jit", "cfunc", "vectorize", "guvectorize"):
-                return True
-        return False
-
-    def walk(node, outer):
+    def walk(node, outer, jitted):
         for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 qualname = f"{outer}{child.name}"
-                if not isinstance(child, ast.ClassDef) and decorated_with(child):
+                counts = jitted or bool(child.decorator_list)
+                if counts:
                     names.append((qualname, child.lineno))
-                walk(child, f"{qualname}.<locals>." if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-                     else f"{qualname}.")
+                walk(child, f"{qualname}.<locals>.", counts)
+            elif isinstance(child, ast.ClassDef):
+                walk(child, f"{outer}{child.name}.", jitted)
             else:
-                walk(child, outer)
+                walk(child, outer, jitted)
 
-    walk(ast.parse(code_txt), "")
+    walk(ast.parse(code_txt), "", False)
     version = f"py{sys.version_info[0]}{sys.version_info[1]}{getattr(sys, 'abiflags', '')}"
     return max(
         (len(f"{stem}.{qualname.replace('<', '').replace('>', '')}-{lineno}.{version}.99.nbc.tmp.".encode("utf-8")) + 16
