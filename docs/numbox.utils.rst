@@ -190,8 +190,9 @@ at a UTF-8 path. The anchor's check writes a name as long as the
 longest numba writes for the functions it anchors, read off the
 generated code, the functions decorated themselves or defined within a
 decorated one, an overload's constructor among them: the stem, the
-function's qualified name, its line, Python's version, a two-digit
-overload number and the 21 of the temporary name numba writes each
+function's qualified name, its line, Python's version, three digits
+for the data file's number, which numba counts from one without
+bound, and the 21 of the temporary name numba writes each
 file through, so a user cache directory
 or a ``NUMBA_CACHE_DIR`` within that of the path limit, 4096 on Linux,
 fails it and the generated code compiles without a cache after the

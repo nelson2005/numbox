@@ -61,6 +61,12 @@ def _cache_probe():
 # this bound.
 LONGEST_CACHE_FILE_NAME = 128
 
+# The digits reserved for the number numba gives a function's data file, one per signature, counted from one
+# without bound: three, a thousandth signature of one function being beyond what the package and its generated
+# code make; a name an error carries with a wider number is read by its own width. Two digits, a ninety-ninth
+# signature's, left the hundredth's name a byte longer than the reserve.
+_OVERLOAD_DIGITS = 3
+
 # The probe's module, one per check, named apart from every other's, stands in
 # sys.modules while numba picks the locator.
 _probes = itertools.count()
@@ -703,9 +709,9 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
     or its file, the package's to give, and the check's error for a name as long as the package's functions get,
     which that file system takes no name as long as, is told the length, with ``NUMBA_CACHE_DIR`` pointed at a
     directory on a file system that takes a
-    name that long offered where a file system in use takes the name, 255 being their limit, less the 28 of the
-    longest name numba writes for the function, a data file's for a ninety-ninth overload through the temporary
-    name it writes each file through, and numba tries the
+    name that long offered where a file system in use takes the name, 255 being their limit, less the 29 of the
+    longest name numba writes for the function, a data file's with three digits for its number, numba numbering
+    them from one without bound, through the temporary name it writes each file through, and numba tries the
     variable before the locator that took the file, as it is offered at a short path for a path too long, and
     nothing offered for a ``.zip`` member, which the variable does nothing for. numba hashes the source's directory
     path as UTF-8 for that name and
@@ -952,9 +958,10 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
         # system in use takes the name at all, 255 being the limit of ext4,
         # NTFS and APFS alike, in the units each counts, for the longest name
         # numba writes for the function: the index, ".nbi", and a data file
-        # per overload, ".<n>.nbc", each through a temporary name 21 longer,
-        # ".tmp." and sixteen hex digits, the data file's with two digits,
-        # ".99.nbc.tmp.<16 hex>", being 28 more than their common base; or
+        # per signature, ".<n>.nbc", numbered from one without bound, each
+        # through a temporary name 21 longer, ".tmp." and sixteen hex digits,
+        # the data file's with the digits reserved for its number, or the
+        # number the error names where that is wider; or
         # None where the error names no such file, or its name fits. The
         # remedy asked for the package, the user's cache directory, IPython's
         # or the variable at a shorter path, which move nothing of the name,
@@ -976,8 +983,11 @@ def cache_remedy(py_file, failure, silence, package="numbox"):
             f"numba names the cache files for a function after the source's name and the function's qualified "
             f"name, {name}, {length} {counted_in}, which is longer than a name can be on that file system ({limit})"
         )
-        base = re.sub(r"\.nbi$|\.\d+\.nbc$", "", re.sub(r"\.tmp\.[0-9a-f]{16}$", "", name))
-        return clause, _measured(base)[0] + len(".99.nbc") + 21 <= 255
+        stripped = re.sub(r"\.tmp\.[0-9a-f]{16}$", "", name)
+        numbered = re.search(r"\.(\d+)\.nbc$", stripped)
+        digits = max(_OVERLOAD_DIGITS, len(numbered.group(1))) if numbered else _OVERLOAD_DIGITS
+        base = re.sub(r"\.nbi$|\.\d+\.nbc$", "", stripped)
+        return clause, _measured(base)[0] + len(".") + digits + len(".nbc") + 21 <= 255
 
     a_file_on_disk = os.path.exists(py_file)
 

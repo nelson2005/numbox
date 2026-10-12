@@ -15,7 +15,8 @@ import time
 import warnings
 from pathlib import Path
 
-from numbox.core.configurations import LONGEST_CACHE_FILE_NAME, cache_remedy, check_cache_location, is_a_cache_error
+from numbox.core.configurations import (LONGEST_CACHE_FILE_NAME, _OVERLOAD_DIGITS, cache_remedy, check_cache_location,
+                                        is_a_cache_error)
 
 
 def _anchor_root(subdir: str = "numbox-structref") -> Path:
@@ -38,7 +39,8 @@ def _longest_cache_file_name(stem: str, code_txt: str) -> int:
     of the functions the code jits, decorated themselves, with ``njit`` or a decorator of the package's own that
     jits, or defined within a decorated one, as an ``overload``'s constructor is, which numba compiles with the
     overload's options and writes cache files for under the overload's name and ``locals``; nested ones and
-    methods included, with two digits for the overload, a ninety-ninth's. A plain function at the top or in a
+    methods included, with the digits ``_OVERLOAD_DIGITS`` reserves for the data file's number, three, numba
+    numbering them from one without bound. A plain function at the top or in a
     class body, a struct's method under its own name, which calls the jitted thunk, gets no cache file, and
     counted, a method named with two hundred characters put the longest over the file system's 255, and the struct
     compiled uncached; counted by five decorators' names alone, the builder's derive function, jitted through the
@@ -67,7 +69,8 @@ def _longest_cache_file_name(stem: str, code_txt: str) -> int:
     walk(ast.parse(code_txt), "", False)
     version = f"py{sys.version_info[0]}{sys.version_info[1]}{getattr(sys, 'abiflags', '')}"
     return max(
-        (len(f"{stem}.{qualname.replace('<', '').replace('>', '')}-{lineno}.{version}.99.nbc.tmp.".encode("utf-8")) + 16
+        (len(f"{stem}.{qualname.replace('<', '').replace('>', '')}-{lineno}.{version}.{'9' * _OVERLOAD_DIGITS}.nbc.tmp."
+             .encode("utf-8")) + 16
          for qualname, lineno in names), default=0)
 
 
