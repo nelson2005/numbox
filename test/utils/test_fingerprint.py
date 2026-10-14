@@ -11,6 +11,8 @@ derive path, forces an address-bearing fallback and unbounded cache growth.
 """
 import textwrap
 
+from collections import namedtuple
+
 import numpy as np
 import pytest
 
@@ -44,6 +46,42 @@ def test_canon_value_structured_dtype_preserves_layout():
 def test_canon_value_plain_dtype_unchanged():
     canon = _canon_value(np.arange(3, dtype=np.float64), set())
     assert canon.startswith("ndarray(<f8;")
+
+
+def _column(a):
+    return a[..., 1].sum()
+
+
+def _window(a):
+    return a[1:3].sum()
+
+
+def _wider(a):
+    return a[1:4].sum()
+
+
+def test_ellipsis_and_folded_slice_constants_fingerprint():
+    """``a[..., 1]`` holds ``Ellipsis`` in a tuple constant on every Python, and Python 3.14 folds ``a[1:3]`` into a
+    ``slice`` constant; a function using either fingerprints, and two slices apart fingerprint apart."""
+    for func in (_column, _window, _wider):
+        _fingerprint_function(func, set())
+    assert _fingerprint_function(_window, set()) != _fingerprint_function(_wider, set())
+    assert _canon_value(Ellipsis, set()) == "Ellipsis"
+    assert _canon_value(slice(1, 3, None), set()) == "slice(1,3,None)"
+    assert _canon_value(slice(1, 3, None), set()) != _canon_value(slice(1, 4, None), set())
+
+
+_FirstSecond = namedtuple("Pair", "first second")
+_SecondFirst = namedtuple("Pair", "second first")
+
+
+def test_a_namedtuple_fingerprints_with_its_field_names():
+    """numba types a namedtuple by its class and field names and compiles ``pair.first`` to a position in it, so two
+    classes of one name holding the same values under their field names in another order fingerprint apart."""
+    first_second, second_first = _FirstSecond(1.0, 2.0), _SecondFirst(1.0, 2.0)
+    assert _canon_value(first_second, set()) != _canon_value(second_first, set())
+    assert _canon_value(first_second, set()) == "namedtuple(test.utils.test_fingerprint.Pair;first,second)[1.0,2.0]"
+    assert _canon_value((1.0, 2.0), set()) == "tuple[1.0,2.0]"
 
 
 def test_proxy_binding_callback_fingerprints_cleanly_and_distinctly():

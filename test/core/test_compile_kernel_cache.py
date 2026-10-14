@@ -14,6 +14,7 @@ import types
 
 import pytest
 from numba import njit, typeof, vectorize
+from numba.core import config as numba_config
 from numba.core.caching import NullCache
 
 from numbox.core.variable.compile_kernel import (
@@ -77,6 +78,24 @@ def _body(x):
     # fastmath's nnan/reassociation makes (x + 1e308) - 1e308 collapse to x
     # instead of 0.0 -- a visible, one-line flag-sensitive result.
     return (x + 1e308) - 1e308
+
+
+# A formula indexing with Ellipsis or a constant slice keeps the kernel cacheable
+# ---------------------------------------------------------------------------
+
+def _column_formula(a):
+    return a[..., 1].sum()
+
+
+def _window_formula(a):
+    return a[1:3].sum()
+
+
+def test_ellipsis_and_slice_formulas_keep_the_kernel_cacheable():
+    """``a[..., 1]`` holds ``Ellipsis`` in a constant on every Python, and Python 3.14 folds ``a[1:3]`` into a slice
+    constant; a formula using either used to compile its kernel uncached, for want of a canonical form."""
+    for formula in (_column_formula, _window_formula):
+        assert _formula_fingerprint(formula)[1] is True
 
 
 # DUFunc (@vectorize) formula targetoptions must enter the digest
@@ -391,11 +410,10 @@ def test_module_attr_dufunc_captured_value_rekeys_fingerprint():
 # ---------------------------------------------------------------------------
 
 def test_vectorize_env_knob_enters_digest(monkeypatch):
-    import numbox.utils.fingerprint as fp
     src = "def _kernel(a0):\n    return (a0,)\n"
-    monkeypatch.setattr(fp.numba_config, "LOOP_VECTORIZE", 0, raising=False)
+    monkeypatch.setattr(numba_config, "LOOP_VECTORIZE", 0, raising=False)
     name0 = _compile(src, {}, None, None).py_func.__name__
-    monkeypatch.setattr(fp.numba_config, "LOOP_VECTORIZE", 1, raising=False)
+    monkeypatch.setattr(numba_config, "LOOP_VECTORIZE", 1, raising=False)
     name1 = _compile(src, {}, None, None).py_func.__name__
     assert name0 != name1, "LOOP_VECTORIZE absent from the cache digest"
 
@@ -407,11 +425,10 @@ def test_boundscheck_env_enters_digest(monkeypatch):
     """NUMBA_BOUNDSCHECK overrides even an explicit boundscheck flag at lowering
     but is in neither the jit flags nor numba's cache key; it must enter the
     digest so a bounds-check flip does not cache-hit the unchecked binary."""
-    import numbox.utils.fingerprint as fp
     src = "def _kernel(a0):\n    return (a0,)\n"
-    monkeypatch.setattr(fp.numba_config, "BOUNDSCHECK", None)
+    monkeypatch.setattr(numba_config, "BOUNDSCHECK", None)
     name_off = _compile(src, {}, None, None).py_func.__name__
-    monkeypatch.setattr(fp.numba_config, "BOUNDSCHECK", 1)
+    monkeypatch.setattr(numba_config, "BOUNDSCHECK", 1)
     name_on = _compile(src, {}, None, None).py_func.__name__
     assert name_off != name_on, "BOUNDSCHECK absent from the cache digest"
 

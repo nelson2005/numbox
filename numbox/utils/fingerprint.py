@@ -23,13 +23,10 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
-from numba.core import config as numba_config
 from numba.core.dispatcher import Dispatcher
 from numba.core.types import ExternalFunction
 from numba.core.types.function_type import CompileResultWAP
 from numba.np.ufunc.dufunc import DUFunc
-
-from numbox.core.configurations import jit_options as _default_jit_options
 
 
 class _Unfingerprintable(Exception):
@@ -83,9 +80,24 @@ def _dtype_key(dtype: np.dtype) -> str:
 _ABSENT_ALIASES: set[str] = set()
 
 
+def _namedtuple_class(cls: type) -> Optional[str]:
+    """``namedtuple(<class>;<fields>)`` for a namedtuple class, else ``None``.
+
+    numba types a namedtuple by its class and its field names, by the same test (``_asdict``), and compiles a read of a
+    field to its position: two classes naming their fields in different orders give the same values two meanings.
+    """
+    if not (isinstance(cls, type) and issubclass(cls, tuple) and hasattr(cls, "_asdict")):
+        return None
+    return f"namedtuple({cls.__module__}.{cls.__qualname__};{','.join(map(str, getattr(cls, '_fields', ())))})"
+
+
 def _canon_value(value: Any, seen: set[int]) -> str:
-    if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
+    if value is None or value is Ellipsis or isinstance(value, (bool, int, float, complex, str, bytes)):
         return repr(value)
+    if isinstance(value, slice):
+        # Constants the interpreter folds into a code object: ``a[..., 1]`` holds ``Ellipsis`` in a tuple constant,
+        # and Python 3.14 folds ``a[1:3]`` into a slice.
+        return f"slice({_canon_value(value.start, seen)},{_canon_value(value.stop, seen)},{_canon_value(value.step, seen)})"
     if isinstance(value, np.generic):
         return f"npscalar({_dtype_key(value.dtype)};{value.tobytes().hex()})"
     if isinstance(value, np.ndarray):
@@ -98,7 +110,8 @@ def _canon_value(value: Any, seen: set[int]) -> str:
             raise _Unfingerprintable(f"unhashable ndarray {value.dtype.str}") from e
         return f"ndarray({_dtype_key(data.dtype)};{value.shape};{raw})"
     if isinstance(value, (tuple, list)):
-        return f"{type(value).__name__}[" + ",".join(_canon_value(v, seen) for v in value) + "]"
+        head = _namedtuple_class(type(value)) or type(value).__name__
+        return f"{head}[" + ",".join(_canon_value(v, seen) for v in value) + "]"
     if isinstance(value, (set, frozenset)):
         return f"{type(value).__name__}[" + ",".join(sorted(_canon_value(v, seen) for v in value)) + "]"
     if isinstance(value, dict):
@@ -455,12 +468,8 @@ def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list]
 # Shared by every content-addressed cache key that must re-key when the resolved
 # jit flags change: the `compile_kernel` digest and the `make_graph` kernel
 # fingerprint. Kept here rather than in `compile_kernel` so `builder` can reuse it
-# without importing that module (whose import runs an orphan-anchor sweep).
-
-_CODEGEN_ENV_KNOBS = (
-    "BOUNDSCHECK", "LOOP_VECTORIZE", "SLP_VECTORIZE", "ENABLE_AVX", "DISABLE_INTEL_SVML",
-)
-
+# without importing that module (whose import runs an orphan-anchor sweep). The
+# NUMBA_* settings those digests fold come from `numbox.core.cache_key`.
 
 def _effective_flags(jit_options: dict | None) -> dict:
     """The non-`cache` jit flags, resolved against the numbox defaults.
@@ -470,18 +479,10 @@ def _effective_flags(jit_options: dict | None) -> dict:
     Every other flag (`fastmath`, `error_model`, `boundscheck`, ...) does change
     the binary and must re-key.
     """
-    opts = {**_default_jit_options, **(jit_options or {})}
+    # Read here, not at import: numbox.core installs the cache key as it loads, which imports this module.
+    from numbox.core.configurations import jit_options as default_jit_options
+    opts = {**default_jit_options, **(jit_options or {})}
     return {k: v for k, v in opts.items() if k != "cache"}
-
-
-def _codegen_env_canon() -> str:
-    """Canonical string for the process's result-affecting numba codegen env knobs.
-
-    These change the emitted binary but live in neither the jit flags nor numba's
-    own on-disk cache key, and they override even an explicit jit flag at lowering,
-    so they must enter a digest directly, read at compile time.
-    """
-    return repr([(k, getattr(numba_config, k, None)) for k in _CODEGEN_ENV_KNOBS])
 
 
 def _flags_canon(flags: dict) -> tuple[str, bool]:
