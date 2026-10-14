@@ -101,6 +101,7 @@ These are the canonical primitives for C-string interop. New bindings should com
 - `numbox/core/bindings/sqlite/constants.py` — SQLite result codes, type codes, flags, destructor sentinels
 - `numbox/core/bindings/sqlite/_typemap.py` — private column-tag/typemap helpers (not part of the public surface)
 - `numbox/utils/clock.py` — cross-platform monotonic nanosecond clock intrinsic
+- `numbox/core/cache_key.py` — numbox's part of numba's on-disk cache key (flags, keyed `NUMBA_*` settings, globals and callees), `keyed_njit`/`keyed_cfunc`, `explain_cache_key`; installed by `numbox/core/__init__.py`
 - `test/core/` — tests for all core modules
 
 ## Preferences
@@ -143,6 +144,8 @@ Hard-won notes that aren't obvious from the code. Feature/merge history lives in
 
 ### Codegen / numba
 
+- **`numbox/__init__.py` is overwritten at release** (`release.yml` writes `__version__ = '<tag>'` over the whole file), so package-wide set-up goes in `numbox/core/__init__.py`, which installs the cache key before any numbox module compiles. Every numbox module that caches imports something under `numbox.core`.
+- **The cache key keys a cache, not a function.** `numbox.core.cache_key` marks the cache numba sets up when a numbox module's function, or one decorated inside `_keyed(func)` (`keyed_njit`, `keyed_cfunc`, `cres`, the `@proxy` body and wrapper), enables caching; `_index_key` then appends numbox's parts. A value the walker cannot put in the key makes that function compile uncached with an `UncachedWarning`, so a new kind of global in numbox's own jitted code must be canonicalizable by `_Walk.value`, or every process recompiles it.
 - **macOS-arm64 dead-code-elimination** (observed on py3.14 / numba 0.65.1): raw-pointer result stores (`array_data_p` + `store_unaligned`) were silently dropped, so `query_to_array` returned correct-shape all-zeros on that toolchain only. Write results through a numba-tracked `out.view(np.uint8)` (native byte-order via a typed view of an 8-byte scratch buffer), never a raw pointer.
 - **`@proxy` / `make_structref` cache anchors** ([`numbox/utils/preprocessing.py`](numbox/utils/preprocessing.py)) work around CPython [#122981](https://github.com/python/cpython/issues/122981) (the `@proxy` decorator line must be `co_firstlineno`) **and** numba's `co_consts` cache-key collision (numba hashes `co_code` but not `co_consts`, so pure-numeric-literal body edits don't shift the key).
 - **`Record` LARGE struct returns are rejected** by the ABI dispatcher: RecordModel uses a raw `[N x i8]*`, so a stack-alloca `sret` would dangle after the `@njit` return — it needs NRT-allocated storage. `Tuple` / `UniTuple` LARGE returns work.
