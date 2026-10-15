@@ -7,10 +7,11 @@ from numba import njit, typeof
 from numba.core.types import Type
 from typing import Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple as PyTuple, Union
 
+from numbox.core.cache_key import _settings_canon
 from numbox.core.configurations import jit_options as jit_options_
 from numbox.core.work.lowlevel_work_utils import ll_make_work
 from numbox.utils.fingerprint import (
-    _Unfingerprintable, _codegen_env_canon, _effective_flags, _fingerprint_function,
+    _Unfingerprintable, _effective_flags, _fingerprint_function,
     _fingerprint_function_best_effort, _flags_canon, _loaded_global_names,
 )
 from numbox.utils.highlevel import cres, _signature_identity, _type_identity
@@ -169,7 +170,7 @@ def _derive_anchor_cres(derive_sig, sig_canon, derive, derive_fp, jit_options):
         return None
     digest = sha256(
         f"derive-anchor-v2\n{derive_fp}\n# sig: {sig_canon}\n# flags: {flags_canon}"
-        f"\n# codegen_env: {_codegen_env_canon()}".encode("utf-8")
+        f"\n# settings: {_settings_canon()}".encode("utf-8")
     ).hexdigest()[:16]
     name = f"_derive_{digest}"
     params = ", ".join(f"a{i}" for i in range(len(derive_sig.args)))
@@ -277,7 +278,8 @@ def _kernel_fingerprint(code_block: str, derive_hashes: list, type_sigs: list, j
     derive source hashes, since a declared ty reaches the generated code only as the
     bare global name ``{name}_ty`` and so is not otherwise captured by the body.
 
-    Also folds the resolved jit flags and the process codegen env knobs. The body
+    Also folds the resolved jit flags and the ``NUMBA_*`` settings that change the
+    emitted code (see :mod:`numbox.core.cache_key`). The body
     text renders them only as the literal ``@njit(**jit_options)``, so without this
     two graphs differing solely in ``error_model`` or ``fastmath`` produced the same
     ``_make_<hash>`` name, shared numba's cache key, and the second process linked
@@ -294,7 +296,7 @@ def _kernel_fingerprint(code_block: str, derive_hashes: list, type_sigs: list, j
     flags_canon, ok_flags = _flags_canon(_effective_flags(jit_options))
     return code_block_hash(
         f"code_block = {code_block} derive_hashes = {derive_hashes} type_sigs = {type_sigs}"
-        f" flags = {flags_canon} codegen_env = {_codegen_env_canon()}"
+        f" flags = {flags_canon} settings = {_settings_canon()}"
     ), ok_flags
 
 

@@ -14,6 +14,7 @@ from numba.extending import overload, overload_method
 from textwrap import dedent, indent
 from typing import Callable, Iterable, Optional
 
+from numbox.core.cache_key import _keyed
 from numbox.core.configurations import jit_options as jit_options_
 from numbox.utils.derive_wap import DeriveWAP, jit_addr_supported
 from numbox.utils.fingerprint import (
@@ -80,7 +81,8 @@ def cres(sig, **kwargs):
         raise ValueError(f"Expected a single signature, found {sig} of type {type(sig)}")
 
     def _(func):
-        func_jit = njit(sig, **kwargs)(func)
+        with _keyed(func):
+            func_jit = njit(sig, **kwargs)(func)
         sigs = func_jit.nopython_signatures
         assert len(sigs) == 1, f"Ambiguous signature, {sigs}"
         func_cres = func_jit.get_compile_result(sigs[0])
