@@ -1,0 +1,56 @@
+name: probe-windows-zip
+
+on:
+  push:
+    branches: [ "probe/**" ]
+
+permissions:
+  contents: read
+
+jobs:
+  zip:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        numba: [ "0.68.0", "0.68.1rc2" ]
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/checkout@v6
+      with:
+        repository: Goykhman/numbox
+        ref: e170a76b3d79c6172073673189e5615867518162
+        path: numbox
+    - uses: actions/checkout@v6
+      with:
+        repository: Goykhman/numbarrow
+        ref: 2af2c6d955f8d9293d8a0c22d1f2414fcdc31615
+        path: numbarrow
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Install numba ${{ matrix.numba }}, numbox at e170a76 and numbarrow at 2af2c6d
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install "numba==${{ matrix.numba }}" numpy pyarrow pytest
+        echo "__version__ = '0.0.0'" > numbarrow/numbarrow/__init__.py
+        python -m pip install --no-deps -e ./numbox -e ./numbarrow
+        python -m pip list | grep -i -E "^(numba|llvmlite|numpy|pyarrow|numbox|numbarrow|pytest) "
+    - name: numbox imported from a zip, twice
+      if: ${{ !cancelled() }}
+      run: python probes/zip_probe.py numbox/numbox "import numbox.core.configurations, numbox.core.bindings.libm as m; print(m.__file__)"
+    - name: numbarrow imported from a zip, twice
+      if: ${{ !cancelled() }}
+      run: python probes/zip_probe.py numbarrow/numbarrow "import numpy as np; from numbarrow.utils.utils import arrays_viewers; src = np.array([-1, 0, 7], dtype=np.int32); print(arrays_viewers[np.int32](src.ctypes.data, 3).tolist())"
+    - name: numbox's test_no_cache_location.py
+      if: ${{ !cancelled() }}
+      working-directory: numbox
+      run: python -m pytest test/core/test_no_cache_location.py -rs -q -p no:cacheprovider --durations=10
+    - name: numbarrow's archive tests
+      if: ${{ !cancelled() }}
+      working-directory: numbarrow
+      run: python -m pytest test/test_cache.py test/test_configurations.py -k "zip or archive" -rs -v -p no:cacheprovider
