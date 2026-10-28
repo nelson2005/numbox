@@ -1,4 +1,4 @@
-"""Tests for the structref-backed SQLite UDAF/window registration helpers."""
+"""The tests cover the structref-backed SQLite registration helpers for UDAFs and window functions."""
 import gc
 from ctypes import addressof, c_char_p, c_int64
 
@@ -18,7 +18,7 @@ from numbox.utils.cstrings import c_string
 from numbox.utils.lowlevel import _cast_int_to_void_p
 
 
-# --- state type (module-level => importable, stable __module__) ---
+# --- State type, defined at module level so that it is importable and has a stable __module__ ---
 @structref.register
 class SumStateType(nb_types.StructRef):
     def preprocess_fields(self, fields):
@@ -50,7 +50,7 @@ def sum_finalize(state, ctx):
     sqlite3_result_int64(ctx, state.total)
 
 
-# --- test plumbing ---
+# --- Test helpers ---
 def _open_memory():
     db_p = c_int64(0)
     with c_string(":memory:") as name_p:
@@ -67,14 +67,14 @@ def _make_table(db, values):
 
 
 def _errmsg(db):
-    """Decode sqlite3_errmsg(db) (the most recent error string) to a str."""
+    """Decode the most recent error string, sqlite3_errmsg(db), to a str."""
     p = sqlite3_errmsg(db)
     return c_char_p(p).value.decode("utf-8", "replace") if p else ""
 
 
 def _read1_int64(db, select_sql):
-    """Route a scalar SELECT through a capture UDF that stores arg0 into a
-    numpy buffer; returns (value, keepalive)."""
+    """Route a scalar SELECT through a capture UDF that stores arg0 into a numpy buffer, and return
+    (value, keepalive)."""
     buf = np.zeros(1, dtype=np.int64)
 
     @cfunc(types.void(types.intp, types.int32, types.intp))
@@ -97,7 +97,7 @@ def test_aggregate_sum():
     db = _open_memory()
     _make_table(db, [1, 2, 3, 4, 5])
     register_aggregate(db, "my_sum", 1, sum_state_type, sum_init, sum_step, sum_finalize)
-    gc.collect()  # no handle retained; callbacks survive GC (numba keeps the JIT code alive)
+    gc.collect()  # No handle is retained. The callbacks survive GC because numba keeps the JIT code alive.
     val, _cap = _read1_int64(db, "SELECT __cap(my_sum(v)) FROM t")
     sqlite3_close(db)
     assert val == 15
@@ -126,9 +126,9 @@ import sys                                           # noqa: E402
 import textwrap                                      # noqa: E402
 
 
-# A self-contained driver: defines a state type + sum UDAF in an importable
-# module, registers it, runs SELECT sum(v), prints the result. {MULT} is the
-# step multiplier (1 normally; flipped to prove invalidation).
+# _DRIVER is a self-contained driver. It defines a state type and a sum UDAF in an importable module, registers the
+# UDAF, runs SELECT sum(v) and prints the result. {MULT} is the step multiplier: it is 1 normally, and a test changes
+# it to prove cache invalidation.
 _DRIVER = textwrap.dedent('''
     from ctypes import addressof, c_int64
     import numpy as np
@@ -203,32 +203,32 @@ def _run_driver(tmp_path, cache_dir, mult):
 
 
 def _count_nbc(cache_dir):
-    # Count only the generated UDAF impl caches (anchor stem "udaf_"/"wudaf_"),
-    # not the whole cache: scoping keeps the no-growth assertion immune to
-    # unrelated bindings whose compile timing could differ across the matrix.
+    # The count covers only the caches of the generated UDAF implementations (anchor stem "udaf_" or "wudaf_"), not the
+    # whole cache. This limit prevents unrelated bindings from affecting the no-growth assertion, because their compile
+    # timing could differ across the matrix.
     return sum(1 for _ in cache_dir.rglob("*udaf*.nbc"))
 
 
 def test_xprocess_cache_no_growth(tmp_path):
     cache = tmp_path / "nbcache"
     cache.mkdir()
-    assert _run_driver(tmp_path, cache, 1) == 15      # cold: compiles + writes cache
+    assert _run_driver(tmp_path, cache, 1) == 15      # The cold run compiles and writes the cache
     n_cold = _count_nbc(cache)
     assert n_cold > 0
-    assert _run_driver(tmp_path, cache, 1) == 15      # warm: must reuse, not append
+    assert _run_driver(tmp_path, cache, 1) == 15      # The warm run must reuse the cache, not append to it
     assert _count_nbc(cache) == n_cold, "warm run grew the cache (C failure mode)"
 
 
 def test_invalidation_on_literal_edit(tmp_path):
     cache = tmp_path / "nbcache"
     cache.mkdir()
-    assert _run_driver(tmp_path, cache, 1) == 15       # step: += 1*v  => 15
-    assert _run_driver(tmp_path, cache, 3) == 45       # step: += 3*v  => 45 (not stale 15)
+    assert _run_driver(tmp_path, cache, 1) == 15       # The step adds 1*v, so the sum is 15
+    assert _run_driver(tmp_path, cache, 3) == 45       # The step adds 3*v, so the sum is 45 and not the stale 15
 
 
 def test_jit_options_cache_disabled_honored(tmp_path):
-    """Generated impls honor the numbox-wide jit_options: with NUMBOX_JIT_OPTIONS
-    cache off, the UDAF still computes correctly and writes no impl .nbc."""
+    """The generated implementations honor the numbox-wide jit_options. If NUMBOX_JIT_OPTIONS turns the cache off, the
+    UDAF still computes correctly and writes no implementation .nbc."""
     cache = tmp_path / "nbcache_nocache"
     cache.mkdir()
     script = tmp_path / "drv_nocache.py"
@@ -239,7 +239,7 @@ def test_jit_options_cache_disabled_honored(tmp_path):
                          capture_output=True, text=True, timeout=600)
     assert out.returncode == 0, out.stderr
     result = [ln for ln in out.stdout.splitlines() if ln.startswith("RESULT")][0]
-    assert int(result.split()[1]) == 15                # correct with cache disabled
+    assert int(result.split()[1]) == 15                # The result is correct with the cache disabled
     assert _count_nbc(cache) == 0, "cache disabled but a udaf impl .nbc was written"
 
 
@@ -255,7 +255,7 @@ def w_value(state, ctx):
 
 
 def _read_window(db, select_sql, nrows):
-    meta = np.zeros(nrows + 1, dtype=np.int64)  # meta[0]=count, meta[1:]=values
+    meta = np.zeros(nrows + 1, dtype=np.int64)  # meta[0] holds the count and meta[1:] hold the values
 
     @cfunc(types.void(types.intp, types.int32, types.intp))
     def wcap_cb(ctx, argc, argv):
@@ -288,7 +288,7 @@ def test_window_running_sum():
 
 
 @njit
-def sum2_step(state, ctx, argc, argv_pp):  # distinct body => independent compiled callbacks
+def sum2_step(state, ctx, argc, argv_pp):  # A distinct body yields independent compiled callbacks
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
     state.total += 2 * sqlite3_value_int64(args[0])
 
@@ -314,10 +314,9 @@ def test_deterministic_flag():
 
 
 def test_deterministic_flag_ors_bit(monkeypatch):
-    """deterministic=True must OR SQLITE_DETERMINISTIC into the flags passed to
-    sqlite3_create_function_v2, and the default must not. The flag is a
-    query-planner hint with no effect on an aggregate's value, so a result
-    assertion alone cannot guard this contract -- spy on the flags instead."""
+    """deterministic=True must OR SQLITE_DETERMINISTIC into the flags passed to sqlite3_create_function_v2, and the
+    default must not. The flag is a query-planner hint with no effect on an aggregate's value, so a result assertion
+    alone cannot verify this contract. The test therefore records the flags through a spy instead."""
     import numbox.core.bindings.sqlite.udf_helpers as helpers
     real = helpers.sqlite3_create_function_v2
     seen = []
@@ -343,7 +342,7 @@ def test_no_meminfo_leak():
         import pytest
         pytest.skip("NRT allocation stats unavailable")
     _nrt.memsys_enable_stats()
-    test_aggregate_sum()          # warm up JIT / one-time allocs
+    test_aggregate_sum()          # This call warms up the JIT and the one-time allocations
     test_window_running_sum()
     before = nrt.rtsys.get_allocation_stats()
     for _ in range(10):
@@ -376,15 +375,14 @@ def test_window_deterministic_flag_ors_bit(monkeypatch):
 
 
 def test_registration_error_raises(monkeypatch):
-    """A non-OK return from sqlite registration surfaces as a RuntimeError via
-    _raise_rc, not a silent success. The non-OK code is injected (rather than
-    relying on an out-of-range n_arg or an over-long name, whose rejection is
-    build-dependent -- SQLITE_MAX_FUNCTION_ARG and name limits vary), so the
-    test is portable across sqlite builds."""
+    """A non-OK return from sqlite registration raises a RuntimeError through _raise_rc instead of succeeding silently.
+    The test injects the non-OK code, so the test is portable across sqlite builds. An out-of-range n_arg or an
+    over-long name would not be portable, because its rejection is build-dependent: SQLITE_MAX_FUNCTION_ARG and name
+    limits vary."""
     import pytest
     import numbox.core.bindings.sqlite.udf_helpers as helpers
     monkeypatch.setattr(helpers, "sqlite3_create_function_v2",
-                        lambda *a, **k: 1)  # non-OK rc (SQLITE_ERROR)
+                        lambda *a, **k: 1)  # The lambda returns a non-OK rc (SQLITE_ERROR)
     db = _open_memory()
     with pytest.raises(RuntimeError, match="registration failed"):
         register_aggregate(db, "err", 1, sum_state_type, sum_init, sum_step, sum_finalize)
@@ -392,8 +390,8 @@ def test_registration_error_raises(monkeypatch):
 
 
 def test_plain_python_callbacks_accepted():
-    """Plain (undecorated) Python callbacks are njit-wrapped by the helper and
-    work end-to-end -- callers need not pre-``@njit`` them."""
+    """The helper wraps plain (undecorated) Python callbacks with njit, and the callbacks work end to end. Callers do
+    not need to apply ``@njit`` to them first."""
     db = _open_memory()
     _make_table(db, [1, 2, 3, 4, 5])
 
@@ -408,14 +406,14 @@ def test_plain_python_callbacks_accepted():
         sqlite3_result_int64(ctx, state.total)
 
     register_aggregate(db, "plain_sum", 1, sum_state_type, plain_init, plain_step, plain_finalize)
-    gc.collect()  # no handle retained; plain callbacks njit-wrapped, survive GC too
+    gc.collect()  # No handle is retained. The njit-wrapped plain callbacks survive GC as well.
     val, _cap = _read1_int64(db, "SELECT __cap(plain_sum(v)) FROM t")
     sqlite3_close(db)
     assert val == 15
 
 
 def test_non_callable_callback_rejected():
-    """A non-callable callback is rejected up front with a clear TypeError."""
+    """A non-callable callback is rejected immediately with a clear TypeError."""
     import pytest
     db = _open_memory()
     with pytest.raises(TypeError, match="step must be a callable"):
@@ -423,7 +421,7 @@ def test_non_callable_callback_rejected():
     sqlite3_close(db)
 
 
-# --- multi-field state + multi-arg UDAF parity ---
+# --- Multi-field state and multi-argument UDAF parity ---
 @structref.register
 class PairStateType(nb_types.StructRef):
     def preprocess_fields(self, fields):
@@ -466,7 +464,7 @@ def test_multiarg_multifield_state():
     register_aggregate(db, "pairsum", 2, pair_state_type, pair_init, pair_step, pair_finalize)
     val, _cap = _read1_int64(db, "SELECT __cap(pairsum(a, b)) FROM t2")
     sqlite3_close(db)
-    assert val == 156  # sa=1+2+3=6, sb=4+5+6=15 => 6 + 10*15
+    assert val == 156  # sa=1+2+3=6 and sb=4+5+6=15, so the result is 6 + 10*15
 
 
 @njit
@@ -475,8 +473,8 @@ def raising_finalize(state, ctx):
 
 
 def test_finalize_exception_surfaces_error_and_no_leak():
-    """A raising finalize must fail the query (xFinal reports SQLITE_ERROR) and
-    must not leak the exported meminfo slot -- xFinal releases in a try/except."""
+    """A raising finalize must fail the query (xFinal reports SQLITE_ERROR) and must not leak the exported meminfo slot.
+    xFinal releases the slot in a try/except."""
     from numba.core.runtime import nrt
     _nrt = nrt._nrt
     if not hasattr(_nrt, "memsys_enable_stats"):
@@ -488,11 +486,11 @@ def test_finalize_exception_surfaces_error_and_no_leak():
     register_aggregate(db, "raise_fin", 1, sum_state_type, sum_init, sum_step, raising_finalize)
     with c_string("SELECT raise_fin(v) FROM t") as sp:
         rc = sqlite3_exec(db, sp, 0, 0, 0)
-    assert rc != SQLITE_OK  # error surfaced to sqlite, not a silent wrong result
-    assert "finalize callback" in _errmsg(db)  # descriptive message, not the generic code
+    assert rc != SQLITE_OK  # sqlite3_exec returns the error instead of a silent wrong result
+    assert "finalize callback" in _errmsg(db)  # The message is descriptive, not the generic text for the error code
 
     _nrt.memsys_enable_stats()
-    with c_string("SELECT raise_fin(v) FROM t") as sp:  # warm
+    with c_string("SELECT raise_fin(v) FROM t") as sp:  # This run is the warm-up
         sqlite3_exec(db, sp, 0, 0, 0)
     before = nrt.rtsys.get_allocation_stats()
     for _ in range(10):
@@ -524,11 +522,11 @@ def test_step_exception_surfaces_error_and_no_leak():
     register_aggregate(db, "raise_step", 1, sum_state_type, sum_init, raising_step, sum_finalize)
     with c_string("SELECT raise_step(v) FROM t") as sp:
         rc = sqlite3_exec(db, sp, 0, 0, 0)
-    assert rc != SQLITE_OK  # raising step fails the query, not a silent wrong result
-    assert "step callback" in _errmsg(db)  # descriptive message, not the generic code
+    assert rc != SQLITE_OK  # The raising step fails the query instead of producing a silent wrong result
+    assert "step callback" in _errmsg(db)  # The message is descriptive, not the generic text for the error code
 
     _nrt.memsys_enable_stats()
-    with c_string("SELECT raise_step(v) FROM t") as sp:  # warm
+    with c_string("SELECT raise_step(v) FROM t") as sp:  # This run is the warm-up
         sqlite3_exec(db, sp, 0, 0, 0)
     before = nrt.rtsys.get_allocation_stats()
     for _ in range(10):
@@ -565,10 +563,10 @@ def test_value_exception_surfaces_error_and_no_leak():
     with c_string(_WIN_SQL % "raise_wval") as sp:
         rc = sqlite3_exec(db, sp, 0, 0, 0)
     assert rc != SQLITE_OK
-    assert "value callback" in _errmsg(db)  # descriptive message, not the generic code
+    assert "value callback" in _errmsg(db)  # The message is descriptive, not the generic text for the error code
 
     _nrt.memsys_enable_stats()
-    with c_string(_WIN_SQL % "raise_wval") as sp:  # warm
+    with c_string(_WIN_SQL % "raise_wval") as sp:  # This run is the warm-up
         sqlite3_exec(db, sp, 0, 0, 0)
     before = nrt.rtsys.get_allocation_stats()
     for _ in range(10):
@@ -587,9 +585,9 @@ def raising_inverse(state, ctx, argc, argv_pp):
 
 
 def test_inverse_exception_surfaces_error_and_no_leak():
-    """A raising window inverse must fail the query and must not leak the borrowed
-    meminfo. (SQLite does not document xInverse error propagation, but it is
-    observed on the system sqlite; the load-bearing guarantee is no-leak.)"""
+    """A raising window inverse must fail the query and must not leak the borrowed meminfo. SQLite does not document
+    whether an error in xInverse propagates, but the propagation is observed on the system sqlite. The essential
+    guarantee is the absence of a leak."""
     from numba.core.runtime import nrt
     _nrt = nrt._nrt
     if not hasattr(_nrt, "memsys_enable_stats"):
@@ -604,7 +602,7 @@ def test_inverse_exception_surfaces_error_and_no_leak():
     assert rc != SQLITE_OK
 
     _nrt.memsys_enable_stats()
-    with c_string(_WIN_SQL % "raise_winv") as sp:  # warm
+    with c_string(_WIN_SQL % "raise_winv") as sp:  # This run is the warm-up
         sqlite3_exec(db, sp, 0, 0, 0)
     before = nrt.rtsys.get_allocation_stats()
     for _ in range(10):
@@ -618,32 +616,31 @@ def test_inverse_exception_surfaces_error_and_no_leak():
 
 
 def test_finalize_exception_empty_group_surfaces_error():
-    """A raising finalize on an EMPTY group (xFinal's no-state branch, where no
-    xStep ran so the aggregate context is NULL) must also fail the query, not be
-    silently swallowed -- the empty-group branch is guarded like the borrow path."""
+    """A raising finalize on an empty group must also fail the query, and its exception must not be discarded silently.
+    An empty group takes xFinal's no-state branch: no xStep ran, so the aggregate context is NULL. The empty-group
+    branch is guarded like the borrow path."""
     db = _open_memory()
-    _make_table(db, [])  # empty: xStep never runs -> xFinal hits the no-state branch
+    _make_table(db, [])  # With an empty table, xStep never runs and xFinal takes the no-state branch
     register_aggregate(db, "raise_fin_empty", 1, sum_state_type, sum_init, sum_step, raising_finalize)
     with c_string("SELECT raise_fin_empty(v) FROM t") as sp:
         rc = sqlite3_exec(db, sp, 0, 0, 0)
     msg = _errmsg(db)
     sqlite3_close(db)
-    assert rc != SQLITE_OK  # raising finalize on an empty group must fail loudly
-    assert "finalize callback" in msg  # descriptive message even on the empty-group path
+    assert rc != SQLITE_OK  # A raising finalize on an empty group must fail with an error
+    assert "finalize callback" in msg  # The message is descriptive on the empty-group path as well
 
 
 @njit
 def init_raise():
     s = SumState(np.int64(0))
-    if s.total >= 0:  # always true at runtime; keeps the St return type for typing
+    if s.total >= 0:  # The condition is always true at run time, but it keeps the St return type for typing
         raise ValueError("boom from init")
     return s
 
 
 def test_init_exception_surfaces_error_no_unraisable():
-    """A raising init (called at xStep's first-row export) must be caught and
-    reported as 'error in user init callback', NOT swallowed by the @cfunc
-    boundary as an 'Exception ignored' unraisable."""
+    """A raising init (called at xStep's first-row export) must be caught and reported as 'error in user init callback'.
+    The @cfunc boundary must not discard the exception as an 'Exception ignored' unraisable."""
     db = _open_memory()
     _make_table(db, [1, 2, 3])
     register_aggregate(db, "raise_init", 1, sum_state_type, init_raise, sum_step, sum_finalize)
@@ -659,7 +656,7 @@ def test_init_exception_surfaces_error_no_unraisable():
     sqlite3_close(db)
     assert not captured, "raising init leaked an unraisable (swallowed): %r" % (captured,)
     assert rc != SQLITE_OK
-    assert "init callback" in msg  # accurate role, not a mislabeled finalize error
+    assert "init callback" in msg  # The message names the correct role, not a mislabeled finalize error
 
 
 def test_init_exception_empty_group_surfaces_error():

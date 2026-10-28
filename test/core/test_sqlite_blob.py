@@ -1,4 +1,4 @@
-"""BLOB incremental I/O tests for the SQLite buildout."""
+"""The tests cover the SQLite bindings for incremental BLOB I/O."""
 from ctypes import addressof, c_int64
 
 import numpy as np
@@ -15,9 +15,8 @@ from numbox.utils.cstrings import c_string
 
 @pytest.fixture
 def populated_db(tmp_path):
-    """Create a file-backed db (not :memory:, since stdlib + our bindings
-    can't share an in-memory connection) with t(b BLOB) containing one row
-    of known bytes at rowid 1."""
+    """Create a file-backed database with t(b BLOB) containing one row of known bytes at rowid 1. The database is not
+    :memory:, because the stdlib sqlite3 module and the numbox bindings cannot share an in-memory connection."""
     import sqlite3 as stdlib_sqlite3
     db_file = tmp_path / "blob.sqlite"
     conn = stdlib_sqlite3.connect(str(db_file))

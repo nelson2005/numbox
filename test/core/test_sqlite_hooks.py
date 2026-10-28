@@ -1,9 +1,8 @@
-"""Callback hook tests for the SQLite buildout.
+"""The tests cover the SQLite callback hook bindings.
 
-Uses numpy int64 arrays as ctx — passing `arr.ctypes.data` as the ctx pointer
-lets @cfunc callbacks read/write the array's bytes directly. This is the
-canonical pattern for capturing state across the C->Python boundary without
-ctypes-level Python object refs.
+The tests use numpy int64 arrays as ctx. If `arr.ctypes.data` is passed as the ctx pointer, the @cfunc callbacks can
+read and write the bytes of the array directly. This pattern is the canonical way to capture state across the boundary
+from C to Python without ctypes-level references to Python objects.
 """
 from ctypes import addressof, c_int64
 
@@ -21,11 +20,12 @@ from numbox.core.bindings.sqlite.exec import sqlite3_exec
 from numbox.utils.cstrings import c_string
 
 
-# Module-level cfuncs — must outlive any hook registration.
+# These cfuncs are defined at module level because they must outlive any hook registration.
 
 @cfunc(types.void(types.voidptr, types.int32, types.intp, types.intp, types.int64))
 def _update_cb(ctx, op, db_p, tbl_p, rowid):
-    """Write op into ctx[0] (rolling: ctx[idx]=op where idx = ctx[64]++)."""
+    """Write op into the next entry of the op log in ctx, starting at ctx[0]. The index of that entry is ctx[64], which
+    the callback then increments."""
     arr = carray(ctx, 128, dtype=np.int64)
     idx = arr[64]
     arr[idx] = op
@@ -34,17 +34,17 @@ def _update_cb(ctx, op, db_p, tbl_p, rowid):
 
 @cfunc(types.int32(types.voidptr))
 def _progress_abort_cb(ctx):
-    return 1  # nonzero -> abort
+    return 1  # A nonzero return aborts the operation
 
 
 @cfunc(types.int32(types.voidptr, types.int32))
 def _busy_abort_cb(ctx, n):
-    return 0  # zero -> abort (no retry)
+    return 0  # A return of 0 aborts instead of retrying
 
 
 @cfunc(types.int32(types.voidptr))
 def _commit_veto_cb(ctx):
-    return 1  # nonzero -> veto
+    return 1  # A nonzero return vetoes the commit
 
 
 @cfunc(types.void(types.voidptr))
@@ -79,14 +79,14 @@ def populated_db(tmp_path):
 
 
 def test_update_hook_records_ops(populated_db):
-    # ctx layout: arr[0..63] = op log, arr[64] = next-write index
+    # In the ctx layout, arr[0..63] holds the op log and arr[64] holds the next-write index.
     ctx = np.zeros(128, dtype=np.int64)
     sqlite3_update_hook(populated_db, _update_cb.address, ctx.ctypes.data)
     with c_string("INSERT INTO t VALUES (99); DELETE FROM t WHERE a=99;") as sql_p:
         rc = sqlite3_exec(populated_db, sql_p, 0, 0, 0)
     assert rc == SQLITE_OK
     # SQLITE_INSERT = 18, SQLITE_DELETE = 9
-    assert ctx[64] == 2  # two callbacks fired
+    assert ctx[64] == 2  # SQLite invokes the callback twice
     assert ctx[0] == 18
     assert ctx[1] == 9
 
@@ -99,8 +99,8 @@ def test_progress_handler_aborts(populated_db):
 
 
 def test_busy_handler_registration_returns_ok(populated_db):
-    # Triggering busy-condition reliably is hard in a unit test (needs two
-    # connections / file locking). Verify only that registration succeeds.
+    # A busy condition is difficult to trigger reliably in a unit test, because it requires two connections and file
+    # locking. The test verifies only that the registration succeeds.
     rc = sqlite3_busy_handler(populated_db, _busy_abort_cb.address, 0)
     assert rc == SQLITE_OK
 
@@ -109,7 +109,7 @@ def test_commit_hook_vetoes(populated_db):
     sqlite3_commit_hook(populated_db, _commit_veto_cb.address, 0)
     with c_string("INSERT INTO t VALUES (42)") as sql_p:
         rc = sqlite3_exec(populated_db, sql_p, 0, 0, 0)
-    # Vetoed commit -> rolled back; sqlite3_exec returns non-OK (typically
+    # SQLite rolls back the vetoed commit. sqlite3_exec then returns a code other than SQLITE_OK (typically
     # SQLITE_CONSTRAINT_TRIGGER or SQLITE_CONSTRAINT in some versions).
     assert rc != SQLITE_OK
 

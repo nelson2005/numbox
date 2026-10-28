@@ -1,4 +1,7 @@
-"""``NUMBOX_JIT_OPTIONS``, read once when ``numbox.core.configurations`` is imported, so read in a child."""
+"""The tests cover values of ``NUMBOX_JIT_OPTIONS`` that numbox refuses with an error that names the variable. numbox
+reads the variable once, when ``numbox.core.configurations`` is imported, so each test imports that module in a child
+process.
+"""
 import os
 import subprocess
 import sys
@@ -10,9 +13,9 @@ IMPORT_CONFIGURATIONS = "import numbox.core.configurations"
 
 @pytest.mark.parametrize("value", ["null", "42", "[]", '"cache"'])
 def test_a_value_that_is_not_an_object_is_refused_by_name(tmp_path, value):
-    # Valid JSON of another shape went to njit as keyword arguments and died
-    # there, or at the fallback's read of "cache", with a message naming
-    # neither the variable nor the shape it takes.
+    # Without the check, njit would receive valid JSON of another shape as keyword arguments and fail there, or the
+    # fallback would fail when it reads "cache". In either case, the error message would name neither the variable
+    # nor the shape that the variable takes.
     env = dict(os.environ, NUMBOX_JIT_OPTIONS=value)
     run = subprocess.run([sys.executable, "-c", IMPORT_CONFIGURATIONS], capture_output=True, text=True, env=env,
                          cwd=str(tmp_path))
@@ -22,8 +25,8 @@ def test_a_value_that_is_not_an_object_is_refused_by_name(tmp_path, value):
 
 @pytest.mark.parametrize("value", ['{"cache": "false"}', '{"cache": 0}', '{"cache": null}'])
 def test_a_cache_value_that_is_not_a_boolean_is_refused_by_name(tmp_path, value):
-    # The string "false", the natural quoting slip in an environment variable,
-    # is true to numba, which reads the option's truth, so caching stayed on.
+    # The string "false" is a common quoting error in an environment variable. numba tests the option for truth, and
+    # the string "false" is true, so caching would stay on without the check.
     env = dict(os.environ, NUMBOX_JIT_OPTIONS=value)
     run = subprocess.run([sys.executable, "-c", IMPORT_CONFIGURATIONS], capture_output=True, text=True, env=env,
                          cwd=str(tmp_path))

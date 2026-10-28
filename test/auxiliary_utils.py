@@ -37,25 +37,23 @@ def collect_and_run_tests(module_name):
 def open_libm():
     """Open the platform's math library and return a fresh handle, or ``None``.
 
-    The handle answers to ``ceil``, ``cos`` and ``floor``, every symbol a caller needs
-    to be present, or the result is ``None`` and there is nothing on this machine to run
-    those tests against. Returning ``None`` rather than raising is the point: a platform
-    with no usable C runtime should skip, the way one where ``find_library`` comes up
-    empty already does, not turn into a failure that reads like a defect in the code
-    under test. Gating on a subset gives that away, because a library holding only the
-    subset is admitted and the callers reaching past it fail instead of skipping.
+    A returned handle has ``ceil``, ``cos`` and ``floor``, every symbol that a caller requires. If every candidate
+    library lacks one of them, the result is ``None``: this machine then has nothing to run those tests against. The
+    function returns ``None`` rather than raising by design. A platform with no usable C runtime should skip, as a
+    platform already does when ``find_library`` finds nothing. It should not fail with an error that suggests a defect
+    in the code under test. A check on a subset of the symbols would lose that behavior. A library that holds only the
+    subset would pass the check, and the callers that use the other symbols would fail instead of skipping.
 
-    ``find_library("m")`` resolves it on Linux (a soname) and on macOS (a path into
-    the dyld shared cache). On Windows the C runtime is not loadable by name --
-    ``find_msvcrt()`` returns ``None`` for every VS2015+ build -- so try ``msvcrt``,
-    the legacy CRT shim :func:`numbox.core.bindings.utils.load_lib` already falls back
-    to, and then ``ucrtbase``, the CRT the interpreter itself links. All three are C89,
-    so the shim carries them on any image that has the shim at all; ``ucrtbase`` is
-    there for an image that does not. Falling through rather than giving up on the
-    first candidate keeps the coverage a skip would give away.
+    ``find_library("m")`` resolves the library on Linux (a soname) and on macOS (a path into the dyld shared cache).
+    On Windows, the C runtime is not loadable by name: ``find_msvcrt()`` returns ``None`` for every VS2015+ build.
+    The function therefore tries ``msvcrt`` and then ``ucrtbase``. ``msvcrt`` is the legacy CRT shim that
+    :func:`numbox.core.bindings.utils.load_lib` already falls back to. ``ucrtbase`` is the CRT that the interpreter
+    itself links. All three functions are C89, so the shim provides them on any image that has the shim. ``ucrtbase``
+    is the fallback for an image without the shim. The function falls through to the next candidate instead of
+    stopping at the first. It thereby keeps the coverage that a skip would lose.
 
-    Each call opens its own handle rather than sharing a cached one, so a caller
-    comparing two handles is comparing two.
+    Each call opens its own handle rather than sharing a cached one, so a caller that compares two handles compares
+    two distinct handles.
     """
     import ctypes
     from ctypes.util import find_library
@@ -122,57 +120,47 @@ def test_str_from_p_as_int():
 def assert_njit_cache_survives_subprocess_roundtrip(
         tmp_path, probe_source, expected_stdout_lines,
 ):
-    """Verify ``@njit(cache=True)`` callers in *probe_source* survive a
-    process restart (the load-bearing property of ``@proxy``-wrapped
-    bindings and of the fmtio variadic-intrinsic dispatch).
+    """Verify that the ``@njit(cache=True)`` callers in *probe_source* survive a process restart.
 
-    Mechanics:
+    ``@proxy``-wrapped bindings and the fmtio variadic-intrinsic dispatch both depend on that property. The helper
+    works in these steps:
 
-    - Writes *probe_source* to a fresh ``.py`` file under ``tmp_path``.
-      (``@njit(cache=True)`` refuses to cache functions whose
-      ``co_filename`` is ``<string>``, so the probe has to live in a real
-      file rather than be passed via ``python -c``.)
-    - Runs the probe twice in subprocess, sharing
-      ``NUMBA_CACHE_DIR = tmp_path/numba-cache``. The cold run populates
-      the cache; the warm run must reuse it.
-    - Asserts each run's stdout splits to *expected_stdout_lines*.
-    - Asserts the cache state is byte-identical between the two runs:
-      * the set of ``*.nbc`` + ``*.nbi`` file paths is unchanged
-        (catches added / removed files — e.g. a new specialization or
-        a sweep that deleted something)
-      * each file's mtime is unchanged (catches in-place rewrites,
-        which would happen on a cache miss that recompiles to the
-        same signature)
+    - It writes *probe_source* to a fresh ``.py`` file under ``tmp_path``. ``@njit(cache=True)`` refuses to cache
+      functions whose ``co_filename`` is ``<string>``, so the probe must be a real file rather than code passed through
+      ``python -c``.
+    - It runs the probe twice, each time in a subprocess, and both runs share
+      ``NUMBA_CACHE_DIR = tmp_path/numba-cache``. The cold run populates the cache, and the warm run must reuse it.
+    - It asserts that the stdout of each run splits into *expected_stdout_lines*.
+    - It asserts that the cache state is byte-identical between the two runs:
+      * The set of ``*.nbc`` and ``*.nbi`` file paths is unchanged. This catches added or removed files, for example
+        a new specialization or a sweep that deleted a file.
+      * The mtime of each file is unchanged. This catches in-place rewrites, which would happen on a cache miss that
+        recompiles to the same signature.
 
-    Globbing both ``.nbc`` and ``.nbi`` is strictly tighter than
-    ``.nbc`` alone: empirical inspection on the current numba shows
-    neither is touched on cache hit, but checking both pins against a
-    future numba release that might write ``.nbi`` metadata on hit.
+    A glob over both ``.nbc`` and ``.nbi`` is strictly tighter than a glob over ``.nbc`` alone. Empirical inspection
+    on the current numba shows that a cache hit touches neither file. The check of both still guards against a future
+    numba release that might write ``.nbi`` metadata on a hit.
 
-    *probe_source* is passed through ``textwrap.dedent`` so callers can
-    use triple-quoted strings with leading indentation. The probe must
-    import its own dependencies and ``print()`` whatever it wants
-    asserted; no other communication channel.
+    The helper passes *probe_source* through ``textwrap.dedent``, so callers can use triple-quoted strings with
+    leading indentation. The probe must import its own dependencies and ``print()`` everything that it wants
+    asserted. The helper has no other communication channel with the probe.
 
-    *expected_stdout_lines* is compared via ``splitlines()`` so platform
-    line-endings (``\\n`` vs ``\\r\\n``) don't matter.
+    The helper compares *expected_stdout_lines* with the result of ``splitlines()``, so platform line endings
+    (``\\n`` versus ``\\r\\n``) do not matter.
     """
-    import pathlib  # local — avoid a top-level import in the test utils
+    import pathlib  # The import is local to avoid a top-level import in the test utils.
     probe = pathlib.Path(tmp_path) / "probe.py"
-    # Write the probe explicitly as UTF-8. Without encoding= Path.write_text
-    # uses locale.getpreferredencoding() which is cp1252 on Windows runners
-    # and would raise UnicodeEncodeError on any non-Latin-1 char in the
-    # probe source (arrows, em-dashes, accented chars in test data, ...).
+    # Write the probe explicitly as UTF-8. Path.write_text without encoding= uses locale.getpreferredencoding(), which
+    # is cp1252 on Windows runners. That encoding would raise UnicodeEncodeError on any character outside Latin-1 in
+    # the probe source, such as arrows, em dashes and accented characters in test data.
     probe.write_text(textwrap.dedent(probe_source), encoding="utf-8")
     cache_dir = pathlib.Path(tmp_path) / "numba-cache"
     env = {**os.environ, "NUMBA_CACHE_DIR": str(cache_dir)}
 
     def _run(label):
-        # Force UTF-8 decoding on both ends: PYTHONIOENCODING so the
-        # subprocess uses UTF-8 for stdout/stderr (overrides Windows
-        # cp1252 default), and encoding="utf-8" so capture_output decodes
-        # the captured bytes as UTF-8 (otherwise text=True would use the
-        # parent's locale, which is cp1252 on Windows runners).
+        # Force UTF-8 decoding on both ends. PYTHONIOENCODING makes the subprocess use UTF-8 for stdout and stderr,
+        # which overrides the Windows default of cp1252. encoding="utf-8" makes capture_output decode the captured
+        # bytes as UTF-8. Without it, text=True would use the locale of the parent, which is cp1252 on Windows runners.
         r = subprocess.run(
             [sys.executable, str(probe)],
             env={**env, "PYTHONIOENCODING": "utf-8"},

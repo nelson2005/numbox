@@ -222,8 +222,8 @@ but data and sources imply () -> float64"""
 
 
 def test_get_input_rejects_negative_index():
-    # a negative index must be out-of-range, not silently honored as Python
-    # negative indexing into the inputs vector (which would return a wrong work).
+    # get_input must treat a negative index as out of range. It must not silently apply Python negative indexing to
+    # the inputs vector, because that would return the wrong work.
     w1 = make_work("w1", 3.14)
     w2 = make_work("w2", 2)
 
@@ -236,9 +236,9 @@ def test_get_input_rejects_negative_index():
 
 
 def test_explain_on_make_work_graph_uses_fallback():
-    # a derive built via make_work (not builder.make_graph) is not registered in
-    # _derive_funcs, so explain() can't recover its source. It must degrade to a
-    # defined fallback line, not raise AttributeError on None.__name__.
+    # A derive built through make_work, not builder.make_graph, is not registered in _derive_funcs, so explain()
+    # cannot recover its source. explain() must then produce a defined fallback line instead of raising
+    # AttributeError on None.__name__.
     w1 = make_work("w1", 3.14)
     w2 = make_work("w2", 2)
 
@@ -253,9 +253,9 @@ def test_explain_on_make_work_graph_uses_fallback():
 
 
 def test_cres_requires_explicit_signature():
-    # cres pins the compiled return type to the declared one. Were a bare type
-    # accepted, the return could infer as a Literal and be delivered as a zero
-    # through the first-class call.
+    # cres compiles with the declared signature, so the compiled return type is the declared one. If cres accepted a
+    # bare type, the return type could be inferred as a Literal, and the first-class call would return the value as
+    # zero.
     with pytest.raises(ValueError) as e:
         @cres(float64)
         def derive_no_sig():
@@ -265,8 +265,8 @@ def test_cres_requires_explicit_signature():
 
 @pytest.mark.parametrize("eager", [True, False])
 def test_make_work_rejects_bare_dispatcher(eager):
-    # a CPUDispatcher derive is the lazily-typed path that loses a Literal return
-    # value; make_work must refuse it rather than cast it to a FunctionType.
+    # A CPUDispatcher derive is typed lazily, and that path loses a Literal return value. make_work must therefore
+    # reject it rather than cast it to a FunctionType.
     def derive_pi():
         return 3.14
     derive_jit = njit(float64())(derive_pi) if eager else njit(derive_pi)
@@ -276,16 +276,15 @@ def test_make_work_rejects_bare_dispatcher(eager):
 
 
 def test_make_work_exposes_py_func():
-    """`make_work` stopped being a dispatcher; the attribute callers introspected
-    survives as the undecorated implementation."""
+    """`make_work` is no longer a dispatcher, but it keeps ``py_func``, the attribute that callers introspect on a
+    dispatcher. The attribute holds the undecorated implementation."""
     assert make_work.py_func is _make_work_jit.py_func
 
 
 def test_source_getters_are_generated_once_per_namespace():
-    # _codegen_method hands the getters either work.py's own namespace or a copy
-    # of it extended by ns_extras, so presence is a question for the namespace: a
-    # getter generated into the copy is absent from the original, and a getter
-    # already present is kept rather than generated again.
+    # _codegen_method generates the getters into either the namespace of work.py or a copy of it extended by
+    # ns_extras, so the presence of a getter is checked in that namespace itself. A getter generated into the copy is
+    # absent from the original, and a getter that is already present is kept rather than generated again.
     from numbox.core.work import work
     ns = {k: v for k, v in vars(work).items() if not k.startswith("_get_source_")}
     extended = {**ns, "extra": None}

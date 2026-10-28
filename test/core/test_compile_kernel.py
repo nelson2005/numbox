@@ -30,8 +30,8 @@ def test_sanitize_basic():
 
 
 def test_assign_identifiers_unique_and_valid():
-    v1 = Variable(name="c", source="a_b")     # qual a_b.c -> base a_b_c
-    v2 = Variable(name="b_c", source="a")     # qual a.b_c -> base a_b_c (collision)
+    v1 = Variable(name="c", source="a_b")     # qual a_b.c sanitizes to base a_b_c
+    v2 = Variable(name="b_c", source="a")     # qual a.b_c sanitizes to base a_b_c (collision)
     idents = _assign_identifiers([v1, v2])
     assert idents[v1] != idents[v2]
     assert all(s.isidentifier() for s in idents.values())
@@ -39,7 +39,7 @@ def test_assign_identifiers_unique_and_valid():
 
 def test_assign_identifiers_formula_prefix_collision():
     node = Variable(name="x", source="variables")        # base variables_x
-    clash = Variable(name="variables_x", source="f")     # base f_variables_x == f_<node temp>
+    clash = Variable(name="variables_x", source="f")     # base f_variables_x, the same as f_<node temp>
     idents = _assign_identifiers([node, clash])
     temps = set(idents.values())
     fgs = {"f_" + t for t in temps}
@@ -297,10 +297,9 @@ def test_cres_formula():
 
 
 def test_a_raising_cres_formula_propagates():
-    """`cres` is a general utility, not a `Work` detail, so the exception contract it
-    carries reaches this subsystem too. A formula that raises used to leave a
-    zero-filled result and no signal at all; it now surfaces to the caller of
-    `execute`, with no `Work` anywhere in the picture."""
+    """`cres` is a general utility, not a `Work` detail, so the exception contract that it carries applies to this
+    subsystem as well. Without that contract, a formula that raises would leave a zero-filled result and no signal at
+    all. The exception instead reaches the caller of `execute`, although no `Work` is involved."""
     def blow_up(a, b):
         if a > b:
             raise ValueError("formula boom")
@@ -330,8 +329,8 @@ def test_non_jittable_formula_demotes_at_first_call():
         ]},
         external_source_names=["ext"],
     )
-    ck = compile_kernel(g, ["variables.b"])     # still must NOT raise here (lazy)
-    assert ck.execute({"ext": {"y": 1.0}}) == {"variables.b": bad(1.0)}  # first call succeeds via demotion
+    ck = compile_kernel(g, ["variables.b"])     # must still not raise here: compilation is lazy
+    assert ck.execute({"ext": {"y": 1.0}}) == {"variables.b": bad(1.0)}  # the first call succeeds through demotion
     assert ck.partition.mode == "segmented"
     assert "variables.b" in ck.partition.python_nodes
     reasons = {q: r for s in ck.partition.segments for q, r in s.reasons.items()}
@@ -339,10 +338,9 @@ def test_non_jittable_formula_demotes_at_first_call():
 
 
 def test_cache_no_skeleton_collision(tmp_path):
-    # Two kernels with identical skeleton (one leaf -> one formula -> return) but
-    # different formulas (y*10 vs y*1000). With cache=True they must NOT load each
-    # other's cached binary. Run twice in fresh interpreters so the 2nd run reads
-    # the on-disk cache.
+    # Two kernels have an identical skeleton (a leaf, then a formula, then the return) but different formulas (y*10
+    # and y*1000). With cache=True, they must not load each other's cached binary. The test runs the probe twice in
+    # fresh interpreters, so that the second run reads the on-disk cache.
     script = textwrap.dedent('''
         from numba import njit
         from numbox.core.variable.variable import Graph
@@ -375,7 +373,7 @@ def test_cache_no_skeleton_collision(tmp_path):
 
 
 def test_assign_identifiers_avoids_python_keyword():
-    # qual_name ".for" sanitizes to the keyword "for"; must get a suffix
+    # qual_name ".for" sanitizes to the keyword "for", so the identifier must get a suffix
     v = Variable(name="for", source="")
     ident = _assign_identifiers([v])[v]
     import keyword as _kw
@@ -384,7 +382,7 @@ def test_assign_identifiers_avoids_python_keyword():
 
 
 def test_compile_kernel_keyword_node_name():
-    # namespace "_" + variable "for" -> qual_name "_.for" -> sanitizes to "for"
+    # namespace "_" and variable "for" give qual_name "_.for", which sanitizes to "for"
     g = Graph(
         variables_lists={"_": [
             {"name": "for", "inputs": {"y": "e"}, "formula": njit(lambda y: y + 1)},
@@ -396,8 +394,8 @@ def test_compile_kernel_keyword_node_name():
 
 
 def test_compile_kernel_newline_in_name_is_safe():
-    # an external input name containing a newline must not break the generated
-    # source via the trailing comment
+    # An external input name that contains a newline must not break the generated source through the trailing
+    # comment.
     g = Graph(
         variables_lists={"v": [
             {"name": "o", "inputs": {"a\nx": "e"}, "formula": njit(lambda a: a + 1)},
@@ -405,8 +403,8 @@ def test_compile_kernel_newline_in_name_is_safe():
         external_source_names=["e"],
     )
     ck = compile_kernel(g, ["v.o"])
-    # the raw newline from the name must not appear unescaped in the generated
-    # source (that would split the trailing comment into an executable line)
+    # The raw newline from the name must not appear unescaped in the generated source, because it would split the
+    # trailing comment into an executable line.
     assert "e.a\nx" not in ck.source
     assert ck.execute({"e": {"a\nx": 10}}) == {"v.o": 11}
 
@@ -418,9 +416,8 @@ def test_compile_kernel_duplicate_required_raises():
 
 
 def test_fingerprint_fallback_is_per_object():
-    # A callable whose source can't be fingerprinted and whose __repr__ is
-    # non-unique must still hash distinctly per object (via the id() suffix),
-    # so two such formulas never collide in the content-addressed cache.
+    # A callable whose source cannot be fingerprinted and whose __repr__ is not unique must still hash distinctly per
+    # object, through the id() suffix, so that two such formulas never collide in the content-addressed cache.
     from numbox.core.variable.compile_kernel import _formula_fingerprint
 
     class _Konst:
@@ -685,9 +682,9 @@ def test_digest_global_change_invalidates_cache(tmp_path):
     mod = moddir / "formulas_mod.py"
     runner = tmp_path / "run.py"
     runner.write_text(textwrap.dedent(_DIGEST_PROBE.format(moddir=str(moddir))))
-    # Disable .pyc caching: the two writes can land in the same mtime tick and
-    # are the same byte length, so a cached bytecode would mask the second
-    # source -- we want the subprocess to recompile from the new SCALE each run.
+    # The test disables .pyc caching. The two writes can fall within the same mtime tick and have the same byte
+    # length, so a cached bytecode would mask the second source. The subprocess must recompile from the new SCALE on
+    # each run.
     env = {**os.environ, "NUMBA_CACHE_DIR": str(tmp_path / "nbcache"),
            "PYTHONDONTWRITEBYTECODE": "1"}
 
@@ -731,9 +728,9 @@ def test_digest_includes_jit_flags():
     def build():
         return Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
 
-    # numba's default error_model is "python" (1.0/0.0 raises); "numpy" returns
-    # inf. Same formula, two distinct jit-flag sets -> two distinct kernels with
-    # different behavior: the flags must be part of the cache digest.
+    # numba's default error_model is "python" (1.0/0.0 raises), and "numpy" returns inf. The same formula under two
+    # distinct jit-flag sets gives two distinct kernels with different behavior, so the flags must be part of the
+    # cache digest.
     ck_default = compile_kernel(build(), "calc.y")
     with pytest.raises(ZeroDivisionError):
         ck_default.execute({"ext": {"x": 0.0}})
@@ -770,11 +767,10 @@ def test_digest_cres_kernel_uncached_and_quiet(tmp_path):
 
 
 def test_digest_mixed_cres_graph_uncached(tmp_path):
-    # A plain-python formula is fingerprintable, but a cres/CompileResultWAP node
-    # in the same kernel is not -- the uncacheable verdict must propagate to the
-    # whole kernel: zero cache files, correct results for both nodes. (An object
-    # cell in a lambda body cannot be njit-compiled at all, so this mixed-graph
-    # form is the runnable analogue of the un-fingerprintable-formula case.)
+    # A plain-python formula is fingerprintable, but a cres/CompileResultWAP node in the same kernel is not. The
+    # uncacheable verdict must propagate to the whole kernel, which writes zero cache files and gives correct results
+    # for both nodes. An object cell in a lambda body cannot be njit-compiled at all, so this mixed-graph form is the
+    # runnable analogue of the un-fingerprintable-formula case.
     probe = tmp_path / "probe.py"
     probe.write_text(textwrap.dedent("""
         from numba.core.types import float64
@@ -806,9 +802,8 @@ def test_digest_mixed_cres_graph_uncached(tmp_path):
 
 
 def test_dufunc_and_cfunc_formulas_accepted(tmp_path):
-    # A CFunc node poisons the whole kernel's cacheability (its .address is an
-    # ASLR-randomized pointer numba cannot disk-cache), so no anchor and no numba
-    # cache files may exist -- and compiling must stay warning-free.
+    # A CFunc node makes the whole kernel uncacheable, because its .address is an ASLR-randomized pointer that numba
+    # cannot cache on disk. No anchor and no numba cache files may exist, and the compile must not issue any warning.
     probe = tmp_path / "probe.py"
     probe.write_text(textwrap.dedent("""
         import warnings
@@ -838,10 +833,10 @@ def test_dufunc_and_cfunc_formulas_accepted(tmp_path):
 
 
 def test_dufunc_only_kernel_caches_cleanly(tmp_path):
-    # A single DUFunc-formula node must disk-cache cleanly: run twice sharing one
-    # NUMBA_CACHE_DIR under simplefilter("error") (any NumbaWarning fails it). After
-    # run 1 the cache holds at least one .nbi; run 2 is a warm hit that rewrites
-    # nothing -- the (path, mtime) set of all .nbc/.nbi files is identical.
+    # A single DUFunc-formula node must cache on disk without any warning. The test runs the probe twice with one
+    # shared NUMBA_CACHE_DIR under simplefilter("error"), so any NumbaWarning fails the run. The cache holds at least
+    # one .nbi after the first run. The second run is a warm hit that rewrites nothing, so the (path, mtime) set of all
+    # .nbc and .nbi files is identical.
     probe = tmp_path / "probe.py"
     probe.write_text(textwrap.dedent("""
         import warnings
@@ -949,9 +944,8 @@ def test_required_validation_messages():
 
 
 def test_external_typo_compiles_to_phantom_input():
-    # External mints any requested name, so a typo'd external becomes a new
-    # kernel input rather than an error. It surfaces at execute time as a clear
-    # missing-value KeyError when the real name is provided instead.
+    # External creates any requested name, so a misspelled external becomes a new kernel input rather than an error.
+    # The mistake appears at execute time as a clear missing-value KeyError when the real name is provided instead.
     def f(x):
         return x
 
@@ -1032,12 +1026,11 @@ def test_fingerprint_object_array_is_unfingerprintable():
 
 
 def test_object_array_closure_kernel_uncached(tmp_path):
-    # An object-dtype array in a formula's closure is un-fingerprintable, and numba
-    # cannot njit-compile a formula that closes over a pyobject array, so the node is
-    # demoted to a Python segment and the call succeeds in plain Python. With the only
-    # node demoted there are zero jit segments, so nothing fingerprintable is ever
-    # compiled -- the load-bearing claim remains the empty cache dir, proving the
-    # un-fingerprintable/unjittable content never wrote an anchor.
+    # An object-dtype array in a formula's closure is un-fingerprintable, and numba cannot njit-compile a formula that
+    # closes over a pyobject array. The node is therefore demoted to a Python segment, and the call succeeds in plain
+    # Python. Because the only node is demoted, there are zero jit segments, and nothing fingerprintable is ever
+    # compiled. The decisive assertion therefore remains the empty cache dir, which proves that the un-fingerprintable
+    # and unjittable content never wrote an anchor.
     probe = tmp_path / "probe.py"
     probe.write_text(textwrap.dedent("""
         import numpy as np
@@ -1100,8 +1093,8 @@ def test_compile_self_referential_jit_option_no_recursionerror(tmp_path):
         return x + 1.0
 
     g = Graph({"calc": [{"name": "y", "inputs": {"x": "ext"}, "formula": f}]}, ["ext"])
-    # an un-canonicalizable jit flag must not let RecursionError escape the digest path;
-    # numba will reject the unknown option with its OWN error instead.
+    # An un-canonicalizable jit flag must not let a RecursionError escape the digest path. numba rejects the unknown
+    # option with its own error instead.
     with pytest.raises(Exception) as ei:
         compile_kernel(g, "calc.y", jit_options={"_review_loop": loop}).execute({"ext": {"x": 1.0}})
     assert not isinstance(ei.value, RecursionError)
@@ -1129,7 +1122,7 @@ def _nodes_from(graph, required):
 
 
 def _parallel_chains_graph():
-    # py-chain p1->p2 and jit-chain j1->j2 from one external, joined by jit sink.
+    # A Python chain from p1 to p2 and a jit chain from j1 to j2 start from one external and join at a jit sink.
     return Graph(
         variables_lists={"variables": [
             {"name": "p1", "inputs": {"x": "ext"}, "formula": lambda x: x + 1.0},
@@ -1151,7 +1144,7 @@ def test_linearize_minimizes_runs_on_parallel_chains():
     order = linearize(nodes, demoted)
     runs = build_runs(order, demoted)
     assert [kind for kind, _ in runs] == ["python", "jit"]  # 2 runs, not 3
-    # dependencies respected
+    # the dependencies are respected
     pos = {n.variable.qual_name(): i for i, n in enumerate(order)}
     for n in order:
         for inp in n.inputs:
@@ -1184,7 +1177,7 @@ def test_liveness_and_runs():
     out_names = [v.qual_name() for v in live_out]
     assert in_names == sorted(in_names) and out_names == sorted(out_names)
     assert "ext.x" in in_names and "variables.p2" in in_names
-    assert out_names == ["variables.out"]  # only the required sink escapes
+    assert out_names == ["variables.out"]  # only the required sink is live-out
 
 
 def test_plan_run_threads_values():
@@ -1267,7 +1260,7 @@ def test_generate_segment_body_empty_run():
 
 
 class _Opaque:
-    """A value numba.typeof cannot type; arithmetic works in Python."""
+    """A value that numba.typeof cannot type, but whose arithmetic works in Python."""
     def __init__(self, v):
         self.v = v
 
@@ -1420,7 +1413,7 @@ def test_fused_mode_resolution():
     g = _diamond_graph()
     ck = compile_kernel(g, ["variables.u", "variables.a"], cache=False)
     assert ck.partition is None
-    early = ck.kernel                      # resolver grabbed before first call
+    early = ck.kernel                      # the resolver, obtained before the first call
     assert not isinstance(early, Dispatcher)
     assert early(100) == (326.5, 126)
     assert ck.partition is not None
@@ -1433,7 +1426,7 @@ def test_fused_mode_resolution():
     assert seg.source == ck.source and seg.reasons == {}
     assert isinstance(ck.kernel, Dispatcher)
     assert ck.kernel(100) == (326.5, 126)
-    assert early(100) == (326.5, 126)      # early ref still valid post-resolution
+    assert early(100) == (326.5, 126)      # the early reference is still valid after resolution
 
 
 def _chain_graph_with_python_middle():
@@ -1549,7 +1542,7 @@ def test_plan_replacement_on_new_signature():
     ck = compile_kernel(g, "calc.n5", cache=False)
     assert ck.kernel(7.0) == ((((7.0 + 1.0) * 2.0 * 3.0) - 4.0) / 2.0,)
     assert len([s for s in ck.partition.segments if s.kind == "jit"]) == 2
-    out, = ck.kernel(_Opaque(7.0))          # breaks segment 1 -> re-discovery
+    out, = ck.kernel(_Opaque(7.0))          # segment 1 fails to compile, so re-discovery runs
     assert isinstance(out, _Opaque) and out.v == (((7.0 + 1.0) * 2.0 * 3.0) - 4.0) / 2.0
     assert [s.kind for s in ck.partition.segments] == ["python"]
     assert ck.kernel(7.0) == ((((7.0 + 1.0) * 2.0 * 3.0) - 4.0) / 2.0,)
@@ -1637,11 +1630,10 @@ def test_linearize_run_count_is_optimal_bruteforce():
 
 
 def test_discovery_path_honors_jit_options():
-    # The discovery path (forced here by an untypeable external) must honor the
-    # kernel's jit_options just like the fused/segment hot path. Under
-    # error_model="numpy", x/0 is inf rather than a ZeroDivisionError; with bare
-    # njit wraps the discovery call would instead raise. Regression for the
-    # inner-wrap flag-threading fix.
+    # The discovery path, forced here by an untypeable external, must honor the kernel's jit_options just like the
+    # fused and segment hot paths. Under error_model="numpy", x/0 is inf rather than a ZeroDivisionError. If the inner
+    # wraps were bare njit wraps, the discovery call would raise instead. The test is the regression test for passing
+    # the flags into the inner wraps.
     class Opaque:
         pass
 
@@ -1654,7 +1646,7 @@ def test_discovery_path_honors_jit_options():
 
     out = ck.execute({"ext": {"x": 1.0, "y": 0.0, "opaque": Opaque()}})
     assert out["calc.r"] == float("inf")
-    assert ck.partition.mode == "segmented"  # the discovery/segment path was exercised
+    assert ck.partition.mode == "segmented"  # the discovery and segment path was exercised
     # the segment hot path (second call) agrees with the discovery call
     out2 = ck.execute({"ext": {"x": 1.0, "y": 0.0, "opaque": Opaque()}})
     assert out2["calc.r"] == float("inf")
@@ -1768,8 +1760,8 @@ def test_cone_liveness_single_run_uses_required_and_boundary():
     run = [nodes[a], nodes[b], nodes[u]]          # one fused run over the cone of x
     boundary = {a, u}
     live_in, live_out = cone_liveness(run, run, {u}, boundary)
-    assert set(live_out) == {a, u}                 # a kept via boundary; b not boundary/required/later -> dropped
-    assert x in set(live_in)                       # x consumed by a,b, produced outside run
+    assert set(live_out) == {a, u}                 # a stays (boundary); b is dropped (not boundary, required or later)
+    assert x in set(live_in)                       # x is consumed by a and b and produced outside the run
     assert list(live_out) == sorted(live_out, key=lambda v: v.qual_name())
 
 
@@ -1781,7 +1773,7 @@ def test_cone_liveness_cross_segment_handoff():
     cone_order = [nodes[m], nodes[n_]]            # two single-node runs
     run1 = [nodes[m]]
     live_in, live_out = cone_liveness(run1, cone_order, set(), set())
-    assert m in set(live_out)                      # consumed by later step n, even though not required/boundary
+    assert m in set(live_out)                      # consumed by the later step n, though neither required nor boundary
 
 
 def test_recompute_precondition_before_full_call():
@@ -1796,7 +1788,7 @@ def test_recompute_noop_matches_kernel_fused():
     g = _diamond_graph()
     ck = compile_kernel(g, ["variables.u", "variables.a"])
     full = tuple(ck.kernel(100))               # resolves fused, seeds nothing yet
-    assert tuple(ck.recompute({})) == full     # no-op recompute seeds store, returns same
+    assert tuple(ck.recompute({})) == full     # a no-op recompute seeds the store and returns the same result
 
 
 def _interp_recompute_sequence(g, req, ext, changes):
@@ -1824,9 +1816,9 @@ def _kernel_recompute_sequence(g, req, ext, changes):
      [{"basket": {"y": 11.0}}, {"basket": {"y": 12.0}}, {"basket": {"y": 13.0}}]),
     (_diamond_graph, ["variables.u", "variables.a"], {"basket": {"y": 100}},
      [{"basket": {"y": 101}}, {"basket": {"y": 102}}, {"basket": {"y": 103}}]),
-    # The two-source case is the cross-cone freshness guard: alternating a-only /
-    # b-only changes prove a join-parent is re-persisted (a single-source graph
-    # cannot catch boundary staleness, since every change re-affects the whole cone).
+    # The two-source case guards cross-cone freshness: alternating changes to a alone and to b alone prove that a
+    # join-parent is re-persisted. A single-source graph cannot detect boundary staleness, because every change
+    # affects the whole cone again.
     (_two_source_reconvergent_graph, ["variables.r"], {"basket": {"a": 2.0, "b": 3.0}},
      [{"basket": {"a": 5.0}}, {"basket": {"b": 7.0}}, {"basket": {"a": 9.0, "b": 1.0}}]),
 ])
@@ -1838,9 +1830,9 @@ def test_recompute_equiv_external(factory, req, ext, changes):
 
 def test_recompute_equiv_mixed_cone():
     g = _chain_graph_with_python_middle()
-    # _chain_graph_with_python_middle: external 'ext.x', chain calc.n1->..->calc.n5
-    # with calc.n3 a non-jittable (Python) node -> segmented mode. Request calc.n5
-    # (downstream of the Python node) and vary the single external 'ext.x'.
+    # _chain_graph_with_python_middle has the external 'ext.x' and a chain from calc.n1 to calc.n5, in which calc.n3
+    # is a non-jittable (Python) node, so the kernel runs in segmented mode. The test requests calc.n5, downstream of
+    # the Python node, and varies the single external 'ext.x'.
     req = ["calc.n5"]
     ext = {"ext": {"x": 7.0}}
     changes = [{"ext": {"x": 8.0}}, {"ext": {"x": 9.0}}]
@@ -1869,16 +1861,16 @@ def test_recompute_cache_reuses_plan():
     key = next(iter(ck._cone_cache))
     plan_first = ck._cone_cache[key]
     ck.recompute({"basket": {"y": 102}})
-    assert ck._cone_cache[key] is plan_first        # same cone -> reused plan
+    assert ck._cone_cache[key] is plan_first        # the same cone reuses the plan
 
 
 def test_recompute_cache_cap_evicts():
     g = _fanout_graph()
     ck = compile_kernel(g, ["variables.o1", "variables.o2"])
-    ck._cone_cap = 1                                  # force thrash
+    ck._cone_cap = 1                                  # forces cache thrashing
     ck.execute({"basket": {"a": 1.0, "b": 2.0}})
     ck.recompute({"basket": {"a": 3.0}})             # cone {o1}
-    ck.recompute({"basket": {"b": 4.0}})             # cone {o2} -> evicts {o1}
+    ck.recompute({"basket": {"b": 4.0}})             # cone {o2}, which evicts {o1}
     assert len(ck._cone_cache) == 1
     assert tuple(ck.recompute({"basket": {"a": 5.0}})) == (5.0 + 1.0, 4.0 + 2.0)
 
@@ -1914,13 +1906,12 @@ def test_recompute_interior_override_expands_sources_and_flushes():
 
 
 def test_recompute_external_and_interior_yield_distinct_keys():
-    # An external change to basket.y (cone {x,a,b,u}, live-in {basket.y}) and an
-    # interior override of variables.x (cone {a,b,u}, live-in {variables.x}) produce
-    # different cone node-sets and different live-ins, so once both cones are cached
-    # they coexist as two distinct keys (no collision), and both must compute correct
-    # values. The interior override is applied FIRST so its one-time source expansion
-    # (which clears the cache) precedes the external change; both cones then cache and
-    # coexist. Values are verified against the interpreted oracle.
+    # An external change to basket.y (cone {x,a,b,u}, live-in {basket.y}) and an interior override of variables.x
+    # (cone {a,b,u}, live-in {variables.x}) produce different cone node-sets and different live-ins. Once both cones
+    # are cached, they coexist as two distinct keys (no collision), and both must compute correct values. The test
+    # applies the interior override first, so that its one-time source expansion, which clears the cache, precedes the
+    # external change. Both cones are then cached and coexist. The test verifies the values against the interpreted
+    # oracle.
     g = _diamond_graph()
     req, ext = ["variables.u"], {"basket": {"y": 100}}
     changes = [{"variables": {"x": 5.0}}, {"basket": {"y": 101}}]
@@ -1936,8 +1927,8 @@ def test_recompute_external_and_interior_yield_distinct_keys():
 
 
 def test_recompute_graph_priority_over_co_changed_interior_override():
-    """CompiledKernel.recompute takes priority: an interior value supplied alongside a
-    co-changed upstream input is recomputed from the graph, not held."""
+    """CompiledKernel.recompute gives the graph priority: an interior value supplied alongside a co-changed upstream
+    input is recomputed from the graph rather than held at the supplied value."""
     g = Graph(
         variables_lists={"vars_": [
             {"name": "b", "inputs": {"a": "ext"}, "formula": njit(lambda a: 10 * a)},
@@ -1949,7 +1940,7 @@ def test_recompute_graph_priority_over_co_changed_interior_override():
     b = g.registry["vars_"]["b"]
     c = g.registry["vars_"]["c"]
     assert ck.execute({"ext": {"a": 1}}) == {"vars_.b": 10, "vars_.c": 11}
-    # b supplied 999 but downstream of co-changed ext.a; graph priority recomputes it.
+    # b is supplied as 999 but is downstream of the co-changed ext.a, so graph priority recomputes it.
     ck.recompute({"ext": {"a": 2}, "vars_": {"b": 999}})
     assert ck._store[b] == 20
     assert ck._store[c] == 21

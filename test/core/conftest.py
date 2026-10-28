@@ -10,8 +10,10 @@ from numbox.utils.cstrings import c_string
 
 @pytest.fixture
 def memory_db():
-    """Open ``:memory:`` via the raw bindings; yield the connection pointer;
-    close on teardown."""
+    """Open a ``:memory:`` database through the raw bindings and yield its connection pointer.
+
+    The fixture closes the connection on teardown.
+    """
     db_p = c_int64(0)
     with c_string(":memory:") as name_p:
         assert sqlite3_open(name_p, addressof(db_p)) == SQLITE_OK

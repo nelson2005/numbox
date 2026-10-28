@@ -1,9 +1,8 @@
-"""Value accessor tests for the SQLite UDF bindings.
+"""The tests cover the value accessors of the SQLite UDF bindings.
 
-Exercises each ``sqlite3_value_*`` accessor inside a ``@cfunc`` callback
-registered via ``sqlite3_create_function_v2``.  The capture pattern writes
-the accessor's result into a numpy array via ``sqlite3_user_data`` +
-``carray``, then the Python-level test asserts the captured value.
+The tests exercise each ``sqlite3_value_*`` accessor inside a ``@cfunc`` callback that ``sqlite3_create_function_v2``
+registers. The capture pattern writes the accessor's result into a numpy array through ``sqlite3_user_data`` and
+``carray``. The Python-level test then asserts the captured value.
 """
 from ctypes import addressof, c_int64
 
@@ -49,7 +48,7 @@ def _register(db_p, name, narg, cb_address, ud_ptr):
 
 
 # ---------------------------------------------------------------------------
-# Callback: capture int
+# Callback that captures an int
 # ---------------------------------------------------------------------------
 
 @njit
@@ -67,7 +66,7 @@ _cap_int_cb = cfunc(
 
 
 # ---------------------------------------------------------------------------
-# Callback: capture int64
+# Callback that captures an int64
 # ---------------------------------------------------------------------------
 
 @njit
@@ -85,7 +84,7 @@ _cap_int64_cb = cfunc(
 
 
 # ---------------------------------------------------------------------------
-# Callback: capture double
+# Callback that captures a double
 # ---------------------------------------------------------------------------
 
 @njit
@@ -103,8 +102,8 @@ _cap_double_cb = cfunc(
 
 
 # ---------------------------------------------------------------------------
-# Callback: capture text bytes into ud array
-# ud layout: [0] = byte count, [1..] = text bytes as uint8
+# Callback that captures text bytes into the ud array
+# In the ud layout, [0] holds the byte count and [1..] hold the text bytes as uint8.
 # ---------------------------------------------------------------------------
 
 @njit
@@ -127,8 +126,8 @@ _cap_text_cb = cfunc(
 
 
 # ---------------------------------------------------------------------------
-# Callback: capture blob bytes into ud array
-# ud layout: [0] = byte count, [1..] = blob bytes as uint8
+# Callback that captures blob bytes into the ud array
+# In the ud layout, [0] holds the byte count and [1..] hold the blob bytes as uint8.
 # ---------------------------------------------------------------------------
 
 @njit
@@ -151,7 +150,7 @@ _cap_blob_cb = cfunc(
 
 
 # ---------------------------------------------------------------------------
-# Callback: capture type codes for up to 5 args
+# Callback that captures the type codes of up to 5 arguments
 # ---------------------------------------------------------------------------
 
 @njit
@@ -171,7 +170,7 @@ _cap_types_cb = cfunc(
 
 
 # ---------------------------------------------------------------------------
-# Callback: dup a value, read int from the dup, then free
+# Callback that duplicates a value, reads an integer from the duplicate and then frees the duplicate
 # ---------------------------------------------------------------------------
 
 @njit

@@ -41,13 +41,11 @@ def test_stdin_handle_nonzero():
 
 
 def test_stdio_handles_are_distinct():
-    """stdout / stderr / stdin must resolve to three different FILE* values.
+    """stdout, stderr and stdin must resolve to three different FILE* values.
 
-    Smoke-tests-by-address can miss a regression that transposes platform
-    symbol names (e.g. macOS ``_DATA_SYMBOL_BY_NAME`` swapping
-    ``__stdoutp`` and ``__stderrp``): each individual ``addr != 0`` check
-    passes, but two handles point at the same FILE. This test catches
-    that class of mistake without needing capfd.
+    Address-only smoke tests can miss a regression that transposes platform symbol names, for example if macOS
+    ``_DATA_SYMBOL_BY_NAME`` swaps ``__stdoutp`` and ``__stderrp``. Each individual ``addr != 0`` check then passes,
+    but two handles point at the same FILE. This test detects that class of mistake without capfd.
     """
     @njit(cache=True)
     def get_all():
@@ -75,11 +73,11 @@ def test_stderr_fputs_roundtrip(capfd):
     reason="capfd does not reliably capture C-level fputs+fflush to stdout() on Windows",
 )
 def test_stdout_fputs_roundtrip(capfd):
-    """Verifies stdout() resolves to the actual standard-output FILE* by
-    writing through it and checking ``capfd``'s ``out`` capture (not
-    ``err``). If the Linux/Darwin data-symbol table ever transposed
-    ``stdout`` and ``stderr``, the smoke tests above would still pass
-    but this test would receive the bytes on ``err`` instead.
+    """stdout() resolves to the actual standard-output FILE*.
+
+    The test writes through stdout() and checks the ``out`` capture of ``capfd``, not ``err``. If the Linux/Darwin
+    data-symbol table transposed ``stdout`` and ``stderr``, the smoke tests above would still pass, but this test would
+    receive the bytes on ``err`` instead.
     """
     p = get_unicode_data_p("ok-out\n")
     _write_to_stdout(p)

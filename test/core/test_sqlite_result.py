@@ -1,9 +1,8 @@
-"""Result setter tests for the SQLite UDF buildout.
+"""The tests cover the result setters of the SQLite UDF bindings.
 
-Each test registers a scalar UDF that calls a specific sqlite3_result_*
-setter, then verifies the actual returned value using the "capture probe"
-pattern: a second UDF reads the result via sqlite3_value_* accessors and
-writes it into a numpy array via sqlite3_user_data.
+Each test registers a scalar UDF that calls a specific sqlite3_result_* setter. The test then verifies the actual
+returned value with the "capture probe" pattern: a second UDF reads the result through the sqlite3_value_* accessors
+and writes it into a numpy array through sqlite3_user_data.
 """
 from ctypes import addressof, c_int64
 
@@ -54,7 +53,7 @@ def _register(db_p, name, narg, cb_address, ud_ptr, flags=SQLITE_UTF8):
 
 
 def _register_and_exec(db_p, name, cb, sql, n_arg=0):
-    """Register a scalar UDF and execute sql. Returns exec rc."""
+    """Register a scalar UDF and execute sql. Returns the rc of sqlite3_exec."""
     with c_string(name) as name_p:
         rc = sqlite3_create_function_v2(
             db_p, name_p, n_arg, SQLITE_UTF8, 0,
@@ -65,12 +64,12 @@ def _register_and_exec(db_p, name, cb, sql, n_arg=0):
 
 
 # ---------------------------------------------------------------------------
-# Capture probes (module-level to outlive registrations)
+# Capture probes, defined at module level so that they outlive their registrations
 # ---------------------------------------------------------------------------
 
 @njit
 def _cap_int64_impl(ctx, argc, argv_pp):
-    """Capture first arg as int64 into user_data."""
+    """Capture the first argument as an int64 into user_data."""
     ud = sqlite3_user_data(ctx)
     out = carray(_cast_int_to_void_p(ud), (1,), dtype=np.int64)
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
@@ -85,7 +84,7 @@ _cap_int64_cb = cfunc(
 
 @njit
 def _cap_double_impl(ctx, argc, argv_pp):
-    """Capture first arg as float64 into user_data."""
+    """Capture the first argument as a float64 into user_data."""
     ud = sqlite3_user_data(ctx)
     out = carray(_cast_int_to_void_p(ud), (1,), dtype=np.float64)
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
@@ -100,7 +99,7 @@ _cap_double_cb = cfunc(
 
 @njit
 def _cap_text_impl(ctx, argc, argv_pp):
-    """Capture first arg text bytes into user_data. Layout: [0]=len, [1..]=bytes."""
+    """Capture the text bytes of the first argument into user_data. The layout is [0]=len, [1..]=bytes."""
     ud = sqlite3_user_data(ctx)
     meta = carray(_cast_int_to_void_p(ud), (64,), dtype=np.uint8)
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
@@ -120,7 +119,7 @@ _cap_text_cb = cfunc(
 
 @njit
 def _cap_type_impl(ctx, argc, argv_pp):
-    """Capture first arg's sqlite3_value_type into user_data as int64."""
+    """Capture the sqlite3_value_type of the first argument into user_data as an int64."""
     ud = sqlite3_user_data(ctx)
     out = carray(_cast_int_to_void_p(ud), (1,), dtype=np.int64)
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
@@ -135,7 +134,7 @@ _cap_type_cb = cfunc(
 
 @njit
 def _cap_blob_impl(ctx, argc, argv_pp):
-    """Capture first arg blob bytes into user_data. Layout: [0]=len, [1..]=bytes."""
+    """Capture the blob bytes of the first argument into user_data. The layout is [0]=len, [1..]=bytes."""
     ud = sqlite3_user_data(ctx)
     meta = carray(_cast_int_to_void_p(ud), (64,), dtype=np.uint8)
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
@@ -155,7 +154,7 @@ _cap_blob_cb = cfunc(
 
 @njit
 def _cap_subtype_impl(ctx, argc, argv_pp):
-    """Capture first arg's sqlite3_value_subtype into user_data as int64."""
+    """Capture the sqlite3_value_subtype of the first argument into user_data as an int64."""
     ud = sqlite3_user_data(ctx)
     out = carray(_cast_int_to_void_p(ud), (1,), dtype=np.int64)
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
@@ -170,7 +169,7 @@ _cap_subtype_cb = cfunc(
 
 @njit
 def _cap_numeric_type_impl(ctx, argc, argv_pp):
-    """Capture first arg's sqlite3_value_numeric_type into user_data."""
+    """Capture the sqlite3_value_numeric_type of the first argument into user_data."""
     ud = sqlite3_user_data(ctx)
     out = carray(_cast_int_to_void_p(ud), (1,), dtype=np.int64)
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
@@ -327,7 +326,7 @@ _result_text_for_numeric_cb = cfunc(
 
 
 # ---------------------------------------------------------------------------
-# Tests — Issue 1: existing tests now verify actual values
+# Tests that verify what the setters produce, beyond the return code
 # ---------------------------------------------------------------------------
 
 def test_result_int():
@@ -428,7 +427,7 @@ def test_result_zeroblob():
 
 
 # ---------------------------------------------------------------------------
-# Tests — Issue 2: new coverage for untested bindings
+# Tests of the bindings that the tests above do not cover
 # ---------------------------------------------------------------------------
 
 def test_result_blob():
@@ -517,9 +516,8 @@ def test_result_error_toobig():
 def test_result_subtype():
     db_p = _open_memory()
     out = np.zeros(1, dtype=np.int64)
-    # sqlite >= 3.45 built with -DSQLITE_STRICT_SUBTYPE=1 (e.g. conda-forge)
-    # errors unless the producer declares SQLITE_RESULT_SUBTYPE and the consumer
-    # declares SQLITE_SUBTYPE; both flags are ignored on older sqlite.
+    # sqlite >= 3.45 built with -DSQLITE_STRICT_SUBTYPE=1 (e.g. conda-forge) reports an error unless the producer
+    # declares SQLITE_RESULT_SUBTYPE and the consumer declares SQLITE_SUBTYPE. Older sqlite versions ignore both flags.
     ver = sqlite3_libversion_number()
     rsub_flags = SQLITE_UTF8 | (SQLITE_RESULT_SUBTYPE if ver >= 3045000 else 0)
     cap_flags = SQLITE_UTF8 | (SQLITE_SUBTYPE if ver >= 3030000 else 0)
@@ -551,10 +549,10 @@ def test_value_numeric_type():
 # ---------------------------------------------------------------------------
 # Skipped bindings (documented)
 # ---------------------------------------------------------------------------
-# sqlite3_value_nochange — only meaningful inside xColumn of a virtual table
-#     UPDATE; no way to test without a full virtual table implementation.
-# sqlite3_value_frombind — requires distinguishing bound parameters from
-#     literal SQL values; not testable via sqlite3_exec which has no bind API.
+# sqlite3_value_nochange is meaningful only inside xColumn of a virtual table UPDATE. It cannot be tested without a
+#     full virtual table implementation.
+# sqlite3_value_frombind requires distinguishing bound parameters from literal SQL values. It cannot be tested
+#     through sqlite3_exec, which has no bind API.
 
 
 if __name__ == "__main__":

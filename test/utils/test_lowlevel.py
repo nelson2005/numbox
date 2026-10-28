@@ -175,9 +175,11 @@ def test_get_str_from_p_as_int():
 
 
 def test_get_str_from_p_as_int_high_bytes():
-    """Bytes 0x80-0xFF must read back as their unsigned codepoint, not crash.
-    Decode contract is per-byte Latin-1 (one codepoint per byte), so a UTF-8
-    payload comes back byte-for-byte rather than decoded."""
+    """``get_str_from_p_as_int`` must read bytes 0x80-0xFF back as their unsigned codepoint, and it must not crash.
+
+    The decode contract is per-byte Latin-1, one codepoint per byte. A UTF-8 payload is therefore returned byte for byte
+    rather than decoded.
+    """
     raw = "é".encode("utf-8") + b"A"  # b'\xc3\xa9A'
     buf = c_char_p(raw)
     p = c_void_p.from_buffer(buf).value
@@ -280,7 +282,7 @@ def test_array_data_p_njit():
 
 
 def test_load_at_store_at_int32_roundtrip():
-    """Positive path: store an int32 at an intp pointer, load it back."""
+    """In the positive path, ``store_at`` writes an int32 at an intp pointer and ``load_at`` reads it back."""
     import numpy
     from numba import int32, njit
     from numbox.utils.lowlevel import array_data_p
@@ -296,9 +298,9 @@ def test_load_at_store_at_int32_roundtrip():
 
 
 def test_load_at_rejects_non_intp_pointer():
-    """The pointer is contract-carried as ``intp`` — accepting any integer
-    width would silently truncate addresses on inttoptr (an int32 pointer
-    captures only the low 32 bits of the real address)."""
+    """The pointer is an ``intp`` by contract. If ``load_at`` accepted any integer width, inttoptr would silently
+    truncate addresses, because an int32 pointer captures only the low 32 bits of the real address.
+    """
     from numba import int32, njit
     from numba.core.errors import TypingError
     with pytest.raises(TypingError, match="intp"):
@@ -308,7 +310,7 @@ def test_load_at_rejects_non_intp_pointer():
 
 
 def test_store_at_rejects_non_intp_pointer():
-    """Parallel guard for ``store_at``."""
+    """``store_at`` has the same guard as ``load_at``."""
     from numba import int32, njit, void
     from numba.core.errors import TypingError
     with pytest.raises(TypingError, match="intp"):
@@ -318,12 +320,12 @@ def test_store_at_rejects_non_intp_pointer():
 
 
 def test_load_at_accepts_integer_literal_pointer():
-    """Integer literals in ``@njit`` are typed as ``IntegerLiteral``, not
-    ``intp``. The guard uses ``unliteral()`` so callers can pass literal
-    pointers (e.g. compile-time-known addresses) without hitting a
-    spurious TypingError. We only compile — calling a literal-zero
-    pointer would segfault, but compilation is enough to exercise the
-    typing-time guard."""
+    """numba types an integer literal in ``@njit`` code as ``IntegerLiteral``, not ``intp``.
+
+    The guard uses ``unliteral()``, so callers can pass literal pointers (e.g. compile-time-known addresses) without
+    triggering a spurious TypingError. The test only compiles the kernel, because a call to it would dereference a
+    literal-zero pointer and segfault. Compilation is enough to exercise the typing-time guard.
+    """
     from numba import int32, njit
 
     @njit("int32()")
@@ -333,7 +335,7 @@ def test_load_at_accepts_integer_literal_pointer():
 
 
 def test_store_at_accepts_integer_literal_pointer():
-    """Parallel literal-acceptance for ``store_at``."""
+    """``store_at`` accepts an integer literal pointer in the same way."""
     from numba import int32, njit
 
     @njit("void()")

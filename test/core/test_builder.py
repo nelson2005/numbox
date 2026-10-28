@@ -489,10 +489,10 @@ def _run_graph_driver(tmp_path, cache, probe_val):
 def test_make_graph_cache_key_content_independent(tmp_path):
     cache = tmp_path / "nbcache"
     cache.mkdir()
-    _run_graph_driver(tmp_path, cache, "1.0")        # cold: compiles + caches
+    _run_graph_driver(tmp_path, cache, "1.0")        # cold: compiles and caches
     n_cold = sum(1 for _ in cache.rglob("builder._make*.nbc"))
     assert n_cold > 0
-    _run_graph_driver(tmp_path, cache, "2.0")        # warm: same TYPE, different value
+    _run_graph_driver(tmp_path, cache, "2.0")        # warm: same type, different value
     n_warm = sum(1 for _ in cache.rglob("builder._make*.nbc"))
     assert n_warm == n_cold, (
         "make_graph wrote a new _make .nbc for a same-typed init with different "
@@ -522,11 +522,11 @@ _ATTR_COLLIDE_DRIVER = textwrap.dedent('''
 
 
 def test_attribute_named_global_does_not_grow_the_cache(tmp_path):
-    """A derive whose attribute access (``a_.size``) shares a name with an un-fingerprintable module global
-    must still fingerprint stably, so its graph kernel caches once and hits thereafter -- not a fresh
-    ``_make_<hash>`` per process. Uses a plain float64 array (no record dtype) to isolate the ``co_names``
-    vs ``LOAD_ATTR`` distinction from any type-mangling concern; running three fresh processes against one
-    cache dir must add zero kernels after the first."""
+    """A derive whose attribute access (``a_.size``) shares a name with an un-fingerprintable module global must still
+    fingerprint stably. Its graph kernel is then cached once and hit after that, instead of producing a fresh
+    ``_make_<hash>`` per process. The test uses a plain float64 array (no record dtype) to isolate the ``co_names`` vs
+    ``LOAD_ATTR`` distinction from any type-mangling concern. Three fresh processes that share one cache directory must
+    add zero kernels after the first."""
     cache = tmp_path / "nbcache"
     cache.mkdir()
     script = tmp_path / "attr_collide_drv.py"
@@ -569,11 +569,11 @@ _RECORD_GRAPH_DRIVER = textwrap.dedent('''
 
 
 def test_record_typed_graph_kernel_is_process_stable(tmp_path):
-    """A graph node typed as an ``Array`` of a numpy record must produce the same ``_make_<hash>`` kernel in
-    every process. A ``Record`` mangles by a creation-order ``_code``, so its hash -- and the kernel name
-    folding it -- differed between a cold process (which compiles, hence creates, many types before this one)
-    and a warm one, reminting the kernel on the first warm run. Three fresh processes against one cache dir
-    must add zero kernels after the first."""
+    """A graph node typed as an ``Array`` of a numpy record must produce the same ``_make_<hash>`` kernel in every
+    process. A ``Record`` mangles by a creation-order ``_code``. A hash of that form, and the kernel name that folds it,
+    would differ between a cold process and a warm one, because the cold process compiles, and hence creates, many
+    types before this one. The first warm run would then write a new kernel. Three fresh processes that share one
+    cache directory must add zero kernels after the first."""
     cache = tmp_path / "nbcache"
     cache.mkdir()
     script = tmp_path / "record_graph_drv.py"
@@ -627,10 +627,9 @@ def test_make_graph_distinct_types_dispatch(tmp_path):
 
 
 def test_make_graph_kernel_name_depends_on_declared_type(monkeypatch):
-    # Two graphs identical except an explicit End ty must produce different
-    # _make_<hash> kernel names; otherwise cache=True reuses a stale cached
-    # kernel that builds Work nodes of the wrong data type. The kernel name
-    # folds each node's declared type via _kernel_fingerprint.
+    # Two graphs that differ only in an explicit End ty must produce different _make_<hash> kernel names. Otherwise
+    # cache=True reuses a stale cached kernel that builds Work nodes of the wrong data type. The kernel name folds each
+    # node's declared type through _kernel_fingerprint.
     import numbox.core.work.builder as builder_mod
     captured = []
     orig = builder_mod._kernel_fingerprint
@@ -650,20 +649,16 @@ def test_make_graph_kernel_name_depends_on_declared_type(monkeypatch):
 
 
 def test_make_graph_kernel_name_depends_on_jit_flags(monkeypatch):
-    """Two graphs identical except a jit flag must produce different
-    _make_<hash> kernel names.
+    """Two graphs that differ only in a jit flag must produce different _make_<hash> kernel names.
 
-    numba caches the whole library, including the generated CPython wrapper,
-    and the wrapper is flag-sensitive independently of the body: nogil=True
-    emits PyEval_SaveThread/PyEval_RestoreThread around the call, nogil=False
-    does not. The derive anchor does not re-key the kernel. The flag fold in
-    _kernel_fingerprint gives the two different names, beside the flags
-    numbox's cache key holds for each.
+    numba caches the whole library, including the generated CPython wrapper, and the wrapper depends on the flags
+    independently of the body: nogil=True emits PyEval_SaveThread and PyEval_RestoreThread around the call, and
+    nogil=False does not. The derive anchor does not re-key the kernel. The flag fold in _kernel_fingerprint gives the
+    two graphs different names, in addition to the flags that numbox's cache key holds for each.
 
-    nogil is used rather than error_model/fastmath/boundscheck precisely because
-    those three only affect arithmetic, of which the generated kernel body (a
-    sequence of ll_make_work calls and a tuple build) has none. `cache` itself
-    must NOT re-key: it does not change the emitted binary.
+    The test uses nogil rather than error_model, fastmath or boundscheck precisely because those three affect only
+    arithmetic, and the generated kernel body (a sequence of ll_make_work calls and a tuple build) has none. `cache`
+    itself must not re-key the kernel, because it does not change the emitted binary.
     """
     import numbox.core.work.builder as builder_mod
     captured = []
@@ -675,8 +670,8 @@ def test_make_graph_kernel_name_depends_on_jit_flags(monkeypatch):
         return h, ok
     monkeypatch.setattr(builder_mod, "_kernel_fingerprint", spy)
 
-    # Identical graph every time -- only the jit flags vary, so the node name
-    # must stay constant or the body text alone would move the fingerprint.
+    # The graph is identical in every iteration, and only the jit flags vary. The node name must stay constant, or the
+    # body text alone would change the fingerprint.
     for opts in ({"cache": False, "nogil": True},
                  {"cache": False, "nogil": False},
                  {"cache": True, "nogil": False}):
@@ -693,11 +688,12 @@ def test_make_graph_kernel_name_depends_on_jit_flags(monkeypatch):
 
 
 def test_make_graph_exec_defined_derive_is_cached_through_its_anchor():
-    """A derive defined via exec has co_filename '<string>', which numba cannot
-    locate for caching. It used to degrade to uncached rather than raise; it is
-    now compiled through its own on-disk anchor, which gives
-    numba a real source file, so it caches instead of degrading -- and the anchor
-    digest folds the derive fingerprint, so two exec'd bodies never collide.
+    """A derive defined through exec has co_filename '<string>', which numba cannot locate for caching.
+
+    Without an anchor of its own, such a derive would degrade to an uncached compile rather than raise. The derive is
+    therefore compiled through its own on-disk anchor, which gives numba a real source file, so the derive caches
+    instead of degrading. The anchor digest folds the derive fingerprint, so two bodies defined through exec never
+    collide.
     """
     reg = {}
     exec_ns = {}
@@ -708,8 +704,8 @@ def test_make_graph_exec_defined_derive_is_cached_through_its_anchor():
     access.exec_y.calculate()
     assert isclose(access.exec_y.data, 3.0)
 
-    # A second exec'd body differing only in a constant must get its own anchor,
-    # not the first one's binary.
+    # A second body defined through exec that differs only in a constant must have its own anchor and must not load
+    # the first body's binary.
     reg2 = {}
     exec_ns2 = {}
     exec("def d(x):\n    return x + 100.0\n", exec_ns2)  # nosec B102 - test fixture
@@ -721,15 +717,13 @@ def test_make_graph_exec_defined_derive_is_cached_through_its_anchor():
 
 
 def test_derive_anchor_degrade_drops_the_cache(monkeypatch):
-    """When the derive anchor cannot be built, the fallback compile must drop
-    `cache`.
+    """When the derive anchor cannot be built, the fallback compile must drop `cache`.
 
-    The anchor is what keys a cached derive on what it reads. numba names a
-    plain `cres(..., cache=True)` cache file after the derive's own source file
-    and qualname, and numbox's key on it holds the flags but not the derive's
-    globals and callees. Falling back to that on the degrade paths -- flags with
-    no canonical form, or an unwritable anchor -- would restore the staleness
-    the anchor exists to prevent, so the degrade compiles uncached instead.
+    The anchor is what keys a cached derive on what it reads. numba names the cache file of a plain
+    `cres(..., cache=True)` after the derive's own source file and qualname, and numbox's key on it holds the flags
+    but not the derive's globals and callees. The degrade paths are flags with no canonical form and an unwritable
+    anchor. If they fell back to that plain compile, they would reintroduce the stale binaries that the anchor exists
+    to prevent, so the degrade compiles uncached instead.
     """
     from numbox.core.work import builder as builder_mod
 
@@ -765,13 +759,11 @@ def test_derive_anchor_degrade_drops_the_cache(monkeypatch):
 def test_make_graph_uncanonical_jit_flags_drop_the_kernel_cache(monkeypatch):
     """A jit flag with no canonical form must compile the outer kernel uncached.
 
-    `_flags_canon` degrades to `repr(sorted(flags.items(), key=repr))` for a
-    value it cannot canonicalize -- a `pipeline_class`, a numba-typed `locals`.
-    That repr is neither process-stable for a default-repr object nor guaranteed
-    to separate two behaviourally different values, so a `_make_<hash>` name
-    built on it can collide across variants or churn across processes. The derive
-    anchor and `compile_kernel` both already drop the cache on this flag; the
-    generated kernel is the third caller and must do the same.
+    `_flags_canon` degrades to `repr(sorted(flags.items(), key=repr))` for a value it cannot canonicalize, such as a
+    `pipeline_class` or a numba-typed `locals`. That repr is not process-stable for an object with the default repr,
+    and it is not guaranteed to separate two values that behave differently. A `_make_<hash>` name built on it can
+    therefore collide across variants or change from process to process. The derive anchor and `compile_kernel`
+    already drop the cache on this flag, and the generated kernel is the third caller, so it must do the same.
     """
     from numba.core.compiler import Compiler
     from numbox.core.work import builder as builder_mod

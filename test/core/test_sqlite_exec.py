@@ -1,4 +1,4 @@
-"""sqlite3_exec + sqlite3_free tests."""
+"""The tests cover sqlite3_exec and sqlite3_free."""
 from ctypes import addressof, c_int64
 
 import numpy as np
@@ -12,7 +12,7 @@ from numbox.utils.lowlevel import get_str_from_p_as_int
 from test.auxiliary_utils import collect_and_run_tests
 
 
-# Module-level cfuncs — must outlive exec for the hooks/exec tests.
+# These cfuncs are defined at module level because they must outlive exec in the hooks and exec tests.
 
 @cfunc(types.int32(types.voidptr, types.int32, types.intp, types.intp))
 def _count_rows_cb(ctx, n, values_pp, names_pp):
@@ -62,7 +62,7 @@ def test_exec_invalid_sql_writes_errmsg(memory_db):
     assert errmsg_p.value != 0
     msg = get_str_from_p_as_int(errmsg_p.value)
     assert "syntax" in msg.lower() or "error" in msg.lower(), msg
-    sqlite3_free(errmsg_p.value)  # no return value; just exercise the path
+    sqlite3_free(errmsg_p.value)  # sqlite3_free returns no value, so the call only exercises the code path
 
 
 if __name__ == "__main__":

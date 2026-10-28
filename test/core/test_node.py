@@ -23,8 +23,8 @@ def test():
 
 
 def test_get_input_rejects_negative_index():
-    # a negative index must be out-of-range, not silently honored as Python
-    # negative indexing into the inputs List (which would return a wrong node).
+    # A negative index must be rejected as out of range. If get_input applied Python negative indexing to the inputs
+    # List instead, it would silently return a wrong node.
     n1 = make_node("n1")
     n2 = make_node("n2", (n1,))
     with pytest.raises(NumbaError):

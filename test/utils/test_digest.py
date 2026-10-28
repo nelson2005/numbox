@@ -25,8 +25,8 @@ def test_digest_varies_with_subject():
 
 
 def test_digest_varies_with_function_literal():
-    # co_consts-sensitive: bodies differing only by a numeric literal must produce
-    # different digests (cloudpickle of __code__, not bare co_code which is identical here).
+    # The digest is sensitive to co_consts: bodies that differ only in a numeric literal must produce different
+    # digests. The digest hashes cloudpickle of __code__, not the bare co_code, which is identical for these bodies.
     def cb_one(x):
         return x + 1
 
@@ -47,14 +47,14 @@ def test_digest_varies_with_jit_options(monkeypatch):
 
 
 def test_digest_accepts_codeless_callable():
-    # a callable with no __code__ (builtin, functools.partial, callable object)
-    # must hash via cloudpickle of the object itself instead of raising.
+    # A callable with no __code__ (a builtin, a functools.partial or a callable object) must be hashed through
+    # cloudpickle of the object itself instead of raising.
     assert len(digest("StateType", (functools.partial(len),))) == 16
 
 
 def test_digest_codeless_callable_captures_state():
-    # object-fallback hashes the whole object, so differing partial args (state)
-    # yield different digests -- which __call__.__code__ alone would miss.
+    # The object fallback hashes the whole object, so partials with different arguments (state) yield different
+    # digests. A hash of __call__.__code__ alone would not detect that difference.
     one = digest("StateType", (functools.partial(len, "a"),))
     two = digest("StateType", (functools.partial(len, "ab"),))
     assert one != two
@@ -66,27 +66,25 @@ def test_digest_empty_inputs_deterministic():
 
 
 def test_digest_unfingerprintable_function_captures_closure():
-    # When the strict walker aborts on an un-canonicalizable referenced value, the
-    # fallback must still capture closure state: two functions with identical
-    # source but different closure values yield different digests. The old
-    # fallback cloudpickled the bare __code__, dropping exactly that state.
-    class Opaque:  # not a canonicalizable type -> forces the strict walker to abort
+    # When the strict walker aborts on an un-canonicalizable referenced value, the fallback must still capture
+    # closure state: two functions with identical source but different closure values yield different digests. A
+    # fallback that cloudpickled the bare __code__ would drop exactly that state.
+    class Opaque:  # Opaque is not a canonicalizable type, so it forces the strict walker to abort.
         pass
     marker = Opaque()
 
     def make(k):
         def cb(x):
-            return (marker, k, x)  # references the opaque global; k lives in the closure
+            return (marker, k, x)  # The tuple references the opaque global, and k is a closure variable.
         return cb
 
     assert digest("StateType", (make(1),)) != digest("StateType", (make(2),))
 
 
 def test_digest_folds_dispatcher_jit_flags():
-    # A Dispatcher's py_func is only half its identity: numba compiles a
-    # different library per jit-flag set, so two dispatchers over one body must
-    # key distinctly. The py_func shortcut saw only the Python body and collided
-    # all of these onto a single digest.
+    # A Dispatcher's py_func identifies only part of the dispatcher, because numba compiles a different library for
+    # each set of jit flags. Two dispatchers over one body must therefore produce distinct digests. The py_func
+    # shortcut sees only the Python body, so it would give all of these variants a single digest.
     def cb(x):
         return x + 1
 
@@ -113,11 +111,10 @@ def test_digest_of_dispatcher_is_deterministic_and_body_sensitive():
 
 
 def test_digest_folds_dufunc_jit_flags():
-    # @vectorize freezes its scalar body at compile time, so its targetoptions
-    # belong in the key too. Note this holds on the cloudpickle path as well, so
-    # unlike the Dispatcher case above it does not by itself pin the _canon_value
-    # routing -- what routing buys DUFuncs is escaping cloudpickle's documented
-    # nondeterminism for __main__ objects.
+    # @vectorize freezes its scalar body at compile time, so its targetoptions belong in the key too. This property
+    # also holds on the cloudpickle path, so, unlike the Dispatcher case above, the test does not by itself verify
+    # the _canon_value routing. For DUFuncs, the routing avoids cloudpickle's documented nondeterminism for __main__
+    # objects.
     def cb(x):
         return x + 1
 

@@ -5,7 +5,7 @@ from numbox.utils.lowlevel import load_unaligned, store_unaligned, load_at, stor
 
 
 def test_load_unaligned_reads_misaligned_int64():
-    # int64 stored at byte offset 1 of a byte buffer (deliberately misaligned).
+    # The test stores an int64 at byte offset 1 of a byte buffer, so the value is deliberately misaligned.
     buf = np.zeros(16, dtype=np.uint8)
     buf[1:9] = np.frombuffer(np.int64(0x0123456789ABCDEF).tobytes(), dtype=np.uint8)
 
@@ -38,11 +38,10 @@ def test_load_unaligned_float64():
 
 
 def test_store_unaligned_emits_align1_not_natural():
-    # A runtime roundtrip can't distinguish store_unaligned from store_at on x86:
-    # the hardware tolerates a misaligned natural-aligned access, so both pass.
-    # The contract lives in the emitted IR — store_unaligned MUST be align=1.
-    # store_at on a misaligned address is UB; a regression to it would flip the
-    # store to natural alignment, which this asserts against.
+    # A runtime round trip cannot distinguish store_unaligned from store_at on x86. The hardware tolerates a misaligned
+    # access that is declared naturally aligned, so both pass. The test therefore checks the contract in the emitted
+    # IR: store_unaligned must emit an align=1 store. store_at on a misaligned address is UB. If store_unaligned
+    # regressed to store_at, its store would change to natural alignment. The test asserts against that regression.
     @njit
     def w_unaligned(p):
         store_unaligned(p + 1, int64(0x0102030405060708))
@@ -54,7 +53,7 @@ def test_store_unaligned_emits_align1_not_natural():
     buf = np.zeros(16, dtype=np.uint8)
     w_unaligned(array_data_p(buf))
     assert int(np.frombuffer(buf[1:9].tobytes(), dtype=np.int64)[0]) == 0x0102030405060708
-    w_at(array_data_p(buf))  # compiled only for the IR contrast below
+    w_at(array_data_p(buf))  # w_at runs here only so that it compiles for the IR contrast below
 
     needle = str(0x0102030405060708)  # LLVM prints the i64 constant in decimal
 
@@ -67,7 +66,7 @@ def test_store_unaligned_emits_align1_not_natural():
 
 
 def test_load_unaligned_emits_align1_not_natural():
-    # Same contract on the load side: load_unaligned MUST emit an align=1 load.
+    # The same contract holds on the load side: load_unaligned must emit an align=1 load.
     buf = np.zeros(16, dtype=np.uint8)
     buf[1:9] = np.frombuffer(np.int64(0x0102030405060708).tobytes(), dtype=np.uint8)
 
@@ -80,7 +79,7 @@ def test_load_unaligned_emits_align1_not_natural():
         return load_at(p + 1, int64)
 
     assert r_unaligned(array_data_p(buf)) == 0x0102030405060708
-    assert r_at(array_data_p(buf)) == 0x0102030405060708  # UB but tolerated on x86
+    assert r_at(array_data_p(buf)) == 0x0102030405060708  # The access is UB, but x86 tolerates it
 
     def i64_loads(f):
         ir = "\n".join(f.inspect_llvm().values())

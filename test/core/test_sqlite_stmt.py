@@ -1,4 +1,4 @@
-"""Statement-lifecycle binding tests for the SQLite buildout."""
+"""The tests cover the SQLite bindings for the statement lifecycle."""
 from ctypes import addressof, c_int64
 
 from numbox.core.bindings.sqlite.constants import SQLITE_DONE, SQLITE_OK, SQLITE_ROW
@@ -32,7 +32,7 @@ def test_reset_replays_query(memory_db):
     stmt_p = _prepare(memory_db, "SELECT 1")
     assert sqlite3_step(stmt_p) == SQLITE_ROW
     assert sqlite3_reset(stmt_p) == SQLITE_OK
-    assert sqlite3_step(stmt_p) == SQLITE_ROW  # replays
+    assert sqlite3_step(stmt_p) == SQLITE_ROW  # The statement replays the query after the reset
     sqlite3_finalize(stmt_p)
 
 
@@ -56,20 +56,20 @@ def test_expanded_sql_substitutes_and_must_free(memory_db):
 
 def test_stmt_busy_is_nonzero_mid_iteration(memory_db):
     stmt_p = _prepare(memory_db, "SELECT 1")
-    assert sqlite3_stmt_busy(stmt_p) == 0  # before step
-    sqlite3_step(stmt_p)                   # ROW
-    assert sqlite3_stmt_busy(stmt_p) != 0  # mid-iteration
+    assert sqlite3_stmt_busy(stmt_p) == 0  # The statement has not been stepped yet
+    sqlite3_step(stmt_p)                   # The step returns SQLITE_ROW
+    assert sqlite3_stmt_busy(stmt_p) != 0  # The statement is in the middle of an iteration
     sqlite3_finalize(stmt_p)
 
 
 def test_prepare_invalid_sql_returns_error(memory_db):
     stmt_p = c_int64(0)
     tail_p = c_int64(0)
-    with c_string("SELECT FROM WHERE") as sql_p:  # garbage
+    with c_string("SELECT FROM WHERE") as sql_p:  # The SQL text is invalid
         rc = sqlite3_prepare_v2(memory_db, sql_p, -1,
                                 addressof(stmt_p), addressof(tail_p))
     assert rc != SQLITE_OK
-    assert stmt_p.value == 0  # no statement on failure
+    assert stmt_p.value == 0  # The failed prepare creates no statement
 
 
 def test_db_handle_round_trip(memory_db):

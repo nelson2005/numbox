@@ -1,4 +1,4 @@
-"""Column accessor tests for the SQLite buildout."""
+"""The tests cover the SQLite column accessor bindings."""
 from ctypes import addressof, c_int64, c_ubyte
 
 import pytest
@@ -20,8 +20,8 @@ from test.auxiliary_utils import collect_and_run_tests, str_from_p_as_int
 
 @pytest.fixture
 def populated_table(tmp_path):
-    """File db with t(i INT, big BIGINT, d REAL, s TEXT, b BLOB, n FLOAT)
-    containing one row of known values."""
+    """Create a file-backed database with t(i INT, big BIGINT, d REAL, s TEXT, b BLOB, n FLOAT) containing one row of
+    known values."""
     import sqlite3 as stdlib_sqlite3
     db_file = tmp_path / "cols.sqlite"
     conn = stdlib_sqlite3.connect(str(db_file))
@@ -69,7 +69,7 @@ def test_column_blob_matches_inserted(populated_table):
     blob_p = sqlite3_column_blob(stmt_p, 0)
     n = sqlite3_column_bytes(stmt_p, 0)
     assert n == 4
-    # c_ubyte (not np.uint8) — np.uint8 is a numpy scalar dtype, not a ctypes type.
+    # The buffer uses c_ubyte, not np.uint8, because np.uint8 is a numpy scalar dtype and not a ctypes type.
     buf = bytes((c_ubyte * n).from_address(blob_p))
     assert buf == bytes([1, 2, 3, 4])
     sqlite3_finalize(stmt_p)
@@ -101,7 +101,7 @@ def test_column_name_returns_label(populated_table):
 def test_column_decltype_returns_declared(populated_table):
     stmt_p = _prepare_and_step(populated_table, "SELECT i FROM t")
     dt_p = sqlite3_column_decltype(stmt_p, 0)
-    # The declared type from CREATE TABLE was "INT"
+    # CREATE TABLE declares column i as "INT"
     assert str_from_p_as_int(dt_p).upper() == "INT"
     sqlite3_finalize(stmt_p)
 

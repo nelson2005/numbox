@@ -1,4 +1,4 @@
-"""Presence + value assertions for the public SQLite constant surface."""
+"""The tests check that the public SQLite constants are present and have the expected values."""
 from test.auxiliary_utils import collect_and_run_tests
 
 

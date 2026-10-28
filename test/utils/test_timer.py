@@ -1,8 +1,7 @@
 """Tests for ``numbox.utils.timer``.
 
-``Timer`` is a library utility, so importing it must leave the process-wide
-root logger alone and its per-call timing must be routine (INFO) output that
-the application opts into.
+``Timer`` is a library utility. Importing it must therefore leave the process-wide root logger unconfigured, and its
+per-call timing must be routine (INFO) output that the application opts into.
 """
 import logging
 import subprocess
@@ -24,8 +23,11 @@ def test_timer_records_duration_and_returns_result():
 
 
 class _Records(logging.Handler):
-    """Keeps every record it is handed. A plain handler rather than pytest's ``caplog`` fixture, so the file also runs
-    through its own ``collect_and_run_tests`` block, which calls each test with no arguments."""
+    """Keeps every record it receives.
+
+    It is a plain handler rather than pytest's ``caplog`` fixture, so that the file also runs through its own
+    ``collect_and_run_tests`` block, which calls each test with no arguments.
+    """
 
     def __init__(self):
         super().__init__()

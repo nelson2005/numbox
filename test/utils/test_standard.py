@@ -1,10 +1,8 @@
 """Tests for ``numbox.utils.standard`` source-string helpers.
 
-``make_params_strings`` is consumed by ``make_structref``'s method-binding
-codegen and by the ``@proxy`` decorator. Both produce Python source that
-gets ``exec()``'d; the helper must refuse parameter kinds it cannot
-faithfully reproduce, otherwise the generated wrapper silently binds
-arguments differently from the user's intent.
+``make_params_strings`` is consumed by ``make_structref``'s method-binding codegen and by the ``@proxy`` decorator. Both
+produce Python source that is passed to ``exec()``. The helper must refuse the parameter kinds that it cannot faithfully
+reproduce. Otherwise, the generated wrapper would silently bind arguments differently from the user's intent.
 """
 import pytest
 
@@ -39,19 +37,18 @@ def test_make_params_strings_rejects_var_keyword():
 
 
 def test_make_params_strings_flattens_keyword_only():
-    """Keyword-only `*,` separator is silently dropped — this is the
-    behavior `@proxy` relies on for `Omitted`-style overloads written
-    as `def f(x, *, y=default)`. See test_proxy.py::test_2."""
+    """The keyword-only `*,` separator is silently dropped. `@proxy` relies on this behavior for `Omitted`-style
+    overloads written as `def f(x, *, y=default)`. See test_proxy.py::test_2.
+    """
     def f(a, *, b):
         pass
     assert make_params_strings(f) == ("a, b", "a, b")
 
 
 def test_make_params_strings_flattens_positional_only():
-    """Positional-only `/` separator is silently dropped to match the
-    kw-only handling — both are non-Critical for the codegen since they
-    only widen the calling-convention surface area, they don't
-    miscompile."""
+    """The positional-only `/` separator is silently dropped, to match the keyword-only handling. Both flattenings are
+    non-Critical for the codegen, because they only widen the calling-convention surface area and do not miscompile.
+    """
     def f(a, b, /, c):
         pass
     assert make_params_strings(f) == ("a, b, c", "a, b, c")
@@ -67,10 +64,8 @@ def test_make_params_strings_rejects_combined_var_args_and_kwargs():
 def test_make_params_strings_string_default_uses_repr():
     """String defaults must round-trip through the generated source.
 
-    ``str("hello") == "hello"`` (no quotes) which is invalid as a
-    default-value expression — it would parse as a bare identifier
-    and NameError at exec time. ``repr("hello") == "'hello'"`` round-
-    trips correctly.
+    ``str("hello") == "hello"`` (no quotes) is invalid as a default-value expression: the rendered default would parse
+    as a bare identifier and raise NameError at exec time. ``repr("hello") == "'hello'"`` round-trips correctly.
     """
     def f(x="hello"):
         pass
@@ -83,8 +78,9 @@ def test_make_params_strings_string_default_uses_repr():
 
 
 def test_make_params_strings_none_default_round_trips():
-    """None default — both str and repr produce ``"None"``; pin the
-    repr fix didn't break the case that ``str`` handled correctly."""
+    """For a None default, both str and repr produce ``"None"``. The test checks that rendering defaults with repr does
+    not break the case that ``str`` handles correctly.
+    """
     def f(x=None):
         pass
     sig, _ = make_params_strings(f)
@@ -96,11 +92,12 @@ def test_make_params_strings_none_default_round_trips():
 
 @pytest.mark.parametrize("bad_float", [float('nan'), float('inf'), float('-inf')])
 def test_make_params_strings_nan_inf_floats_documented_no_roundtrip(bad_float):
-    """nan/inf floats render via repr() to bare identifiers (``nan`` /
-    ``inf`` / ``-inf``) which are not valid Python expressions and raise
-    NameError at exec time. The docstring documents this as a known
-    limitation. Pin the behavior so the gotcha stays visible if the
-    codepath ever changes."""
+    """repr() renders nan and inf floats as bare identifiers (``nan`` / ``inf`` / ``-inf``).
+
+    Those identifiers are not valid Python expressions, and they raise NameError at exec time. The docstring of
+    ``make_params_strings`` documents this as a known limitation. The test asserts the behavior, so that the limitation
+    stays visible if the codepath ever changes.
+    """
     def f(x=bad_float):
         pass
     sig, _ = make_params_strings(f)

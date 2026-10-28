@@ -10,8 +10,8 @@ from numbox.core.bindings.utils import platform_
 from numbox.utils.lowlevel import array_data_p, get_str_from_p_as_int
 
 
-# Invalid errno value far outside any libc's mapped range (POSIX errno is
-# typically <200; glibc reserves through ~133 for application use).
+# INVALID_ERRNO is an invalid errno value far outside the mapped range of any libc. POSIX errno values are typically
+# below 200. glibc reserves values through about 133 for application use.
 INVALID_ERRNO = 99999
 
 
@@ -31,15 +31,13 @@ def _strerror(errnum, buflen=128):
 
 
 def test_strerror_safe_enoent_roundtrip():
-    """Known errno produces a non-empty, non-fallback message.
+    """A known errno produces a non-empty, non-fallback message.
 
-    Locale-tolerant: we don't pin LANG/LC_MESSAGES, so the exact English
-    "No such file or directory" string is not asserted. Instead we verify
-    that ENOENT and EACCES produce *different* messages — a property that
-    holds in every locale (no locale collapses distinct errno values into
-    the same translation) — and that neither matches the libc's
-    "Unknown error N" fallback shape that would indicate the errno wasn't
-    recognized.
+    The test is locale-tolerant. It does not set LANG/LC_MESSAGES, so it does not assert the exact English
+    "No such file or directory" string. Instead, the test verifies that ENOENT and EACCES produce *different*
+    messages. That property holds in every locale, because no locale collapses distinct errno values into the same
+    translation. The test also verifies that neither message matches the libc's "Unknown error N" fallback pattern,
+    which would indicate that the errno was not recognized.
     """
     rc_enoent, msg_enoent = _strerror(errno.ENOENT)
     rc_eacces, msg_eacces = _strerror(errno.EACCES)
@@ -47,15 +45,14 @@ def test_strerror_safe_enoent_roundtrip():
     assert rc_eacces == 0, f"EACCES roundtrip rc={rc_eacces}"
     assert msg_enoent, "ENOENT produced empty message"
     assert msg_eacces, "EACCES produced empty message"
-    # Distinct errnos must produce distinct messages on any sane locale.
+    # Distinct errnos must produce distinct messages in any well-formed locale.
     assert msg_enoent != msg_eacces, (
         f"ENOENT and EACCES produced identical messages "
         f"({msg_enoent!r}) — likely both fell through to a fallback"
     )
-    # Neither message should look like the unrecognized-errno fallback.
-    # glibc renders "Unknown error N"; musl uses "No error information";
-    # Windows uses "Unknown error". Reject any "unknown error" prefix in
-    # any case.
+    # Neither message should match the unrecognized-errno fallback. glibc renders "Unknown error N", musl uses
+    # "No error information" and Windows uses "Unknown error". The check rejects any "unknown error" prefix,
+    # regardless of case.
     for errnum, msg in [(errno.ENOENT, msg_enoent), (errno.EACCES, msg_eacces)]:
         assert not msg.lower().startswith("unknown error"), (
             f"errno {errnum} produced fallback message {msg!r}"
@@ -63,22 +60,21 @@ def test_strerror_safe_enoent_roundtrip():
 
 
 def test_strerror_safe_invalid_errno_uses_fallback():
-    """An unrecognized errno produces a fallback message (and either rc=0 or
-    a positive errno indicator), with the buffer still NUL-terminated.
+    """An unrecognized errno produces a fallback message, and the buffer remains NUL-terminated. The rc is either 0 or
+    a positive errno indicator.
 
-    Per the POSIX strerror_r spec and Windows strerror_s docs, exact rc
-    behavior on unknown errno varies across libcs:
+    According to the POSIX strerror_r specification and the Windows strerror_s documentation, the exact rc behavior on
+    an unknown errno varies across libcs:
 
       - glibc: writes "Unknown error N", returns 0
       - musl:  writes "No error information", returns EINVAL
       - macOS: writes "Unknown error: N", returns 0
       - Windows: returns EINVAL, writes a fallback
 
-    The test asserts the *portable* contract: the buffer is non-empty,
-    NUL-terminated, and either (a) the rc indicates an error, or (b) the
-    message is a recognized "unknown/unrecognized" fallback shape. This
-    pins down the EINVAL-or-fallback path that the strerror_safe docstring
-    promises without overfitting to one libc.
+    The test asserts the *portable* contract: the buffer is non-empty and NUL-terminated, and either (a) the rc
+    indicates an error, or (b) the message matches a recognized "unknown/unrecognized" fallback pattern. The test thus
+    verifies the EINVAL-or-fallback path that the strerror_safe docstring promises, without relying on the behavior of
+    one libc.
     """
     rc, msg = _strerror(INVALID_ERRNO)
     assert msg, "invalid errno produced empty message"
@@ -94,16 +90,14 @@ def test_strerror_safe_invalid_errno_uses_fallback():
 
 
 def test_strerror_safe_short_buffer():
-    # Pre-fill with 0xFF so the trailing-NUL check actually probes the
-    # implementation: a zero-initialized buffer would pass the assertion
-    # even if strerror_safe wrote nothing.
+    # The buffer is pre-filled with 0xFF so that the trailing-NUL check actually probes the implementation. A
+    # zero-initialized buffer would pass the assertion even if strerror_safe wrote nothing.
     buf = np.full(2, 0xFF, dtype=np.uint8)
     rc, _ = _describe(errno.ENOENT, buf, buf.size)
-    # POSIX strerror_r returns ERANGE on short buffer; Windows strerror_s may
-    # truncate-and-succeed instead. The portable contract is NUL-termination
-    # within the caller's buffer — verify that directly rather than reading
-    # the buffer via a NUL-scanning helper (which could read past the
-    # allocation if the implementation didn't NUL-terminate).
+    # POSIX strerror_r returns ERANGE on a short buffer. Windows strerror_s may truncate the message and succeed
+    # instead. The portable contract is NUL-termination within the caller's buffer. The test verifies that directly
+    # instead of reading the buffer through a NUL-scanning helper. Such a helper could read past the allocation if the
+    # implementation did not NUL-terminate the buffer.
     assert buf[-1] == 0, f"buffer not NUL-terminated (rc={rc})"
 
 
@@ -130,16 +124,15 @@ def test_strerror_safe_two_threads_no_contamination():
 
 
 def test_strerror_safe_rejects_int64_errnum():
-    """The private _strerror_safe intrinsic requires int32 errnum at typing
-    time. The user-facing strerror_safe wrapper casts to int32 first, so
-    this guard only fires on direct misuse.
+    """The private _strerror_safe intrinsic requires an int32 errnum at typing time. The user-facing strerror_safe
+    wrapper casts errnum to int32 first, so this guard raises only on direct misuse.
     """
     from numba.core.errors import TypingError
     from numbox.core.bindings.strerror import _strerror_safe
 
     @njit
     def caller(errnum, buf, buflen):
-        # errnum arrives as int64 (Python default); no cast — should fail
+        # errnum is typed as int64, the Python default. The call does not cast it, so the typing should fail.
         return _strerror_safe(errnum, buf, buflen)
 
     buf = np.zeros(64, dtype=np.uint8)

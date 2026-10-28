@@ -1,7 +1,7 @@
-"""UDF registration and integration tests for the SQLite buildout.
+"""The tests cover UDF registration and integration for the SQLite bindings.
 
-Covers scalar UDFs, aggregate UDFs (structref-backed), window UDFs,
-and context helper round-trips (sqlite3_user_data, sqlite3_context_db_handle).
+The tests exercise scalar UDFs, aggregate UDFs (structref-backed), window UDFs and context helper round trips
+(sqlite3_user_data, sqlite3_context_db_handle).
 """
 from ctypes import addressof, c_int64
 
@@ -83,7 +83,7 @@ _null_check_cb = cfunc(
 
 
 # ---------------------------------------------------------------------------
-# Capture probe: scalar UDF that writes its first arg into user_data
+# Capture probe: a scalar UDF that writes its first argument into user_data
 # ---------------------------------------------------------------------------
 
 @njit
@@ -105,7 +105,7 @@ _capture_cb = cfunc(types.void(types.intp, types.int32, types.intp))(_capture_im
 @njit
 def _sum_step_impl(ctx, argc, argv_pp):
     agg_ptr = sqlite3_aggregate_context(ctx, 8)
-    if agg_ptr == 0:  # NULL on OOM; carray on a NULL pointer would segfault
+    if agg_ptr == 0:  # agg_ptr is NULL on OOM, and carray on a NULL pointer would cause a segfault
         return
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
     val = sqlite3_value_int64(args[0])
@@ -143,24 +143,22 @@ _sum_final_cb = cfunc(types.void(types.intp))(_sum_final_impl)
 # ---------------------------------------------------------------------------
 # Window UDF callbacks (array-backed state)
 #
-# Alternative to the structref-backed aggregate above: the aggregate_context
-# slot is 16 bytes holding two intp values -- [meminfo_p, data_p] -- instead
-# of a single structref meminfo pointer. The payload is a 1-element int64
-# array (the running total) allocated with np.zeros inside the step callback.
-# Because np.zeros emits an NRT_MemInfo_alloc in that body, removerefctpass is
-# disabled there, so the manual _incref_meminfo (the @intrinsic, which inlines)
-# survives and pins the buffer past the callback; release_meminfo in xFinal
-# frees it. Subsequent callbacks reach the payload through data_p via carray --
-# no structref reconstruction. Same pattern as numbduck's array UDAF.
+# These callbacks are an alternative to the structref-backed aggregate above. The aggregate_context slot is 16 bytes
+# and holds two intp values, [meminfo_p, data_p], instead of a single structref meminfo pointer. The payload is a
+# 1-element int64 array (the running total) that np.zeros allocates inside the step callback. np.zeros emits an
+# NRT_MemInfo_alloc in that body, so removerefctpass is disabled there. The manual _incref_meminfo (the @intrinsic,
+# which inlines) therefore remains in the compiled code and holds a reference to the buffer after the callback
+# returns. release_meminfo in xFinal frees the buffer. Subsequent callbacks reach the payload through data_p with
+# carray, without reconstructing a structref. numbduck's array UDAF uses the same pattern.
 # ---------------------------------------------------------------------------
 
-_WSUM_SLOTS = 2  # aggregate_context layout: slot[0]=meminfo_p, slot[1]=data_p
+_WSUM_SLOTS = 2  # In the aggregate_context layout, slot[0] holds meminfo_p and slot[1] holds data_p
 
 
 @njit
 def _wsum_step_impl(ctx, argc, argv_pp):
     agg_ptr = sqlite3_aggregate_context(ctx, 16)
-    if agg_ptr == 0:  # NULL on OOM; carray on a NULL pointer would segfault
+    if agg_ptr == 0:  # agg_ptr is NULL on OOM, and carray on a NULL pointer would cause a segfault
         return
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
     val = sqlite3_value_int64(args[0])
@@ -183,7 +181,7 @@ _wsum_step_cb = cfunc(
 @njit
 def _wsum_inverse_impl(ctx, argc, argv_pp):
     agg_ptr = sqlite3_aggregate_context(ctx, 16)
-    if agg_ptr == 0:  # NULL on OOM; carray on a NULL pointer would segfault
+    if agg_ptr == 0:  # agg_ptr is NULL on OOM, and carray on a NULL pointer would cause a segfault
         return
     args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
     val = sqlite3_value_int64(args[0])
@@ -418,16 +416,14 @@ def test_window_running_sum():
 
 
 def test_udaf_no_meminfo_leak():
-    """Regression guard for the aggregate/window state lifecycle.
+    """The test guards the lifecycle of the aggregate and window state against regressions.
 
-    Exercises both bridge idioms: the structref-backed aggregate
-    (``test_udaf_sum_structref``) and the array-backed window function
-    (``test_window_running_sum``). Each keeps its state alive across callbacks
-    with a +1 incref -- ``export_meminfo`` for the structref, the inlined
-    ``_incref_meminfo`` for the array -- and frees it with a single
-    ``release_meminfo`` in xFinal. A dropped incref frees the state early
-    (use-after-free); a dropped release leaks. Either shows up as an imbalance
-    between meminfo allocations and frees.
+    The test exercises both bridge idioms: the structref-backed aggregate (``test_udaf_sum_structref``) and the
+    array-backed window function (``test_window_running_sum``). Each idiom keeps its state alive across callbacks with
+    a +1 incref: ``export_meminfo`` for the structref and the inlined ``_incref_meminfo`` for the array. Each idiom
+    frees its state with a single ``release_meminfo`` in xFinal. If an incref is dropped, the state is freed early
+    (use-after-free). If a release is dropped, the state leaks. Either defect appears as an imbalance between meminfo
+    allocations and frees.
     """
     from numba.core.runtime import nrt
     _nrt = nrt._nrt
@@ -435,7 +431,7 @@ def test_udaf_no_meminfo_leak():
         import pytest
         pytest.skip("NRT allocation stats unavailable")
     _nrt.memsys_enable_stats()
-    # warm up JIT / one-time allocations before measuring steady state
+    # A warm-up round performs the JIT compilation and the one-time allocations before the steady state is measured.
     test_udaf_sum_structref()
     test_window_running_sum()
     test_udaf_empty_group()

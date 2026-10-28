@@ -51,13 +51,12 @@ def test_c():
 
 
 def test_load_lib_path_returns_handle_with_known_symbol():
-    """``load_lib_path`` takes a path, so this needs one on every platform.
+    """``load_lib_path`` takes a path, so the test needs a library path on every platform.
 
-    Windows has no path to the C runtime: it stopped being loadable by name with
-    VS2015 and ``find_msvcrt()`` returns None for every build since, so asking for one
-    skipped the test and left the ``winmode=0`` branch of ``load_lib_path`` unexecuted
-    there. The bundled ``sqlite3.dll`` is a path that does exist, and a hard
-    prerequisite of every working Python on Windows because ``_sqlite3.pyd`` links it.
+    Windows has no path to the C runtime. The C runtime has not been loadable by name since VS2015. ``find_msvcrt()``
+    returns None for every build since then. If the test asked for the path of the C runtime, it would skip on Windows,
+    and the ``winmode=0`` branch of ``load_lib_path`` would stay unexecuted there. The bundled ``sqlite3.dll`` is a path
+    that exists. Every working Python on Windows requires that DLL, because ``_sqlite3.pyd`` links it.
     """
     from numbox.core.bindings.utils import _windows_bundled_dll_path, load_lib_path
 
@@ -78,7 +77,7 @@ def test_load_lib_returns_queryable_handle():
     assert handle is not None
     # strlen is in libc on every supported platform
     assert hasattr(handle, "strlen")
-    # A symbol that doesn't exist returns False
+    # hasattr returns False for a symbol that does not exist
     assert not hasattr(handle, "definitely_not_a_real_symbol_xyzzy")
 
 
@@ -100,7 +99,7 @@ def _strings_compare_search():
     c = get_unicode_data_p("world")
     eq = strcmp(a, b)
     ne = strcmp(a, c)
-    # Bounded comparison: "hello" vs "help!" first matches 3 chars, differs at 4
+    # Bounded comparison: "hello" and "help!" match in the first 3 characters and differ in the first 4
     d_hello = get_unicode_data_p("hello")
     d_help = get_unicode_data_p("help!")
     n_match = strncmp(d_hello, d_help, 3)
@@ -125,9 +124,9 @@ def test_c_strings():
     eq, ne, n_match, n_differ, off_first, off_last, off_sub = _strings_compare_search()
     assert eq == 0
     assert ne != 0
-    # strncmp("hello", "help!", 3) == 0: first 3 bytes "hel" match
+    # strncmp("hello", "help!", 3) == 0: the first 3 bytes, "hel", match
     assert n_match == 0, n_match
-    # strncmp("hello", "help!", 4) != 0: differs at byte 3 ('l' vs 'p')
+    # strncmp("hello", "help!", 4) != 0: the strings differ at byte 3 ('l' versus 'p')
     assert n_differ != 0, n_differ
     assert off_first == 2
     assert off_last == 9
@@ -208,19 +207,15 @@ def _env_lookup(name):
 
 @pytest.fixture
 def _getenv_test_var(monkeypatch):
-    """Set a unique env var that numbox's getenv binding can read, and
-    clean it up on teardown.
+    """Set a unique environment variable that numbox's getenv binding can read, and remove it on teardown.
 
-    Plain ``monkeypatch.setenv`` is sufficient on POSIX. On Windows it
-    isn't: ``numbox.core.bindings.utils.load_lib("c")`` resolves to
-    ``msvcrt.dll`` (the legacy CRT compatibility shim — what
-    ``ctypes.cdll.msvcrt`` returns), while Python 3.10+ uses UCRT for
-    ``os.environ`` / ``monkeypatch.setenv``. MSVCRT and UCRT have
-    separate ``environ`` tables, so a var set via the Python-side path
-    is invisible to the binding's getenv call. To make the test
-    deterministic on Windows, set the var via the same MSVCRT instance
-    the binding uses (``msvcrt._putenv_s``); the env-table the binding
-    reads is then the one that contains the var.
+    ``monkeypatch.setenv`` alone is sufficient on POSIX but not on Windows. On Windows,
+    ``numbox.core.bindings.utils.load_lib("c")`` resolves to ``msvcrt.dll``, the legacy CRT compatibility shim that
+    ``ctypes.cdll.msvcrt`` returns. Python 3.10+ uses UCRT for ``os.environ`` and ``monkeypatch.setenv``. MSVCRT and
+    UCRT have separate ``environ`` tables, so a variable set through the Python-side path is not visible to the
+    binding's getenv. To make the test deterministic on Windows, the fixture sets the variable through the same MSVCRT
+    instance that the binding uses (``msvcrt._putenv_s``). The environment table that the binding reads then contains
+    the variable.
     """
     var_name = "NUMBOX_TEST_GETENV_VAR_7d4f1c"
     var_value = "numbox-getenv-roundtrip-sentinel"
@@ -231,7 +226,7 @@ def _getenv_test_var(monkeypatch):
         try:
             yield var_name, var_value
         finally:
-            # _putenv_s with empty value removes the var (MSDN docs).
+            # _putenv_s with an empty value removes the variable, as the MSDN documentation states.
             msvcrt._putenv_s(var_name.encode(), b"")
     else:
         monkeypatch.setenv(var_name, var_value)
@@ -239,15 +234,14 @@ def _getenv_test_var(monkeypatch):
 
 
 def test_c_env(_getenv_test_var):
-    """getenv contract: returns a pointer to the environ-table string for set
-    variables and 0 for unset variables. Verify both the presence/absence
-    distinction AND that the returned pointer dereferences to the correct
-    value — a stale or wrong-variable pointer would slip past an address-only
-    check.
+    """getenv returns a pointer to the environ-table string for a set variable, and 0 for an unset variable.
 
-    Uses a dedicated test-controlled env var rather than the ambient
-    ``PATH`` (hermetic CI runners can clear ``PATH``); see the
-    ``_getenv_test_var`` fixture for the platform-aware setup.
+    The test verifies both the distinction between a set and an unset variable and that the returned pointer
+    dereferences to the correct value. An address-only check would not detect a stale pointer or a pointer to the
+    wrong variable.
+
+    The test uses a dedicated variable that it controls rather than the ambient ``PATH``, because hermetic CI runners
+    can clear ``PATH``. See the ``_getenv_test_var`` fixture for the platform-aware setup.
     """
     var_name, var_value = _getenv_test_var
     found_p = _env_lookup(var_name)
@@ -265,15 +259,15 @@ def test_c_env(_getenv_test_var):
 
 
 def test_resolve_lib_path_windows_sqlite3_never_falls_back(monkeypatch):
-    # On Windows sqlite3 MUST resolve to the CPython-bundled DLL and NEVER fall
-    # back to find_library: a PATH-resident third-party sqlite3.dll (AWS CLI v2)
-    # writes to NULL inside sqlite3_open from a foreign process. Pure logic, so
-    # it runs on any host by monkeypatching the platform + candidate check.
+    # On Windows, sqlite3 must resolve to the CPython-bundled DLL and must never fall back to find_library. A
+    # third-party sqlite3.dll in a directory on PATH (AWS CLI v2) writes to NULL inside sqlite3_open in a foreign
+    # process. The resolution is pure logic, so the test runs on any host by monkeypatching the platform and the
+    # candidate check.
     import ctypes.util as _ctypes_util
     from numbox.core.bindings import utils
 
     monkeypatch.setattr(utils, "platform_", "Windows")
-    # find_msvcrt is Windows-only; inject it so the Windows branch imports on any host
+    # find_msvcrt exists only on Windows. The test injects it so that the Windows branch imports on any host.
     monkeypatch.setattr(_ctypes_util, "find_msvcrt", lambda: "C:\\msvcrt.dll", raising=False)
     find_library_calls = []
     monkeypatch.setattr(
@@ -290,8 +284,8 @@ def test_resolve_lib_path_windows_sqlite3_never_falls_back(monkeypatch):
 
 
 def test_resolve_lib_path_windows_nonsqlite_prefers_bundled(monkeypatch):
-    # For a non-sqlite3 name the bundled DLL is preferred over find_library when
-    # both exist; find_library is the last resort only when no bundled DLL.
+    # For a name other than sqlite3, _resolve_lib_path prefers the bundled DLL over find_library when both exist.
+    # find_library is the fallback only when no bundled DLL exists.
     import ctypes.util as _ctypes_util
     from numbox.core.bindings import utils
 
@@ -307,12 +301,11 @@ def test_resolve_lib_path_windows_nonsqlite_prefers_bundled(monkeypatch):
 
 
 def test_import_one_binding_stays_lazy(tmp_path):
-    # The reason bindings/__init__.py is empty: importing one binding must not
-    # eagerly compile the rest of the subsystem (a plain libm import used to
-    # drag in all of sqlite — ~71% of the ~12.8s cold cost). A re-export
-    # sneaked back into __init__.py, or a stray top-level import in
-    # call.py/utils.py, would silently restore that cost with no test failing.
-    # Run in a fresh process: pytest has already imported every binding here.
+    # bindings/__init__.py is empty because importing one binding must not eagerly compile the rest of the subsystem.
+    # If __init__.py re-exported the bindings, a plain libm import would load all of sqlite, which accounts for ~71% of
+    # the ~12.8s cold cost. A re-export added back to __init__.py, or a stray top-level import in call.py or utils.py,
+    # would silently restore that cost, and no test would fail. The probe runs in a fresh process, because pytest has
+    # already imported every binding in this one.
     probe = tmp_path / "lazy_probe.py"
     probe.write_text(textwrap.dedent('''
         import json

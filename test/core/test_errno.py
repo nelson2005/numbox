@@ -25,24 +25,20 @@ def test_errno_set_get_roundtrip():
 
 
 def test_errno_per_thread_isolation():
-    """Two threads concurrently set distinct errno sentinels and read after a
-    pure-compute busy loop. Each thread MUST observe its own sentinel.
+    """Two threads concurrently set distinct errno sentinels and read errno back after a pure-compute busy loop. Each
+    thread must observe its own sentinel.
 
-    Why a busy loop instead of a sync primitive: any Python-side
-    ``threading.Barrier.wait`` / ``Event.wait`` / lock acquire goes through
-    futex(2), which sets errno (typically ``EAGAIN``) in the calling
-    thread before returning to user code. That syscall would clobber the
-    sentinel the thread just stored, so a sync-based probe sees the
-    syscall errno instead of the sentinel — and would (falsely) pass
-    *even with thread-isolated errno*, defeating the test's purpose.
+    The test uses a busy loop instead of a synchronization primitive. Any Python-side ``threading.Barrier.wait``,
+    ``Event.wait`` or lock acquire goes through futex(2). The futex(2) call sets errno (typically ``EAGAIN``) in the
+    calling thread before it returns to user code. That syscall would overwrite the sentinel that the thread has just
+    stored. A probe based on synchronization would therefore see the syscall errno instead of the sentinel. Such a
+    probe would (falsely) pass *even with thread-isolated errno*, which would invalidate the test.
 
-    The pure-compute spin runs entirely in ``@njit(nogil=True)`` code with
-    no syscall between set and get. The only way one thread's set could
-    influence another thread's read is if errno is process-global. With
-    TLS errno (the documented invariant of ``__errno_location`` etc.),
-    each thread reads its own slot and always sees its own sentinel
-    regardless of scheduling. The test runs many trials to ensure the
-    two threads overlap in wall time.
+    The pure-compute spin runs entirely in ``@njit(nogil=True)`` code, with no syscall between ``errno_set`` and
+    ``errno_get``. One thread can influence what the other thread reads only if errno is process-global. If errno is
+    TLS (the documented invariant of ``__errno_location`` and the other errno accessors), each thread reads its own
+    slot. Each thread then always sees its own sentinel, regardless of scheduling. The test runs many trials so that
+    the two threads overlap in wall time.
     """
     SENTINEL_A = 0xABCD
     SENTINEL_B = 0xBEEF
@@ -88,16 +84,13 @@ def test_errno_per_thread_isolation():
 
 
 def test_errno_set_get_observable_in_parallel_iterations():
-    """Within a @njit(parallel=True) loop, errno_set in iteration i is
-    observable by errno_get in the same iteration.
+    """errno_get observes the value that errno_set stored in the same iteration of a @njit(parallel=True) loop.
 
-    This guards against the codegen accidentally caching/hoisting the
-    errno-accessor call (e.g. via a stray ``readnone`` attribute on
-    ``__errno_location``). It is NOT a thread-isolation probe: numba's
-    prange chunks iterations contiguously per thread, so set-then-read
-    within one iteration runs on the same thread regardless of whether
-    errno is TLS or process-global. See
-    ``test_errno_per_thread_isolation`` for the actual TLS probe.
+    The test guards against code generation that caches or hoists the errno-accessor call by accident, for example
+    through a stray ``readnone`` attribute on ``__errno_location``. The test is not a thread-isolation probe. numba's
+    prange assigns each thread a contiguous chunk of iterations. ``errno_set`` and ``errno_get`` within one iteration
+    therefore run on the same thread, whether errno is TLS or process-global. See ``test_errno_per_thread_isolation``
+    for the actual TLS probe.
     """
     @njit(parallel=True, cache=True)
     def f(n):

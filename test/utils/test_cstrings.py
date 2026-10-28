@@ -19,7 +19,7 @@ def test_utf8_round_trip():
     s = "café — 你好 — 🚀"
     with c_string(s) as p:
         assert p != 0
-        # Read back the UTF-8 bytes through to NUL
+        # Read the UTF-8 bytes back up to the NUL terminator.
         roundtrip = str_from_p_as_int(p)
         assert roundtrip == s
 
@@ -34,14 +34,13 @@ def test_empty_string_returns_pointer_to_nul():
 def test_nul_terminator_present():
     s = "abc"
     with c_string(s) as p:
-        # Index 3 is the position after "abc" — must be NUL
+        # Index 3 is the position after "abc", and the byte there must be NUL.
         assert c_char.from_address(p + len(s.encode("utf-8"))).value == b"\x00"
 
 
 def test_embedded_nul_rejected():
-    """Embedded NUL bytes would silently truncate the C string at the
-    first NUL — would mask bugs in callers passing untrusted input.
-    Reject up front instead.
+    """Embedded NUL bytes would silently truncate the C string at the first NUL, and the truncation would hide bugs in
+    callers that pass untrusted input. c_string therefore rejects such a string before it creates the buffer.
     """
     with pytest.raises(ValueError, match="embedded NUL"):
         with c_string("foo\x00bar"):
@@ -58,14 +57,12 @@ def test_distinct_strings_get_distinct_pointers():
 
 
 def test_context_manager_in_njit_raises():
-    """Numba doesn't support arbitrary context managers — guard against
-    a future numba version silently accepting and miscompiling. If this
-    test breaks because numba started supporting it, revisit the
-    cstrings module docstring's JIT caveat.
+    """Numba does not support arbitrary context managers. The test guards against a future numba version that silently
+    accepts such a context manager and miscompiles it. If this test fails because numba starts to support such context
+    managers, revisit the JIT caveat in the cstrings module docstring.
 
-    The test's intent is to assert that compilation fails with numba's
-    ``UnsupportedBytecodeError``. The regression it would catch, numba
-    silently accepting and miscompiling, would not raise at all.
+    The test's intent is to assert that compilation fails with numba's ``UnsupportedBytecodeError``. The regression
+    that the test would detect raises no exception: numba silently accepts the context manager and miscompiles it.
     """
     @njit
     def kernel():

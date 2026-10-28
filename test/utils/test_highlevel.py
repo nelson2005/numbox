@@ -176,11 +176,10 @@ def test_make_structref_3():
         return self.y * 3 + aux()
     m1 = {"calculate_1": calculate_1, "calculate_2": calculate_impl}
     code_txt = make_structref_code_txt("S3", ("x", "y"), S3TypeClass, struct_methods=m1)[0]
-    # The method-name suffix is a fingerprint that folds code.co_code, so it moves
-    # with every CPython bytecode change and can only ever match one interpreter.
-    # Pin what is portable -- the generated structure, that each call site names
-    # the method it defines, and that distinct methods get distinct suffixes --
-    # and normalise the suffix itself out of the comparison.
+    # The method-name suffix is a fingerprint that folds code.co_code, so it changes whenever CPython's bytecode
+    # changes, and it can match only one interpreter. The test therefore asserts what is portable: the generated
+    # structure, that each call site names the method it defines, and that distinct methods get distinct suffixes.
+    # It normalizes the suffix itself out of the comparison.
     digests = _method_digest_re.findall(code_txt)
     assert len(digests) == 4, digests
     assert digests[0] == digests[1], digests
@@ -198,10 +197,13 @@ def test_make_structref_3():
 
 
 def test_make_structref_method_param_edge_cases():
-    """COR-4 / task 8: make_structref must accept method signatures whose source
-    spelling differs from repr() of the default (1_000, 0x10, quote style), drops
-    annotations, or contains a nested ')'. The old regex cross-check assert in
-    make_structref_code_txt rejected these. Codegen-only (no numba needed)."""
+    """make_structref must accept method signatures in three cases that a regex cross-check would reject.
+
+    In the first case, the source spells a default differently from its repr() (1_000, 0x10, quote style). In the
+    second, the signature has an annotation, which the generated parameters drop. In the third, the signature contains a
+    nested ')'. make_structref_code_txt does not cross-check the parameters against the source with a regex, because
+    such an assert rejects these signatures. The test covers code generation only and needs no numba.
+    """
     def m_underscore(self, n=1_000):
         return self.x + n
 
@@ -362,11 +364,9 @@ def test_cres_if_available_missing_symbol_returns_stub():
 
 
 def test_orphan_anchor_sweep_spares_fresh_tmp_files():
-    """Concurrent-import race protection: ``_orphan_anchor_sweep`` must not
-    unlink ``.tmp-*`` files that another process just created via
-    ``_materialize_anchor``'s ``mkstemp`` and is about to ``replace`` into
-    place. The age filter (``_ORPHAN_AGE_SECONDS``) ensures only stale
-    files get unlinked.
+    """Concurrent-import race protection: ``_orphan_anchor_sweep`` must not unlink a ``.tmp-*`` file that another
+    process has just created through the ``mkstemp`` call in ``_materialize_anchor`` and is about to ``replace`` into
+    place. The age filter (``_ORPHAN_AGE_SECONDS``) ensures that only stale files are unlinked.
     """
     root = _anchor_root("numbox-structref")
     root.mkdir(parents=True, exist_ok=True)
@@ -386,11 +386,11 @@ def test_orphan_anchor_sweep_spares_fresh_tmp_files():
 
 
 def test_materialize_anchor_writes_utf8_bytes(tmp_path):
-    """Anchor file must be written as utf-8 to match ``_anchor_path``'s
-    sha256(content.encode('utf-8')) addressing. On Windows the default
-    encoding from ``os.fdopen`` can be cp1252; explicit utf-8 ensures
-    round-trip integrity for non-ASCII source AND keeps the bytes-on-disk
-    consistent with the path hash.
+    """The anchor file must be written as utf-8, because ``_anchor_path`` addresses it by
+    sha256(content.encode('utf-8')).
+
+    On Windows, the default encoding from ``os.fdopen`` can be cp1252. The explicit utf-8 ensures round-trip integrity
+    for non-ASCII source, and it also keeps the bytes on disk consistent with the path hash.
     """
     content = "# café — non-ASCII sentinel\nx = 1\n"
     anchor = tmp_path / "anchor.py"
@@ -406,12 +406,11 @@ def test_type_identity_plain_type_is_cacheable():
 
 
 def test_type_identity_dispatcher_is_uncacheable_and_content_sensitive():
-    """Both bodies are un-cacheable for the one reason that they are Dispatchers.
+    """Both bodies are un-cacheable only because they are Dispatchers.
 
-    They differ only in which fingerprint branch supplies the hash: ``intrinsic_ref``
-    reaches an ``@intrinsic``, which has no canonical form, so the strict walker raises
-    and the best-effort one runs. That branch must still discriminate two bodies -- a
-    changed body has to re-key the in-process name.
+    The bodies differ only in the fingerprint branch that supplies the hash. ``intrinsic_ref`` reaches an
+    ``@intrinsic``, which has no canonical form, so the strict walker raises and the best-effort walker runs. That
+    branch must still discriminate two bodies, because a changed body has to re-key the in-process name.
     """
     @njit
     def plain(x):
@@ -423,38 +422,41 @@ def test_type_identity_dispatcher_is_uncacheable_and_content_sensitive():
 
     h_plain, ok_plain = _type_identity(typeof(plain))
     h_intr, ok_intr = _type_identity(typeof(intrinsic_ref))
-    assert ok_plain is False and ok_intr is False   # Dispatcher-ness alone decides this
+    assert ok_plain is False and ok_intr is False   # the Dispatcher type alone decides this
     assert len(h_plain) == 64 and len(h_intr) == 64
-    assert h_plain != h_intr                   # distinct bodies -> distinct hashes
+    assert h_plain != h_intr                   # distinct bodies give distinct hashes
 
 
 def test_type_identity_cres_is_cacheable():
-    """A compiled function is not itself the problem -- a ``cres`` renders as
-    ``DeriveFunctionType[<sig>]``, which carries neither an address nor a creation-order id
-    and which numba can cross-process-cache. Only the Dispatcher spelling is dropped."""
+    """A compiled function does not by itself make a type un-cacheable.
+
+    A ``cres`` renders as ``DeriveFunctionType[<sig>]``. That form carries neither an address nor a creation-order id,
+    and numba can cross-process-cache it. Only the Dispatcher spelling loses cacheability.
+    """
     @cres(float64(float64))
     def compiled(x):
         return x + 1.0
 
     ty = typeof(compiled)
-    # `cres` mints the numbox-owned type, which is structural, the property this test
-    # is about; that it is minted is pinned by
-    # `test/utils/test_derive_wap.py::test_cres_mints_a_derive_wap`.
+    # `cres` builds the numbox-owned type. That type is structural, which is the property this test checks.
+    # `test/utils/test_derive_wap.py::test_cres_mints_a_derive_wap` checks that `cres` builds it.
     assert str(ty) == "DeriveFunctionType[float64(float64)]"
     h, ok = _type_identity(ty)
     assert ok is True and len(h) == 64
 
 
 def test_type_identity_nested_dispatcher_is_uncacheable():
-    """A Dispatcher nested in a heterogeneous container escapes the top-level
-    ``isinstance`` check but must still be un-cacheable -- numba cannot
-    cross-process-cache a Dispatcher-carrying signature at any depth."""
+    """A Dispatcher nested in a heterogeneous container must still be un-cacheable, although the top-level
+    ``isinstance`` check does not catch it.
+
+    numba cannot cross-process-cache a Dispatcher-carrying signature at any depth.
+    """
     @njit
     def helper(x):
         return x + 1.0
 
     het = typeof((1.0, helper))                # Tuple(float64, Dispatcher)
-    assert "CPUDispatcher(" in str(het)        # the substring the guard keys on
+    assert "CPUDispatcher(" in str(het)        # the substring that the guard checks for
     _h, ok = _type_identity(het)
     assert ok is False
 
@@ -462,11 +464,10 @@ def test_type_identity_nested_dispatcher_is_uncacheable():
 def test_type_identity_record_is_hashed_structurally_not_mangled():
     """A Record must take the structural branch, not numba's mangle.
 
-    The mangle folds a creation-order ``_code``, so it differs between a cold process
-    and a warm one; hashing ``str(ty)`` instead is what makes a Record-typed node
-    process-stable. Asserting the hash simply *differs* from the mangled one pins that
-    the branch was taken -- deleting it makes this fail -- while the layout check pins
-    that going structural did not erase the field layout.
+    The mangle folds a creation-order ``_code``, so it differs between a cold process and a warm one. The structural
+    branch hashes ``str(ty)`` instead, and that makes a Record-typed node process-stable. The test asserts that the hash
+    *differs* from the mangled one, which verifies that the branch was taken: if the branch is deleted, the assertion
+    fails. The layout check verifies that the structural hash did not erase the field layout.
     """
     import hashlib
     import numpy as np
@@ -493,23 +494,22 @@ def test_signature_identity_folds_component_cacheability():
     text_plain, ok_plain = _signature_identity(float64(float64, float64))
     assert ok_plain is True and isinstance(text_plain, str)
 
-    # A function-typed component is not automatically fatal: a cres stays cacheable.
+    # A function-typed component does not by itself make the signature un-cacheable: a cres stays cacheable.
     text_cres, ok_cres = _signature_identity(float64(float64, typeof(compiled)))
     assert ok_cres is True and isinstance(text_cres, str)
 
     text_disp, ok_disp = _signature_identity(float64(float64, typeof(helper)))
-    assert ok_disp is False                    # a Dispatcher component makes the sig un-cacheable
+    assert ok_disp is False                    # a Dispatcher component makes the signature un-cacheable
     assert isinstance(text_disp, str)
 
 
 def test_method_identity_folds_ns_values_read_as_globals_only():
-    """An `ns` value is folded when the method reads it as a global, and not
-    when the method merely names it as an attribute.
+    """An `ns` value is folded when the method reads it as a global, and not when the method merely names it as an
+    attribute.
 
-    Deciding this off `co_names` cannot tell `LOAD_GLOBAL knob` from
-    `LOAD_ATTR knob`, so a method doing `self.knob` against an `ns` carrying an
-    unrelated `knob` folded a value it never reads -- and, when that value has no
-    canonical form, dropped the struct's on-disk cache for nothing.
+    If `_method_identity` chose the `ns` entries to fold from `co_names`, it could not distinguish `LOAD_GLOBAL knob`
+    from `LOAD_ATTR knob`. A method that reads `self.knob` while `ns` holds an unrelated `knob` would then fold a value
+    that it never reads. If that value had no canonical form, the struct would lose its on-disk cache for no reason.
     """
     class Opaque:
         pass
@@ -528,7 +528,7 @@ def test_method_identity_folds_ns_values_read_as_globals_only():
     assert "ns:knob" not in ident_attr
 
     ident_global, cacheable_global = _method_identity(reads_global, {"knob": Opaque()})
-    assert cacheable_global is False           # genuinely read, and opaque -> uncacheable
+    assert cacheable_global is False           # genuinely read, and opaque, so uncacheable
     assert "ns:knob" in ident_global
 
     # A genuinely-read global that *does* canonicalize stays cacheable, and its value

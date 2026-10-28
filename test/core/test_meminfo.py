@@ -91,7 +91,8 @@ def test_bridge_round_trip_recovers_fields():
 
 
 def test_bridge_intrinsics_reject_non_intp():
-    """Wrong-width integer args should raise at typing time, not corrupt at runtime."""
+    """A bridge intrinsic that receives an integer argument of the wrong width raises at typing time instead of
+    corrupting memory at run time."""
     import pytest
     from numba import int32, njit
     from numba.core.errors import TypingError
@@ -106,10 +107,10 @@ def test_bridge_intrinsics_reject_non_intp():
 
 
 def test_incref_survives_refcount_pruning():
-    """A ``void(intp)`` caller passes the legality check of numba's ``removerefctpass`` (numba <= 0.65), which strips
-    NRT_incref by name; the incref must survive it. The refcounts can only fail where that pass exists, so the test
-    also looks for the ``numba_args_may_always_need_nrt`` tag that keeps the pass off, which the IR carries on every
-    numba."""
+    """A ``void(intp)`` caller passes the legality check of numba's ``removerefctpass`` (numba <= 0.65). That pass
+    strips NRT_incref by name. The incref of ``_incref_meminfo`` must survive it. The refcount assertions can fail only
+    on a numba version that has the pass. The test therefore also checks the IR for the
+    ``numba_args_may_always_need_nrt`` tag, which disables the pass. The IR carries that tag on every numba version."""
     from numbox.utils.meminfo import _incref_meminfo, export_meminfo, get_nrt_refcount, release_meminfo
     from test.common_structrefs import S1
 
@@ -129,10 +130,11 @@ def test_incref_survives_refcount_pruning():
 
 
 def test_export_meminfo_keeps_its_incref_for_an_array():
-    """An array argument is legal for numba's ``removerefctpass`` (numba <= 0.65), so without the
-    ``numba_args_may_always_need_nrt`` tag the pass strips the +1 from ``export_meminfo`` compiled for an array, and
-    the pointer it returns names a MemInfo already freed. Unboxing wraps the array in a MemInfo that holds a Python
-    reference to it, and that is the MemInfo exported, so the +1 shows on the array's Python refcount."""
+    """An array argument passes the legality check of numba's ``removerefctpass`` (numba <= 0.65). Without the
+    ``numba_args_may_always_need_nrt`` tag, the pass strips the +1 from ``export_meminfo`` compiled for an array. The
+    pointer that ``export_meminfo`` returns then refers to a MemInfo that is already freed. Unboxing wraps the array
+    in a MemInfo that holds a Python reference to the array. That MemInfo is the one exported, so the +1 is visible in
+    the array's Python refcount."""
     import sys
 
     from numbox.utils.meminfo import export_meminfo, release_meminfo

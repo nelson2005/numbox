@@ -1,4 +1,4 @@
-"""Connection + metadata binding tests for the SQLite buildout."""
+"""The tests cover the SQLite bindings for connections and metadata."""
 from ctypes import addressof, c_int64
 
 import pytest
@@ -34,7 +34,7 @@ def test_libversion_returns_dotted_string():
 
 def test_libversion_number_returns_modern_int():
     n = sqlite3_libversion_number()
-    # SQLite 3.0.0 = 3_000_000; any modern build is far above this.
+    # SQLite 3.0.0 has the version number 3_000_000. Any modern build has a much larger number.
     assert n >= 3_000_000, n
 
 
@@ -62,11 +62,11 @@ def test_open_v2_bad_path_returns_cantopen(tmp_path):
     with c_string(str(bad_path)) as name_p:
         rc = sqlite3_open_v2(name_p, addressof(db_p), SQLITE_OPEN_READONLY, 0)
     assert rc == SQLITE_CANTOPEN, rc
-    # Even on failure, SQLite returns a (possibly bare) connection handle that
-    # owns the errmsg. Caller must close it.
+    # Even on failure, SQLite returns a connection handle that owns the errmsg. The handle may have no open database.
+    # The caller must close it.
     if db_p.value != 0:
         errmsg_p = sqlite3_errmsg(db_p.value)
-        assert get_str_from_p_as_int(errmsg_p)  # non-empty
+        assert get_str_from_p_as_int(errmsg_p)  # The errmsg is not empty
         sqlite3_close(db_p.value)
 
 
@@ -95,8 +95,8 @@ def test_db_readonly_zero_for_writable(tmp_path):
 
 
 def test_threadsafe_returns_nonzero():
-    # Modern SQLite is always built with at least multi-thread (1) or
-    # serialized (2) mode. Single-thread (0) is essentially extinct.
+    # Modern SQLite is always built with at least multi-thread (1) or serialized (2) mode. Single-thread (0) builds
+    # are practically nonexistent.
     assert sqlite3_threadsafe() in (1, 2)
 
 
@@ -118,7 +118,7 @@ def test_changes64_when_available():
         pytest.skip("sqlite3_changes64 not available (SQLite < 3.37)")
     db_p = _open_memory()
     n = sqlite3_changes64(db_p)
-    assert n == 0  # no statements executed yet
+    assert n == 0  # The connection has executed no statements yet
     sqlite3_close(db_p)
 
 

@@ -1,13 +1,12 @@
 """Tests for the content-fingerprint walker (numbox.utils.fingerprint).
 
-Two concerns run through these: canonicalizing a *value* stably (so that two artifacts
-differing only in captured data get different digests), and telling a genuine global read
-(``LOAD_GLOBAL``) apart from an attribute access (``LOAD_ATTR``) whose name merely collides
-with a module global. ``co_names`` pools the latter two, so folding globals off it either
-over-invalidates the fingerprint (a colliding global that canonicalizes) or makes the whole
-function un-fingerprintable (a colliding global that does not) -- which, on the builder's
-derive path, forces an address-bearing fallback and unbounded cache growth.
-``_loaded_global_names`` reads the opcodes instead.
+These tests cover two concerns. The walker must canonicalize a *value* stably, so that two artifacts that differ only in
+captured data get different digests. It must also distinguish a genuine global read (``LOAD_GLOBAL``) from an attribute
+access (``LOAD_ATTR``) whose name merely collides with a module global. ``co_names`` pools the names of both. If the
+walker chose the globals to fold from it, a colliding global that canonicalizes would over-invalidate the fingerprint.
+Such a walker would also make the whole function un-fingerprintable for a colliding global that does not canonicalize.
+On the builder's derive path, an un-fingerprintable function forces an address-bearing fallback and unbounded cache
+growth. ``_loaded_global_names`` reads the opcodes instead.
 """
 import textwrap
 
@@ -29,8 +28,8 @@ def _make(src, **globs):
 
 
 def test_canon_value_structured_dtype_preserves_layout():
-    # dtype.str is |V<n> for structured dtypes (field layout erased), so same-byte
-    # different-layout arrays would collide. The full descriptor discriminates them.
+    # dtype.str is |V<n> for a structured dtype and erases the field layout, so arrays with the same bytes and
+    # different layouts would collide. The full descriptor discriminates them.
     raw = (1).to_bytes(4, "little") + (2).to_bytes(4, "little")
     two_i4 = np.frombuffer(raw, dtype=np.dtype([("a", "<i4"), ("b", "<i4")])).copy()
     two_f4 = np.frombuffer(raw, dtype=np.dtype([("a", "<f4"), ("b", "<f4")])).copy()
@@ -47,11 +46,10 @@ def test_canon_value_plain_dtype_unchanged():
 
 
 def test_proxy_binding_callback_fingerprints_cleanly_and_distinctly():
-    # A callback that calls a @proxy'd binding used to abort the walker (the
-    # wrapper recurses into its @intrinsic, which has no canonical form), so the
-    # cache digest degraded to a coarse fallback. The dispatcher is now identified
-    # by its stable alias, so the callback fingerprints cleanly and two callbacks
-    # calling different bindings differ.
+    # Walking the wrapper of a @proxy'd binding would recurse into its @intrinsic, which has no canonical form. The
+    # walker would then abort on any callback that calls the binding, and the cache digest would degrade to a coarse
+    # fallback. The walker therefore identifies the dispatcher by its stable alias. The callback then fingerprints
+    # without raising, and two callbacks that call different bindings get different fingerprints.
     from numbox.core.bindings.sqlite.value import sqlite3_value_int64, sqlite3_value_double
 
     def cb_int(v):
@@ -74,16 +72,16 @@ def test_proxy_binding_canon_does_not_recurse_into_intrinsic():
 
 
 def test_unfingerprintable_value_still_raises_for_strict_walker():
-    # The strict walker must keep raising on a genuinely un-canonicalizable value
-    # (so degrade-to-uncached consumers still trigger); only the best-effort walker
-    # swallows it.
+    # The strict walker must still raise on a genuinely un-canonicalizable value, so that the degrade-to-uncached
+    # path of its consumers still triggers. Only the best-effort walker suppresses the error.
     class Opaque:
         pass
 
     def cb():
         return Opaque()
 
-    # Opaque() is a const-less local; reference it via a closure to force the walk.
+    # The instance that Opaque() returns is a local, not a constant, so cb2 references an instance through a
+    # closure to make the walker reach it.
     marker = Opaque()
 
     def cb2():
@@ -111,22 +109,22 @@ def test_loaded_global_names_distinguishes_globals_from_attributes():
 
 
 def test_fingerprint_ignores_a_global_shadowed_by_an_attribute_name():
-    """A record-field / chained attribute whose name matches a module global must not fold that global.
+    """The walker must not fold a module global whose name matches a record field or a chained attribute.
 
-    With a canonicalizable colliding global the old behaviour over-invalidated (folded a value the body
-    never reads); with an un-canonicalizable one it raised, discarding the whole fingerprint. Neither may
-    happen now: ``a.c1`` reads an attribute, not the global ``c1``.
+    If the walker folded a canonicalizable colliding global, it would over-invalidate the fingerprint with a value that
+    the body never reads. If it folded a colliding global that has no canonical form, it would raise and discard the
+    whole fingerprint. Neither may happen, because ``a.c1`` reads an attribute, not the global ``c1``.
     """
     canon = _make("def f(a):\n    return a.c1\n", c1=3)
     assert "c1=" not in _fingerprint_function(canon, set()), "folded a global the body only accesses as an attribute"
 
     uncanon = _make("def f(a):\n    return a.c1\n", c1=np.array([object()], dtype=object))
-    # Must not raise despite the colliding global having no canonical form.
+    # The walk must not raise, although the colliding global has no canonical form.
     fp = _fingerprint_function(uncanon, set())
     assert "c1=" not in fp
 
-    # The fingerprint depends on the attribute name itself (it is still in co_names), so a different
-    # field is a different body -- the fix drops only the spurious global-value fold, not the attribute.
+    # The fingerprint depends on the attribute name itself, which is still in co_names, so a function that reads a
+    # different field is a different body. The walker leaves out only the spurious global value, not the attribute.
     other = _make("def f(a):\n    return a.c2\n", c1=3)
     assert _fingerprint_function(canon, set()) != _fingerprint_function(other, set())
 
@@ -138,7 +136,7 @@ def test_fingerprint_still_folds_a_genuine_global_read():
     g = _make("def f(x):\n    return x * K\n", K=9)
     assert _fingerprint_function(f, set()) != _fingerprint_function(g, set())
 
-    # An un-canonicalizable *genuine* global read still raises -- that degrade path is intended and unchanged.
+    # An un-canonicalizable *genuine* global read still raises. That degrade path is intended and unchanged.
     bad = _make("def f(x):\n    return x * K\n", K=np.array([object()], dtype=object))
     try:
         _fingerprint_function(bad, set())
@@ -149,9 +147,12 @@ def test_fingerprint_still_folds_a_genuine_global_read():
 
 
 def test_module_attribute_read_still_rekeys(tmp_path):
-    """Non-regression: a value read through a module (``cfg.SCALE``) is still folded, so changing it
-    re-keys; an attribute present on the module but never referenced (``cfg.OFFSET``) does not. The fix keeps
-    passing the full ``co_names`` set to the module-attribute walk, so this path is unaffected."""
+    """Non-regression: a value read through a module (``cfg.SCALE``) is still folded.
+
+    Changing that value re-keys the fingerprint. Changing an attribute that is present on the module but never
+    referenced (``cfg.OFFSET``) does not re-key it. The walker still passes the full ``co_names`` set to the
+    module-attribute walk, so ``_loaded_global_names`` does not affect this path.
+    """
     import types
 
     cfg = types.ModuleType("cfgfake")
@@ -167,13 +168,13 @@ def test_module_attribute_read_still_rekeys(tmp_path):
 
 
 def test_an_external_function_is_canonicalized_by_symbol_and_signature():
-    """Two bindings a factory made over different C symbols must not share a fingerprint.
+    """Two bindings that a factory made over different C symbols must not share a fingerprint.
 
-    ``ExternalFunction`` has no ``_canon_value`` branch of its own until one is written for it,
-    so it used to reach the terminal ``raise`` and, on the best-effort path that the ``@proxy``
-    alias runs on, collapse to ``<opaque:ExternalFunction>``: the same placeholder for every
-    symbol. numba's own key for the type is ``(symbol, signature)``, both of which mean the same
-    thing in the next process, so folding those separates the two without costing stability.
+    ``ExternalFunction`` needs a ``_canon_value`` branch of its own. Without one, the type would reach the terminal
+    ``raise``. The ``@proxy`` alias comes from the best-effort walker, which would then substitute
+    ``<opaque:ExternalFunction>``, the same placeholder for every symbol. numba's own key for the type is
+    ``(symbol, signature)``, and both parts mean the same thing in the next process. The branch folds both parts, so it
+    separates the two bindings without a loss of stability.
     """
     from numba.core.types import ExternalFunction, float64
 
@@ -187,12 +188,12 @@ def test_an_external_function_is_canonicalized_by_symbol_and_signature():
 
 
 def test_a_library_bound_ctypes_pointer_is_canonicalized_by_library_and_symbol():
-    """The same for a pointer reached by attribute access on a loaded library.
+    """The same holds for a pointer reached by attribute access on a loaded library.
 
-    What is folded is the string the library was opened with, not the library the loader
-    resolved it to, so two handles on one library opened under different strings -- a soname
-    and an absolute path -- do canonicalize differently. That is over-discrimination: it
-    costs a recompile the load-time guard heals, never a wrong answer.
+    The walker folds the string the library was opened with, not the library the loader resolved it to. Two handles on
+    one library that were opened under different strings, such as a soname and an absolute path, therefore canonicalize
+    differently. That is over-discrimination: it costs a recompile that the load-time guard repairs, and never a wrong
+    answer.
     """
     libm = open_libm()
     if libm is None:
@@ -206,17 +207,16 @@ def test_a_library_bound_ctypes_pointer_is_canonicalized_by_library_and_symbol()
 
 
 def test_a_ctypes_pointer_built_from_an_address_stays_unfingerprintable():
-    """The residual class, and why it is deliberate.
+    """A pointer built from a raw address is the residual class, and the walker refuses it deliberately.
 
-    A pointer built from a raw address carries no library and no symbol name. The only thing
-    separating two of them is the address, which ASLR moves, so folding it would buy
-    discrimination at the cost of the process-stability the fingerprint exists for. Refusing is
-    the honest answer, and it leaves the caller to detect the collision instead of hiding it.
+    Such a pointer carries no library and no symbol name. Only the address separates two of them, and ASLR moves the
+    address. Folding the address would gain discrimination at the cost of the process stability that the fingerprint
+    exists for. Refusing is the correct answer: it leaves the caller to detect the collision instead of hiding it.
 
-    The refusal has to come from the ctypes branch deciding it, not from the walker never
-    reaching one. A walker with no ctypes handling at all refuses this pointer too, and would
-    satisfy a bare ``pytest.raises``; what separates the two is the message, which the terminal
-    raise fills with the type name and the ctypes branch fills with its own reason.
+    The refusal has to come from the ctypes branch, not from a walker that never reaches that branch. A walker without
+    any ctypes handling refuses this pointer too, and it would satisfy a ``pytest.raises`` that checks only the
+    exception type. The message separates the two cases. The terminal raise fills it with the type name, and the ctypes
+    branch fills it with its own reason.
     """
     import ctypes
 
@@ -236,18 +236,17 @@ def test_a_ctypes_pointer_built_from_an_address_stays_unfingerprintable():
 def test_a_proxied_binding_and_a_cres_are_not_canonicalized_alike_as_function_values():
     """Two first-class function values must not fold onto one canonical form.
 
-    ``CompileResultWAP`` had no branch here, so a body capturing one reached the terminal
-    ``raise`` and collapsed to ``<opaque:{type name}>`` on the best-effort path the alias
-    runs on. That placeholder holds a Python type name and nothing else, so what separated
-    a proxied binding's ``.as_func`` from a :func:`~numbox.utils.highlevel.cres` value was
-    the accident that one was a ``CompileResultWAP`` and the other a ``DeriveWAP``. Two
-    otherwise-identical bodies over those two handles then shared an alias the moment both
-    became the same type, which retires the alias and costs both cross-process caching.
+    Without a ``CompileResultWAP`` branch, a body that captures such a value would reach the terminal ``raise``. The
+    alias comes from the best-effort walker, which would then substitute ``<opaque:{type name}>``, a placeholder that
+    holds a Python type name and nothing else. A proxied binding's ``.as_func`` and a
+    :func:`~numbox.utils.highlevel.cres` value are both a ``DeriveWAP``, so both would get the same placeholder. Two
+    otherwise-identical bodies over those two handles would then share an alias. A shared alias is retired, and both
+    bodies then lose cross-process caching.
 
-    What is folded instead means the same thing next run: the binding's own content-addressed
-    alias for the first, and the compiled body's fingerprint with its signature for the
-    second. The wrapper itself offers neither -- it carries a compiled address and a mangled
-    name holding a per-process counter -- so numbox tags the two it mints.
+    Instead, the branch folds what means the same thing in the next run. For the binding, that is its own
+    content-addressed alias. For the ``cres`` value, it is the compiled body's fingerprint with its signature. The
+    wrapper itself provides neither, because it carries a compiled address and a mangled name that holds a per-process
+    counter. numbox therefore tags the two kinds of function value that it builds.
     """
     from numba import float64
 
@@ -277,17 +276,17 @@ def test_a_proxied_binding_and_a_cres_are_not_canonicalized_alike_as_function_va
 
 
 def test_a_function_value_numbox_did_not_mint_stays_unfingerprintable():
-    """The residual class here, for the same reason as the raw-address pointer.
+    """An untagged function value is the residual class here, for the same reason as the raw-address pointer.
 
-    A ``CompileResultWAP`` built directly against numba carries no tag, and the compile
-    result identifies its body only by a compiled address and a mangled name whose abi-tag
-    is a per-process counter. Neither means the same thing next run, so refusing is the
-    honest answer and leaves the collision to be detected rather than hidden.
+    A ``CompileResultWAP`` built directly against numba carries no tag. The compile result identifies its body only by a
+    compiled address and a mangled name whose abi-tag is a per-process counter. Neither of them means the same thing in
+    the next run. Refusing the value is therefore the correct answer, and it leaves the collision to be detected rather
+    than hidden.
 
-    Refusing this one only means something while numbox's own function value of the same shape
-    is accepted. The untagged wrapper falls through to the very terminal raise a walker with no
-    ``CompileResultWAP`` branch at all would give it, so the ``cres`` below is what says the tag
-    is doing the separating rather than the type being unreachable.
+    The refusal is meaningful only if numbox's own function value of the same shape is accepted. The untagged wrapper
+    reaches the same terminal raise as it would in a walker without any ``CompileResultWAP`` branch. The ``cres`` value
+    below is accepted. It shows that the tag separates the two values, and that the walker has a ``CompileResultWAP``
+    branch.
     """
     from numba import float64, njit
     from numba.core.types.function_type import CompileResultWAP
@@ -310,14 +309,13 @@ def test_a_function_value_numbox_did_not_mint_stays_unfingerprintable():
 
 
 def test_two_python_callbacks_sharing_a_name_are_not_canonicalized_alike():
-    """A Python callback is not a library symbol, and must not be keyed as if it were.
+    """A Python callback is not a library symbol, and the walker must not key it as if it were one.
 
-    ``_objects["0"]`` holds the loaded library for a pointer taken off one, but for a
-    callback built from a Python function it holds the CThunkObject instead, which has no
-    ``_name``. Reading that as a library folded the ``None`` into the key, so two
-    unrelated callbacks that happened to share a ``__name__`` -- which any decorator
-    copying ``__name__`` arranges -- canonicalized alike, and the alias they mint stopped
-    telling them apart.
+    ``_objects["0"]`` holds the library for a pointer taken from a loaded library. It holds the CThunkObject instead for
+    a callback built from a Python function, and that object has no ``_name``. If the walker read that object as a
+    library, it would fold the ``None`` into the key. Two unrelated callbacks that share a ``__name__`` would then
+    canonicalize alike, and the alias derived from them would no longer distinguish them. Any decorator that copies
+    ``__name__`` produces such a shared name.
     """
     import ctypes
 
@@ -335,16 +333,15 @@ def test_two_python_callbacks_sharing_a_name_are_not_canonicalized_alike():
 def test_unset_and_empty_argtypes_are_canonicalized_apart():
     """An unset ``argtypes`` and an empty one must not fold onto one canonical form.
 
-    numba refuses a call through a pointer whose ``argtypes`` is unset and accepts one
-    declared to take nothing, so a key folding the two together pairs a caller with a body
-    it cannot call. ``getattr(value, "argtypes", None) or ()`` folds them together, and that
-    is the implementation this rules out: the two pointers below differ in nothing else, so
-    their canonical forms have to differ with that attribute.
+    numba refuses a call through a pointer whose ``argtypes`` is unset, and it accepts a call through one declared to
+    take nothing. A key that folds the two together therefore pairs a caller with a body that it cannot call.
+    ``getattr(value, "argtypes", None) or ()`` folds them together, and this test rules out that implementation. The two
+    pointers below differ in nothing else, so their canonical forms have to differ with that attribute.
 
-    They come off two handles because ``CDLL.__getattr__`` caches the pointer it builds on
-    the instance: one handle asked twice hands back one object, and setting ``argtypes``
-    would set it on both. ``open_libm`` opening a fresh handle per call is what keeps this a
-    two-object comparison, and is pinned by ``test_open_libm_hands_back_a_usable_handle``.
+    The pointers come from two handles because ``CDLL.__getattr__`` caches the pointer it builds on the instance. A
+    handle asked for the same symbol twice returns one object, so setting ``argtypes`` on one pointer would set it on
+    both. ``open_libm`` opens a fresh handle per call, which keeps this a comparison of two objects.
+    ``test_open_libm_hands_back_a_usable_handle`` asserts that behavior.
     """
     libm = open_libm()
     if libm is None:
@@ -360,23 +357,22 @@ def test_unset_and_empty_argtypes_are_canonicalized_apart():
 
 
 def test_two_prototypes_over_one_address_are_not_read_as_one_value():
-    """An address is not a call, so it cannot decide on its own that two values are one body.
+    """An address is not a call, so the address alone cannot establish that two values are one body.
 
-    ``_opaque_values_match`` answers whether two equal fingerprints stood on the same values,
-    and a raw-address ctypes pointer is what reaches it, because :func:`_ctypes_func_key`
-    refuses one for want of a process-stable identity. Comparing two of them by the address
-    alone is the implementation this rules out. numba types a call from ``restype``,
-    ``argtypes`` and the convention and lowers it against them, so one symbol reached through
-    two prototypes is two calls that compile to two different bodies; reading them as one
-    value hands the second the alias the first was published under, with no collision to
-    report and no warning.
+    ``_opaque_values_match`` determines whether two equal fingerprints were computed from the same values. A raw-address
+    ctypes pointer reaches it, because :func:`_ctypes_func_key` refuses such a pointer for lack of a process-stable
+    identity. This test rules out an implementation that compares two such pointers by the address alone. numba types a
+    call from ``restype``, ``argtypes`` and the convention, and lowers the call against them. One symbol reached through
+    two prototypes is therefore two calls that compile to two different bodies. If the comparison treated them as one
+    value, the second body would receive the alias under which the first was published, with no collision to report and
+    no warning.
 
-    The three mismatching pairs differ from the first pointer in the return type, in the
-    arguments, and in both, so a fix folding only one half of the prototype still fails one
-    of them. The matching pair is what stops the check reading every module reload and every
-    twice-called factory as a collision, which retires their alias and costs both bodies
-    cross-process caching for nothing. It has to be two objects over one address, or the
-    identity test at the top of the comparison answers before the pointer branch is reached.
+    The three mismatching pairs differ from the first pointer in the return type, in the arguments, and in both. An
+    implementation that folds only one half of the prototype therefore still fails one of them. The matching pair keeps
+    the check from treating every module reload and every twice-called factory as a collision. Such a collision would
+    retire their alias, and both bodies would lose cross-process caching for no reason. The matching pair has to be two
+    objects over one address. Otherwise, the identity test at the top of the comparison returns before the pointer
+    branch is reached.
     """
     import ctypes
 
@@ -409,19 +405,17 @@ def test_two_prototypes_over_one_address_are_not_read_as_one_value():
 
 
 def test_a_retired_alias_is_not_folded_into_a_body_that_captured_it():
-    """A name that stopped identifying a body must not go on identifying it to its captors.
+    """An alias that no longer identifies a binding must not be folded into the bodies that capture the binding.
 
-    An alias is retired when two bodies reach it, because which of them ends up under the
-    shared name and which under the minted one is decided by the order this process built
-    them in. That reasoning does not stop at the two bodies. A third body capturing one of
-    them and folding ``proxy(<alias>)`` gets a fingerprint that means the other body in a
-    process that built the pair the other way round, and it is published under a fresh name
-    that resolves, so unlike the colliding pair it keeps a cross-process cache that is now
-    wrong.
+    An alias is retired when two bodies reach it, because the order in which this process built them decides whether a
+    body holds the shared name or the newly built one. The same reasoning applies beyond the two bodies. If a third body
+    that captures one of them folded ``proxy(<alias>)``, its fingerprint would identify the other body in a process that
+    built the pair in the opposite order. The third body is published under a new name that resolves. Unlike the
+    colliding pair, it would therefore keep a cross-process cache that is now wrong.
 
-    Falling through to the ordinary walk is what prevents it. The dispatcher has no canonical
-    form there, so a derived body reaches ``_opaque_values_match`` like any other pair the
-    fingerprint cannot separate, and its own alias is retired in turn.
+    The walker prevents this by falling through to the ordinary walk. The dispatcher has no canonical form there, so a
+    derived body reaches ``_opaque_values_match`` like any other pair that the fingerprint cannot separate. Its own
+    alias is then retired in turn.
     """
     import ctypes
 
@@ -461,11 +455,11 @@ def test_a_retired_alias_is_not_folded_into_a_body_that_captured_it():
 
 
 def test_a_live_alias_is_still_folded():
-    """The refusal above is keyed on retirement, not on being a proxied binding at all.
+    """The refusal above depends on retirement, not on whether the value is a proxied binding.
 
-    A binding whose alias still identifies it is the ordinary case and has to keep folding by
-    that alias, or every body capturing any proxied binding becomes un-fingerprintable and the
-    cache digests that rest on it degrade.
+    A binding whose alias still identifies it is the ordinary case, and the walker must keep folding it by that alias.
+    Otherwise, every body that captures any proxied binding becomes un-fingerprintable, and the cache digests that
+    depend on its fingerprint degrade.
     """
     from numba import float64
 

@@ -35,7 +35,7 @@ def assert_close(actual, expected):
             f"expected {expected}, got {actual}"
 
 
-# --- Trig ---
+# --- Trigonometric ---
 
 class TestTrig:
     @staticmethod
@@ -139,7 +139,7 @@ class TestTrig:
             assert np.isnan(tan(x))
 
 
-# --- Inverse trig ---
+# --- Inverse trigonometric ---
 
 class TestAcos:
     @staticmethod
@@ -1404,7 +1404,7 @@ class TestFabs:
         assert np.isnan(fabs(NAN))
 
 
-# --- Two-argument: trig ---
+# --- Two-argument: trigonometric ---
 
 class TestAtan2:
     @staticmethod

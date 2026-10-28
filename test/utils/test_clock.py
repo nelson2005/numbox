@@ -29,19 +29,16 @@ def test_monotonically_non_decreasing():
 def test_linear_scaling():
     """Validate the n-dependency property from numbox#7.
 
-    clock_gettime (Linux) and QueryPerformanceCounter (Windows) are external
-    C functions that carry no LLVM optimization attributes.  Every call is a
-    full compiler barrier: LLVM cannot reorder, hoist, eliminate, or merge
-    clock calls across the barrier.  Therefore the accumulated time must grow
-    linearly with the number of iterations, because each iteration forces a
-    real pair of clock reads around a math.sin() operation that itself cannot
-    be eliminated (its result is accumulated and returned).
+    clock_gettime (Linux) and QueryPerformanceCounter (Windows) are external C functions that carry no LLVM
+    optimization attributes.  Every call is a full compiler barrier: LLVM cannot reorder, hoist, eliminate, or merge
+    clock calls across the barrier.  The accumulated time must therefore grow linearly with the number of iterations,
+    because each iteration forces a pair of clock reads around a math.sin() operation.  That operation itself cannot
+    be eliminated, because its result is accumulated and returned.
 
-    We measure time(2n) / time(n) averaged over multiple runs and assert
-    it falls in [1.5, 3.0] (expected value 2.0).  Averaging reduces noise
-    from CI VMs enough to use tight bounds while still catching gross
-    mis-behaviour (e.g. the loop being compiled away entirely, which would
-    produce a ratio near 1.0 regardless of n).
+    The test measures time(2n) / time(n), averages it over multiple runs, and asserts that the average falls in
+    [1.5, 3.0] (expected value 2.0).  Averaging reduces the noise from CI VMs enough for tight bounds, and the bounds
+    still detect gross misbehavior.  For example, if the loop were compiled away entirely, the ratio would be near 1.0
+    regardless of n.
     """
     @njit
     def timed_loop(n):
@@ -78,18 +75,14 @@ def test_linear_scaling():
 def test_wall_clock_consistency():
     """Validate sum-of-parts consistency from numbox#7.
 
-    If the JIT clock were being optimized away or silently reordered, the
-    accumulated JIT total would diverge from the Python wall-clock time that
-    wraps the same call.  We use time.perf_counter_ns() for the wall clock
-    because it uses QueryPerformanceCounter on all CPython versions.
-    On CPython 3.10-3.12, time.monotonic_ns() uses GetTickCount64
-    (~15 ms resolution) and can return zero for fast loops; CPython 3.13+
-    switched to QPC, but perf_counter_ns() works consistently across
-    all versions.
+    If the JIT clock were being optimized away or silently reordered, the accumulated JIT total would diverge from the
+    Python wall-clock time that wraps the same call.  The test uses time.perf_counter_ns() for the wall clock, because
+    that function uses QueryPerformanceCounter on all CPython versions.  On CPython 3.10-3.12, time.monotonic_ns()
+    uses GetTickCount64 (~15 ms resolution) and can return zero for fast loops.  CPython 3.13+ uses QPC for
+    time.monotonic_ns(), but perf_counter_ns() works consistently across all versions.
 
-    We assert jit_total / wall_total is in [0.1, 1.0].  The JIT total
-    cannot exceed the wall total since the wall clock wraps the entire
-    call.  A ratio near 0 would indicate the JIT clock is being optimized
+    The test asserts that jit_total / wall_total is in [0.1, 1.0].  The JIT total cannot exceed the wall total,
+    because the wall clock wraps the entire call.  A ratio near 0 would indicate that the JIT clock is being optimized
     away.
     """
     @njit

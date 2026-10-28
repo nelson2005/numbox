@@ -1,4 +1,4 @@
-"""Parameter-binding tests for the SQLite buildout."""
+"""The tests cover the SQLite parameter-binding functions."""
 from ctypes import addressof, c_int64
 
 import numpy as np
@@ -18,8 +18,8 @@ from test.auxiliary_utils import collect_and_run_tests, str_from_p_as_int
 
 @pytest.fixture
 def stmt_three_params():
-    """Open :memory: db, prepare 'SELECT ?1, ?2, ?3', yield (db_p, stmt_p),
-    teardown finalizes + closes."""
+    """Open a :memory: database, prepare 'SELECT ?1, ?2, ?3' and yield (db_p, stmt_p). The teardown finalizes the
+    statement and closes the database."""
     db_p = c_int64(0)
     with c_string(":memory:") as name_p:
         assert sqlite3_open(name_p, addressof(db_p)) == SQLITE_OK
@@ -91,7 +91,7 @@ def test_bind_parameter_index_by_name():
         with c_string(":foo") as foo_p, c_string(":bar") as bar_p:
             assert sqlite3_bind_parameter_index(stmt_p.value, foo_p) == 1
             assert sqlite3_bind_parameter_index(stmt_p.value, bar_p) == 2
-        # name lookup round trip (output points into SQLite-owned memory)
+        # The name lookup completes the round trip. Its result points into SQLite-owned memory.
         name_back_p = sqlite3_bind_parameter_name(stmt_p.value, 1)
         assert str_from_p_as_int(name_back_p) == ":foo"
         sqlite3_finalize(stmt_p.value)

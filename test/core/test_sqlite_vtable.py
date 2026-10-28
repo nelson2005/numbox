@@ -56,7 +56,7 @@ def test_utf32_stops_at_nul():
 
 
 def test_utf32_keeps_interior_nul():
-    # trailing NUL pad is trimmed; an interior NUL code point is preserved
+    # The trailing NUL pad is trimmed, and an interior NUL code point is preserved.
     assert _encode("a\x00b", 6) == b"a\x00b"
 
 
@@ -131,9 +131,8 @@ def test_descriptor_rejects_bad_shapes():
 
 
 def test_widest_unicode_width_accepted():
-    # The per-cursor scratch buffer is its own int32-sized sqlite3_malloc, and
-    # numpy caps 'U' itemsize below 2**31, so even the widest constructible
-    # unicode column yields a scratch size that fits int32 -- no
+    # The per-cursor scratch buffer is its own int32-sized sqlite3_malloc, and numpy caps the 'U' itemsize below 2**31.
+    # Even the widest constructible unicode column therefore yields a scratch size that fits int32, so there is no
     # registration-time guard.
     dt = np.dtype([("u", "U536870911")])
     built = _build_descriptor(np.zeros(0, dtype=dt), None, False)
@@ -185,8 +184,8 @@ def test_xbestindex_sets_cardinality():
 
 
 def test_xbestindex_estimates_bound_branch():
-    # With nbound usable EQ constraints on numeric columns, estimatedRows is the
-    # heuristic nrows // (nbound + 1) + 1 and estimatedCost is float(nrows).
+    # If nbound usable EQ constraints apply to numeric columns, estimatedRows is the heuristic nrows // (nbound + 1) + 1
+    # and estimatedCost is float(nrows).
     from numbox.core.bindings.sqlite.vtable import (
         _xbestindex, _build_descriptor, _VTAB_DTYPE, _VTAB_SIZE, _IDX_INFO_DTYPE,
         _CONSTRAINT_DTYPE, _USAGE_DTYPE,
@@ -217,8 +216,8 @@ def test_xbestindex_estimates_bound_branch():
     assert usage["argvIndex"].tolist() == [1, 2]
     assert int(view["estimatedRows"]) == nrows // (nbound + 1) + 1
     assert float(view["estimatedCost"]) == float(nrows)
-    # xBestIndex handed the serialised (col, op) idxStr to SQLite; free it here
-    # since no real connection owns it in this direct-call harness.
+    # xBestIndex passed the serialized (col, op) idxStr to SQLite. The test frees it here, because no real connection
+    # owns it in this direct-call harness.
     if int(view["needToFreeIdxStr"]):
         sqlite3_free(int(view["idxStr"]))
 
@@ -301,7 +300,7 @@ def test_uint64_roundtrip_and_signed_wrap():
     db = _open_memory()
     a = np.array([[1], [2 ** 63], [2 ** 64 - 1]], dtype=np.uint64)
     h = register_table(db, "t", a, columns=["a"])  # noqa: F841
-    # SQLite INTEGER is a signed int64; uint64 values >= 2**63 reinterpret as negative.
+    # SQLite INTEGER is a signed int64, so uint64 values >= 2**63 are reinterpreted as negative.
     assert _fetchall(db, "SELECT a FROM t") == [(1,), (-(2 ** 63),), (-1,)]
     sqlite3_close(db)
 
@@ -354,10 +353,9 @@ def test_columns_rename_rejects_non_string():
 
 
 def test_two_unicode_columns_single_cursor():
-    # Both U columns of a row are decoded into the SAME per-cursor scratch
-    # buffer, so SQLite must copy the first result before the second xColumn
-    # overwrites the scratch -- guards the TRANSIENT choice on the U branch
-    # (S/BLOB results are STATIC; flipping U to match corrupts exactly this).
+    # Both U columns of a row are decoded into the same per-cursor scratch buffer, so SQLite must copy the first result
+    # before the second xColumn overwrites the scratch. The test guards the TRANSIENT choice on the U branch. S/BLOB
+    # results are STATIC, and if the U branch were changed to match them, exactly this case would be corrupted.
     db = _open_memory()
     dt = np.dtype([("u1", "U4"), ("u2", "U4")])
     a = np.array([("abcd", "wxyz"), ("hi", "yo")], dtype=dt)
@@ -387,9 +385,8 @@ def test_blob_preserves_interior_nul():
 
 @pytest.mark.parametrize("text_as_blob", [False, True])
 def test_text_and_blob_cells_point_into_the_registered_array(text_as_blob):
-    # The registered array outlives every query, so 'S' cells reach SQLite as
-    # SQLITE_STATIC, without a copy. sqlite3_column_blob returns the stored
-    # pointer as is, so each cell points at its own bytes in the array.
+    # The registered array outlives every query, so 'S' cells reach SQLite as SQLITE_STATIC, without a copy.
+    # sqlite3_column_blob returns the stored pointer unchanged, so each cell points at its own bytes in the array.
     db = _open_memory()
     a = np.array([(b"xy",), (b"zw",)], dtype=np.dtype([("s", "S3")]))
     h = register_table(db, "t", a, text_as_blob=text_as_blob)  # noqa: F841
@@ -406,9 +403,8 @@ def test_text_and_blob_cells_point_into_the_registered_array(text_as_blob):
 
 @pytest.mark.parametrize("tag", [99, -1])
 def test_a_column_tag_without_a_branch_fails_the_query(tag):
-    # Every tag _col_tag produces has a branch in _emit_cell. If one ever does
-    # not, above that range or below it, the query must fail rather than read the
-    # cell back as a silent NULL or as some other type.
+    # Every tag that _col_tag produces has a branch in _emit_cell. If a tag has no branch there, whether it lies above
+    # that range or below it, the query must fail instead of reading the cell back as a silent NULL or as another type.
     from numbox.core.bindings.sqlite import vtable as v
     from numbox.core.bindings.sqlite.conn import sqlite3_errmsg
     from numbox.core.bindings.sqlite.constants import SQLITE_ERROR
@@ -491,10 +487,9 @@ def test_join_two_tables():
 
 
 def test_join_refilters_inner_cursor_per_outer_row():
-    # A nested-loop join re-invokes xFilter on the inner vtable cursor once per
-    # outer row, each time with a DIFFERENT bound value on the join key. This
-    # exercises the per-xFilter free+realloc of pred_p and the rowid reset; a
-    # correct joined result across multiple distinct outer keys demonstrates it.
+    # A nested-loop join re-invokes xFilter on the inner vtable cursor once per outer row, each time with a different
+    # bound value on the join key. The test exercises the per-xFilter free and realloc of pred_p and the rowid reset. A
+    # correct joined result across multiple distinct outer keys demonstrates both.
     db = _open_memory()
     outer = np.array([[1], [2], [3], [2]], dtype=np.int64)
     inner = np.array([[1, 10], [2, 20], [2, 21], [3, 30]], dtype=np.int64)
@@ -511,17 +506,16 @@ def test_self_join_unicode_two_cursors():
     dt = np.dtype([("k", "i8"), ("u", "U4")])
     a = np.array([(1, "wörd"), (2, "café"), (3, "ab")], dtype=dt)
     h = register_table(db, "t", a)  # noqa: F841
-    # a self-join keeps two cursors open on the same vtable at once, so each
-    # decodes its 'U' column into its own per-cursor scratch buffer
+    # A self-join keeps two cursors open on the same vtable at once, so each cursor decodes its 'U' column into its own
+    # per-cursor scratch buffer.
     got = _fetchall(db, "SELECT a.u, b.u FROM t a JOIN t b ON a.k = b.k ORDER BY a.k")
     assert got == [("wörd", "wörd"), ("café", "café"), ("ab", "ab")]
     sqlite3_close(db)
 
 
 def test_registration_survives_gc():
-    # register_table returns None; the keep-alive is the module-level
-    # _DATA_ANCHOR, so the registration must survive gc.collect() with no
-    # user-held handle.
+    # register_table returns None. The module-level _DATA_ANCHOR keeps the registration alive, so the registration
+    # must survive gc.collect() with no user-held handle.
     db = _open_memory()
     a = np.array([[5, 6]], dtype=np.int64)
     assert register_table(db, "t", a, columns=["a", "b"]) is None
@@ -540,9 +534,9 @@ def test_duplicate_name_replaces():
     sqlite3_close(db)
 
 
-# A self-contained driver: imports register_table, opens :memory:, registers a
-# 2-D int64 table, runs a SELECT, and prints the rows. Run twice in fresh
-# subprocesses to assert cold/warm cfunc cache reuse (no growth on the warm run).
+# _DRIVER is a self-contained driver. It imports register_table, opens :memory:, registers a 2-D int64 table, runs a
+# SELECT and prints the rows. A test runs it twice in fresh subprocesses to assert cold/warm cfunc cache reuse (no
+# growth on the warm run).
 _DRIVER = textwrap.dedent('''
     from ctypes import addressof, c_int64
     import numpy as np
@@ -584,22 +578,21 @@ def _run_vtable_driver(tmp_path, cache_dir):
 
 
 def _count_vtable_nbc(cache_dir):
-    # Scope to the vtable cfunc/njit caches only, so the no-growth assertion is
-    # immune to unrelated bindings whose compile timing differs across runs.
-    # numba names cache files by source stem, so anchoring at the start (no
-    # leading *) matches vtable.py's products exactly and nothing else — the
-    # vtable_drv.py driver's own caches (stem "vtable_drv") don't match.
+    # The count covers only the vtable cfunc/njit caches. This limit prevents unrelated bindings from affecting the
+    # no-growth assertion, because their compile timing differs across runs. numba names cache files by source stem,
+    # so a pattern anchored at the start (no leading *) matches the products of vtable.py exactly and nothing else. The
+    # caches of the vtable_drv.py driver itself (stem "vtable_drv") do not match.
     return sum(1 for _ in cache_dir.rglob("vtable.*.nbc"))
 
 
 def test_xprocess_cache_no_growth(tmp_path):
     cache = tmp_path / "nbcache"
     cache.mkdir()
-    line1 = _run_vtable_driver(tmp_path, cache)  # cold: compiles + writes cache
+    line1 = _run_vtable_driver(tmp_path, cache)  # The cold run compiles and writes the cache
     assert line1 == "RESULT [(1, 10), (2, 20), (3, 30)]"
     n_cold = _count_vtable_nbc(cache)
     assert n_cold > 0
-    line2 = _run_vtable_driver(tmp_path, cache)  # warm: must reuse, not append
+    line2 = _run_vtable_driver(tmp_path, cache)  # The warm run must reuse the cache, not append to it
     assert line2 == "RESULT [(1, 10), (2, 20), (3, 30)]"
     assert _count_vtable_nbc(cache) == n_cold, "warm run grew the cache (cache reuse failed)"
 
@@ -734,9 +727,9 @@ def test_xdestroy_reregister_drops_first():
     b = np.array([[2]], np.int64)
     keys0 = set(v._DATA_ANCHOR)
     register_table(db.value, "t", a, ["c"])
-    (key1,) = set(v._DATA_ANCHOR) - keys0  # the first descriptor pointer = its anchor key
+    (key1,) = set(v._DATA_ANCHOR) - keys0  # The anchor key is the pointer of the first descriptor
     register_table(db.value, "t", b, ["c"])
-    # re-registration fires the FIRST descriptor's xDestroy synchronously
+    # Re-registration invokes the xDestroy of the first descriptor synchronously.
     assert key1 not in v._DATA_ANCHOR, "first entry not dropped on re-register"
     (key2,) = set(v._DATA_ANCHOR) - keys0
     assert key2 != key1
@@ -756,14 +749,13 @@ def test_xdestroy_no_c_free_of_descriptor():
     keys0 = set(v._DATA_ANCHOR)
     register_table(db.value, "t", arr, ["c"])
     (key,) = set(v._DATA_ANCHOR) - keys0
-    anchor = v._DATA_ANCHOR[key]  # hold the handle past xDestroy
+    anchor = v._DATA_ANCHOR[key]  # The test holds the handle past xDestroy
     assert _select_col0(db.value, "SELECT c FROM t") == [11, 22, 33]
     n_before = len(v._DATA_ANCHOR)
     sqlite3_close(db.value)
     assert len(v._DATA_ANCHOR) == n_before - 1
-    # xDestroy must NOT have C-freed the numpy-owned descriptor/array: the test
-    # still holds arr and the anchored handle, so reading both must not
-    # segfault and both must be unchanged.
+    # xDestroy must not have called a C free on the numpy-owned descriptor or array. The test still holds arr and the
+    # anchored handle, so reading both must not cause a segfault, and both must be unchanged.
     assert arr.tolist() == [[11], [22], [33]]
     assert anchor._keep[0].c["nrows"][0] == 3
 
@@ -800,10 +792,9 @@ def test_xdestroy_tvf_pops_anchor_on_close():
 
 
 def test_pushdown_explain_uses_index():
-    # SQLite reports the chosen vtable plan as "VIRTUAL TABLE INDEX <idxNum>:".
-    # A full scan claims nothing, so idxNum stays 0; a claimed constraint sets a
-    # non-zero idxNum. Assert the constrained query picks a non-zero idxNum and
-    # the unconstrained query does not.
+    # SQLite reports the chosen vtable plan as "VIRTUAL TABLE INDEX <idxNum>:". A full scan claims nothing, so idxNum
+    # stays 0. A claimed constraint sets a non-zero idxNum. The test asserts that the constrained query uses a non-zero
+    # idxNum and that the unconstrained query does not.
     db = _open_memory()
     a = np.array([[3], [5], [7]], dtype=np.int64)
     h = register_table(db, "t", a, columns=["c"])  # noqa: F841
@@ -817,9 +808,9 @@ def test_pushdown_explain_uses_index():
 
 
 def test_text_column_where_not_pushed_down():
-    # String/text columns are non-numeric, so xBestIndex never claims a WHERE on
-    # them: the plan stays at idxNum 0 (full scan) and the omit=0 re-check filters
-    # the surfaced rows -- the full-scan fallback must still return correct rows.
+    # String and text columns are non-numeric, so xBestIndex never claims a WHERE on them. The plan stays at idxNum 0
+    # (full scan), and the omit=0 re-check filters the rows that the cursor returns. The full-scan fallback must still
+    # return correct rows.
     db = _open_memory()
     dt = np.dtype([("name", "U4"), ("a", "i8")])
     a = np.array([("foo", 1), ("bar", 2), ("foo", 3)], dtype=dt)
@@ -832,9 +823,8 @@ def test_text_column_where_not_pushed_down():
 
 
 def test_rowid_constraint_not_pushed_down():
-    # The 0 <= col < ncols guard in xBestIndex excludes the iColumn == -1 rowid
-    # sentinel, so a rowid constraint is never claimed (idxNum stays 0). rowid is
-    # the 0-based scan position; the full-scan fallback must still be correct.
+    # The 0 <= col < ncols guard in xBestIndex excludes the iColumn == -1 rowid sentinel, so a rowid constraint is never
+    # claimed (idxNum stays 0). rowid is the 0-based scan position. The full-scan fallback must still be correct.
     db = _open_memory()
     a = np.array([[10], [20], [30]], dtype=np.int64)
     h = register_table(db, "t", a, columns=["a"])  # noqa: F841
@@ -848,8 +838,8 @@ def test_rowid_constraint_not_pushed_down():
 
 @pytest.mark.parametrize("dt", [np.int32, np.uint16, np.float32])
 def test_pushdown_smaller_dtypes_match_fullscan(dt):
-    # EQ + a range op pushed down on the smaller numeric dtypes, cross-checked
-    # against a full-scan (stdlib-equivalent) expectation.
+    # The test pushes EQ and a range op down on the smaller numeric dtypes and cross-checks the results against a
+    # full-scan (stdlib-equivalent) expectation.
     db = _open_memory()
     vals = [3, 5, 7, 5, 9, 1, 5]
     a = np.array([[v] for v in vals], dtype=dt)
@@ -861,8 +851,8 @@ def test_pushdown_smaller_dtypes_match_fullscan(dt):
 
 
 def test_pushdown_bool_column():
-    # A bool column maps to SQLite INTEGER and the cursor reads/compares it, so
-    # an eq constraint must be pushed down (non-zero idxNum), not full-scanned.
+    # A bool column maps to SQLite INTEGER, and the cursor reads and compares it. An eq constraint must therefore be
+    # pushed down (non-zero idxNum), not full-scanned.
     db = _open_memory()
     a = np.array([[True], [False], [True], [False], [True]], dtype=np.bool_)
     h = register_table(db, "t", a, columns=["c"])  # noqa: F841
@@ -875,10 +865,9 @@ def test_pushdown_bool_column():
 
 
 def test_pushdown_bool_range_ops_match_stdlib():
-    # Bool pushdown goes through the FLOAT comparison domain (_is_int_tag
-    # excludes bool): an int64-truncated RHS would turn c > -0.5 into c > 0
-    # and drop rows the omit=0 re-check never sees. Cross-check every range op
-    # and a fractional/negative RHS against stdlib sqlite3 on INTEGER 0/1.
+    # Bool pushdown uses the FLOAT comparison domain, because _is_int_tag excludes bool. An int64-truncated RHS would
+    # change c > -0.5 to c > 0 and drop rows that never reach the omit=0 re-check. The test cross-checks every range op
+    # and a fractional or negative RHS against stdlib sqlite3 on INTEGER 0/1.
     import sqlite3 as pysqlite
     rows = [True, False, True, False, True]
     ref = pysqlite.connect(":memory:")
@@ -892,8 +881,8 @@ def test_pushdown_bool_range_ops_match_stdlib():
             sql = "SELECT c FROM t WHERE c %s %s" % (op, rhs)
             exp = sorted(r[0] for r in ref.execute(sql))
             assert sorted(_select_col0(db, sql)) == exp, sql
-    # prove the fractional-RHS range predicate is actually claimed (pushed to
-    # xFilter), not just caught by SQLite's omit=0 re-check of surfaced rows
+    # The plan check proves that the fractional-RHS range predicate is actually claimed (pushed to xFilter), not only
+    # filtered by SQLite's omit=0 re-check of the returned rows.
     plan = _fetchall(db, "EXPLAIN QUERY PLAN SELECT c FROM t WHERE c > -0.5")
     text = " ".join(str(field) for row in plan for field in row).upper()
     assert "VIRTUAL TABLE INDEX 1:" in text, text
@@ -918,16 +907,16 @@ def test_pushdown_int64_above_2_53_range():
         got = sorted(_select_col0(db, "SELECT c FROM t WHERE c %s %d" % (op, threshold)))
         exp = sorted(v for v in vals if pred(v))
         assert got == exp, (op, got, exp)
-    # the exact row at 2**53+1 that float64 collapse used to drop under "> base":
+    # This assertion covers the exact row at 2**53+1. A float64 comparison would drop that row under "> base", because
+    # float64 rounds 2**53+1 to 2**53.
     assert sorted(_select_col0(db, "SELECT c FROM t WHERE c > %d" % base)) == sorted(vals[1:])
     sqlite3_close(db)
 
 
 def test_pushdown_int_column_fractional_rhs_match_stdlib():
-    # Int columns constrained by a fractional REAL literal must compare in the
-    # float domain: sqlite3_value_int64 would truncate the threshold toward zero
-    # (4.5 -> 4, -4.5 -> -4) and drop rows the omit=0 re-check never resurfaces.
-    # Cross-check signed int dtypes against stdlib sqlite3 on identical data.
+    # Int columns constrained by a fractional REAL literal must compare in the float domain. sqlite3_value_int64 would
+    # truncate the threshold toward zero (4.5 to 4, -4.5 to -4) and drop rows that the omit=0 re-check cannot restore.
+    # The test cross-checks signed int dtypes against stdlib sqlite3 on identical data.
     import sqlite3 as pysqlite
     cases = [
         (np.int8, [3, 4, 5]),
@@ -949,8 +938,8 @@ def test_pushdown_int_column_fractional_rhs_match_stdlib():
                 sql = "SELECT c FROM t WHERE c %s %s" % (op, rhs)
                 exp = sorted(r[0] for r in ref.execute(sql))
                 assert sorted(_select_col0(db, sql)) == exp, (dtype, sql)
-        # prove the fractional predicate is actually pushed to xFilter, not just
-        # caught by SQLite's omit=0 re-check of surfaced rows
+        # The plan check proves that the fractional predicate is actually pushed to xFilter, not only filtered by
+        # SQLite's omit=0 re-check of the returned rows.
         plan = _fetchall(db, "EXPLAIN QUERY PLAN SELECT c FROM t WHERE c < 4.5")
         text = " ".join(str(field) for row in plan for field in row).upper()
         assert "VIRTUAL TABLE INDEX 1:" in text, text
@@ -959,9 +948,8 @@ def test_pushdown_int_column_fractional_rhs_match_stdlib():
 
 
 def test_pushdown_int64_out_of_range_real_rhs_match_stdlib():
-    # An out-of-int64-range REAL literal (~1e23) must compare in the float
-    # domain: sqlite3_value_int64 clamps it to INT64_MAX, turning "c < clamp"
-    # into "c < INT64_MAX" which wrongly drops the INT64_MAX row.
+    # An out-of-int64-range REAL literal (about 1e23) must compare in the float domain. sqlite3_value_int64 clamps it to
+    # INT64_MAX, which changes "c < clamp" to "c < INT64_MAX". That comparison wrongly drops the INT64_MAX row.
     import sqlite3 as pysqlite
     INT64_MAX = (1 << 63) - 1
     vals = [-5, 0, 5, INT64_MAX]
@@ -979,11 +967,10 @@ def test_pushdown_int64_out_of_range_real_rhs_match_stdlib():
 
 
 def test_pushdown_int64_integer_valued_real_rhs_match_stdlib():
-    # An int column constrained by an INTEGER-VALUED REAL literal at high
-    # magnitude must compare EXACTLY: widening the int64 cell to f64 (the old
-    # float-domain path) is lossy above 2**53, so (2**53+1) collapses to 2**53
-    # and "c > 2**53.0" wrongly drops the 2**53+1 row. Cross-check against stdlib
-    # sqlite3 on identical data, both above +2**53 and below -2**53.
+    # An int column constrained by an integer-valued REAL literal at high magnitude must compare exactly. A float-domain
+    # comparison would widen the int64 cell to f64, which is lossy above 2**53. (2**53+1) would then round to 2**53, and
+    # "c > 2**53.0" would wrongly drop the 2**53+1 row. The test cross-checks against stdlib sqlite3 on identical data,
+    # both above +2**53 and below -2**53.
     import sqlite3 as pysqlite
     base = 1 << 53
     cases = [
@@ -1002,8 +989,8 @@ def test_pushdown_int64_integer_valued_real_rhs_match_stdlib():
         sql = "SELECT c FROM t WHERE c %s %s" % (op, rhs)
         exp = sorted(r[0] for r in ref.execute(sql))
         assert sorted(_select_col0(db, sql)) == exp, (sql, exp)
-        # prove the REAL-RHS predicate is actually pushed to xFilter, not just
-        # caught by SQLite's omit=0 re-check of surfaced rows
+        # The plan check proves that the REAL-RHS predicate is actually pushed to xFilter, not only filtered by
+        # SQLite's omit=0 re-check of the returned rows.
         plan = _fetchall(db, "EXPLAIN QUERY PLAN " + sql)
         text = " ".join(str(field) for row in plan for field in row).upper()
         assert "VIRTUAL TABLE INDEX 1:" in text, text
@@ -1016,8 +1003,8 @@ def test_pushdown_uint64_high_magnitude_consistent():
     vals = [(1 << 63), (1 << 63) + 5, (1 << 63) + 1]
     a = np.array([[v] for v in vals], dtype=np.uint64)
     h = register_table(db, "t", a, columns=["c"])  # noqa: F841
-    # xColumn surfaces uint64 as a wrapped int64; the cursor must agree, so a
-    # pushdown query returns exactly what a full scan + SQLite re-check returns.
+    # xColumn returns uint64 as a wrapped int64, and the cursor must use the same representation. A pushdown query then
+    # returns exactly what a full scan with the SQLite re-check returns.
     pushed = sorted(_select_col0(db, "SELECT c FROM t WHERE c > %d" % ((1 << 63) + 0)))
     allrows = sorted(_select_col0(db, "SELECT c FROM t"))
     full = sorted(v for v in allrows if v > ((1 << 63) + 0))
@@ -1045,13 +1032,13 @@ def test_xdestroy_deferred_while_statement_open():
     stmt = c_int64(0)
     with c_string("SELECT n FROM series(2, 5)") as p:
         sqlite3_prepare_v2(db.value, p, -1, addressof(stmt), 0)
-    sqlite3_step(stmt.value)  # leave the statement open (not finalized)
+    sqlite3_step(stmt.value)  # The statement stays open (not finalized)
     n_before = len(v._DATA_ANCHOR)
     rc = sqlite3_close(db.value)  # sqlite3_close (v1) returns SQLITE_BUSY with an open stmt
-    assert rc != 0  # BUSY: close refused, xDestroy NOT fired
-    assert len(v._DATA_ANCHOR) == n_before  # anchor entry still present
+    assert rc != 0  # The close is refused with BUSY, and xDestroy does not run
+    assert len(v._DATA_ANCHOR) == n_before  # The anchor entry is still present
     sqlite3_finalize(stmt.value)
-    assert sqlite3_close(db.value) == 0  # now it closes and fires xDestroy
+    assert sqlite3_close(db.value) == 0  # The close now succeeds and runs xDestroy
     assert len(v._DATA_ANCHOR) == n_before - 1
     del h
 
@@ -1136,7 +1123,7 @@ def test_columnar_join_two_tables():
 def test_columnar_strided_column():
     db = _open_memory()
     backing = np.array([1, 99, 2, 99, 3, 99], dtype=np.int64)
-    strided = backing[::2]            # values 1,2,3; stride 16 bytes; non-contiguous
+    strided = backing[::2]            # The view holds 1, 2, 3 with a stride of 16 bytes and is non-contiguous
     assert not strided.flags["C_CONTIGUOUS"]
     cols = {"a": strided, "b": np.array([10, 20, 30], dtype=np.int64)}
     register_table(db, "t", cols)
@@ -1147,7 +1134,7 @@ def test_columnar_strided_column():
 def test_columnar_strided_string_column():
     db = _open_memory()
     backing = np.array(["aa", "zz", "bb", "zz", "cc", "zz"], dtype="U6")
-    strided = backing[::2]            # "aa","bb","cc"; non-contiguous (stride 2*itemsize)
+    strided = backing[::2]            # The view holds "aa", "bb", "cc" and is non-contiguous (stride 2*itemsize)
     assert not strided.flags["C_CONTIGUOUS"]
     cols = {"s": strided, "n": np.array([1, 2, 3], dtype=np.int64)}
     register_table(db, "t", cols)
@@ -1157,7 +1144,7 @@ def test_columnar_strided_string_column():
 
 def test_columnar_negative_stride_column():
     backing = np.array([10, 20, 30, 40], dtype=np.int64)
-    rev = backing[::-1]            # negative stride; rev.ctypes.data is the physical-last element
+    rev = backing[::-1]            # The stride is negative, and rev.ctypes.data is the physical-last element
     assert rev.strides[0] < 0
     db = _open_memory()
     register_table(db, "t", {"a": rev})

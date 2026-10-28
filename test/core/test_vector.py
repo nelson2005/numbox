@@ -263,10 +263,9 @@ def test_zero_capacity_rejected():
 
 
 def test_cache_survives_across_processes(tmp_path):
-    # numbox's make_structref emits @njit(cache=True) proxy accessors. If the
-    # StructRef type class for a vector is created per-process (e.g. via
-    # type(...) inside a function body), run 2 loads cached code that expects
-    # the run-1 class object and fails with "No conversion from X to X".
+    # The vector's accessors, size and buf, are @njit(cache=True) properties of Vector. If the StructRef type class
+    # for a vector were created per process, for example by type(...) inside a function body, the second run would
+    # load cached code that expects the class object of the first run and fail with "No conversion from X to X".
     probe = textwrap.dedent("""
         from numba import types as nb_types
         from numbox.core.vector.vector import make_vector
@@ -288,8 +287,8 @@ def test_cache_survives_across_processes(tmp_path):
 
 
 def test_vector_ctor_raises_numbaerror_in_njit():
-    """Vector(...) from nopython context should raise NumbaError with the
-    make_vector redirect, not a generic typing failure."""
+    """Vector(...) raises NumbaError when it is called from nopython code, and the message redirects the caller to
+    make_vector. The error is not a generic typing failure."""
     def caller():
         return Vector(5)
 
