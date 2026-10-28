@@ -50,7 +50,7 @@ class Work(NodeBase):
     derive : FunctionType
         Function of the signature determined by the data types of `sources` and `data`.
         An exception raised inside it propagates out of
-        `calculate`, leaving `data` untouched and `derived` unset, so the node can be
+        `calculate`. `data` is left as it was and `derived` stays unset, so the node can be
         calculated again once the cause is addressed. numba's error path holds the
         references it took, so a node whose derive has ever failed stays pinned, along
         with what it references, for the life of the process; retrying the same node
@@ -60,8 +60,8 @@ class Work(NodeBase):
         where it cannot be upgraded. A `@proxy` binding's `.as_func` is not such a plain
         `CompileResultWAP`. It is a `DeriveWAP` and propagates on those same jitted-scope
         paths. Another is a `cfunc`, which is not upgraded either. The last is a 'derive'
-        handed from Python to a jitted parameter declared as a plain `FunctionType`, which
-        degrades on the way in.
+        passed from Python to a jitted parameter declared as a plain `FunctionType`, which
+        degrades on entry to the jitted function.
     derived : int8
         Flag indicating whether the `data` has already been calculated.
     node : NodeType
@@ -167,19 +167,17 @@ def _make_work_jit(name, data, sources=(), derive=None):
 def make_work(name, data, sources=(), derive=None):
     """Create a `Work` from Python scope.
 
-    A derive compiled by :func:`~numbox.utils.highlevel.cres` already propagates
-    its exceptions. One built directly against numba does not, so it is upgraded
-    here. The upgrade has to happen in Python because the check is on the object's
-    class, which a jitted body cannot see.
+    A derive compiled by :func:`~numbox.utils.highlevel.cres` already propagates its exceptions. One built directly
+    against numba does not, so it is upgraded here. The upgrade has to happen in Python, because the check is on the
+    object's class, which a jitted body cannot inspect.
 
-    Jitted callers reach the overload below, which takes the value as given: by
-    then the type is fixed and nothing can be re-wrapped.
+    Jitted callers reach the overload below, which uses the value as it is passed. The type is fixed at that point,
+    so the value cannot be re-wrapped.
 
-    ``make_work.py_func`` is preserved from when this function was itself a
-    dispatcher, since that attribute was part of the surface callers could reach for.
-    It is not callable, then or now: the body it exposes calls the `ll_make_work`
-    intrinsic and raises `NotImplementedError`. Note it is `_make_work_jit`'s body
-    rather than this one, so it does not carry the `rewrap_derive` call above.
+    ``make_work.py_func`` is kept because this function was itself a dispatcher, and that attribute was part of the
+    surface that callers could use. The attribute was not callable on the dispatcher and is not callable now: the body
+    it exposes calls the `ll_make_work` intrinsic and raises `NotImplementedError`. That body is the body of
+    `_make_work_jit`, not of this function, so it does not include the `rewrap_derive` call above.
     """
     return _make_work_jit(name, data, sources, rewrap_derive(derive))
 
@@ -198,17 +196,14 @@ make_work.py_func = _make_work_jit.py_func
 def _call_derive(typingctx: Context, derive_ty: FunctionType, sources_ty: Tuple):
     """Call the derive, propagating an exception it raises where possible.
 
-    Three cases, and only the second needs a runtime test. The first is settled once
-    the field's type is known. The third is reached at runtime, where the slot is null:
+    There are three cases, and only the second needs a runtime test. The first case is decided once the field's type
+    is known. The third case arises at runtime, when the slot is null:
 
-    - a ``DeriveFunctionType`` field carries a populated ``jit_addr`` by
-      construction, so the propagating convention is selected outright with no
-      runtime branch;
-    - a plain ``FunctionType`` field may still carry one, because numba's own
-      unboxing populates it for an njit dispatcher passed as a
-      ``FunctionType``-typed argument, so ``jit_addr`` is tested at runtime;
-    - a null ``jit_addr`` has no entry point that can carry an exception, so the
-      previous C call is emitted unchanged.
+    - a ``DeriveFunctionType`` field carries a populated ``jit_addr`` by construction, so the propagating convention
+      is selected unconditionally, with no runtime branch;
+    - a plain ``FunctionType`` field may still carry one, because numba's own unboxing populates it for an njit
+      dispatcher passed as a ``FunctionType``-typed argument, so ``jit_addr`` is tested at runtime;
+    - a null ``jit_addr`` has no entry point that can carry an exception, so the original C call is emitted unchanged.
     """
     fsig = derive_ty.signature
 

@@ -1,12 +1,13 @@
-"""SQLite parameter-binding bindings.
+"""Bindings for the SQLite parameter-binding functions.
 
-The destructor arg in bind_text / bind_blob (last intp) is one of:
-- SQLITE_STATIC = 0  -> SQLite assumes the buffer outlives the statement
-- SQLITE_TRANSIENT = -1 -> SQLite makes a copy
-- any other value -> a C function pointer SQLite calls to free the buffer
+The destructor argument of bind_text and bind_blob (the last intp) is one of:
 
-For numpy arrays passed via array_data_p, prefer SQLITE_TRANSIENT unless the
-caller can guarantee the array outlives the prepared statement.
+- SQLITE_STATIC = 0: SQLite assumes that the buffer outlives the statement.
+- SQLITE_TRANSIENT = -1: SQLite makes a copy.
+- any other value: a C function pointer that SQLite calls to free the buffer.
+
+For numpy arrays passed through array_data_p, prefer SQLITE_TRANSIENT unless the caller can guarantee that the array
+outlives the prepared statement.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures

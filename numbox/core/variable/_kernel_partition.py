@@ -1,10 +1,9 @@
 """Partitioning machinery for segmented compile_kernel.
 
-Private module: discovery (warm-up + probe), fusion-maximizing
-linearization, run/liveness partitioning, the master execution plan, and
-the PartitionReport surfaced as CompiledKernel.partition. Everything here
-operates on `core.variable` Variables/CompiledNodes and plain values; the
-only numba interaction is Dispatcher.compile probes and typeof.
+This private module holds the discovery (a warm-up and a probe), the fusion-maximizing linearization, the run and
+liveness partitioning, the master execution plan, and the PartitionReport that CompiledKernel.partition exposes. The
+code here operates on `core.variable` Variables and CompiledNodes and on plain values. Its only numba interactions are
+Dispatcher.compile probes and typeof.
 """
 from bisect import insort
 from dataclasses import dataclass, field
@@ -30,7 +29,7 @@ class Segment:
 
 @dataclass(frozen=True)
 class PartitionReport:
-    """What actually runs where, and why -- see CompiledKernel.partition."""
+    """Where each node actually runs, in a jit segment or in Python, and why; see CompiledKernel.partition."""
     mode: str                      # "fused" | "segmented"
     segments: tuple[Segment, ...]  # of Segment
 
@@ -88,8 +87,10 @@ class _Plan:
 @dataclass(frozen=True)
 class _ConePlan:
     """A recompute sub-plan executed in place against a persistent store.
-    Unlike _Plan.run (fresh dict from args, returns output_vars), run_into
-    reads live-ins from and writes every step output back to the shared store."""
+
+    _Plan.run builds a fresh dict from its args and returns output_vars. run_into instead reads the live-ins from the
+    shared store, and writes every step output back to it.
+    """
     steps: tuple[_JitStep | _PyStep, ...]
 
     def run_into(self, store: dict) -> None:
@@ -135,16 +136,14 @@ def _linearize_from(nodes: list[CompiledNode], demoted: set[Variable], start_jit
 
 
 def linearize(nodes: list[CompiledNode], demoted: set[Variable]) -> list[CompiledNode]:
-    """Topological order clustering same-color nodes into minimal runs.
+    """Topological order that clusters same-color nodes into minimal runs.
 
-    Greedy color-sticky Kahn (drain the current color while possible,
-    deterministic qual_name tie-break), evaluated from both possible
-    starting colors; the candidate with fewer runs wins (jit-start on a
-    tie). For two colors this is exactly optimal: starting from color c,
-    run i holds precisely the nodes whose longest color-alternating
-    ancestor chain spans i runs, so the run count meets the lower bound
-    of 1 + the maximum number of color alternations along any directed
-    path.
+    The order comes from a greedy color-sticky Kahn traversal, which drains the current color while it can and breaks
+    ties deterministically by qual_name. The traversal is evaluated from both possible starting colors, and the
+    candidate with fewer runs is chosen; a tie goes to the jit start. For two colors this is exactly optimal. Suppose
+    the order starts from color c. Run i then holds precisely the nodes whose longest color-alternating ancestor chain
+    spans i runs. The run count therefore meets the lower bound: 1 + the maximum number of color alternations along
+    any directed path.
     """
     jit_first = _linearize_from(nodes, demoted, start_jit=True)
     py_first = _linearize_from(nodes, demoted, start_jit=False)
@@ -203,10 +202,10 @@ def cone_liveness(
 ) -> tuple[tuple[Variable, ...], tuple[Variable, ...]]:
     """(live_in, live_out) for one jit run inside a recompute cone.
 
-    live_in: inputs consumed by the run but not produced within it (read from
-    the store). live_out: produced values that are consumed by a later cone
-    step, are required outputs, or are boundary nodes (persisted for other
-    cones). Both sorted by qual_name."""
+    live_in: inputs consumed by the run but not produced within it (read from the store). live_out: produced values
+    that are consumed by a later cone step, are required outputs, or are boundary nodes (persisted for other cones).
+    Both are sorted by qual_name.
+    """
     produced = {n.variable for n in run_nodes}
     live_in = set()
     for n in run_nodes:
@@ -232,9 +231,11 @@ _REASON_LIMIT = 200
 
 
 def _error_reason(exc: Exception) -> str:
-    """First informative line of a numba error -- numba prefixes typing
-    failures with a generic pipeline line, which would make every reason
-    in a PartitionReport read identically."""
+    """First informative line of a numba error.
+
+    numba prefixes typing failures with a generic pipeline line, which would make every reason in a PartitionReport
+    identical.
+    """
     lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()]
     informative = next(
         (ln for ln in lines if not ln.startswith("Failed in nopython mode pipeline")),
@@ -256,10 +257,12 @@ def _untypeable_reason(node: CompiledNode, values: dict[Variable, Any]) -> str |
 
 
 def _call_exotic(binding, args: list, arg_types: tuple, flags: dict | None = None) -> Any:
-    """Evaluate a CompileResultWAP/CFunc/DUFunc formula through a one-line
-    @njit shim (the same global-binding shape segments use). No Python
-    fallback exists for these, so a NumbaError here propagates. `flags` are the
-    kernel's effective jit flags, so the shim matches the fused/segment hot path."""
+    """Evaluate a CompileResultWAP, CFunc or DUFunc formula through a one-line @njit shim.
+
+    The shim has the same global-binding shape that segments use. No Python fallback exists for these formulas, so a
+    NumbaError raised here propagates. `flags` are the kernel's effective jit flags, so that the shim matches the
+    fused and segment hot path.
+    """
     names = ", ".join(f"a{i}" for i in range(len(args)))
     ns = {"_formula": binding}
     exec(f"def _shim({names}):\n    return _formula({names})\n", ns)  # nosec B102
@@ -269,10 +272,11 @@ def _call_exotic(binding, args: list, arg_types: tuple, flags: dict | None = Non
 
 
 def _dominators(nodes: list[CompiledNode], sources: set[Variable]) -> dict[Variable, frozenset]:
-    """Dominator set per node for the DAG rooted at a virtual super-source
-    (represented by None) with an edge to every node that is in `sources` or
-    has an external input. `nodes` must be topologically ordered. Each node's
-    set includes the node itself."""
+    """Dominator set per node, for the DAG rooted at a virtual super-source.
+
+    The super-source is represented by None, and has an edge to every node that is in `sources` or has an external
+    input. `nodes` must be topologically ordered. Each node's set includes the node itself.
+    """
     by_var = {n.variable: n for n in nodes}
     dom: dict[Variable, frozenset] = {}
     for n in nodes:
@@ -288,10 +292,12 @@ def _dominators(nodes: list[CompiledNode], sources: set[Variable]) -> dict[Varia
 def compute_boundary(
     nodes: list[CompiledNode], sources: set[Variable], required: set[Variable],
 ) -> set[Variable]:
-    """Variables that must live in the recompute store: required outputs, plus
-    any node that fails to dominate a consumer (some change in `sources` can
-    reach the consumer without reaching the node, making it a cone live-in).
-    Nodes that dominate all their consumers are fuse-through (not persisted)."""
+    """Variables that the recompute store must hold.
+
+    These are the required outputs, plus any node that fails to dominate a consumer: some change in `sources` can
+    reach the consumer without reaching the node, which makes the node a cone live-in. Nodes that dominate all their
+    consumers are fuse-through, and are not persisted.
+    """
     by_var = {n.variable: n for n in nodes}
     dom = _dominators(nodes, sources)
     consumers: dict[Variable, list[Variable]] = {}
@@ -315,15 +321,16 @@ def _evaluate(
     flags: dict | None,
     demoted: set[Variable] | dict[Variable, str],
 ) -> None:
-    """Populate `values` for every interior node using a fixed `demoted` set
-    (no probing). Demoted nodes run their py_func; exotic bindings run via the
-    @njit shim; the rest run their Dispatcher.
+    """Populate `values` for every interior node with a fixed `demoted` set, and no probing.
 
-    Invoked by `CompiledKernel._ensure_store` to seed the value store on the
-    first `recompute()` of a declared kernel -- the declarations supply the
-    demotion set directly, so no discovery/probing is needed. (This is not a
-    NumbaError fallback: the NumbaError-driven re-discovery path is
-    `_run_segmented`/`discover`, which a declared kernel deliberately skips.)"""
+    Demoted nodes run their py_func, exotic bindings run through the @njit shim, and the other nodes run their
+    Dispatcher.
+
+    `CompiledKernel._ensure_store` calls this function to seed the value store on the first `recompute()` of a
+    declared kernel. The declarations supply the demotion set directly, so no discovery or probing is needed. This
+    is not a NumbaError fallback: the NumbaError-driven re-discovery path is `_run_segmented`/`discover`, which a
+    declared kernel deliberately skips.
+    """
     for node in ordered_nodes:
         var = node.variable
         if var in external:
@@ -347,11 +354,10 @@ def discover(
     bindings_by_var: dict[Variable, Any],
     flags: dict | None = None,
 ) -> dict[Variable, str]:
-    """One-pass warm-up + probe.
+    """Warm up and probe every node in one pass.
 
-    Mutates `values` ({Variable: value}, pre-seeded with externals) to hold
-    every node's value; returns {Variable: reason} for demoted nodes.
-    Numba *compile* errors demote; runtime errors propagate.
+    Mutates `values` ({Variable: value}, pre-seeded with externals) to hold every node's value, and returns
+    {Variable: reason} for the demoted nodes. numba *compile* errors demote a node; runtime errors propagate.
     """
     demoted = {}
     for node in ordered_nodes:

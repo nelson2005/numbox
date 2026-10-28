@@ -33,13 +33,11 @@ def _errno_ptr(typingctx):
     def codegen(context, builder, signature, arguments):
         intp_ll = context.get_value_type(intp)
         i32_ptr = llir.IntType(32).as_pointer()
-        # NOTE: deliberately NOT setting readnone/memory(none) on this
-        # declaration, even though glibc declares __errno_location with
-        # __attribute_const__ (which maps to LLVM's readnone). Setting the
-        # attribute would allow LLVM to hoist the call out of loops or
-        # across function-call boundaries — fatal for correctness when the
-        # OS thread changes (e.g., across @njit(parallel=True) workers).
-        # An opaque/side-effecting call is what we need here.
+        # This declaration deliberately does not set readnone or memory(none), although glibc declares
+        # __errno_location with __attribute_const__, which maps to LLVM's readnone. With that attribute, LLVM could
+        # hoist the call out of loops or across function-call boundaries. The result would be incorrect when the OS
+        # thread changes, e.g., across @njit(parallel=True) workers. The call must therefore stay opaque, with
+        # possible side effects.
         func_ty = llir.FunctionType(i32_ptr, [])
         func_p = get_or_insert_function(builder.module, func_ty, sym)
         ptr = builder.call(func_p, [])
@@ -51,11 +49,10 @@ def _errno_ptr(typingctx):
 def errno_get():
     """Return the current thread's errno as int32.
 
-    Re-resolves the per-thread errno location on every call: on
-    @njit(parallel=True) workers, the accessor returns that worker's
-    errno. A Python caller observes errno set inside a normal @njit
-    function (same OS thread), but not errno set inside a parallel
-    region's worker (different OS thread).
+    The function resolves the per-thread errno location again on every call. On @njit(parallel=True) workers, the
+    accessor therefore returns the errno of the calling worker. A normal @njit function runs on the OS thread of its
+    Python caller, so the caller observes an errno that the function sets. A worker of a parallel region runs on a
+    different OS thread, so the Python caller does not observe an errno set there.
     """
     return load_at(_errno_ptr(), int32)
 
@@ -64,8 +61,7 @@ def errno_get():
 def errno_set(v):
     """Set the current thread's errno to v.
 
-    Accepts int64 (Python's default integer width); the value is
-    narrowed to int32 before being stored at the per-thread errno
-    location, matching C's ``int errno``.
+    The function accepts int64, Python's default integer width. It narrows the value to int32 before it stores the
+    value at the per-thread errno location, which matches C's ``int errno``.
     """
     store_at(_errno_ptr(), int32(v))

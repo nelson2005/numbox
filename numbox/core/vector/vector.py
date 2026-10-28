@@ -52,22 +52,24 @@ _vector_cache = {}
 def make_vector(elem_type):
     """Return ``(create, type_instance)`` for ``Vector[elem_type]``.
 
-    - ``create``: an ``@njit`` factory taking a single ``capacity`` argument.
-      Dtype is locked by the type — callers cannot pass a mismatched buffer.
+    - ``create``: an ``@njit`` factory that takes a single ``capacity``
+      argument. The type fixes the dtype, so callers cannot pass a mismatched
+      buffer.
     - ``type_instance``: the ``VectorType`` instance with resolved field
       types.
 
     Results are memoized in ``_vector_cache`` keyed by ``elem_type.key``.
 
-    The numpy dtype is derived from ``str(elem_type)`` at build time. Works
-    for standard scalar numba types (float64, int64, etc.). Exotic types
-    where ``str()`` does not match a numpy dtype name are unsupported.
+    The numpy dtype is derived from ``str(elem_type)`` at build time. This
+    works for standard scalar numba types (float64, int64, etc.). Exotic types
+    for which ``str()`` does not match a numpy dtype name are unsupported.
 
-    Initial ``capacity`` must be ``>= 1``. The ``create`` factory asserts
-    this. Zero-capacity construction is rejected because the geometric
-    growth in ``vector_push`` / ``vector_extend`` would produce ``0 * 2 = 0``
-    and either OOB or infinite-loop. Vectors only grow, never shrink, so a
-    positive initial capacity guarantees a positive capacity for all time.
+    The initial ``capacity`` must be ``>= 1``, and the ``create`` factory
+    asserts this. Zero-capacity construction is rejected, because the geometric
+    growth in ``vector_push`` and ``vector_extend`` would produce
+    ``0 * 2 = 0``, and would then either access memory out of bounds or loop
+    forever. Vectors only grow and never shrink, so a positive initial capacity
+    guarantees a positive capacity for the lifetime of the vector.
     """
     key = elem_type.key
     if key in _vector_cache:

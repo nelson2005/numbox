@@ -1,15 +1,11 @@
-"""SQLite numeric constants (result codes, type codes, open flags, blob flags,
-trace flags, destructor sentinels).
+"""SQLite numeric constants: result codes, type codes, open flags, blob flags, trace flags and destructor sentinels.
 
-Public surface — import directly, e.g.
-``from numbox.core.bindings.sqlite.constants import SQLITE_OK``.
-All names are uppercase ``SQLITE_*`` to avoid collision with the lowercase
-C-function-named wrappers.
+These names are public. Import them directly, e.g. ``from numbox.core.bindings.sqlite.constants import SQLITE_OK``.
+All names are uppercase ``SQLITE_*``, so they do not collide with the lowercase wrappers named after the C functions.
 
-Numba handles Python integer literals natively in ``@njit`` code, so these
-constants are usable inside JITed functions without further wrapping. The
-underlying SQLite values are API-stable across all matrix versions
-(3.34.0 through current).
+numba handles Python integer literals natively in ``@njit`` code, so these constants are usable inside JITed
+functions without further wrapping. The underlying SQLite values are API-stable across all matrix versions, from
+3.34.0 to the current version.
 """
 
 __all__ = [
@@ -88,7 +84,7 @@ SQLITE_OPEN_FULLMUTEX = 0x00010000
 SQLITE_OPEN_SHAREDCACHE = 0x00020000
 SQLITE_OPEN_PRIVATECACHE = 0x00040000
 
-# === sqlite3_blob_open flags (the integer values its `flags` arg accepts) ===
+# === sqlite3_blob_open flags (the integer values that its `flags` argument accepts) ===
 SQLITE_BLOB_READONLY = 0
 SQLITE_BLOB_READWRITE = 1
 
@@ -107,11 +103,10 @@ SQLITE_UTF8 = 1
 SQLITE_DETERMINISTIC = 0x800
 SQLITE_DIRECTONLY = 0x80000
 SQLITE_INNOCUOUS = 0x200000
-# SQLITE_SUBTYPE (since 3.30.0) declares a function may read its arguments'
-# subtypes via sqlite3_value_subtype; SQLITE_RESULT_SUBTYPE (since 3.45.0)
-# declares it may set a result subtype via sqlite3_result_subtype. Both are
-# required on strict-subtype builds (-DSQLITE_STRICT_SUBTYPE=1, e.g. conda-forge)
-# and harmlessly ignored on older sqlite.
+# SQLITE_SUBTYPE (since 3.30.0) declares that a function may read the subtypes of its arguments through
+# sqlite3_value_subtype. SQLITE_RESULT_SUBTYPE (since 3.45.0) declares that it may set a result subtype through
+# sqlite3_result_subtype. Strict-subtype builds (-DSQLITE_STRICT_SUBTYPE=1, e.g. conda-forge) require both, and an
+# older sqlite ignores them harmlessly.
 SQLITE_SUBTYPE = 0x100000
 SQLITE_RESULT_SUBTYPE = 0x1000000
 

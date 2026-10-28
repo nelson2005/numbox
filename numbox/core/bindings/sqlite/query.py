@@ -1,4 +1,4 @@
-"""query_to_array: collect SELECT results into a numpy structured array."""
+"""Collect the results of a SELECT into a numpy structured array (query_to_array)."""
 import ctypes
 
 import numpy as np
@@ -33,13 +33,13 @@ def _copy_bytes(dst, off, src, nbytes):
 
 @njit(**jit_options)
 def _put_unicode(buf, off, scratch8, src_p, nbytes, width_cp):
-    """Decode UTF-8 at ``src_p`` into up to ``width_cp`` UTF-32 code points and
-    write them into ``buf`` at ``off`` in the platform's NATIVE byte order (via a
-    uint32 view of ``scratch8``, matching numpy's 'U' dtype). Decodes with the
-    same ``_typemap._utf8_decode_one`` as ``utf8_to_utf32`` but writes natively
-    into ``buf`` (a tracked uint8 array view) instead of a raw pointer -- raw-
-    pointer stores get dead-code-eliminated by the macOS-arm64 optimizer.
-    Malformed input -> U+FFFD."""
+    """Decode the UTF-8 at ``src_p`` into up to ``width_cp`` UTF-32 code points and write them into ``buf`` at ``off``.
+
+    The code points are written in the platform's native byte order, through a uint32 view of ``scratch8``, which
+    matches numpy's 'U' dtype. The decoding uses the same ``_typemap._utf8_decode_one`` as ``utf8_to_utf32``. Unlike
+    ``utf8_to_utf32``, this function writes into ``buf``, a tracked uint8 array view, instead of through a raw pointer,
+    because the macOS-arm64 optimizer eliminates raw-pointer stores as dead code. Malformed input decodes to U+FFFD.
+    """
     inp = carray(_cast_int_to_void_p(src_p), (nbytes,), dtype=np.uint8)
     cps = scratch8.view(np.uint32)
     i = 0
@@ -53,13 +53,14 @@ def _put_unicode(buf, off, scratch8, src_p, nbytes, width_cp):
 
 @njit(**jit_options)
 def _store_cell(buf, off, tag, width, stmt, j, scratch8):
-    """Write column ``j`` of the current row into the uint8 array view ``buf`` at
-    byte offset ``off``. Scalars are serialised through ``scratch8`` (a tracked
-    8-byte uint8 array) via a typed view, so the bytes land in the platform's
-    NATIVE order, then copied into ``buf`` -- all numba-tracked array writes, so
-    the optimizer cannot drop them on macOS-arm64. The row is pre-zeroed by the
-    caller (np.zeros): a SQL NULL leaves an integer cell 0 / text-blob empty; only
-    float cells get NaN. The text/blob accessor is read before column_bytes."""
+    """Write column ``j`` of the current row into the uint8 array view ``buf`` at byte offset ``off``.
+
+    Scalars are serialized through ``scratch8``, a tracked 8-byte uint8 array, with a typed view, so the bytes are in
+    the platform's native order before they are copied into ``buf``. These are all numba-tracked array writes, so the
+    optimizer cannot remove them on macOS-arm64. The caller pre-zeroes the row (np.zeros). A SQL NULL therefore leaves
+    an integer cell at 0 and a text or blob cell empty, and only a float cell is set to NaN. The text or blob accessor
+    is called before column_bytes.
+    """
     ctype = sqlite3_column_type(stmt, j)
     if ctype == SQLITE_NULL:
         if tag == _TAG_F32:
@@ -108,11 +109,11 @@ def _store_cell(buf, off, tag, width, stmt, j, scratch8):
 
 @njit(**jit_options)
 def _query_core(stmt, ncols, offsets, tags, widths, itemsize):
-    """Step ``stmt`` to exhaustion, materialising rows into a flat uint8 numpy
-    array that grows geometrically, then trim to the exact length. Returns
-    ``(buf, rc)`` where ``buf`` is ``n * itemsize`` native-order bytes (the
-    caller views it back to the structured dtype) and ``rc`` is the terminal
-    step return code (SQLITE_DONE on success).
+    """Step ``stmt`` until it stops returning rows, and return the rows as native-order bytes.
+
+    The rows are materialized into a flat uint8 numpy array that grows geometrically, and the array is then trimmed to
+    the exact length. Returns ``(buf, rc)``, where ``buf`` is ``n * itemsize`` native-order bytes and ``rc`` is the
+    terminal step return code (SQLITE_DONE on success). The caller views ``buf`` back to the structured dtype.
     """
     cap = 16
     out_u8 = np.zeros(cap * itemsize, np.uint8)
@@ -130,10 +131,10 @@ def _query_core(stmt, ncols, offsets, tags, widths, itemsize):
             _store_cell(out_u8, row_off + offsets[j], tags[j], widths[j], stmt, j, scratch8)
         n += 1
         rc = sqlite3_step(stmt)
-    # The bare slice is lifetime-safe (it shares the parent's NRT meminfo via
-    # make_view/impl_ret_borrowed); .copy() only trims the growth slack, whose
-    # absolute size is under one doubling: less than n rows' worth (n * itemsize
-    # bytes) for n > 16, at most 16 rows' worth when n <= 16 (cap floors at 16).
+    # The slice alone would be lifetime-safe, because it shares the NRT meminfo of the parent through
+    # make_view/impl_ret_borrowed. The .copy() call only trims the unused capacity, whose absolute size is under one
+    # doubling. That capacity is less than n rows (n * itemsize bytes) when n > 16, and at most 16 rows when n <= 16,
+    # because cap is never below 16.
     return out_u8[:n * itemsize].copy(), rc
 
 
@@ -146,11 +147,12 @@ def _raise_rc(db, rc):
 
 
 def query_to_array(db, sql_p, dtype):
-    """Run the NUL-terminated SQL text at pointer ``sql_p`` on ``db`` and return
-    its rows as a 1-D numpy structured array of ``dtype`` (one field per result
-    column, by position). ``sql_p`` is a char* pointer (e.g. from
-    ``numbox.utils.cstrings.c_string`` or ``get_unicode_data_p``), not a Python
-    str. NULL -> NaN (float) / 0 (int) / empty (text/blob)."""
+    """Run the SQL text at ``sql_p`` on ``db`` and return its rows as a 1-D numpy structured array of ``dtype``.
+
+    The array has one field per result column, matched by position. ``sql_p`` is a char* pointer to NUL-terminated
+    SQL text (e.g. from ``numbox.utils.cstrings.c_string`` or ``get_unicode_data_p``), not a Python str. A SQL NULL
+    becomes NaN in a float field, 0 in an integer field and an empty value in a text or blob field.
+    """
     if dtype.fields is None or dtype.names is None:
         raise TypeError("dtype must be a structured numpy dtype, got %r" % (dtype,))
     names = list(dtype.names)

@@ -1,29 +1,25 @@
 """Cross-platform monotonic nanosecond clock callable from @njit code.
 
-Exposes a single function::
+The module exposes a single function::
 
     monotonic_ns() -> int64   # nanoseconds since an unspecified epoch
 
-Implemented as a Numba ``@intrinsic`` that emits an LLVM ``alloca`` for
-the platform's time struct, calls the OS clock function into it, and
-returns the result — all on the stack, with zero heap allocation and no
-NRT liveness concerns.
+``monotonic_ns`` is a Numba ``@intrinsic`` that emits an LLVM ``alloca`` for the platform's time struct, calls the OS
+clock function into it, and returns the result. All of it happens on the stack, with zero heap allocation and no NRT
+liveness concerns.
 
 Platform implementations
 ------------------------
 Linux / macOS:
-    Calls libc ``clock_gettime(CLOCK_MONOTONIC, &ts)`` where ``ts`` is a
-    stack-allocated ``struct timespec {int64 tv_sec; int64 tv_nsec}``.
-    The LLVM declaration is emitted with ``get_or_insert_function`` and
-    resolved through the platform's normal dynamic symbol lookup at JIT
-    link time — libc is always globally loaded.
+    Calls libc ``clock_gettime(CLOCK_MONOTONIC, &ts)``, where ``ts`` is a stack-allocated
+    ``struct timespec {int64 tv_sec; int64 tv_nsec}``. The LLVM declaration is emitted with ``get_or_insert_function``
+    and resolved through the platform's normal dynamic symbol lookup at JIT link time. libc is always globally loaded,
+    so the lookup finds the symbol.
 
 Windows:
-    Calls ``QueryPerformanceCounter`` from ``kernel32.dll``.  The
-    performance-counter frequency is read once at module import via
-    ctypes and baked into the IR as a compile-time constant.
-    ``kernel32`` is registered with LLVM's symbol search via
-    ``load_library_permanently``.
+    Calls ``QueryPerformanceCounter`` from ``kernel32.dll``.  The performance-counter frequency is read once at module
+    import via ctypes and embedded in the IR as a compile-time constant. ``kernel32`` is registered with LLVM's symbol
+    search via ``load_library_permanently``.
 """
 import ctypes
 import platform
@@ -63,8 +59,8 @@ if _SYSTEM == "Windows":
 
             ns = (ticks / freq) * 1e9 + (ticks % freq) * 1e9 / freq
 
-        The naive ``ticks * 1e9 / freq`` overflows int64 after ~15 min
-        of uptime at a typical 10 MHz QPC frequency.
+        The naive formula ``ticks * 1e9 / freq`` overflows int64 after about 15 minutes of uptime at a typical
+        QPC frequency of 10 MHz.
         """
         def codegen(context, builder, signature, arguments):
             counter_ptr = builder.alloca(_i64)

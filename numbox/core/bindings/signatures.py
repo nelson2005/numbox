@@ -118,7 +118,7 @@ signatures_sqlite = {
     "sqlite3_changes": int32(intp),
     "sqlite3_last_insert_rowid": int64(intp),
     "sqlite3_total_changes": int32(intp),
-    # 64-bit row counts — SQLite 3.37+ (Nov 2021); guarded via proxy_if_available
+    # 64-bit row counts: SQLite 3.37+ (Nov 2021), guarded via proxy_if_available
     "sqlite3_changes64": int64(intp),
     "sqlite3_total_changes64": int64(intp),
     # === Statement lifecycle ===
@@ -150,7 +150,7 @@ signatures_sqlite = {
     "sqlite3_column_count": int32(intp),
     "sqlite3_column_name": intp(intp, int32),
     "sqlite3_column_decltype": intp(intp, int32),
-    # Compile-flag-gated (SQLITE_ENABLE_COLUMN_METADATA); via proxy_if_available
+    # Compile-flag-gated (SQLITE_ENABLE_COLUMN_METADATA), guarded via proxy_if_available
     "sqlite3_column_database_name": intp(intp, int32),
     "sqlite3_column_table_name": intp(intp, int32),
     "sqlite3_column_origin_name": intp(intp, int32),

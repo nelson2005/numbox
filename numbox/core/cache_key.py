@@ -22,15 +22,15 @@ import numbox
 
 #: The ``NUMBA_*`` settings that change the code numba emits, each with the ``numba.config`` attribute numba reads it
 #: into. A survey of numba 0.63 to 0.68, each minor version at its latest patch release, classified them. The survey
-#: compiled a fixed corpus with each setting changed in turn and compared the emitted LLVM IR and assembly. Of the
-#: settings that numba's own key leaves out, one is keyed if and only if changing it changes the code, including
-#: settings that change only speed or debugging information. ``NUMBA_DUMP_ASSEMBLY``, ``NUMBA_DEBUG`` and
-#: ``NUMBA_DIFF_IR`` change the code only as a side effect of the dumps they request, and are keyed as well. Three
-#: settings change the code only in combination with another setting or flag, so a survey that changes one setting at
-#: a time cannot reveal them. They were found in numba's source: ``NUMBA_DEBUG_NRT_STACK_LIMIT`` changes the code only
-#: under ``NUMBA_DEBUG_NRT``, and ``NUMBA_FULL_TRACEBACKS`` and ``NUMBA_DEVELOPER_MODE`` (its default) change it only
-#: where bounds checking is enabled. ``NUMBA_DISABLE_INTEL_SVML`` changes the code only where Intel's SVML library is
-#: installed, which the survey's machines lacked; numba then calls SVML for vectorized math.
+#: compiled a fixed corpus with each setting changed in turn and compared the emitted LLVM IR and assembly. numbox keys
+#: a setting that numba's own key leaves out if and only if changing it changes the code, including a setting that
+#: changes only speed or debugging information. ``NUMBA_DUMP_ASSEMBLY``, ``NUMBA_DEBUG`` and ``NUMBA_DIFF_IR`` change
+#: the code only as a side effect of the dumps they request. They are keyed as well. Three settings change the code only
+#: in combination with another setting or flag, so a survey that changes one setting at a time cannot reveal them.
+#: numba's source shows them: ``NUMBA_DEBUG_NRT_STACK_LIMIT`` changes the code only under ``NUMBA_DEBUG_NRT``, and
+#: ``NUMBA_FULL_TRACEBACKS`` and ``NUMBA_DEVELOPER_MODE`` (its default) change it only where bounds checking is
+#: enabled. ``NUMBA_DISABLE_INTEL_SVML`` changes the code only where Intel's SVML library is installed; numba then
+#: calls SVML for vectorized math. The survey's machines lacked it.
 KEYED_SETTINGS = {
     "NUMBA_BOUNDSCHECK": "BOUNDSCHECK",
     "NUMBA_OPT": "OPT",
@@ -133,8 +133,8 @@ def _current_settings() -> tuple:
 def _settings_canon() -> str:
     """The settings part of the key, with the current values.
 
-    Shared with the content-addressed names of the kernels :mod:`numbox.core.variable.compile_kernel` generates and
-    the derives :mod:`numbox.core.work.builder` anchors, which include it in their digests.
+    The content-addressed names of the kernels :mod:`numbox.core.variable.compile_kernel` generates and of the derives
+    :mod:`numbox.core.work.builder` anchors include this part in their digests.
     """
     return repr(list(_current_settings()))
 
@@ -179,13 +179,13 @@ def _flag_value_text(value, where) -> str:
 def _flags_text(kind, compiler) -> str:
     """The decorator kind, the flags numba compiles under and the ``locals`` given at decoration.
 
-    The flags come from numba's own parse of the decorator's options, followed by the changes numba's compiler then
-    makes to them, including those for a C callback. When the function is compiled during the compilation of a caller,
-    the parse takes from the caller's compilation any of ``nrt``, ``fastmath``, ``error_model`` and ``forceinline``
-    that the options leave unset, as numba's parse does. For a variable given in ``locals`` that it renames, numba's SSA
-    pass adds each new name, the variable's name and a number after a dot, typed as the variable. Those names are left
-    out, since the given type determines them. A name with a dot whose part before the last dot is not given is the
-    caller's own, and is kept.
+    The flags come from numba's own parse of the decorator's options. numba's compiler then changes some of them, the
+    changes it makes for a C callback included, and the key holds the result. When the function is compiled during the
+    compilation of a caller, the parse takes from the caller's compilation any of ``nrt``, ``fastmath``, ``error_model``
+    and ``forceinline`` that the options leave unset. numba's own parse does the same. numba's SSA pass renames some of
+    the variables given in ``locals``, and adds each new name, the variable's name and a number after a dot, typed as
+    the variable. The key leaves those names out, since the given type determines them. A name with a dot whose part
+    before the last dot is not given belongs to the caller, and the key keeps it.
     """
     options = compiler.targetoptions
     if isinstance(options.get("parallel"), dict):
@@ -216,10 +216,11 @@ def explain_cache_key(func) -> dict:
     """The parts numbox adds to ``func``'s cache key, with their current values, for the next compile of a direct call
     in this process.
 
-    ``func`` is a dispatcher or ``@cfunc`` whose cache numbox keys, what ``cres`` returns, or a ``@proxy`` function's
-    ``.as_func``: a function numbox compiled, or one decorated with :func:`numbox_njit` or :func:`numbox_cfunc` with
-    ``cache=True``. The result maps ``"numbox"`` to numbox's version, ``"flags"`` to the flags as the key holds them,
-    and ``"settings"`` to each keyed setting's value. Two results that differ belong to two different keys.
+    ``func`` is a dispatcher or ``@cfunc`` whose cache numbox keys, the object ``cres`` returns, or a ``@proxy``
+    function's ``.as_func``: a function numbox compiled, or one decorated with :func:`numbox_njit` or
+    :func:`numbox_cfunc` with ``cache=True``. The result maps ``"numbox"`` to numbox's version, ``"flags"`` to the flags
+    as the key holds them, and ``"settings"`` to each keyed setting's value. Two results that differ belong to two
+    different keys.
     """
     func = getattr(func, "_numbox_dispatcher", func)
     cache = getattr(func, "_cache", None)
@@ -359,8 +360,8 @@ def _wrap_enable_caching(original, kind, py_func_of):
 def _install():
     """Wrap numba's cache and the two decorators' cache set-up; once per process.
 
-    Every lookup happens before the first assignment, so on a numba version that lacks one of them, nothing is
-    installed. The marker that makes a second install return early is set after the last assignment, and an
+    Every lookup happens before the first assignment, so nothing is installed on a numba version that lacks one of the
+    attributes. The marker that makes a second install return early is set after the last assignment, and an
     assignment that fails, the marker's assignment included, restores the attributes assigned before it. A failed
     install leaves numba unchanged, and the next import attempts it again.
     """

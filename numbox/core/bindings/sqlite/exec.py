@@ -1,22 +1,20 @@
-"""SQLite exec + free bindings.
+"""Bindings for sqlite3_exec and sqlite3_free.
 
-sqlite3_exec is the one-shot SQL escape hatch — it parses, prepares, steps,
-and finalizes a (potentially multi-statement) SQL string. The third arg is a
-function pointer to a per-row callback; pass 0 for no callback.
+sqlite3_exec runs arbitrary SQL in a single call: it parses, prepares, steps and finalizes a SQL string, which may
+hold several statements. The third argument is a function pointer to a per-row callback, or 0 for no callback.
 
-sqlite3_free releases memory SQLite allocated and returned to the caller —
-notably the errmsg buffer from sqlite3_exec's out-param, and the result of
-sqlite3_expanded_sql. sqlite3_malloc is its allocation counterpart (used by the
-virtual-table machinery to allocate the vtab and cursor structs).
+sqlite3_free releases memory that SQLite allocated and returned to the caller, in particular the errmsg buffer from
+the out-param of sqlite3_exec and the result of sqlite3_expanded_sql. sqlite3_malloc is the corresponding allocator,
+and the virtual-table code uses it to allocate the vtab and cursor structs.
 
 Callback shape (informational)::
 
     int (*sqlite3_exec_callback)(void *ctx, int ncol,
                                  char **col_values, char **col_names)
 
-Return 0 to continue, nonzero to abort with SQLITE_ABORT.
+A return value of 0 continues the execution, and a nonzero value aborts it with SQLITE_ABORT.
 
-Produce the callback address from Python via::
+Produce the callback address from Python as follows::
 
     @cfunc(int32(voidptr, int32, intp, intp))
     def my_row_cb(ctx, n, values_pp, names_pp): ...

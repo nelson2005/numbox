@@ -8,31 +8,23 @@ _REJECTED_KINDS = {
 
 
 def make_params_strings(func):
-    """Render a function's parameters as two source-string fragments suitable
-    for inlining into generated ``def`` headers and call sites.
+    """Render a function's parameters as two source-string fragments for generated ``def`` headers and call sites.
 
-    ``*args`` and ``**kwargs`` are rejected with ``ValueError`` — their
-    ``*`` / ``**`` markers cannot be reproduced by the existing source-
-    string codegen and the generated wrapper would silently bind those
-    parameters as plain positional args (a different calling convention
-    from what the user wrote).
+    The function rejects ``*args`` and ``**kwargs`` with ``ValueError``. The existing source-string codegen cannot
+    reproduce their ``*`` and ``**`` markers, so the generated wrapper would silently bind those parameters as plain
+    positional arguments, a calling convention different from the one the user wrote.
 
-    Keyword-only (``*,``) and positional-only (``/``) markers are
-    silently flattened to positional-or-keyword — by design. The
-    ``@proxy`` decorator relies on this loosening to support ``Omitted``-
-    style overloads written as ``def f(x, *, y=default)``: the proxy
-    wrapper exposes ``f(x, y=default)`` so callers can pass ``y``
-    positionally as well. Documented at :func:`numbox.core.proxy.proxy`.
+    The function silently flattens keyword-only (``*,``) and positional-only (``/``) markers to positional-or-keyword.
+    This is by design: the ``@proxy`` decorator relies on the flattening to support ``Omitted``-style overloads written
+    as ``def f(x, *, y=default)``. The proxy wrapper exposes ``f(x, y=default)``, so callers can pass ``y``
+    positionally as well. :func:`numbox.core.proxy.proxy` documents this behavior.
 
-    Default-argument values are formatted via ``repr(default)`` —
-    primitives whose ``repr()`` is a valid Python expression (ints,
-    finite floats, strings, ``None``, booleans, tuples thereof) round-
-    trip. Non-round-tripping exceptions: ``float('nan')`` /
-    ``float('inf')`` render as bare identifiers ``nan`` / ``inf`` and
-    ``NameError`` at exec time; complex objects whose ``repr()`` is e.g.
-    ``"<MyClass object at 0x...>"`` likewise render to invalid source and
-    raise ``SyntaxError`` / ``NameError``. These are visible failures,
-    not silent miscompiles.
+    The function formats default-argument values through ``repr(default)``. Primitives whose ``repr()`` is a valid
+    Python expression (ints, finite floats, strings, ``None``, booleans, tuples thereof) round-trip. Some values do
+    not round-trip. ``float('nan')`` and ``float('inf')`` render as the bare identifiers ``nan`` and ``inf``, which
+    raise ``NameError`` at exec time. A complex object whose ``repr()`` is, e.g., ``"<MyClass object at 0x...>"``
+    likewise renders to invalid source and raises ``SyntaxError`` or ``NameError``. These are visible failures, not
+    silent miscompilations.
     """
     func_params = inspect.signature(func).parameters
     for name, p in func_params.items():

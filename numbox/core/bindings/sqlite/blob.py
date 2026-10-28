@@ -1,8 +1,7 @@
-"""SQLite BLOB incremental I/O bindings: blob_open / _close / _bytes / _read /
-_write / _reopen.
+"""SQLite BLOB incremental I/O bindings: blob_open, _close, _bytes, _read, _write and _reopen.
 
-All functions present in SQLite 3.4.0 (2007) except _reopen which arrived in
-3.7.4 (2010). No version gating needed — far below the matrix floor of 3.34.
+All functions exist in SQLite 3.4.0 (2007), except _reopen, which SQLite added in 3.7.4 (2010). Both versions are far
+below the matrix floor of 3.34, so no version gating is needed.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures

@@ -1,15 +1,12 @@
 """SQLite column accessors.
 
-Three metadata accessors (column_database_name / column_table_name /
-column_origin_name) require SQLite to be compiled with
-SQLITE_ENABLE_COLUMN_METADATA. CPython's bundled sqlite3.dll on Windows
-has it enabled, and we use only that bundled DLL on Windows (see
-``_resolve_lib_path`` in ``utils.py``); the system sqlite3 picked up
-via ``find_library`` on Linux / macOS may or may not, depending on the
-distribution. proxy_if_available stubs the accessors out when absent so
-callers can hasattr-guard or fall back.
+Three metadata accessors (column_database_name, column_table_name and column_origin_name) require SQLite to be
+compiled with SQLITE_ENABLE_COLUMN_METADATA. CPython's bundled sqlite3.dll on Windows has it enabled, and numbox uses
+only that bundled DLL on Windows (see ``_resolve_lib_path`` in ``utils.py``). The system sqlite3 that ``find_library``
+finds on Linux or macOS may or may not have it enabled, depending on the distribution. If the accessors are absent,
+proxy_if_available replaces them with stubs, so callers can guard their use with hasattr or fall back.
 
-All other accessors are universally available across the matrix.
+All other accessors are available across the whole matrix.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures

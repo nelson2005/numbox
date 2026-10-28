@@ -61,14 +61,14 @@ class VarSpecBase(TypedDict):
 
 @dataclass(frozen=True)
 class Params:
-    """Optional per-`Variable` declaration driving static jitability in
-    `compile_kernel`. `jitable=False` declares a deliberately plain-Python
-    node; `type` is the variable's numba `Type`
-    (None means undeclared).
+    """Optional per-`Variable` declaration that determines static jitability in `compile_kernel`.
 
-    Like `formula`, `params` must be attached to a node before the first
-    `compile()` of any required set containing that node: a `Graph` caches its
-    compiled result, so a `params` attached afterward is not picked up."""
+    `jitable=False` declares a deliberately plain-Python node, and `type` is the variable's numba `Type` (None means
+    undeclared).
+
+    Like `formula`, `params` must be attached to a node before the first `compile()` of any required set that contains
+    that node. A `Graph` caches its compiled result, so a `params` attached afterward is ignored.
+    """
     jitable: bool = True
     type: Any = None
 
@@ -139,9 +139,11 @@ class External(Namespace):
         return variable
 
     def declare(self, name: str, params: Params) -> 'Variable':
-        """Pre-seed a typed external before compile (the only supported route
-        to attach params to an external, which is otherwise auto-created
-        untyped on lookup)."""
+        """Pre-seed a typed external before compile.
+
+        This is the only supported way to attach params to an external. Otherwise the lookup creates the external
+        automatically, untyped.
+        """
         variable = Variable(name=name, source=self.name, params=params)
         self.update(name, variable)
         return variable
@@ -185,10 +187,9 @@ class Variable:
     params: Params | None = field(default=None)
 
     def __post_init__(self):
-        # Only the variable name is restricted: qualified names compose as
-        # source.name and decode via rsplit(QUAL_SEP, 1), which binds only the
-        # final separator -- so a dotted source/namespace round-trips, while a
-        # dotted name would be ambiguous.
+        # Only the variable name is restricted. Qualified names compose as source.name and decode through
+        # rsplit(QUAL_SEP, 1), which binds only the final separator. A dotted source or namespace therefore
+        # round-trips, while a dotted name would be ambiguous.
         if QUAL_SEP in self.name:
             raise ValueError(
                 f"Variable name {self.name!r} contains the reserved qualified-name "
@@ -396,9 +397,10 @@ class CompiledGraph:
         :param values: storage of all `Variable` values.
 
         Recompute takes priority: each node in the affected downstream cone is reset and
-        recomputed from its formula, so the graph structure decides the final values. A
-        supplied value persists only for a node not downstream of any other change; a
-        co-changed downstream value is recomputed, not held.
+        recomputed from its formula, so the graph structure determines the final values. A
+        supplied value persists only for a node that is not downstream of any other change. If
+        a node downstream of another change also receives a value, that node is recomputed,
+        and the supplied value is not kept.
         """
         changed_vars = set()
         for src, vals in changed.items():

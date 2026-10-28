@@ -22,51 +22,39 @@ from numbox.core.bindings.utils import extract_literal_str
 def _call_lib_func(typingctx, func_name_ty, args_ty=NoneType):
     """Call a C library function with ABI-correct argument and return passing.
 
-    The C function name is resolved from numbox's ``signatures`` dict.
-    Each arg in ``args_ty`` and the resolved return type are classified
-    as scalar / struct <= 16 bytes / struct >16 bytes, then lowered to
-    LLVM IR per the host's calling convention:
+    The intrinsic resolves the C function name in numbox's ``signatures`` dict. It classifies each argument in
+    ``args_ty`` and the resolved return type as a scalar, a struct of at most 16 bytes or a struct of more than 16
+    bytes. It then lowers each of them to LLVM IR according to the calling convention of the host:
 
-    - **Scalar args / returns** -- passed and returned directly.
-    - **<=16-byte struct args** -- by value on SysV x86-64 and AAPCS64
-      (LLVM's frontend lowers to register passing); on Windows x64,
-      sizes 1/2/4/8 are passed by value in registers (per the Windows
-      x64 ABI) and other sizes go by pointer (alloca + store + pass-
-      pointer). On SysV x86-64 and AAPCS64, 16-byte aggregates whose
-      eightbytes are pure-INTEGER but whose LLVM type isn't already
-      ``{i64, i64}`` (e.g. ``{i32, i32, i64}`` -- duckdb_interval) are
-      repacked via memory bitcast before the call -- working around
-      llvmlite not modelling the eightbyte-packing rule, which
-      otherwise drops fields.
-    - **>16-byte struct args** -- by pointer on every platform; on SysV
-      x86-64 the ``byval`` attribute is added to the LLVM arg and the
-      enclosing function gets ``optnone`` + ``noinline`` so the LLVM
-      optimizer does not elide the caller-side stack copy before the
-      callee reads it. See:
-      https://github.com/numba/llvmlite/issues/300#issuecomment-327235846
-    - **<=16-byte struct returns** -- direct on SysV x86-64 and AAPCS64;
-      on Windows x64, sizes 1/2/4/8 return in RAX (direct) and other
-      sizes use ``sret`` (caller-allocated hidden first arg, void
-      return). 16-byte non-canonical INT/INT returns get the same
-      eightbyte repack on SysV / AAPCS64: the LLVM call is declared
-      to return ``{i64, i64}`` and the result is unpacked back to
-      the original LLVM type via memory bitcast.
-    - **>16-byte struct returns** -- ``sret`` (caller-allocated hidden
-      first arg, void return) on every platform. SysV x86-64 / AAPCS64
-      / Windows x64 all use indirect-result-location for this size
-      class; the codegen path is shared with the Windows ``<=16-byte``
-      non-register-passable case. ``Record`` returns are explicitly
-      rejected (``TypingError``): numba's ``RecordModel`` represents
-      values as raw pointers, so a stack-alloca sret slot would dangle
-      after the ``@njit`` function returns; safe support needs an NRT-
-      allocated buffer + integration with numba's record-ownership
-      model. Add when a consumer needs it.
+    - **Scalar arguments and returns** are passed and returned directly.
+    - **Struct arguments of at most 16 bytes** are passed by value on SysV x86-64 and AAPCS64, where LLVM's frontend
+      lowers them to register passing. On Windows x64, the ABI passes sizes 1, 2, 4 and 8 by value in registers, and
+      other sizes by pointer, through an alloca and a store. On SysV x86-64 and AAPCS64, a 16-byte aggregate is
+      repacked through a memory bitcast before the call if its eightbytes are pure-INTEGER but its LLVM type is not
+      already ``{i64, i64}``, for example ``{i32, i32, i64}`` (duckdb_interval). The repack compensates for a
+      limitation of llvmlite: llvmlite does not model the eightbyte-packing rule, and without the repack it loses
+      fields.
+    - **Struct arguments of more than 16 bytes** are passed by pointer on every platform. The SysV x86-64 lowering
+      adds the ``byval`` attribute to the LLVM argument, and ``optnone`` and ``noinline`` to the enclosing function.
+      These attributes prevent the LLVM optimizer from eliding the caller-side stack copy before the callee reads it.
+      See https://github.com/numba/llvmlite/issues/300#issuecomment-327235846
+    - **Struct returns of at most 16 bytes** are returned directly on SysV x86-64 and AAPCS64. On Windows x64, sizes
+      1, 2, 4 and 8 return directly in RAX, and other sizes use ``sret``: a hidden first argument that the caller
+      allocates, with a void return. On SysV and AAPCS64, a 16-byte non-canonical INT/INT return receives the same
+      eightbyte repack. The LLVM call is declared to return ``{i64, i64}``, and a memory bitcast unpacks the result
+      back to the original LLVM type.
+    - **Struct returns of more than 16 bytes** use ``sret`` on every platform, with a hidden first argument that the
+      caller allocates and a void return. SysV x86-64, AAPCS64 and Windows x64 all use an indirect result location for
+      this size class. The code generation path is shared with the Windows case of a ``<=16-byte`` struct that is not
+      register-passable. A ``Record`` return of this size is explicitly rejected with ``TypingError``. numba's
+      ``RecordModel`` represents values as raw pointers, so a stack-alloca sret slot would dangle after the ``@njit``
+      function returns. Safe support needs an NRT-allocated buffer and integration with numba's record-ownership
+      model. That support can be added when a consumer needs it.
 
-    For C signatures of form ``func(T*)`` (pointer to struct) rather
-    than ``func(T)`` lowered to a byval pointer by the ABI, use the
-    sibling ``_call_lib_func_byval`` intrinsic in this module instead.
-    The numba type system can't disambiguate ``T`` from ``T*``; the
-    caller picks the intrinsic based on what the C header declares.
+    This intrinsic handles a C signature ``func(T)``, including one that the ABI lowers to a byval pointer. A C
+    signature of the form ``func(T*)``, which takes a pointer to a struct, needs the sibling intrinsic
+    ``_call_lib_func_byval`` in this module instead. The numba type system cannot distinguish ``T`` from ``T*``, so
+    the caller chooses the intrinsic from what the C header declares.
     """
     func_name = extract_literal_str("_call_lib_func", func_name_ty, field="func_name")
     func_p_as_int = ll.address_of_symbol(func_name)
@@ -210,17 +198,14 @@ def _emit_byval_call(builder, arg, arg_ll_ty, ret_type, func_name):
 
 
 def _needs_int_int_eightbyte_repack(ty, plat):
-    """Whether a 16-byte by-value struct (arg or return) needs repack
-    to ``{i64, i64}`` before the call on the host's ABI.
+    """Return whether a 16-byte by-value struct (argument or return) needs a repack to ``{i64, i64}`` before the call.
 
-    Both SysV x86-64 and AAPCS64 are affected: llvmlite's small-struct
-    register lowering drops fields when both eightbytes are pure-
-    INTEGER but the LLVM type isn't already the canonical
-    ``{i64, i64}`` shape (e.g. ``{i32, i32, i64}`` — the duckdb_interval
-    layout — loses fields). Windows x64 is unaffected because 16-byte
-    aggregates fall outside the ``{1, 2, 4, 8}`` register-passable
-    set, so the call goes via alloca + pointer-pass and avoids the
-    register-coercion path entirely.
+    The answer depends on the host's ABI. SysV x86-64 and AAPCS64 are both affected: llvmlite's small-struct register
+    lowering loses fields when both eightbytes are pure-INTEGER but the LLVM type is not already the canonical
+    ``{i64, i64}`` shape. For example, ``{i32, i32, i64}``, the duckdb_interval layout, loses fields.
+
+    Windows x64 is unaffected, because a 16-byte aggregate falls outside the register-passable set ``{1, 2, 4, 8}``.
+    The call therefore passes it through an alloca and a pointer, and never takes the register-coercion path.
     """
     if plat not in (_PLATFORM_SYSV_X86_64, _PLATFORM_AAPCS64):
         return False
@@ -234,19 +219,17 @@ def _needs_int_int_eightbyte_repack(ty, plat):
 
 
 def _repack_to_i64_pair(builder, val, orig_ll_ty):
-    """Repack a 16-byte struct value to ``{i64, i64}`` via memory bitcast.
+    """Repack a 16-byte struct value to ``{i64, i64}`` through a memory bitcast.
 
-    Allocates a well-aligned ``{i64, i64}`` slot (8-byte alignment),
-    bitcasts it to ``orig_ll_ty*`` for the store, then loads the same
-    bytes back as ``{i64, i64}``. Storing into the bitcast pointer is
-    safe because the slot is over-aligned relative to ``orig_ll_ty``;
-    the subsequent ``{i64, i64}`` load is well-aligned, avoiding the
-    UB that an ``alloca(orig_ll_ty)`` slot (e.g. 4-byte aligned for
-    ``[4 x i32]``) would expose. Both eightbytes must already be
-    pure-INTEGER (caller checks via ``_needs_int_int_eightbyte_repack``);
-    the bitcast is a pure byte reinterpretation, no zext/shift
-    gymnastics required. Returns ``(repacked_val, repacked_ll_ty)``
-    for the caller to substitute into the call site.
+    Both eightbytes must already be pure-INTEGER; the caller checks this with ``_needs_int_int_eightbyte_repack``.
+    The function returns ``(repacked_val, repacked_ll_ty)``, which the caller substitutes into the call site.
+
+    The function allocates a well-aligned ``{i64, i64}`` slot (8-byte alignment) and bitcasts it to ``orig_ll_ty*``
+    for the store. It then loads the same bytes back as ``{i64, i64}``. The store through the bitcast pointer is safe,
+    because the slot is over-aligned relative to ``orig_ll_ty``. The subsequent ``{i64, i64}`` load is well-aligned,
+    which avoids the undefined behavior that an ``alloca(orig_ll_ty)`` slot would expose. Such a slot is 4-byte
+    aligned for ``[4 x i32]``, for example. The bitcast is a pure reinterpretation of the bytes, so no zext or shift
+    is required.
     See: https://github.com/numba/llvmlite/issues/300#issuecomment-327235846
     """
     i64x2_ll_ty = llir.LiteralStructType(
@@ -258,16 +241,14 @@ def _repack_to_i64_pair(builder, val, orig_ll_ty):
 
 
 def _repack_from_i64_pair(builder, i64_pair_val, target_ll_ty):
-    """Inverse of ``_repack_to_i64_pair``: convert a ``{i64, i64}``
-    return value back into ``target_ll_ty``.
+    """Convert a ``{i64, i64}`` return value back into ``target_ll_ty``, as the inverse of ``_repack_to_i64_pair``.
 
-    Allocates a well-aligned ``{i64, i64}`` slot, stores the call
-    result, bitcasts the slot to ``target_ll_ty*``, and loads. Used
-    for the return-side eightbyte repack: when the C function returns
-    a 16-byte INT/INT struct that isn't canonical ``{i64, i64}``,
-    llvmlite has the same field-dropping issue on the return as on
-    the arg side -- so we declare the LLVM call returning
-    ``{i64, i64}`` and unpack it here.
+    The return-side eightbyte repack uses this function. If the C function returns a 16-byte INT/INT struct that is
+    not the canonical ``{i64, i64}``, llvmlite loses fields on the return, as it does on the argument side.
+    ``_call_lib_func`` therefore declares the LLVM call to return ``{i64, i64}``, and this function unpacks the result.
+
+    The function allocates a well-aligned ``{i64, i64}`` slot, stores the call result in it, bitcasts the slot to
+    ``target_ll_ty*``, and loads from it.
     """
     i64x2_ll_ty = llir.LiteralStructType(
         [llir.IntType(64), llir.IntType(64)])
@@ -281,9 +262,8 @@ def _repack_from_i64_pair(builder, i64_pair_val, target_ll_ty):
 def _call_lib_func_byval(typingctx, func_name_ty, arg_ty):
     """Pass ``arg`` to a C function by pointer on all platforms.
 
-    Used when the C signature takes a pointer to a struct and the caller
-    holds the struct as a value; the intrinsic allocates a stack slot,
-    stores the value, and passes the slot's address.
+    Use this intrinsic when the C signature takes a pointer to a struct and the caller holds the struct as a value.
+    The intrinsic allocates a stack slot, stores the value in it, and passes the address of the slot.
     """
     func_name = extract_literal_str("_call_lib_func_byval", func_name_ty, field="func_name")
     func_sig = signatures.get(func_name, None)

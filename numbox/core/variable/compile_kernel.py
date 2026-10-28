@@ -1,60 +1,46 @@
 """Compile a `core.variable` Variable graph into fused @njit kernel(s).
 
-Alongside `core.work` (a structref graph), this turns a `Graph`/`CompiledGraph`
-into JIT-compiled straight-line code. When every formula is njit-able the
-whole graph becomes a single fused @njit function whose interior nodes are SSA
-temporaries (no per-node type info needed: numba infers every interior type
-from the kernel's runtime argument types). When some formulas are not
-njit-able, the first call detects them automatically -- numba compile errors
-demote a node to plain Python, runtime errors always propagate -- and a Python
-master orchestrates fused @njit segments around the demoted nodes, with a
-fusion-maximizing linearization choosing the segment boundaries. The resulting
-partition is described by `CompiledKernel.partition` (a PartitionReport with
-per-node demotion reasons); formulas with no Python fallback
+This module turns a `Graph`/`CompiledGraph` into JIT-compiled straight-line code, alongside `core.work` (a structref
+graph). When every formula can be compiled with njit, the whole graph is compiled into a single fused
+@njit function whose interior nodes are SSA temporaries. No per-node type information is needed, because numba
+infers every interior type from the kernel's runtime argument types. When some formulas cannot be compiled with
+njit, the first call detects them automatically: a numba compile error demotes a node to plain Python, and a runtime
+error always propagates. A Python master then orchestrates fused @njit segments around the demoted nodes, and a
+fusion-maximizing linearization chooses the segment boundaries. `CompiledKernel.partition` describes the resulting
+partition as a PartitionReport with per-node demotion reasons. Formulas that have no Python fallback
 (cres/CompileResultWAP, CFunc, DUFunc) are always treated as jittable.
 
-Jitability may be either discovered at the first call (above) or declared up
-front. Each `Variable` carries an optional `params` (`Params(jitable, type)`).
-A node with no `params` is discovered exactly as before -- byte-for-byte the
-same behavior. When every node in the required cone is declared (and every
-consumed external is typed), `compile_kernel()` resolves the execution mode at
-build time instead of at the first call: an all-jittable graph compiles eagerly
-into one fused kernel ("fused"), a declared jit/Python mix compiles eagerly into
-a static segment plan ("segmented") with no probing, and `CompiledKernel.partition`
-is populated at build (inspectable before any call). A declared `params.type`
-that the formula does not naturally yield is caught at build by an explicit
-unconstrained return-type probe -- not by binding the formula to the declared
-signature, which would silently coerce a convertible-but-wrong scalar type (a
-node declared int64 over a float-returning body would otherwise return a
-truncated value). Any node left undeclared (or only partially typed) keeps the
-runtime-discovery path; a graph that declares nothing behaves exactly as today.
+Jitability may be discovered at the first call, as above, or declared in advance. Each `Variable` carries an optional
+`params` (`Params(jitable, type)`), and a node with no `params` is discovered exactly as described above. When every
+node in the required cone is declared, and every consumed external is typed, `compile_kernel()` resolves the
+execution mode at build time instead of at the first call. An all-jittable graph compiles eagerly into one fused
+kernel ("fused"). A declared mix of jit and Python nodes compiles eagerly into a static segment plan ("segmented"),
+with no probing. `CompiledKernel.partition` is populated at build and can be inspected before any call. If a declared
+`params.type` is not the type that the formula naturally yields, an explicit unconstrained return-type probe catches
+the mismatch at build. Binding the formula to the declared signature would not catch it, because numba would
+silently coerce a convertible but wrong scalar type: a node declared int64 over a float-returning body would return a
+truncated value. Any node left undeclared, or only partially typed, keeps the runtime-discovery path, and a graph
+that declares nothing behaves exactly as described above.
 
-The on-disk cache is content-addressed per compiled unit (the fused kernel, or
-each jit segment). The digest fingerprints each formula's code, constants,
-default arguments, closure-cell values, referenced globals and the values of
-referenced module attributes. It also holds the kernel's effective jit flags,
-any Dispatcher/DUFunc formula's targetoptions, and the ``NUMBA_*`` settings
-that change the emitted code (``numbox.core.cache_key.KEYED_SETTINGS``). The
-kernel itself is a function numbox compiles, so its own cache key holds them
-as well.
-The kernel source never mentions types, so declared signatures are
-appended to the digest as well: two declared-type variants of one graph get
-distinct cache anchors. A formula with no canonical fingerprint forces its unit
-uncached (no anchor, no numba cache).
+The on-disk cache is content-addressed per compiled unit: the fused kernel, or each jit segment. The digest
+fingerprints each formula's code, constants, default arguments, closure-cell values, referenced globals and the
+values of referenced module attributes. It also holds the kernel's effective jit flags, the targetoptions of any
+Dispatcher or DUFunc formula, and the ``NUMBA_*`` settings that change the emitted code
+(``numbox.core.cache_key.KEYED_SETTINGS``). The kernel itself is a function that numbox compiles, so its own cache
+key holds them as well. The kernel source never mentions types, so declared signatures are appended to the digest
+too, and two declared-type variants of one graph get distinct cache anchors. A formula with no canonical fingerprint
+makes its unit uncached: the unit has no anchor and no numba cache.
 
-This freshness guarantee covers the code numbox generates and njit-wraps from
-raw Python. It does *not* extend to a formula that carries its OWN numba on-disk
-cache, a ``@njit(cache=True)`` Dispatcher. That cache's key is blind to the
-global values the dispatcher reads, and numba's own key is blind to its jit
-flags as well. Folding those into the outer kernel name cannot invalidate it,
-and a fresh outer would otherwise link (and serialize) the stale inner binary.
-Such a unit is compiled without an on-disk cache, with a warning. numbox refuses
-to compound that inner cache but cannot cure it: a change to the user
-dispatcher's flags or globals still serves that dispatcher's own stale binary
-in-process. A value or dispatcher a module exposes ONLY
-through a PEP 562 ``__getattr__`` is outside the digest (resolving it would fire
-unrelated modules' ``__getattr__`` on every compile) -- change such a value and
-clear the cache.
+This freshness guarantee covers the code that numbox generates and njit-wraps from raw Python. It does *not* extend
+to a formula that carries its *own* numba on-disk cache, a ``@njit(cache=True)`` Dispatcher. That cache's key does
+not include the global values the dispatcher reads, and numba's own key does not include its jit flags either.
+Folding those values into the outer kernel name cannot invalidate that cache, and a fresh outer kernel would
+otherwise link the stale inner binary and serialize it. Such a unit is therefore compiled without an on-disk cache,
+and numbox issues a warning. numbox does not compound the staleness of that inner cache, but it cannot correct it:
+after a change to the user dispatcher's flags or globals, that dispatcher still runs its own stale binary
+in-process. A value or dispatcher that a module exposes *only* through a PEP 562 ``__getattr__`` is outside the
+digest, because resolving it would call the ``__getattr__`` of unrelated modules on every compile. Clear the cache
+after changing such a value.
 """
 import hashlib
 import warnings
@@ -96,7 +82,7 @@ _orphan_anchor_sweep(_ANCHOR_SUBDIR)
 
 
 class _KernelCtx(NamedTuple):
-    """Build context threaded into a CompiledKernel (Python-side only; never enters njit)."""
+    """Build context passed into a CompiledKernel; it stays on the Python side and never enters njit code."""
     compiled: Any
     idents: dict
     bindings_by_var: dict
@@ -108,19 +94,16 @@ class _KernelCtx(NamedTuple):
 def _formula_fingerprint(formula) -> tuple[str, bool]:
     """Behavioral identity of a formula for the cache digest.
 
-    Returns ``(text, cacheable)``. The text covers every value channel
-    numba freezes into a compiled artifact: code-object bytecode/consts/
-    names, default-argument values, closure-cell values, the values of
-    referenced module-level globals (recursing into helper functions and
-    dispatchers, with cycle protection), the defining module, and
-    dispatcher / DUFunc targetoptions. Builtins resolve outside ``__globals__``
-    and are deliberately not hashed. Any value with no canonical form
-    makes the formula un-fingerprintable: the returned text is then a
-    per-object placeholder and ``cacheable`` is False, so the kernel is
-    compiled without an on-disk cache -- never reused, never wrong.
-    CFunc formulas embed an ASLR-randomized address, so numba can never
-    disk-cache kernels that call them -- they are fingerprinted
-    deterministically but marked uncacheable.
+    Returns ``(text, cacheable)``. The text covers every value channel that numba freezes into a compiled artifact.
+    These are the code object's bytecode, constants and names, the default-argument values, the closure-cell values,
+    the values of referenced module-level globals, the defining module, and the targetoptions of a dispatcher or
+    DUFunc. The walk over the globals recurses into helper functions and dispatchers, with cycle protection. Builtins
+    resolve outside ``__globals__`` and are deliberately not hashed.
+
+    Any value with no canonical form makes the formula un-fingerprintable. The returned text is then a per-object
+    placeholder and ``cacheable`` is False, so the kernel is compiled without an on-disk cache: it is never reused,
+    and it is never wrong. A CFunc formula embeds an ASLR-randomized address, so numba can never cache on disk a
+    kernel that calls it. Such a formula is fingerprinted deterministically but marked uncacheable.
     """
     target = getattr(formula, "py_func", None)
     extra = ""
@@ -140,15 +123,15 @@ def _formula_fingerprint(formula) -> tuple[str, bool]:
 
 
 def _is_self_cached(formula) -> bool:
-    """True if ``formula`` carries its own numba on-disk cache -- a Dispatcher
-    built with ``cache=True`` (its ``_cache`` is a ``FunctionCache``, not a
-    ``NullCache``). That cache's key is blind to the global values the dispatcher
-    reads, so folding them into the outer kernel name cannot keep it
-    fresh: a fresh outer compile links -- and would serialize -- the stale inner
-    binary. Such a unit must not be disk-cached. A ``cache=False`` Dispatcher
-    recompiles in-process and is safe; a DUFunc's cache is not independently
-    introspectable, but its flag identity is folded into the digest so the outer
-    re-keys."""
+    """True if ``formula`` carries its own numba on-disk cache: a Dispatcher built with ``cache=True``.
+
+    The ``_cache`` of such a Dispatcher is a ``FunctionCache``, not a ``NullCache``. That cache's key does not include
+    the global values the dispatcher reads, so folding them into the outer kernel name cannot keep that cache fresh.
+    A fresh compile of the outer kernel links the stale inner binary, and would serialize it. Such a unit must not be
+    cached on disk. A ``cache=False`` Dispatcher recompiles in-process and is safe. A DUFunc's cache cannot be
+    introspected independently, but its flag identity is folded into the digest, so the key of the outer kernel
+    changes with it.
+    """
     if isinstance(formula, Dispatcher):
         cache = getattr(formula, "_cache", None)
         return cache is not None and not isinstance(cache, NullCache)
@@ -156,8 +139,10 @@ def _is_self_cached(formula) -> bool:
 
 
 def _pyfunc_of(formula):
-    """The plain Python function underlying a formula (or None): the dispatcher's
-    ``py_func``, a DUFunc/CFunc's ``__wrapped__``, or a bare function itself."""
+    """The plain Python function underlying a formula, or None.
+
+    It is the dispatcher's ``py_func``, a DUFunc's or CFunc's ``__wrapped__``, or a bare function itself.
+    """
     func = getattr(formula, "py_func", None)
     if func is None and isinstance(formula, (DUFunc, CFunc)):
         func = getattr(formula, "__wrapped__", None)
@@ -167,14 +152,15 @@ def _pyfunc_of(formula):
 
 
 def _references_self_cached(value, seen: set[int]) -> bool:
-    """True if ``value`` IS, or transitively holds/references, a Dispatcher with
-    its own numba cache. A formula can reach a ``@njit(cache=True)`` dispatcher
-    through a call, a default argument, a container, a closure cell, or a global.
-    It then links that dispatcher's binary, whose key is blind to the globals the
-    dispatcher reads. The outer digest re-keys on it yet cannot invalidate the
-    callee's cache, so the unit must not be disk-cached either, or a stale inner
-    is serialized into a fresh-digest artifact. This mirrors ``_canon_value``'s traversal so every channel the
-    digest folds is also covered here -- a narrower walk leaves a poisoning gap."""
+    """True if ``value`` is itself, or transitively holds or references, a Dispatcher with its own numba cache.
+
+    A formula can reach a ``@njit(cache=True)`` dispatcher through a call, a default argument, a container, a
+    closure cell, or a global. The formula then links that dispatcher's binary, whose key does not include the
+    globals the dispatcher reads. The outer digest changes with the dispatcher, but it cannot invalidate the
+    callee's cache. The unit must therefore not be cached on disk either, or a stale inner binary is serialized into
+    an artifact under a fresh digest. This walk mirrors the traversal of ``_canon_value``, so that it covers every
+    channel the digest folds. A narrower walk would leave a gap through which a stale binary poisons the cache.
+    """
     if id(value) in seen:
         return False
     seen.add(id(value))
@@ -203,8 +189,8 @@ def _references_self_cached(value, seen: set[int]) -> bool:
             continue
         gval = func.__globals__[name]
         if isinstance(gval, ModuleType):
-            # a dispatcher reached as a (possibly chained) module attribute --
-            # e.g. helpers.helper(x) -- is linked just like a direct global one.
+            # A dispatcher reached as a module attribute, possibly chained, such as helpers.helper(x), is linked
+            # exactly as a direct global dispatcher is.
             if _module_reaches_self_cached(gval, referenced, seen, set()):
                 return True
         elif _references_self_cached(gval, seen):
@@ -213,11 +199,12 @@ def _references_self_cached(value, seen: set[int]) -> bool:
 
 
 def _module_reaches_self_cached(mod, ref_names, seen: set[int], mods_seen: set[int]) -> bool:
-    """True if any referenced name in ``mod``'s ``__dict__`` (recursing into
-    referenced submodules) reaches a cache-carrying Dispatcher. Scanning is by
-    ``__dict__`` membership (never ``getattr``) to avoid triggering an unrelated
-    module's PEP 562 ``__getattr__`` on a co-name collision; a dispatcher a module
-    exposes ONLY via PEP 562 ``__getattr__`` is a documented uncovered case."""
+    """True if any referenced name in ``mod``'s ``__dict__`` reaches a cache-carrying Dispatcher.
+
+    The search recurses into referenced submodules. It scans by ``__dict__`` membership, never by ``getattr``, so
+    that a co-name collision cannot trigger an unrelated module's PEP 562 ``__getattr__``. A dispatcher that a module
+    exposes *only* through PEP 562 ``__getattr__`` is a documented case that this search does not cover.
+    """
     if id(mod) in mods_seen:
         return False
     mods_seen.add(id(mod))
@@ -268,9 +255,9 @@ def _classify(compiled: CompiledGraph):
         else:
             dispositions[var] = "UNKNOWN"
     vals = set(dispositions.values())
-    # An empty `dispositions` is a fully-undeclared external-only graph (zero
-    # interior nodes); route it to "C" so the "declares nothing = byte-for-byte
-    # today" invariant holds (no eager build, partition None until first call).
+    # An empty `dispositions` is a fully undeclared graph of externals only, with zero interior nodes. Route it to
+    # "C", so that a graph that declares nothing always behaves exactly as on the discovery path: no eager build,
+    # and partition stays None until the first call.
     if not dispositions or "UNKNOWN" in vals or any(not _is_typed(e) for e in consumed):
         case = "C"
     elif "STATIC_PY" in vals:
@@ -281,8 +268,10 @@ def _classify(compiled: CompiledGraph):
 
 
 def _assemble_source(params: list[tuple[str, str, str]], lines: list[str], out_ids: list[str]) -> str:
-    """Assemble the canonical kernel source; both the fused kernel and every
-    segment must share this exact shape so cache digests cannot drift."""
+    """Assemble the canonical kernel source.
+
+    The fused kernel and every segment must share this exact shape, so that their cache digests cannot diverge.
+    """
     sig = ", ".join(ident for _, _, ident in params)
     ret = f"    return ({', '.join(out_ids)},)"
     body = ("\n".join(lines) + "\n") if lines else ""
@@ -293,8 +282,10 @@ def _emit_lines(
     nodes: list[CompiledNode], skip: set[Variable],
     idents: dict[Variable, str], bindings: dict[str, Any], flags: dict | None = None,
 ) -> list[str]:
-    """Emit one body line per node (excluding `skip`), filling `bindings`;
-    raises on a missing formula, a non-callable formula, or an arity mismatch."""
+    """Emit one body line per node, excluding `skip`, and fill `bindings`.
+
+    Raises on a missing formula, a non-callable formula, or an arity mismatch.
+    """
     lines = []
     for node in nodes:
         var = node.variable
@@ -322,11 +313,13 @@ def _generate_segment_body(
     run_nodes: list[CompiledNode], live_in: tuple[Variable, ...],
     live_out: tuple[Variable, ...], idents: dict[Variable, str], flags: dict | None = None,
 ) -> tuple[str, dict, list, list]:
-    """Like _generate_body, for one jit segment: live-ins are parameters,
-    live-outs the return tuple. Same source shape so _compile applies verbatim.
+    """Generate the source of one jit segment, as _generate_body does for the fused kernel.
 
-    Returns (source, bindings, params, outputs) with params/outputs in the
-    caller-provided (qual-sorted) live_in/live_out order.
+    The live-ins are the parameters, and the live-outs are the return tuple. The source has the same shape as the
+    fused kernel's, so _compile applies to it unchanged.
+
+    Returns (source, bindings, params, outputs), with params and outputs in the live_in and live_out order that the
+    caller provides (sorted by qual name).
     """
     params = [(v.source, v.name, idents[v]) for v in live_in]
     bindings = {}
@@ -340,7 +333,7 @@ def _generate_segment_body(
 def _generate_body(
     compiled: CompiledGraph, required: list[str], idents: dict[Variable, str], flags: dict | None = None,
 ) -> tuple[str, dict, list, list]:
-    """Generate `def _kernel(...): ...` source (no decorator) + bindings.
+    """Generate the `def _kernel(...): ...` source, without a decorator, and its bindings.
 
     Returns (source, bindings, params, outputs):
       source   - the kernel def as text (function name is the literal _kernel)
@@ -378,13 +371,13 @@ def _compile(
     source: str, bindings: dict[str, Any], jit_options: dict | None, cache: bool | None,
     declared_sigs: tuple = (),
 ) -> Dispatcher:
-    """Content-addressed compile of the kernel source into an @njit dispatcher.
+    """Compile the kernel source, content-addressed, into an @njit dispatcher.
 
-    `declared_sigs` carries the unit's declared signature(s) -- the consumed
-    external signature for an eager fused kernel, each segment's live-in/out
-    signature for an eager segment -- folded into the digest via `repr` so two
-    declared-type variants of one type-free source get distinct anchors. Empty
-    for undeclared (Case C) units."""
+    `declared_sigs` carries the unit's declared signature(s): the consumed external signature for an eager fused
+    kernel, or each segment's live-in and live-out signature for an eager segment. They are folded into the digest
+    through `repr`, so two declared-type variants of one type-free source get distinct anchors. `declared_sigs` is
+    empty for undeclared (Case C) units.
+    """
     fingerprints = []
     cacheable = True
     self_cached = []
@@ -416,12 +409,10 @@ def _compile(
             f"compile_kernel: jit flags {sorted(flags)} have no canonical "
             "fingerprint; compiling this kernel without an on-disk cache."
         )
-    # Each declared sig is a tuple of numba types; fold them through the
-    # process-stable identity rather than raw repr, whose Dispatcher form
-    # ``type(CPUDispatcher(<function f at 0x...>))`` carries an ASLR address and
-    # would orphan a cache pair per run. An un-fingerprintable
-    # declared type (a Dispatcher wrapping an @intrinsic-referencing body) has only
-    # a best-effort identity -> compile uncached.
+    # Each declared sig is a tuple of numba types. Fold them through the process-stable identity rather than the
+    # raw repr: a Dispatcher's repr, ``type(CPUDispatcher(<function f at 0x...>))``, carries an ASLR address and
+    # would leave one orphaned cache pair per run. An un-fingerprintable declared type, such as a Dispatcher that
+    # wraps an @intrinsic-referencing body, has only a best-effort identity, so the kernel is compiled uncached.
     declared_ids = [[_type_identity(t) for t in s] for s in declared_sigs]
     declared_canon = [[h for h, _ok in sig] for sig in declared_ids]
     if not all(ok for sig in declared_ids for _h, ok in sig):
@@ -445,13 +436,13 @@ def _compile(
     )
     anchor = _anchor_root(_ANCHOR_SUBDIR) / f"_kernel_{digest}.py"
     if opts["cache"]:
-        # An uncached kernel has no anchor, as before; the structref and the
-        # sqlite registrations write theirs for numba's messages either way.
+        # An uncached kernel still gets no anchor. The structref and the sqlite registrations write their anchors for
+        # numba's messages in either case.
         opts = _anchored_or_uncached(anchor, final_src, opts)
     code = compile(final_src, str(anchor), "exec")
-    # __name__ must be an importable module so numba can rebuild the cached
-    # overload's environment in another process (importlib.import_module needs
-    # a real name, not None); mirrors make_graph / make_structref.
+    # __name__ must name an importable module, so that numba can rebuild the cached overload's environment in
+    # another process: importlib.import_module needs a real name, not None. make_graph and make_structref do the
+    # same.
     ns = {**bindings, "njit": njit, "_kernel_jit_options": opts, "__name__": __name__}
     exec(code, ns)  # nosec B102 - JIT codegen of internal source
     return ns.pop(name)
@@ -461,15 +452,14 @@ def _build_plan(
     runs: list, idents: dict, flags: dict, jit_options: dict | None, cache: bool | None,
     liveness: Callable, live_in_type: Callable, declared_sigs: bool = False, demoted: dict | None = None,
 ) -> tuple[tuple, tuple]:
-    """Turn `runs` (from `build_runs`) into plan steps: each Python run becomes a
-    chain of `_PyStep`s, each jit run one compiled `_JitStep` segment.
+    """Turn `runs` from `build_runs` into plan steps, and return (steps, segments).
 
-    `liveness(run_nodes)` gives a jit run's (live_in, live_out) and
-    `live_in_type(v)` the numba type each live-in is compiled against.
-    `declared_sigs` folds the segment's declared live-in/out types into the
-    compile digest. With `demoted` (variable -> demotion reason) a `Segment` is
-    recorded per run for the `PartitionReport`; without it `segments` is empty.
-    Returns (steps, segments)."""
+    Each Python run becomes a chain of `_PyStep` steps, and each jit run becomes one compiled `_JitStep` segment.
+    `liveness(run_nodes)` gives a jit run's (live_in, live_out), and `live_in_type(v)` gives the numba type that each
+    live-in is compiled against. `declared_sigs` folds the segment's declared live-in and live-out types into the
+    compile digest. If `demoted` maps each variable to its demotion reason, a `Segment` is recorded per run for the
+    `PartitionReport`; without `demoted`, `segments` is empty.
+    """
     steps, segments = [], []
     for kind, run_nodes in runs:
         quals = tuple(n.variable.qual_name() for n in run_nodes)
@@ -513,24 +503,25 @@ class CompiledKernel:
 
     Attributes::
 
-      kernel      - hot-path callable: resolver before the first call, the
-                    bare numba dispatcher once fused, the segmented master
-                    otherwise. Positional external args (in `params` order)
-                    -> tuple (in `outputs` order).
-      recompute   - value-only incremental refresh of only the cone affected
-                    by a change, over a store seeded by a prior `kernel` call;
-                    returns a tuple in `outputs` order (see `recompute`).
-      params      - external input qual_names, kernel-argument order.
-      outputs     - requested variable qual_names, return-tuple order.
+      kernel      - hot-path callable: the resolver before the first call, the
+                    bare numba dispatcher once fused, and the segmented master
+                    otherwise. It takes the external args positionally, in
+                    `params` order, and returns a tuple in `outputs` order.
+      recompute   - value-only incremental refresh of only the cone that a
+                    change affects, over a store seeded by a prior `kernel`
+                    call; returns a tuple in `outputs` order (see `recompute`).
+      params      - external input qual_names, in kernel-argument order.
+      outputs     - requested variable qual_names, in return-tuple order.
       source      - generated kernel source text.
       identifiers - {qual_name: temp identifier} for inspection.
-      partition   - PartitionReport describing what runs where. None until the
-                    first call for undeclared graphs; set at build time for
-                    fully-declared (eager) graphs.
-      is_declared - True when the graph was fully declared and the mode resolved
-                    eagerly at build; False for a discovery (undeclared) kernel.
-                    Declared kernels enforce the `recompute()` type contract
-                    instead of re-discovering.
+      partition   - PartitionReport describing which nodes run in jit
+                    segments and which run in Python. None until the first
+                    call for undeclared graphs; set at build time for fully
+                    declared (eager) graphs.
+      is_declared - True when the graph was fully declared and the mode was
+                    resolved eagerly at build; False for a discovery
+                    (undeclared) kernel. Declared kernels enforce the
+                    `recompute()` type contract instead of re-discovering.
     """
 
     def __init__(self, kernel: Dispatcher, params: list[tuple[str, str, str]],
@@ -561,9 +552,8 @@ class CompiledKernel:
     @property
     def kernel(self) -> Callable:
         if self._mode == "fused":
-            # Fused is permanent: later signatures go through numba's own
-            # dispatch, and a typing failure there raises -- no segmentation
-            # fallback from fused mode.
+            # Fused mode is permanent: later signatures go through numba's own dispatch, and a typing failure there
+            # raises. There is no segmentation fallback from fused mode.
             return self._fused
         if self._mode == "fused-pending":
             return self._fused_pending_call
@@ -572,9 +562,8 @@ class CompiledKernel:
         return self._resolve_and_call
 
     def _fused_pending_call(self, *args) -> tuple:
-        # A caller may hold a reference to this bound method across calls; once
-        # the mode has flipped to "fused", go straight to the dispatcher without
-        # re-stamping _last_args (the first call already captured the seeding args).
+        # A caller may hold a reference to this bound method across calls. Once the mode has changed to "fused", call
+        # the dispatcher directly, without setting _last_args again: the first call already captured the seeding args.
         if self._mode == "fused":
             return self._fused(*args)
         result = self._fused(*args)
@@ -620,12 +609,10 @@ class CompiledKernel:
         try:
             result = self._plan.run(args)
         except NumbaError:
-            # Deliberately broad: a segment failing to compile for new input
-            # types triggers re-discovery. A NumbaError raised inside a
-            # python-step formula re-raises from re-discovery's own Python
-            # evaluation of the same args, so nothing is masked. Declared
-            # kernels do not re-discover (that would overwrite the authoritative
-            # _demoted); an off-contract input re-raises instead.
+            # The except clause is deliberately broad: a segment that fails to compile for new input types triggers
+            # re-discovery. A NumbaError raised inside a python-step formula is raised again when re-discovery
+            # evaluates the same args in Python, so no error is masked. Declared kernels do not re-discover, because
+            # that would overwrite the authoritative _demoted; an off-contract input raises again instead.
             if self.is_declared:
                 raise
             result = self._discover_and_run(args)
@@ -668,10 +655,9 @@ class CompiledKernel:
             )
         compiled, _, bindings_by_var, jit_options, cache, external = self._ctx
         flags = _effective_flags(jit_options)
-        # A fused first call discarded interior values, so seed by evaluating the
-        # whole graph once from the captured args. Fused-graph formulas are njit-pure,
-        # so the one extra evaluation is observationally safe. Seeding only the
-        # persisted-node closure instead is a possible future optimization.
+        # A fused first call discarded the interior values, so seed the store by evaluating the whole graph once from
+        # the captured args. Fused-graph formulas are njit-pure, so the one extra evaluation has no observable effect.
+        # Seeding only the persisted-node closure instead would be a possible optimization.
         values = dict(zip(self._external_vars, self._last_args))
         if self.is_declared:
             # Seed interior values with the frozen declared demotion set; re-running
@@ -682,14 +668,15 @@ class CompiledKernel:
         self._store = values
 
     def _apply_changes(self, changed: dict) -> set:
-        """Write changed values into the store; return the set of changed Variables.
-        External names resolve via required_external_variables; interior names via
-        ordered_nodes (overriding an interior node expands the change-source set)."""
+        """Write changed values into the store, and return the set of changed Variables.
+
+        External names resolve through required_external_variables; interior names resolve through ordered_nodes.
+        Overriding an interior node expands the change-source set.
+        """
         compiled = self._ctx.compiled
-        # First pass: resolve every (src, name) -> var and run the declared
-        # contract check, collecting (var, val, is_external). If ANY check
-        # fails, raise here -- before mutating _store -- so a caught-and-retried
-        # ValueError cannot leave the store partially written.
+        # First pass: resolve every (src, name) to its variable, run the declared contract check, and collect
+        # (var, val, is_external). If any check fails, raise here, before _store is mutated, so that a ValueError
+        # that is caught and retried cannot leave the store partially written.
         resolved = []
         for src, vals in changed.items():
             for name, val in vals.items():
@@ -712,7 +699,7 @@ class CompiledKernel:
                         raise ValueError(
                             f"declared type {var.params.type}, got {got} for {var.qual_name()}")
                 resolved.append((var, val, is_external))
-        # Second pass: writes, changed_vars, and interior-override bookkeeping.
+        # Second pass: write the values, collect changed_vars, and record the interior overrides.
         changed_vars = set()
         new_interior_sources = set()
         for var, val, is_external in resolved:
@@ -725,9 +712,11 @@ class CompiledKernel:
         return changed_vars
 
     def _expand_sources(self, new_sources: set):
-        """Add overridden interior nodes to the change-source set, force the
-        persisted-node boundary to recompute, and invalidate cached cone plans
-        (their boundaries have changed)."""
+        """Add overridden interior nodes to the change-source set.
+
+        The method also forces the persisted-node boundary to recompute, and invalidates the cached cone plans,
+        because their boundaries have changed.
+        """
         if self._sources is None:
             self._sources = set(self._external_vars)
         self._sources |= new_sources
@@ -745,20 +734,23 @@ class CompiledKernel:
         )
 
     def _cone_live_in_type(self, v: Variable):
-        """The numba type to compile a cone jit-segment live-in against. For a
-        declared kernel whose live-in declares a type, use the declared type (so the
-        cone matches the eager build's signature); otherwise fall back to the stored
-        value's runtime type, as the undeclared path always does."""
+        """The numba type that a cone jit-segment live-in is compiled against.
+
+        A declared kernel uses the declared type of a live-in that declares one, so that the cone matches the eager
+        build's signature. Otherwise the type falls back to the stored value's runtime type, as the undeclared path
+        always does.
+        """
         if self.is_declared and _is_typed(v):
             return v.params.type
         return typeof(self._store[v])
 
     def _build_cone_plan(self, affected: list) -> _ConePlan:
-        """Linearize the affected cone, split into runs, and compile each jit run
-        against its live-in types (declared types for a declared kernel, else the
-        store's current runtime types; Python runs become _PyStep chains).
-        `_demoted` is restricted to cone nodes so only nodes demoted at seed time stay
-        Python. Called by `_cone_plan_cached` on a cache miss."""
+        """Linearize the affected cone, split it into runs, and compile each jit run against its live-in types.
+
+        The live-in types are the declared types for a declared kernel, and otherwise the store's current runtime
+        types. Python runs become _PyStep chains. `_demoted` is restricted to the cone nodes, so only nodes demoted at
+        seed time stay Python. `_cone_plan_cached` calls this method on a cache miss.
+        """
         compiled, idents, _, jit_options, cache, _ = self._ctx
         flags = _effective_flags(jit_options)
         cone_vars = {n.variable for n in affected}
@@ -773,9 +765,11 @@ class CompiledKernel:
         return _ConePlan(steps=steps)
 
     def _cone_key(self, affected) -> tuple[frozenset, frozenset]:
-        """Cache key for a cone sub-plan: (cone node qual_names, live-in boundary
-        qual_names). Including the live-in boundary keeps an external change and an
-        interior override that share a cone from colliding (their boundaries differ)."""
+        """Cache key for a cone sub-plan: (cone node qual_names, live-in boundary qual_names).
+
+        Including the live-in boundary prevents an external change and an interior override that share a cone from
+        colliding, because their boundaries differ.
+        """
         cone_vars = {n.variable for n in affected}
         live_in_boundary = {inp for n in affected for inp in n.inputs if inp not in cone_vars}
         return (frozenset(v.qual_name() for v in cone_vars),
@@ -794,9 +788,10 @@ class CompiledKernel:
         return plan
 
     def _flush_and_reseed(self):
-        """Drop the cone-plan cache and re-seed the store + boundary from the last full
-        call. Used to recover when a boundary live-in's type change makes a cached cone
-        dispatcher fail to compile."""
+        """Drop the cone-plan cache, and re-seed the store and the boundary from the last full call.
+
+        The method recovers when a type change of a boundary live-in makes a cached cone dispatcher fail to compile.
+        """
         self._cone_cache.clear()
         self._store = None
         self._boundary = None
@@ -804,59 +799,52 @@ class CompiledKernel:
         self._ensure_boundary()
 
     def recompute(self, changed: dict) -> tuple:
-        """Incrementally re-evaluate only the cone affected by `changed`.
+        """Incrementally re-evaluate only the cone that `changed` affects.
 
-        Mirrors :meth:`numbox.core.variable.variable.CompiledGraph.recompute`: this
-        is a value-only refresh, not a recompile. `changed` is
-        ``{source: {name: value}}``; the returned tuple is in `outputs` order. The
-        same variables may carry different values across calls, but their numba types
-        must stay the same as the seeding call (a type change is recovered from once,
-        see below, but the contract is same-types).
+        The method mirrors :meth:`numbox.core.variable.variable.CompiledGraph.recompute`: it is a value-only refresh,
+        not a recompile. `changed` is ``{source: {name: value}}``, and the returned tuple is in `outputs` order. The
+        same variables may carry different values across calls, but their numba types must stay the same as in the
+        seeding call. A type change is recovered from once, as described below, but the contract is that the types
+        stay the same.
 
-        Precondition: a prior full call (``kernel(...)`` / ``execute(...)``) must have
-        seeded the value store. Calling `recompute` first raises ``RuntimeError``.
+        Precondition: a prior full call (``kernel(...)`` or ``execute(...)``) must have seeded the value store.
+        Calling `recompute` first raises ``RuntimeError``.
 
-        What it does: it writes the changed values into a persistent value store,
-        collects the downstream cone of the changed nodes, and re-fuses just that cone
-        -- reading every unchanged input from the store. The cone sub-plan is compiled
-        on first use and kept in a bounded LRU cache keyed on the cone and its live-in
-        boundary, so a recurring change pattern reuses its compiled plan without
-        re-fusing. Nodes that were demoted to plain Python at seed time stay Python in
-        the cone; the jittable remainder fuses into ``@njit`` segments.
+        The method writes the changed values into a persistent value store, collects the downstream cone of the
+        changed nodes, and re-fuses only that cone, reading every unchanged input from the store. The cone sub-plan
+        is compiled on first use and kept in a bounded LRU cache, keyed on the cone and its live-in boundary, so a
+        recurring change pattern reuses its compiled plan without re-fusing. Nodes that were demoted to plain Python
+        at seed time stay Python in the cone, and the jittable remainder fuses into ``@njit`` segments.
 
-        Interior overrides: a `changed` name may resolve to an interior (computed) node
-        rather than an external input -- mirroring the interpreted path. Its value is
-        overridden in the store and only its downstream cone recomputes; the overridden
-        node's own formula is *not* re-run -- unless the node is itself downstream of
-        another changed input in the same call, in which case graph priority applies and
-        it is recomputed from its formula. The first override of a not-yet-seen interior
-        node expands the change-source set and rebuilds the persisted-node boundary (and
-        invalidates cached cone plans, whose boundaries have shifted).
+        Interior overrides: a `changed` name may resolve to an interior (computed) node rather than an external
+        input, as on the interpreted path. Its value is then overridden in the store, and only its downstream cone
+        recomputes. The overridden node's own formula is *not* re-run, unless the node is itself downstream of
+        another changed input in the same call. In that case graph priority applies, and the node is recomputed
+        from its formula. The first override of an interior node not seen before expands the change-source set and
+        rebuilds the persisted-node boundary. It also invalidates the cached cone plans, whose boundaries have
+        changed.
 
         Limitations:
 
-        - Do not interleave input-changing ``kernel(...)`` throughput calls between
-          `recompute` calls. `recompute` is the stateful entry point: the store is
-          seeded once, and a throughput call does not update it, so a subsequent
-          `recompute` would read stale unchanged values. Use `recompute` for the
-          incremental workflow and the bare kernel for independent one-shot calls.
-        - An interior plain-Python (demoted) node must return a stable numba type across
-          recomputes. The same-types contract extends to demoted outputs: a demoted
-          node whose output type drifts between recomputes is not supported.
+        - Do not interleave input-changing ``kernel(...)`` throughput calls between `recompute` calls. `recompute`
+          is the stateful entry point: the store is seeded once, and a throughput call does not update it, so a
+          later `recompute` would read stale values for the unchanged inputs. Use `recompute` for the incremental
+          workflow, and the bare kernel for independent one-shot calls.
+        - An interior plain-Python (demoted) node must return a stable numba type across recomputes. The same-types
+          contract extends to demoted outputs: a demoted node whose output type changes between recomputes is not
+          supported.
 
-        On a live-in type change a cached cone dispatcher fails to compile; the whole
-        cone-plan cache is flushed once, the store re-seeded from the last full call, the
-        change re-applied, and the cone rebuilt against the new types.
+        If the type of a live-in changes, a cached cone dispatcher fails to compile. The whole cone-plan cache is
+        then flushed once, the store is re-seeded from the last full call, the change is applied again, and the cone
+        is rebuilt against the new types.
 
-        Declared kernels enforce a contract instead of recovering. For a kernel
-        built from a fully-declared graph, a changed value is checked for numba
-        assignability to the node's declared type: a value numba cannot assign to
-        the declared type raises a crisp ``declared type X, got Y`` error, while a
-        benign difference numba accepts -- a C-contiguous array against an
-        ``'A'``-layout array declaration, or a safe scalar promotion -- is accepted.
-        The check is convertibility, not type identity, and is scoped to declared
-        (eager) kernels; an individually-declared node inside an otherwise
-        discovered kernel keeps the flush-and-reseed recovery above.
+        Declared kernels enforce a contract instead of recovering. A kernel built from a fully declared graph checks
+        each changed value for numba assignability to the node's declared type. A value that numba cannot
+        assign to the declared type raises a ``declared type X, got Y`` error. A benign difference that numba
+        accepts, such as a C-contiguous array against an ``'A'``-layout array declaration or a safe scalar
+        promotion, is accepted. The check is convertibility, not type identity, and it applies only to declared
+        (eager) kernels. An individually declared node inside an otherwise discovered kernel keeps the one-time
+        flush and reseed described above.
         """
         self._ensure_store()
         changed_vars = self._apply_changes(changed)
@@ -871,11 +859,10 @@ class CompiledKernel:
         try:
             plan.run_into(self._store)
         except NumbaError:
-            # A live-in type change invalidates every compiled cone plan; flush
-            # the whole cache once, reseed the store, re-apply the change against
-            # the fresh store, and rebuild against the new types. Declared kernels
-            # fix every type by contract, so the (d) contract check already
-            # rejected off-contract types crisply; flushing here would be pointless.
+            # A live-in type change invalidates every compiled cone plan. Flush the whole cache once, reseed the
+            # store, apply the change again against the fresh store, and rebuild against the new types. Declared
+            # kernels fix every type by contract, so the declared contract check in _apply_changes has already
+            # rejected off-contract types with a clear error; flushing here would serve no purpose.
             if self.is_declared:
                 raise
             self._flush_and_reseed()
@@ -886,7 +873,10 @@ class CompiledKernel:
         return tuple(self._store[v] for v in self._required_vars)
 
     def execute(self, external_values: dict) -> dict:
-        """Dict-in / dict-out convenience, symmetric with CompiledGraph.execute."""
+        """Take external values as a dict and return the outputs as a dict.
+
+        This convenience wrapper is symmetric with CompiledGraph.execute.
+        """
         args = []
         for src, name in self._param_keys:
             try:
@@ -905,96 +895,73 @@ def compile_kernel(
 ) -> CompiledKernel:
     """Compile `graph` into a fused @njit kernel for the `required` variables.
 
-    :param graph: its dependency structure and formulas are fused
-        into one straight-line @njit function (see `CompiledKernel`).
-    :param required: Order is preserved and fixes the order of
-        `CompiledKernel.outputs` / the kernel's return tuple; a duplicate
-        entry raises `ValueError` (each
-        output is requested once -- the return tuple is positional, so a
-        repeat carries no information).
-    :param jit_options: merged over numbox's defaults
-        (`NUMBOX_JIT_OPTIONS` env, with `cache` off where numba can write no
-        cache for numbox's own files, see `numbox.core.configurations`) and
-        passed to @njit. All options except `cache` participate in the
-        content-addressed digest.
-    :param cache: tri-state. `None` (default) defers to
-        `jit_options["cache"]`, then numbox's default, the
-        `NUMBOX_JIT_OPTIONS` env value or `True` unless numba can write no
-        cache for numbox's own files, where it is `False` even though the
-        kernel's own anchor might be cacheable. An explicit `True`/`False`
-        wins over both, and the anchor's own check still turns caching off
-        where that anchor cannot be cached.
+    :param graph: The graph whose dependency structure and formulas are fused into one straight-line @njit function
+        (see `CompiledKernel`).
+    :param required: The requested variables. Their order is preserved and fixes the order of
+        `CompiledKernel.outputs` and of the kernel's return tuple. A duplicate entry raises `ValueError`: each output
+        is requested once, because the return tuple is positional and a repeat carries no information.
+    :param jit_options: Options merged over numbox's defaults and passed to @njit. The defaults are the
+        `NUMBOX_JIT_OPTIONS` environment value, with `cache` off if numba can write no cache for numbox's own files
+        (see `numbox.core.configurations`). All options except `cache` participate in the content-addressed digest.
+    :param cache: A tri-state flag. `None` (the default) defers to `jit_options["cache"]`, and then to numbox's
+        default: the `NUMBOX_JIT_OPTIONS` environment value, or `True` unless numba can write no cache for numbox's
+        own files. In that case the default is `False`, even though the kernel's own anchor might be cacheable. An
+        explicit `True` or `False` takes precedence over both, and the anchor's own check still turns caching off if
+        that anchor cannot be cached.
 
-    Error timing: structural problems raise here (unknown or malformed
-    `required` entries, non-callable formulas, arity mismatches against the
-    declared inputs, graphs deeper than the recursion limit). For an undeclared
-    (or partially-declared) graph, numba typing problems surface at the kernel's
-    first call (auto-njit of plain-Python formulas is lazy). For a fully-declared
-    graph (every node carries `params`, every consumed external is typed) the
-    mode resolves eagerly here, so type errors move to build time: a formula
-    whose natural return at the declared input types is non-convertible to the
-    declared type, a cross-node type mismatch, and -- crucially -- a
-    coercible-but-wrong `params.type`. The last is caught by an explicit
-    unconstrained return-type probe that compares the formula's naturally
-    inferred return type against the declaration; binding the formula to the
-    declared signature does not catch it, because numba silently coerces a
-    convertible scalar (declaring int64 over a `x * 1.5` body would otherwise
-    compute 7, not 7.5). Fully-declared graphs thus fail fast at build;
-    any-undeclared graph fails at the first call, exactly as today. Runtime
-    errors never demote -- they propagate.
+    Error timing: structural problems raise here. These are unknown or malformed `required` entries, non-callable
+    formulas, arity mismatches against the declared inputs, and graphs deeper than the recursion limit. For an
+    undeclared or partially declared graph, numba typing problems are reported at the kernel's first call, because
+    the automatic njit wrapping of plain-Python formulas is lazy. A graph is fully declared when every node carries
+    `params` and every consumed external is typed. The mode of such a graph resolves eagerly here, so its type errors
+    move to build time. These errors are a formula whose natural return at the declared input types does not convert
+    to the declared type, a cross-node type mismatch, and, in particular, a coercible but wrong `params.type`. An
+    explicit unconstrained return-type probe catches the last of these: it compares the formula's naturally inferred
+    return type against the declaration. Binding the formula to the declared signature does not catch it, because
+    numba silently coerces a convertible scalar. Without the probe, declaring int64 over a `x * 1.5` body would
+    compute 7, not 7.5. A fully declared graph thus fails fast at build, and a graph with any undeclared node fails at
+    the first call, exactly as on the discovery path. Runtime errors never demote a node; they propagate.
 
-    Caching: the kernel digest fingerprints each formula's bytecode,
-    constants, default values, closure-cell values, referenced module-level
-    globals (including helper functions, recursively), referenced
-    module-attribute values and defining module. It also holds the effective
-    jit flags, any Dispatcher/DUFunc formula's targetoptions, and the
-    ``NUMBA_*`` settings that change the emitted code (see
-    :mod:`numbox.core.cache_key`). Because the
-    generated source never mentions types,
-    a declared graph's signatures are appended to the digest too (the consumed
-    external signature for an eager fused kernel, each segment's live-in/out
-    signature for an eager segment), so two declared-type variants of one
-    type-free graph get distinct cache anchors and never reuse each other's
-    binary. Two kinds of formula downgrade their kernel to cache=False, always
-    recompiled and never stale. One is a formula whose state cannot be
-    fingerprinted (e.g. cres/CompileResultWAP objects, values with no canonical
-    form). The other carries or reaches its own numba cache, a
-    `@njit(cache=True)` Dispatcher, whose key is blind to the globals it reads
-    and cannot be invalidated from outside. The
-    self-cached-dispatcher and un-canonicalizable-flag degrades emit a warning; an
-    inherently unfingerprintable formula kind (CFunc, cres) degrades silently as
-    documented. See the module docstring for the guarantee's scope. When caching
-    is enabled, a content-addressed anchor `.py` file is written under numba's
-    cache directory; with caching off (or the cache dir unwritable, which warns
-    and degrades) nothing is written.
+    Caching: the kernel digest fingerprints each formula's bytecode, constants, default values, closure-cell values,
+    referenced module-level globals (including helper functions, recursively), referenced module-attribute values
+    and defining module. It also holds the effective jit flags, the targetoptions of any Dispatcher or DUFunc
+    formula, and the ``NUMBA_*`` settings that change the emitted code (see :mod:`numbox.core.cache_key`). The
+    generated source never mentions types, so a declared graph's signatures are appended to the digest too: the
+    consumed external signature for an eager fused kernel, and each segment's live-in and live-out signature for an
+    eager segment. Two declared-type variants of one type-free graph therefore get distinct cache anchors, and never
+    reuse each other's binary.
 
-    Non-jittable formulas: for an undeclared graph the first call resolves the
-    execution mode. If the fully fused kernel cannot be typed for the actual
-    argument types, each node is probed against the real intermediate values;
-    nodes whose formulas fail to *compile* (or whose input values numba cannot
-    type) run in plain Python, and the jittable remainder is fused into segments
-    orchestrated from Python. A declared `jitable=False` node is instead demoted
-    by declaration (no probing): a graph mixing declared jittable and
-    declared-Python nodes resolves eagerly to a "segmented" plan at build,
-    `CompiledKernel.partition` populated immediately with per-node reasons.
-    `CompiledKernel.partition` describes the result, including per-node demotion
-    reasons; it is `None` before the first call only for an undeclared graph
-    (set at build for a fully-declared one). `CompiledKernel.kernel` is the
-    hot-path callable: the bare @njit dispatcher once the graph resolves fully
-    fused, the Python master when segmented. For an undeclared graph a later
-    call whose types break a segment re-learns and replaces the partition (one
-    active plan); a declared kernel does not re-discover. The crisp
-    `declared type X, got Y` contract is enforced at build time and on
-    `recompute()` (`can_convert` against each declared type), not on the
-    throughput `kernel(...)` path: throughput retains numba's polymorphic
-    widening across calls, and a later `kernel(...)` whose off-contract type
-    breaks a jit segment raises numba's own typing error (the declared `_demoted`
-    is left untouched -- no silent re-discovery). Once fully fused, fused is
-    permanent (a later-signature typing failure raises). The discovery call computes
-    jit-node values through per-node dispatchers while later calls use fused
-    segments -- identical under default IEEE semantics, but non-default
-    jit_options such as fastmath could in principle differ across fusion
-    boundaries.
+    Two kinds of formula downgrade their kernel to cache=False, so that it is always recompiled and never stale. One
+    is a formula whose state cannot be fingerprinted, such as a cres/CompileResultWAP object or a value with no
+    canonical form. The other carries or reaches its own numba cache: a `@njit(cache=True)` Dispatcher, whose key
+    does not include the globals it reads and cannot be invalidated from outside. The downgrades for a self-cached
+    dispatcher and for an un-canonicalizable flag emit a warning. An inherently unfingerprintable formula kind (CFunc,
+    cres) is downgraded silently, as documented. See the module docstring for the scope of the guarantee. When
+    caching is enabled, a content-addressed anchor `.py` file is written under numba's cache directory. Nothing is
+    written with caching off, or with an unwritable cache directory, which warns and degrades.
+
+    Non-jittable formulas: for an undeclared graph, the first call resolves the execution mode. If the fully fused
+    kernel cannot be typed for the actual argument types, each node is probed against the real intermediate values.
+    Nodes whose formulas fail to *compile*, or whose input values numba cannot type, run in plain Python, and the
+    jittable remainder is fused into segments orchestrated from Python. A declared `jitable=False` node is instead
+    demoted by declaration, with no probing. A graph that mixes declared jittable and declared-Python nodes resolves
+    eagerly to a "segmented" plan at build, and `CompiledKernel.partition` is populated immediately with per-node
+    reasons.
+
+    `CompiledKernel.partition` describes the result, including per-node demotion reasons. It is `None` before the
+    first call only for an undeclared graph, and is set at build for a fully declared one. `CompiledKernel.kernel` is
+    the hot-path callable: the bare @njit dispatcher once the graph resolves fully fused, and the Python master when
+    it is segmented. For an undeclared graph, a later call whose types do not fit a segment learns the partition
+    again and replaces it, so one plan is active at a time. A declared kernel does not re-discover.
+
+    The `declared type X, got Y` contract is enforced at build time and on `recompute()`, by `can_convert` against
+    each declared type. It is not enforced on the throughput `kernel(...)` path, which retains numba's polymorphic
+    widening across calls. A later `kernel(...)` call whose off-contract type does not fit a jit segment raises
+    numba's own typing error, and the declared `_demoted` stays unchanged, so no silent re-discovery happens. Once
+    the kernel is fully fused, it stays fused: a typing failure for a later signature raises. The discovery call
+    computes jit-node values through per-node dispatchers, while later calls use fused segments. The results are
+    identical under default IEEE semantics, but non-default jit_options such as fastmath could in principle make
+    them differ across fusion boundaries.
     """
     required = [required] if isinstance(required, str) else list(required)
     for entry in required:
@@ -1044,9 +1011,9 @@ def compile_kernel(
 
     required_vars = [_registry_var(q) for q in outputs]
     external_vars = [graph.registry[src][name] for src, name, _ in params]
-    # For Case A fold the consumed-external declared signature (kernel-arg order,
-    # matching the eager `.compile` below) into the digest so int64/float64
-    # variants of one type-free source get distinct anchors. Cases B/C pass ().
+    # Case A folds the consumed-external declared signature into the digest, in kernel-arg order to match the eager
+    # `.compile` below, so that int64 and float64 variants of one type-free source get distinct anchors. Cases B and
+    # C pass ().
     declared_sigs = ()
     if case == "A":
         consumed_sig = tuple(v.params.type for v in external_vars if v in consumed)
@@ -1062,9 +1029,9 @@ def compile_kernel(
         ck = CompiledKernel(kernel, params, outputs, source, identifiers, ctx,
                             required_vars, external_vars, is_declared=True)
         sig_vars = [v for v in external_vars if v in consumed]
-        # Eager-compile only when every kernel param is consumed; a pass-through
-        # external output is a kernel arg but has no declared type, so a partial
-        # signature would be wrong-arity. Such graphs compile lazily on first call.
+        # Compile eagerly only when every kernel param is consumed. A pass-through external output is a kernel arg
+        # but has no declared type, so a partial signature would have the wrong arity. Such graphs compile lazily on
+        # the first call.
         if len(sig_vars) == len(external_vars):
             ck._fused.compile(tuple(v.params.type for v in sig_vars))
         ck._mode = "fused-pending"
@@ -1076,7 +1043,8 @@ def compile_kernel(
         nodes = [n for n in compiled.ordered_nodes if n.variable not in external]
         order = linearize(nodes, demoted)
         runs = build_runs(order, demoted)
-        # Same segment structure as _discover_and_run, but with declared types and a static demotion set (no probing).
+        # The segment structure is the same as in _discover_and_run, but with declared types and a static demotion
+        # set (no probing).
         steps, segments = _build_plan(
             runs, idents, flags, jit_options, cache,
             liveness=lambda run_nodes: segment_liveness(run_nodes, external, required_vars, order),

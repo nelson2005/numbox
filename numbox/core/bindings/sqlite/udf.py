@@ -1,13 +1,13 @@
 """SQLite UDF registration and context bindings.
 
-sqlite3_create_function_v2 -- register scalar (xFunc) and aggregate (xStep/xFinal) UDFs.
-sqlite3_create_window_function -- register window UDFs (xStep/xFinal/xValue/xInverse).
-sqlite3_aggregate_context -- allocate per-group state for aggregate/window UDFs.
-sqlite3_user_data -- retrieve pApp from context.
-sqlite3_context_db_handle -- retrieve db pointer from context.
+- sqlite3_create_function_v2 registers scalar (xFunc) and aggregate (xStep/xFinal) UDFs.
+- sqlite3_create_window_function registers window UDFs (xStep/xFinal/xValue/xInverse).
+- sqlite3_aggregate_context allocates per-group state for aggregate and window UDFs.
+- sqlite3_user_data retrieves pApp from the context.
+- sqlite3_context_db_handle retrieves the db pointer from the context.
 
-Callback function pointers are passed as intp obtained from @cfunc(...).address.
-Pass 0 for NULL (no callback / no pApp / no xDestroy).
+Callback function pointers are passed as an intp obtained from @cfunc(...).address. Pass 0 for NULL (no callback,
+no pApp or no xDestroy).
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures

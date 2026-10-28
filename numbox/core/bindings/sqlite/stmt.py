@@ -1,10 +1,8 @@
-"""SQLite statement-lifecycle bindings: prepare_v2 / finalize / reset / step /
-sql / expanded_sql / stmt_busy.
+"""SQLite statement-lifecycle bindings: prepare_v2, finalize, reset, step, sql, expanded_sql and stmt_busy.
 
-Note: ``sqlite3_expanded_sql`` returns a ``char *`` the caller MUST free via
-``sqlite3_free`` (bound in sqlite/exec.py). Document this with each call site
-rather than building a wrapper that auto-frees — the wrapper would hide
-ownership in a way the rest of the bindings don't.
+Note: ``sqlite3_expanded_sql`` returns a ``char *`` that the caller must free with ``sqlite3_free`` (bound in
+sqlite/exec.py). Document this at each call site instead of building a wrapper that frees the string automatically.
+Such a wrapper would hide the ownership of the string, and none of the other bindings hide ownership.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures

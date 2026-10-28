@@ -1,8 +1,7 @@
 """SQLite value accessor bindings.
 
-Read UDF arguments inside xFunc / xStep / xInverse callbacks. Each function
-takes a sqlite3_value* (as intp) obtained by dereferencing the argv_pp array
-at the appropriate index.
+These functions read UDF arguments inside the xFunc, xStep and xInverse callbacks. Each function takes a
+sqlite3_value* (as intp) obtained by dereferencing the argv_pp array at the appropriate index.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures

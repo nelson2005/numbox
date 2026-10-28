@@ -1,7 +1,7 @@
 """Extract raw SQLite C API pointers from Python ``sqlite3`` objects.
 
-Bridges CPython's stdlib ``sqlite3`` module to the numba-callable bindings layer by exposing the underlying
-``sqlite3 *db`` handle that sits inside a Python ``sqlite3.Connection``.  Mirrors the pattern in
+The module bridges CPython's standard-library ``sqlite3`` module to the numba-callable bindings layer. It exposes the
+underlying ``sqlite3 *db`` handle that a Python ``sqlite3.Connection`` holds. It follows the pattern of
 `numbduck.pybridge <https://github.com/Goykhman/numbduck/blob/main/numbduck/pybridge.py>`_.
 
 macOS caveat
@@ -10,15 +10,14 @@ macOS caveat
 On macOS, the system sqlite is in the `dyld shared cache
 <https://keith.github.io/xcode-man-pages/dyld.1.html>`_ (structure defined in Apple's
 `DyldSharedCache.h <https://github.com/apple-oss-distributions/dyld/blob/main/common/DyldSharedCache.h>`_),
-mapped into every process at launch.  LLVM's JIT linker resolves ``sqlite3_*`` symbols via
-``dlsym(RTLD_DEFAULT)``, which returns the first match in load order — the system copy.  Python's
-``_sqlite3.so`` may use a *different* sqlite (statically linked on python.org framework builds, or
-dynamically linked to Homebrew's copy).
+which is mapped into every process at launch. LLVM's JIT linker resolves ``sqlite3_*`` symbols through
+``dlsym(RTLD_DEFAULT)``, which returns the first match in load order: the system copy. Python's ``_sqlite3.so`` may
+use a *different* sqlite, statically linked on python.org framework builds or dynamically linked to Homebrew's copy.
 
 If the system sqlite and Python's sqlite differ enough in version or internal layout, passing the pointer from
 :func:`extract_connection_ptr` to numbox's ``@njit`` bindings can produce wrong results or segfaults.
 
-**Workaround:** force the process to load your Python's sqlite first::
+**Workaround:** force the process to load the sqlite that Python uses first::
 
     DYLD_INSERT_LIBRARIES=/path/to/your/libsqlite3.dylib python my_script.py
 
@@ -27,10 +26,10 @@ Common paths:
 - Homebrew (Apple Silicon): ``/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib``
 - Homebrew (Intel): ``/usr/local/opt/sqlite/lib/libsqlite3.dylib``
 - Conda-forge: ``$CONDA_PREFIX/lib/libsqlite3.dylib``
-- python.org framework builds statically link sqlite — no external dylib available;
-  install Homebrew sqlite and use its path.
+- python.org framework builds link sqlite statically and provide no external dylib; install Homebrew sqlite and use
+  its path.
 
-On Linux there is typically only one sqlite on the system, so no workaround is needed.
+A Linux system typically has only one sqlite, so no workaround is needed there.
 """
 import ctypes
 import sqlite3
@@ -41,8 +40,8 @@ from numbox.core.bindings.sqlite.conn import sqlite3_errmsg, sqlite3_libversion
 def _pyobject_head_fields():
     """Return ctypes field list for CPython's ``PyObject_HEAD``.
 
-    Detects debug and free-threaded builds at runtime so the struct
-    offset to ``db`` is correct in all configurations.
+    The function detects debug and free-threaded builds at run time, so the struct offset of ``db`` is correct in all
+    configurations.
     """
     import sys
     import sysconfig
@@ -77,14 +76,12 @@ def _pyobject_head_fields():
 class _PysqliteConnection(ctypes.Structure):
     """Model the first fields of CPython's ``pysqlite_Connection``.
 
-    Mirrors the layout in `Modules/_sqlite/connection.h
-    <https://github.com/python/cpython/blob/main/Modules/_sqlite/connection.h>`_.
-    ``ctypes.Structure`` computes the ``db`` offset from the declared
-    field types, so the layout is correct across 32/64-bit, debug, and
-    free-threaded builds without hardcoded constants.
+    The model follows the layout in `Modules/_sqlite/connection.h
+    <https://github.com/python/cpython/blob/main/Modules/_sqlite/connection.h>`_. ``ctypes.Structure`` computes the
+    ``db`` offset from the declared field types, so the layout is correct across 32/64-bit, debug, and free-threaded
+    builds without hardcoded constants.
 
-    Pattern from `numbsql
-    <https://github.com/cpcloud/numbsql/blob/main/numbsql/sqlite.py#L282>`_.
+    The pattern comes from `numbsql <https://github.com/cpcloud/numbsql/blob/main/numbsql/sqlite.py#L282>`_.
     """
 
     _fields_ = _pyobject_head_fields() + [("db", ctypes.c_void_p)]
@@ -93,11 +90,10 @@ class _PysqliteConnection(ctypes.Structure):
 def libraries_coordinated():
     """True if numbox's ``@njit`` bindings and Python's ``sqlite3`` resolve to the same libsqlite3.
 
-    Compares :func:`~numbox.core.bindings.sqlite.conn.sqlite3_libversion` (what numbox's bindings
-    link against) with ``sqlite3.sqlite_version`` (what Python's ``sqlite3`` module links against).
-    When they differ — the macOS shared-cache situation described in the module docstring — passing a
-    connection pointer across the two is unsafe, and :func:`extract_connection_ptr` raises rather than
-    proceed.
+    The function compares :func:`~numbox.core.bindings.sqlite.conn.sqlite3_libversion` (what numbox's bindings link
+    against) with ``sqlite3.sqlite_version`` (what Python's ``sqlite3`` module links against). When they differ, as in
+    the macOS shared-cache situation that the module docstring describes, passing a connection pointer from one
+    library to the other is unsafe. :func:`extract_connection_ptr` then raises instead of proceeding.
 
     Returns
     -------
@@ -110,17 +106,15 @@ def libraries_coordinated():
 def extract_connection_ptr(conn):
     """Return the raw ``sqlite3*`` underlying a Python ``sqlite3.Connection``.
 
-    Uses :class:`_PysqliteConnection` to read the ``db`` field at its
-    platform-correct offset inside the PyObject struct, then validates
-    the pointer by calling
-    :func:`~numbox.core.bindings.sqlite.conn.sqlite3_errmsg` (a
-    healthy connection returns ``"not an error"``).
+    The function reads the ``db`` field at its platform-correct offset in the PyObject struct through
+    :class:`_PysqliteConnection`. It then validates the pointer by calling
+    :func:`~numbox.core.bindings.sqlite.conn.sqlite3_errmsg`, which returns ``"not an error"`` for a healthy
+    connection.
 
-    Before reading the pointer, checks (via :func:`libraries_coordinated`) that
-    numbox's bindings and Python's ``sqlite3`` module resolve to the same
-    libsqlite3.  If they differ — the macOS shared-cache situation in the module
-    docstring — it raises rather than pass the pointer to a mismatched library,
-    which could segfault.
+    Before it reads the pointer, the function checks through :func:`libraries_coordinated` that numbox's bindings and
+    Python's ``sqlite3`` module resolve to the same libsqlite3. If they differ, as in the macOS shared-cache situation
+    of the module docstring, the function raises instead of passing the pointer to a mismatched library, which could
+    segfault.
 
     Parameters
     ----------
@@ -136,12 +130,10 @@ def extract_connection_ptr(conn):
 
     Warning
     -------
-    The caller must retain *conn* for the entire lifetime of any ``@njit`` use
-    of the returned pointer, and must not use the pointer after ``conn.close()``
-    or after *conn* is garbage-collected — doing so is a use-after-free
-    (dereferencing a dangling ``sqlite3*``). This mirrors the ``SQLITE_STATIC``
-    ownership contract on ``bind_text`` / ``bind_blob``: the borrowed memory
-    must outlive every use.
+    The caller must retain *conn* for the entire lifetime of any ``@njit`` use of the returned pointer, and must not
+    use the pointer after ``conn.close()`` or after *conn* is garbage-collected. Such a use is a use-after-free, which
+    dereferences a dangling ``sqlite3*``. This matches the ``SQLITE_STATIC`` ownership contract on ``bind_text`` /
+    ``bind_blob``: the borrowed memory must outlive every use.
 
     Raises
     ------

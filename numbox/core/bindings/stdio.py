@@ -1,14 +1,12 @@
-"""Stdio handles (stdout/stderr/stdin) callable from @njit code.
+"""Stdio handles stdout, stderr and stdin, callable from @njit code.
 
-Uses extern-symbol references in LLVM IR so cache=True remains correct
-under ASLR. Linux and macOS expose the handles as data symbols (Linux:
-``stdout``/``stderr``/``stdin``; macOS: ``__stdoutp``/``__stderrp``/
-``__stdinp`` — what the libc headers' stdio macros expand to). Windows
-exposes them via an accessor function (``__acrt_iob_func``).
+The module refers to the handles through extern-symbol references in the LLVM IR, so that cache=True remains correct
+under ASLR. Linux and macOS expose the handles as data symbols. On Linux these are ``stdout``, ``stderr`` and
+``stdin``. On macOS they are ``__stdoutp``, ``__stderrp`` and ``__stdinp``, which the stdio macros of the libc
+headers expand to. Windows exposes the handles through an accessor function, ``__acrt_iob_func``.
 
-Windows requires UCRT (Universal C Runtime), bundled with Windows 10
-and later. Older Windows versions exposed FILE* via per-MSVC-version
-symbols (``_iob``, ``__iob_func``) and are not supported.
+Windows requires UCRT (Universal C Runtime), which is bundled with Windows 10 and later. Older Windows versions
+exposed FILE* through symbols specific to each MSVC version (``_iob``, ``__iob_func``), and they are not supported.
 """
 from llvmlite import ir as llir
 from numba.core.cgutils import get_or_insert_function
@@ -76,17 +74,17 @@ def _stdio_handle(typingctx, name_ty):
 
 @proxy(intp(), jit_options=jit_options)
 def stdout():
-    """Return the current process's stdout FILE* as intp. See module docstring."""
+    """Return the current process's stdout FILE* as intp. See the module docstring."""
     return _stdio_handle("stdout")
 
 
 @proxy(intp(), jit_options=jit_options)
 def stderr():
-    """Return the current process's stderr FILE* as intp. See module docstring."""
+    """Return the current process's stderr FILE* as intp. See the module docstring."""
     return _stdio_handle("stderr")
 
 
 @proxy(intp(), jit_options=jit_options)
 def stdin():
-    """Return the current process's stdin FILE* as intp. See module docstring."""
+    """Return the current process's stdin FILE* as intp. See the module docstring."""
     return _stdio_handle("stdin")

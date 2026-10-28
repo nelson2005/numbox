@@ -93,35 +93,30 @@ _derive_funcs = {}
 def _derive_fingerprint(derive) -> tuple[str, bool, bool]:
     """Return ``(fingerprint, derive_cacheable, kernel_safe)`` for a derive.
 
-    Routes the derive through the deep walker so its referenced-global *values*
-    enter the kernel fingerprint, replacing a bare ``sha256(getsource(...))``
-    that was blind to them (and raised ``OSError`` on exec/REPL-defined derives).
+    The derive's fingerprint comes from the deep walker, so the *values* of the globals it references enter the kernel
+    fingerprint. A bare ``sha256(getsource(...))`` would not include those values, and it would raise ``OSError`` for
+    a derive defined through exec or in a REPL.
 
-    A derive that reads module globals is fingerprinted but **not** cacheable:
-    it is compiled as a standalone dispatcher (not inlined into the
-    content-addressed kernel), and numba's own cache key covers only
-    ``co_code`` + closure, so a changed global would silently serve a stale
-    binary. Such a derive is compiled uncached -- recompiled per process,
-    never wrong -- mirroring ``compile_kernel``'s degrade path. Its fingerprint
-    is still process-stable and captures the global's value at build time, so
-    the enclosing kernel stays cacheable (``kernel_safe`` True): a changed global
+    A derive that reads module globals has a fingerprint but is **not** cacheable. It is compiled as a standalone
+    dispatcher, not inlined into the content-addressed kernel, and numba's own cache key covers only ``co_code`` and
+    the closure. If such a global changed, the cached derive would load a stale binary, and numba would issue no
+    warning. Such a derive is therefore compiled uncached, as on ``compile_kernel``'s degrade path: it is recompiled
+    in every process, and its binary is never stale. Its fingerprint is still process-stable and captures the
+    global's value at build time, so the enclosing kernel stays cacheable (``kernel_safe`` is True). A changed global
     re-keys the kernel.
 
-    An **un-fingerprintable** derive is different: ``_fingerprint_function``
-    raises, and the best-effort placeholder used instead is process-stable (never
-    an address, so the kernel name no longer explodes per run) but cannot be
-    trusted to change when the un-canonicalizable state does. Both the derive and
-    the enclosing kernel must therefore compile uncached (``kernel_safe`` False):
-    recompiled per process, never wrong. This is the orphan-per-run class
-    -- ``@id``-based names and unconditional kernel caching re-opened it.
+    For an **un-fingerprintable** derive, ``_fingerprint_function`` raises, and a best-effort placeholder is used
+    instead. The placeholder is process-stable because it never contains an address, so the kernel name does not
+    change from run to run. The placeholder is not guaranteed to change when the un-canonicalizable state changes, so
+    the derive and the enclosing kernel must both compile uncached (``kernel_safe`` is False). Both are then
+    recompiled in every process, and neither runs a stale binary. This case is the orphan-per-run class, which
+    ``@id``-based names and unconditional kernel caching would reintroduce.
 
-    "Reads module globals" is measured off the instruction stream
-    (``_loaded_global_names``), not ``co_names``: a record-field access such as
-    ``a_[t].c1`` is a ``LOAD_ATTR`` whose name would otherwise collide with a
-    module global of the same name, spuriously marking the derive uncacheable
-    (and, via ``_fingerprint_function``, forcing the best-effort fallback below).
-    A genuine ``cfg.SCALE`` read still counts -- its base ``cfg`` is a real
-    ``LOAD_GLOBAL`` -- so module-state derives stay uncacheable.
+    Whether a derive reads module globals is decided from the instruction stream (``_loaded_global_names``), not from
+    ``co_names``. A record-field access such as ``a_[t].c1`` is a ``LOAD_ATTR``, and its name would otherwise collide
+    with a module global of the same name. The collision would mark the derive uncacheable without cause and, through
+    ``_fingerprint_function``, force the best-effort fallback below. A genuine ``cfg.SCALE`` read still counts,
+    because its base ``cfg`` is a real ``LOAD_GLOBAL``, so a derive that reads module state stays uncacheable.
     """
     try:
         fingerprint = _fingerprint_function(derive, set())
@@ -134,37 +129,35 @@ def _derive_fingerprint(derive) -> tuple[str, bool, bool]:
 
 
 _DERIVE_ANCHOR_SUBDIR = "numbox-derive"
-# Clear `.tmp-*` anchors left behind by a SIGKILL'd writer, as every other
-# anchor-writing module does for its own subdir.
+# Clear the `.tmp-*` anchors that a writer killed by SIGKILL left behind, as every other anchor-writing module does
+# for its own subdir.
 _orphan_anchor_sweep(_DERIVE_ANCHOR_SUBDIR)
 
 
 def _derive_anchor_cres(derive_sig, sig_canon, derive, derive_fp, jit_options):
     """Compile ``derive`` under a cache identity that depends on what it reads.
 
-    The derive is compiled as its own ``cres``, whose cache numbox keys on the
-    jit flags and the settings (``numbox.core.cache_key``). That key, like
-    numba's, leaves out what the derive reads: the values of its globals and the
-    code of the functions it calls.
+    The derive is compiled as its own ``cres``, whose cache numbox keys on the jit flags and the settings
+    (``numbox.core.cache_key``). That key, like numba's, leaves out what the derive reads: the values of its globals
+    and the code of the functions it calls.
 
-    So the derive is compiled through a generated wrapper whose *name* carries a
-    digest of the derive fingerprint plus the effective flags, written to its own
-    on-disk anchor. A change to either moves the name. The name moves the anchor,
-    and the anchor moves numba's cache file. Mirrors ``compile_kernel._compile``.
+    The derive is therefore compiled through a generated wrapper whose *name* carries a digest of the derive
+    fingerprint and the effective flags, and the wrapper is written to its own on-disk anchor. If either input
+    changes, the name changes. The anchor's file name and numba's cache file name are derived from the wrapper's name,
+    so both change as well. ``compile_kernel._compile`` uses the same scheme.
 
-    The wrapper delegates to the derive njit-wrapped with ``cache=False``: it is
-    linked into the wrapper's cached artifact, and it must not carry a cache of
-    its own, which numba would key on neither its flags nor what it reads.
+    The wrapper delegates to the derive, compiled by ``njit`` with ``cache=False``. The derive is linked into the
+    wrapper's cached artifact and must not have a cache of its own, because numba would key that cache on neither its
+    flags nor what it reads.
 
-    Returns ``None`` if the flags cannot be canonicalized or no anchor can be
-    written; the caller must then compile the derive **uncached**, because the
-    anchor is what keys a cached derive on what it reads.
+    Returns ``None`` if the flags cannot be canonicalized or no anchor can be written. The caller must then compile
+    the derive **uncached**, because the anchor is what keys a cached derive on what it reads.
     """
     flags = _effective_flags(jit_options)
     flags_canon, ok_flags = _flags_canon(flags)
     if not ok_flags:
-        # A flag with no canonical form cannot be keyed on; a key blind to a flag
-        # cannot protect the binary that flag produced.
+        # A flag with no canonical form cannot enter the key, and a key that leaves out a flag cannot protect the
+        # binary that the flag produced.
         return None
     digest = sha256(
         f"derive-anchor-v2\n{derive_fp}\n# sig: {sig_canon}\n# flags: {flags_canon}"
@@ -179,16 +172,16 @@ def _derive_anchor_cres(derive_sig, sig_canon, derive, derive_fp, jit_options):
     )
     anchor = _anchor_root(_DERIVE_ANCHOR_SUBDIR) / f"{name}.py"
     if _anchor_or_error(anchor, src) is not None:
-        # No anchor on disk, or none numba can cache from: a warm anchor whose
-        # directory can no longer be written and no other location left.
+        # No anchor is on disk, or numba cannot cache from the anchor. The second case includes a warm anchor whose
+        # directory can no longer be written, when no other location is left.
         return None
     ns = {
         "_cres": cres,
         "_derive_sig": derive_sig,
         "_derive_jit_options": jit_options,
         "_inner": njit(**{**flags, "cache": False})(derive),
-        # __name__ must be an importable module so numba can rebuild the cached
-        # overload's environment in another process; mirrors compile_kernel.
+        # __name__ must name an importable module, so that numba can rebuild the cached overload's environment in
+        # another process. compile_kernel sets it the same way.
         "__name__": __name__,
     }
     code = compile(src, str(anchor), "exec")
@@ -209,27 +202,24 @@ def _derived_cres(ty, sources: Sequence[End], derive, jit_options=None, derive_f
         if anchored is not None:
             _derive_funcs[id(anchored)] = derive
             return anchored
-        # The anchor is what keys a cached derive on what it reads. Falling back
-        # to a plain cache=True compile here would restore the cache entry the
-        # anchor exists to avoid, named after the derive's own source file and
-        # qualname and blind to its globals and callees. So the degrade must drop
-        # the cache too: recompiled per process, never wrong.
+        # The anchor is what keys a cached derive on what it reads. A plain cache=True compile here would restore the
+        # cache entry that the anchor exists to avoid: numba names that entry after the derive's own source file and
+        # qualname, and its key leaves out the derive's globals and callees. The fallback therefore drops the cache
+        # as well, so the derive is recompiled in every process and its binary is never stale.
         jit_options = {**jit_options, "cache": False}
     elif jit_options.get("cache") and not sig_cacheable:
-        # A source type -- e.g. a Dispatcher wrapping an un-fingerprintable body
-        # -- has only a best-effort identity: the anchor name would be process-
-        # stable but blind to a change in that type, so a later process could link
-        # a stale derive binary. Drop the cache instead: recompiled per process,
-        # never wrong.
+        # A source type, such as a Dispatcher that wraps an un-fingerprintable body, has only a best-effort identity.
+        # The anchor name would be process-stable but would not change with that type, so a later process could
+        # link a stale derive binary. The derive is compiled without a cache instead, so it is recompiled in every
+        # process and its binary is never stale.
         jit_options = {**jit_options, "cache": False}
     try:
         derive_cres = cres(derive_sig, **jit_options)(derive)
     except RuntimeError as e:
-        # numba refuses cache=True for a function whose source file it cannot
-        # locate (an exec/<string>- or <stdin>-defined derive). Fall back to
-        # uncached rather than crashing -- a body numba cannot cache cannot go
-        # stale anyway. Derives defined in real modules or notebooks have a
-        # locator and are unaffected.
+        # numba refuses cache=True for a function whose source file it cannot locate, such as a derive defined
+        # through exec (<string>) or at <stdin>. Fall back to an uncached compile rather than fail: a body that numba
+        # cannot cache cannot become stale. A derive defined in a module on disk or in a notebook has a locator and
+        # is unaffected.
         if jit_options.get("cache") and "locator" in str(e):
             derive_cres = cres(derive_sig, **{**jit_options, "cache": False})(derive)
         else:
@@ -270,25 +260,23 @@ def code_block_hash(code_txt: str):
 def _kernel_fingerprint(code_block: str, derive_hashes: list, type_sigs: list, jit_options=None) -> tuple[str, bool]:
     """Return ``(hash, flags_cacheable)`` for the generated kernel.
 
-    The hash is baked into the name ``_make_<hash>``.
+    The kernel is named ``_make_<hash>``.
 
-    Folds each node's declared type (``type_sigs``) in alongside the body text and
-    derive source hashes, since a declared ty reaches the generated code only as the
-    bare global name ``{name}_ty`` and so is not otherwise captured by the body.
+    The hash includes each node's declared type (``type_sigs``) along with the body text and the derive source
+    hashes. A declared type reaches the generated code only as the bare global name ``{name}_ty``, so the body text
+    alone does not capture it.
 
-    Also folds the resolved jit flags and the ``NUMBA_*`` settings that change the
-    emitted code (see :mod:`numbox.core.cache_key`). The body text renders the
-    flags only as the literal ``@njit(**jit_options)``, so the fold gives two
-    graphs that differ solely in ``error_model`` or ``fastmath`` two
-    ``_make_<hash>`` names. numbox's key holds the flags of the kernel's cache as
-    well; the names keep the two in separate cache files besides.
+    The hash also includes the resolved jit flags and the ``NUMBA_*`` settings that change the emitted code (see
+    :mod:`numbox.core.cache_key`). The body text renders the flags only as the literal ``@njit(**jit_options)``, so
+    the hash includes them to give two graphs that differ only in ``error_model`` or ``fastmath`` two different
+    ``_make_<hash>`` names. numbox's key holds the flags of the kernel's cache as well; the two names also keep the
+    two graphs in separate cache files.
 
-    ``flags_cacheable`` is False when a flag had no canonical form (a
-    ``pipeline_class``, a numba-typed ``locals``). The fold then degrades to
-    ``repr``, which is neither process-stable for a default-repr object nor
-    guaranteed to distinguish two behaviourally different values, so the caller
-    must compile the kernel uncached -- the same contract ``_derive_anchor_cres``
-    and ``compile_kernel`` already honour for this flag.
+    ``flags_cacheable`` is False when a flag has no canonical form, such as a ``pipeline_class`` or a numba-typed
+    ``locals``. The flags then enter the hash through ``repr``, which is not process-stable for an object with the
+    default ``repr`` and is not guaranteed to distinguish two values that behave differently. The caller must then
+    compile the kernel uncached, the same contract that ``_derive_anchor_cres`` and ``compile_kernel`` honor for
+    this flag.
     """
     flags_canon, ok_flags = _flags_canon(_effective_flags(jit_options))
     return code_block_hash(
@@ -329,9 +317,9 @@ def make_graph(
     if jit_options is None:
         jit_options = {}
     jit_options = {**jit_options_, **jit_options}
-    # The kernel below is anchored to this file and cached beside it; a
-    # caller's cache option reaches numba past the package's answer. The
-    # derives cache under anchors of their own and keep the options as given.
+    # The kernel below is anchored to this file and cached beside it. A cache option that the caller gives reaches
+    # numba as given, and overrides the package's own answer on caching. The derives cache under anchors of their own
+    # and keep the options as given.
     kernel_options = _cached_at_or_uncached(getfile(_file_anchor), jit_options)
     ns = {
         **getmodule(_file_anchor).__dict__,
@@ -355,12 +343,11 @@ def make_graph(
     hash_, flags_cacheable = _kernel_fingerprint(code_txt.getvalue(), derive_hashes, type_sigs, jit_options)
     kernel_cacheable = flags_cacheable and all(kernel_safe_flags) and all(c for _name, (_h, c) in type_ids)
     if not kernel_cacheable:
-        # A derive with only a best-effort fingerprint, a node typed as a
-        # Dispatcher wrapping an un-fingerprintable body, or a jit flag with no
-        # canonical form has a content-blind identity folded into the kernel name;
-        # compile the kernel without an on-disk cache so a stale binary cannot be
-        # linked -- recompiled per process, never wrong. The
-        # name (fed by type_sigs) is unchanged, so nothing else re-keys.
+        # Three cases give the kernel name an identity that does not depend on content: a derive with only a
+        # best-effort fingerprint, a node typed as a Dispatcher that wraps an un-fingerprintable body, and a jit flag
+        # with no canonical form. Compile the kernel without an on-disk cache, so that no stale binary can be linked.
+        # The kernel is then recompiled in every process. The name, which includes type_sigs, does not change, so
+        # nothing else is re-keyed.
         ns["jit_options"] = {**kernel_options, "cache": False}
     access_nodes_names = [n.name for n in access_nodes]
     tup_ = ", ".join(access_nodes_names) + ","

@@ -1,13 +1,13 @@
 """SQLite result setter bindings.
 
-Write the UDF return value inside xFunc / xFinal / xValue callbacks.
-Each function takes a sqlite3_context* (as intp) as the first argument.
+These functions write the UDF return value inside the xFunc, xFinal and xValue callbacks. Each function takes a
+sqlite3_context* (as intp) as the first argument.
 
-The destructor arg in result_text / result_blob (last intp before any
-trailing args) is one of:
-- SQLITE_STATIC = 0  -> SQLite assumes the buffer outlives the call
-- SQLITE_TRANSIENT = -1 -> SQLite makes a copy
-- any other value -> a C function pointer SQLite calls to free the buffer
+The destructor argument of result_text and result_blob (the last intp before any trailing arguments) is one of:
+
+- SQLITE_STATIC = 0: SQLite assumes that the buffer outlives the call.
+- SQLITE_TRANSIENT = -1: SQLite makes a copy.
+- any other value: a C function pointer that SQLite calls to free the buffer.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures

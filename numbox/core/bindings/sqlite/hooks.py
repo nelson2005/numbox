@@ -1,15 +1,14 @@
-"""SQLite callback hooks: update_hook / progress_handler / busy_handler /
-commit_hook / rollback_hook / trace_v2.
+"""SQLite callback hooks: update_hook, progress_handler, busy_handler, commit_hook, rollback_hook and trace_v2.
 
-Each takes a function pointer (intp) the caller produces via @cfunc(...).address.
-The cfunc instance MUST outlive the hook registration — keep it at module scope
-in the caller.
+Each takes a function pointer (intp) that the caller produces through @cfunc(...).address. The cfunc instance must
+outlive the hook registration, so keep it at module scope in the caller.
 
-Callback shapes (informational; signatures are caller's responsibility):
+Callback shapes (informational; the signatures are the caller's responsibility):
+
 - update_hook:       void(void*, int op, const char* db, const char* tbl, sqlite3_int64 rowid)
-- progress_handler:  int(void*) -- nonzero aborts
-- busy_handler:      int(void*, int) -- 0 to abort, nonzero to retry
-- commit_hook:       int(void*) -- nonzero vetoes commit
+- progress_handler:  int(void*); a nonzero return aborts
+- busy_handler:      int(void*, int); a return of 0 aborts, and a nonzero return retries
+- commit_hook:       int(void*); a nonzero return vetoes the commit
 - rollback_hook:     void(void*)
 - trace_v2:          int(unsigned, void*, void*, void*)
 """

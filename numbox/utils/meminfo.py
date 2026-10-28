@@ -65,10 +65,10 @@ _MI_TY = types.MemInfoPointer(types.voidptr)
 
 
 def _require_intp(p_ty, fn_name):
-    """Reject anything other than ``types.intp`` for pointer-as-int args.
+    """Reject anything other than ``types.intp`` for pointer-as-int arguments.
 
-    Accepting an arbitrary integer type would emit an ``inttoptr`` of the
-    wrong width on 64-bit hosts (e.g., int32 → i32 → ptr truncates).
+    Accepting an arbitrary integer type would emit an ``inttoptr`` of the wrong width on 64-bit hosts: for example, an
+    int32 lowers to an i32, and the pointer made from it is truncated.
     """
     if p_ty != types.intp:
         raise TypingError(f"{fn_name} expects types.intp, got {p_ty}")
@@ -78,20 +78,16 @@ def _require_intp(p_ty, fn_name):
 def _incref_meminfo(typingctx, p_ty):
     """Incref a MemInfo at ``intp`` via NRT.
 
-    This intrinsic's signature (``void(intp)``) contains no NRT-tracked types,
-    so a caller of the same shape passes the legality check of numba's
-    ``removerefctpass``, which then deletes every ``NRT_incref`` and
-    ``NRT_decref`` call in that caller by name, this one included. The
-    ``_release_meminfo`` escape (call an NRT function outside the pass's
-    allowlist) is not available for an incref: numba registers no such
-    symbol. Instead the codegen tags the enclosing function with the
-    ``numba_args_may_always_need_nrt`` named metadata, numba's own marker for
-    functions whose references outlive the call, which makes ``_legalize()``
-    refuse the rewrite for that function's module. The tag can only refuse,
-    so it changes nothing where another check already fails, and each
-    function is lowered into a module of its own, so a caller's check never
-    sees the tag. numba 0.66 removed the pass together with every mention of
-    the tag, so from 0.66 on nothing reads it.
+    This intrinsic's signature (``void(intp)``) contains no NRT-tracked types. A caller whose signature also contains
+    none passes the legality check of numba's ``removerefctpass``. The pass then deletes every ``NRT_incref`` and
+    ``NRT_decref`` call in that caller by name, including this one. ``_release_meminfo`` avoids the pass by calling an
+    NRT function outside the pass's allowlist, but that is not possible for an incref, because numba registers no
+    such symbol. Instead, the codegen tags the enclosing function with the ``numba_args_may_always_need_nrt`` named
+    metadata. That metadata is numba's own marker for functions whose references outlive the call, and it makes
+    ``_legalize()`` refuse the rewrite for that function's module. The tag can only prevent the rewrite, so it changes
+    nothing if another check already fails. Each function is lowered into a module of its own, so a caller's check
+    never finds the tag. numba 0.66 removed the pass together with every mention of the tag, so from 0.66 on nothing
+    reads it.
     """
     _require_intp(p_ty, "_incref_meminfo")
     sig = types.void(p_ty)
@@ -110,12 +106,10 @@ def _incref_meminfo(typingctx, p_ty):
 def _release_meminfo(typingctx, p_ty):
     """Decref a MemInfo at ``intp`` via ``NRT_MemInfo_release``.
 
-    Uses ``NRT_MemInfo_release`` directly rather than ``context.nrt.decref``
-    because this intrinsic's signature (``void(intp)``) contains no
-    NRT-tracked types, which lets numba's ``removerefctpass`` rewrite strip
-    a plain ``NRT_decref`` as dead code. Calling ``NRT_MemInfo_release``
-    (not in the pass's accepted-nrtfns allowlist) keeps ``_legalize()``
-    from enabling the rewrite at all.
+    The intrinsic calls ``NRT_MemInfo_release`` directly rather than ``context.nrt.decref``. Its signature
+    (``void(intp)``) contains no NRT-tracked types, so numba's ``removerefctpass`` rewrite would strip a plain
+    ``NRT_decref`` as dead code. ``NRT_MemInfo_release`` is not in the pass's accepted-nrtfns allowlist, so calling it
+    keeps ``_legalize()`` from enabling the rewrite at all.
     """
     _require_intp(p_ty, "_release_meminfo")
     sig = types.void(p_ty)
@@ -149,11 +143,11 @@ def _deref_structref_raw_ptr(typingctx, struct_type_ref, p_ty):
 
 @numba.njit
 def borrow_structref(struct_type, p):
-    """Incref + reconstruct a structref from an ``intp`` MemInfo pointer.
+    """Incref an ``intp`` MemInfo pointer and reconstruct a structref from it.
 
-    The caller receives a live structref that participates in normal NRT
-    refcount. Net-zero for the external owner if the caller's scope exits
-    without additional actions (local decref on drop balances the incref).
+    The caller receives a live structref whose reference count NRT manages normally. The external owner's count is
+    unchanged when the caller's scope exits without additional actions, because the local decref on drop balances the
+    incref.
     """
     _incref_meminfo(p)
     return _deref_structref_raw_ptr(struct_type, p)
@@ -175,7 +169,6 @@ def export_meminfo(s):
 def release_meminfo(p):
     """Decref a MemInfo at ``intp`` via NRT_MemInfo_release.
 
-    Public njit wrapper over ``_release_meminfo``. Callable from Python
-    and ``@njit`` contexts.
+    This is the public njit wrapper over ``_release_meminfo``, callable from Python and from ``@njit`` contexts.
     """
     _release_meminfo(p)

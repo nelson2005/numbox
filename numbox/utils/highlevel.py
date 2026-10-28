@@ -31,23 +31,19 @@ def _file_anchor():
 def _method_identity(method, user_ns) -> tuple[str, bool]:
     """Return ``(identity_text, cacheable)`` for a structref method.
 
-    A ``make_structref`` method's source is inlined into a generated overload
-    exec'd against the merged namespace, so the values passed through the ``ns``
-    argument reach the compiled body but are invisible to ``getsource``. This
-    folds the method's deep fingerprint together with the values of the ``ns``
-    entries it references, so two methods with identical source but different
-    ``ns`` values get distinct hashes (which flow into the content-addressed
-    anchor file name, forcing numba to recompile rather than serve a stale
-    binary). Un-fingerprintable method, or an un-canonicalizable ``ns`` value,
-    makes it uncacheable -- the struct is then compiled without an on-disk
-    cache, never reused, never wrong.
+    ``make_structref`` inlines a method's source into a generated overload and execs it against the merged namespace.
+    The values passed through the ``ns`` argument therefore reach the compiled body, but ``getsource`` does not show
+    them. This function folds the method's deep fingerprint together with the values of the ``ns`` entries that the
+    method references. Two methods with identical source but different ``ns`` values then get distinct hashes. The
+    hashes enter the content-addressed anchor file name, so numba recompiles instead of loading a stale binary. An
+    un-fingerprintable method, or an un-canonicalizable ``ns`` value, makes the method uncacheable. The struct is then
+    compiled without an on-disk cache, so its binary is never reused and never wrong.
 
-    Which ``ns`` entries the method references is read off the instruction
-    stream, not ``co_names``: the values arrive as globals of the exec'd
-    namespace, so only a global read can reach one, while ``co_names`` would also
-    offer up every attribute name. A method doing ``self.x`` against an ``ns``
-    that happens to carry an ``x`` would otherwise fold a value it never reads --
-    and drop the struct's cache entirely if that value were opaque.
+    The function finds the ``ns`` entries that the method references in the instruction stream, not in ``co_names``.
+    The values arrive as globals of the exec'd namespace, so only a global read can reach one, while ``co_names``
+    would also list every attribute name. Otherwise, a method that reads ``self.x`` while ``ns`` holds an entry named
+    ``x`` would fold a value that it never reads. If that value were opaque, the struct would compile without any
+    cache.
     """
     try:
         fingerprint = _fingerprint_function(method, set())
@@ -89,20 +85,18 @@ def cres(sig, **kwargs):
         # a compiled address and a mangled name carrying a per-process counter, so a body
         # that captures this value has nothing process-stable to fingerprint without it.
         wrapper._numbox_py_func = func
-        # And the dispatcher, whose cache explain_cache_key reads.
+        # Keep the dispatcher reachable too, because explain_cache_key reads its cache.
         wrapper._numbox_dispatcher = func_jit
         return wrapper
     return _
 
 
 def cres_if_available(lib, sig, **kwargs):
-    """Like ``cres(sig, **kwargs)``, but stubs out the wrapper if the C
-    symbol matching ``func.__name__`` is absent from ``lib``.
+    """Like ``cres(sig, **kwargs)``, but return a stub if ``lib`` lacks the C symbol ``func.__name__``.
 
-    Use for binding sets that target multiple library versions where some
-    symbols may only exist in newer releases. Callers get a stub that
-    raises ``NotImplementedError`` instead of a confusing LLVM link error
-    at call time.
+    Use it for binding sets that target multiple library versions, when some symbols may exist only in newer
+    releases. Callers get a stub that raises ``NotImplementedError`` instead of a confusing LLVM link error at call
+    time.
     """
     def _(func):
         if hasattr(lib, func.__name__):
@@ -123,26 +117,25 @@ def determine_field_index(struct_ty, field_name):
 
 
 def _type_identity(ty: Type) -> tuple[str, bool]:
-    """Return ``(hash, cacheable)`` for a numba type, for folding into a
-    content-addressed name."""
+    """Return ``(hash, cacheable)`` for a numba type, for folding into a content-addressed name."""
     cacheable = True
     ty_str = str(ty)
     if isinstance(ty, Dispatcher):
-        # numba's own on-disk index misses a Dispatcher-carrying signature every run
-        # and appends a fresh data entry, so the unit's .nbc grows per process forever.
+        # numba's own on-disk index misses a Dispatcher-carrying signature on every run and appends a new data entry,
+        # so the unit's .nbc grows with every process, without bound.
         cacheable = False
         try:
             body = "dispatcher(" + _fingerprint_function(ty.dispatcher.py_func, set()) + ")"
         except (_Unfingerprintable, RecursionError):
             body = "dispatcher-besteffort(" + _fingerprint_function_best_effort(ty.dispatcher.py_func) + ")"
     elif "Record(" in ty_str:
-        # A Record mangles by a creation-order counter (_code), so it hashes differently
-        # in a cold process than a warm one. Its str is structural, so hash that instead.
+        # A Record mangles by a creation-order counter (_code), so it hashes differently in a cold process than in a
+        # warm one. Its str is structural, so this branch hashes the str instead.
         body = "structural(" + ty_str + ")"
     else:
         body = mangle_type_or_value(ty)
     if cacheable and "CPUDispatcher(" in ty_str:
-        # A Dispatcher nested in a container
+        # This branch catches a Dispatcher nested in a container.
         cacheable = False
     return hashlib.sha256(body.encode("utf-8")).hexdigest(), cacheable
 
@@ -153,8 +146,9 @@ def hash_type(ty: Type) -> str:
 
 
 def _signature_identity(sig: Signature) -> tuple[str, bool]:
-    """Return ``(canonical_text, cacheable)`` for a numba ``Signature``, folding every
-    argument and return type through :func:`_type_identity`."""
+    """Return ``(canonical_text, cacheable)`` for a numba ``Signature``.
+
+    Every argument type and the return type are folded through :func:`_type_identity`."""
     ret_hash, ret_ok = _type_identity(sig.return_type)
     arg_ids = [_type_identity(a) for a in sig.args]
     text = ret_hash + "(" + ",".join(h for h, _ok in arg_ids) + ")"
@@ -176,11 +170,10 @@ def make_structref_code_txt(
         assert isinstance(struct_fields, (list, tuple)), struct_fields
         fields_types = None
     struct_fields_str = ", ".join([field for field in struct_fields])
-    # The names of the generated functions, and of the class whose body defines
-    # the jitted getters and method thunks, reach numba's cache file names
-    # through their qualnames; bounded, a struct's name of any length stays
-    # under the file system's limit. The class takes the struct's full name
-    # back once its body is compiled, and the struct's name binds to it.
+    # numba puts the qualnames of the generated functions, and of the class whose body defines the jitted getters and
+    # method thunks, into its cache file names. With these names bounded, a struct name of any length stays under the
+    # file system's limit. The class is assigned the struct's full name once its body is compiled, and the struct's
+    # name is then bound to the class.
     class_name = bounded_stem(struct_name)
     make_name = f"make_{class_name.lower()}"
     new_returns = f"{make_name}({struct_fields_str})"
@@ -194,9 +187,9 @@ class {class_name}(StructRefProxy):
     def __repr__(self):
         return {repr_str}
 """)
-    # A long field's getter is defined under its bounded name and handed to the
-    # field's; that name must be nobody else's in the class body, or the hand-over
-    # would take another field's property or a method.
+    # A long field's getter is defined under its bounded name, assigned to the field's name and then deleted under the
+    # bounded name. Nothing else in the class body may use the bounded name, or the definition would rebind another
+    # field's property or a method, and the ``del`` would remove it.
     taken = set(struct_fields) | set(struct_methods or ())
     for field in struct_fields:
         getter_name = bounded_stem(field)
@@ -322,19 +315,14 @@ def make_structref(
 
     Anchor file
     -----------
-    A content-addressed file under numba's cache directory, not
-    ``highlevel.py``, is the ``compile()`` anchor of the generated
-    ``code_txt``, written whenever it can be, since numba quotes the
-    source from it in its messages: with caching off a write that fails
-    is nothing, the path serving as the code's filename. With caching on
-    the anchor is written and numba asked whether it can cache a function
-    of it, which needs the file on disk; where the write fails, or numba
-    has no location for the file, the struct compiles without a cache
-    after a warning, an anchor that was written left where it is. A
-    method without a
-    canonical fingerprint turns caching off before any of this, without
-    a warning, as it always did. See the "Cache-anchor mechanism"
-    section in ``docs/numbox.utils.rst``.
+    The ``compile()`` anchor of the generated ``code_txt`` is a content-addressed file under numba's cache directory,
+    not ``highlevel.py``. The anchor is written whenever the write succeeds, because numba quotes the source from it
+    in its messages. With caching off, a failed write has no effect, and the path serves as the code's filename. With
+    caching on, the anchor is written, and numbox asks numba whether it can cache a function of the file, which
+    requires the file on disk. If the write fails, or numba has no location for the file, the struct compiles without
+    a cache after a warning, and an anchor that was written stays where it is. A method without a canonical
+    fingerprint turns caching off before any of these steps, without a warning, as it always has. See the
+    "Cache-anchor mechanism" section in ``docs/numbox.utils.rst``.
     """
     code_txt, fields_types, cacheable = make_structref_code_txt(
         struct_name, struct_fields, struct_type_class, struct_methods, user_ns=ns
@@ -342,9 +330,8 @@ def make_structref(
     if jit_options is None:
         jit_options = jit_options_
     if not cacheable:
-        # A method (or an ns value it captures) has no canonical fingerprint, so
-        # its content-addressed identity cannot be trusted to change when the
-        # behaviour does; compile the struct without an on-disk cache.
+        # A method, or an ns value it captures, has no canonical fingerprint. Its content-addressed identity is then
+        # not guaranteed to change when its behavior changes, so the struct compiles without an on-disk cache.
         jit_options = {**jit_options, "cache": False}
     anchor = _structref_anchor_path(struct_name, code_txt)
     jit_options = _anchored_or_uncached(anchor, code_txt, jit_options)

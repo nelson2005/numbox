@@ -76,8 +76,7 @@ def _load_at(typingctx: Context, p_ty, ty_ref: TypeRef):
 def load_at(p, ty):
     """Load a value of type ``ty`` from raw pointer ``p`` (carried as ``intp``).
 
-    Caller is responsible for ``p`` pointing at a live region of memory whose
-    LLVM layout matches ``ty``.
+    The caller is responsible for ``p`` pointing at a live region of memory whose LLVM layout matches ``ty``.
     """
     return _load_at(p, ty)
 
@@ -100,11 +99,10 @@ def _store_at(typingctx: Context, p_ty, v_ty):
 
 @njit(**jit_options)
 def store_at(p, v):
-    """Store ``v`` at raw pointer ``p`` (LLVM type derived from ``v``'s numba type).
+    """Store ``v`` at raw pointer ``p``, with the LLVM type derived from the numba type of ``v``.
 
-    Caller is responsible for ``p`` pointing at a writable region of memory
-    whose LLVM layout matches ``v``'s type, and for casting ``v`` to the
-    intended width (e.g. ``store_at(p, int32(value))`` to write 4 bytes).
+    The caller is responsible for ``p`` pointing at a writable region of memory whose LLVM layout matches the type of
+    ``v``, and for casting ``v`` to the intended width (e.g. ``store_at(p, int32(value))`` to write 4 bytes).
     """
     return _store_at(p, v)
 
@@ -127,8 +125,10 @@ def _store_unaligned(typingctx: Context, p_ty, v_ty):
 
 @njit(**jit_options)
 def store_unaligned(p, v):
-    """Like :func:`store_at` but emits an ``align=1`` store, legal on a misaligned
-    address (e.g. a packed structured-dtype field) where ``store_at`` is UB."""
+    """Like :func:`store_at`, but emit an ``align=1`` store.
+
+    That store is legal on a misaligned address, such as the address of a packed structured-dtype field, while
+    ``store_at`` has undefined behavior there."""
     return _store_unaligned(p, v)
 
 
@@ -150,8 +150,10 @@ def _load_unaligned(typingctx: Context, p_ty, ty_ref: TypeRef):
 
 @njit(**jit_options)
 def load_unaligned(p, ty):
-    """Like :func:`load_at` but emits an ``align=1`` load, legal on a misaligned
-    address (e.g. a packed structured-dtype field) where ``load_at`` is UB."""
+    """Like :func:`load_at`, but emit an ``align=1`` load.
+
+    That load is legal on a misaligned address, such as the address of a packed structured-dtype field, while
+    ``load_at`` has undefined behavior there."""
     return _load_unaligned(p, ty)
 
 
@@ -254,9 +256,9 @@ def get_str_from_p_as_int(p):
     """ Given pointer to null-terminated array of characters as an integer `p`,
     return unicode string object copying the original string's data.
 
-    Bytes are read through an unsigned 8-bit view, so each byte maps to its own
-    codepoint 0..255 (per-byte Latin-1). A multi-byte UTF-8 payload is returned
-    byte-for-byte, not decoded to its Unicode text. """
+    The function reads the bytes through an unsigned 8-bit view, so each byte maps to its own codepoint 0..255
+    (per-byte Latin-1). A multi-byte UTF-8 payload is returned as one character per byte, not decoded to its Unicode
+    text. """
     void_p = _cast_int_to_void_p(p)
     s = ""
     mem_view = carray(void_p, shape=(MAX_STR_LENGTH,), dtype=uint8)
@@ -406,8 +408,7 @@ def uniformize_tuple_of_structs(tup, uniform_ty=VoidType):
 def array_data_p(arr):
     """Return the data pointer of a numpy array as signed intp.
 
-    ``arr.ctypes.data`` is ``uint64`` under numba; the cast aligns with the
-    signed-pointer convention used by numbox binding signatures. Callable
-    from Python and ``@njit`` contexts.
+    ``arr.ctypes.data`` is ``uint64`` under numba, and the cast follows the signed-pointer convention that numbox
+    binding signatures use. The function is callable from Python and from ``@njit`` contexts.
     """
     return intp(arr.ctypes.data)

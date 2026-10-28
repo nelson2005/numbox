@@ -1,9 +1,9 @@
 """Formula and identifier helpers for the fused-kernel compiler.
 
-Shared utilities used by `numbox.core.variable.compile_kernel`: identifier
-assignment for generated kernel source, formula njit-wrapping, and formula
-arity validation. Kept here so they have a stable home as the kernel machinery
-grows and so a second consumer can reuse them without importing compile_kernel.
+This module holds shared utilities that `numbox.core.variable.compile_kernel` uses: identifier assignment for the
+generated kernel source, the njit wrapping of formulas, and the validation of formula arity. The utilities are defined
+here so that their location stays stable as the kernel machinery grows, and so that a second consumer can reuse them
+without importing compile_kernel.
 """
 import hashlib
 import inspect
@@ -21,8 +21,8 @@ from numba.np.ufunc.dufunc import DUFunc
 
 from numbox.core.variable.variable import Variable
 
-# Names injected into the kernel exec namespace; identifiers must avoid them.
-# Kept in lockstep with the exec namespace assembled in compile_kernel._compile.
+# Names injected into the kernel exec namespace; identifiers must avoid them. The set must match the exec
+# namespace that compile_kernel._compile assembles.
 _RESERVED = frozenset({"njit", "_kernel_jit_options"})
 
 
@@ -37,10 +37,9 @@ def _sanitize(qual_name: str) -> str:
 def _assign_identifiers(variables: list[Variable]) -> dict[Variable, str]:
     """Map each Variable to a unique, valid, readable Python identifier.
 
-    Readable (from the qual_name) with a minimal deterministic sha256 suffix
-    only where names would otherwise collide. Reserves both the node temp `t`
-    and its formula global `f_<t>` so those namespaces never clash, and avoids
-    the injected reserved names.
+    The identifier is derived from the qual_name, so it stays readable, and it receives a minimal deterministic sha256
+    suffix only if names would otherwise collide. The function reserves both the node temp `t` and its formula global
+    `f_<t>`, so that those namespaces never clash, and it avoids the injected reserved names.
     """
     used = set(_RESERVED)
     idents = {}
@@ -64,8 +63,11 @@ def _assign_identifiers(variables: list[Variable]) -> dict[Variable, str]:
 
 
 def _wrap_formula(formula: Callable, flags: dict | None = None) -> Dispatcher | CompileResultWAP | DUFunc | CFunc:
-    """Return an njit-callable for `formula`; plain-Python callables are njit-wrapped
-    with the kernel's effective jit `flags` so their semantics match the fused kernel."""
+    """Return an njit-callable for `formula`.
+
+    A plain-Python callable is njit-wrapped with the kernel's effective jit `flags`, so that its semantics match the
+    fused kernel.
+    """
     if isinstance(formula, (Dispatcher, CompileResultWAP, DUFunc, CFunc)):
         return formula
     if not callable(formula):
@@ -74,30 +76,30 @@ def _wrap_formula(formula: Callable, flags: dict | None = None) -> Dispatcher | 
 
 
 def _strip_cache(flags: dict | None) -> dict:
-    """Drop `cache` from the flags used for the transient return-type probe in
-    `_validate_declared_return`: the probe is a throwaway compile, so it must not
-    read or write numba's on-disk cache. (Fused-kernel staleness is handled
-    separately, by folding each formula's digest into the kernel name.)"""
+    """Drop `cache` from the flags used for the transient return-type probe in `_validate_declared_return`.
+
+    The probe is a compile whose result is discarded, so it must not read or write numba's on-disk cache.
+    Fused-kernel staleness is handled separately, by folding each formula's digest into the kernel name.
+    """
     return {k: v for k, v in (flags or {}).items() if k != "cache"}
 
 
 def _validate_declared_return(formula, input_types: tuple, declared, flags: dict | None = None) -> None:
-    """Raise if the formula's NATURAL return type at `input_types` differs from
-    `declared`.
+    """Raise if the formula's NATURAL return type at `input_types` differs from `declared`.
 
-    njit(sig) silently coerces every convertible scalar mismatch (int<->float,
-    narrowing, sign), so the declared return cannot be trusted to fail fast. The
-    natural type is read by:
+    njit(sig) silently coerces every convertible scalar mismatch (between int and float, narrowing, sign), so the
+    declared return cannot be relied on to fail fast. The natural type is read as follows:
+
     - CFunc: `_sig.return_type` (data already present).
     - cres (CompileResultWAP): `signature().return_type` (no `_sig` attribute).
-    - DUFunc (@vectorize): no single return type; probe via an unconstrained
-      @njit shim applying the DUFunc at the declared input types.
+    - DUFunc (@vectorize): no single return type; probe it through an unconstrained @njit shim that applies the
+      DUFunc at the declared input types.
     - plain Python: an unconstrained @njit probe over the declared input types.
 
-    The comparison is equality (no coercion allowed) so the guard truly fires,
-    except that array layout is ignored: an elementwise formula naturally yields a
-    C-contiguous array, while a declared `float64[:]` is layout 'A', and numba freely
-    assigns one to the other -- a layout difference is not a declared-type violation.
+    The comparison is equality, with no coercion allowed, so that the check actually raises on a mismatch. Array
+    layout is the one exception, and is ignored. An elementwise formula naturally yields a C-contiguous array, while
+    a declared `float64[:]` has layout 'A', and numba allows assignment between the two in either direction. A
+    layout difference is therefore not a declared-type violation.
     """
     opts = _strip_cache(flags)
     if isinstance(formula, CFunc):
@@ -119,8 +121,8 @@ def _validate_declared_return(formula, input_types: tuple, declared, flags: dict
         probe.compile(input_types)
         natural = probe.nopython_signatures[-1].return_type
     if isinstance(natural, Array) and isinstance(declared, Array):
-        # Normalize both to layout 'A' so only dtype/ndim/readonly mismatches count
-        # (numba assigns C<->A freely).
+        # Normalize both to layout 'A', so that only dtype, ndim and readonly mismatches count; numba allows
+        # assignment between the C and A layouts in either direction.
         mismatch = natural.copy(layout="A") != declared.copy(layout="A")
     else:
         mismatch = natural != declared

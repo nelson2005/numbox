@@ -1,45 +1,37 @@
 """Higher-level registration helpers for structref-backed SQLite UDAFs.
 
-``register_aggregate`` / ``register_window`` generate the SQLite callback
-functions (xStep/xInverse/xValue/xFinal) that perform the per-group state
-lifecycle -- ``sqlite3_aggregate_context`` allocation + NULL guard, the single
-intp slot, init-on-first-step via ``export_meminfo``, ``borrow_structref``, and
-the release-in-xFinal-but-NOT-xValue rule -- so callers write only their
-``init``/``step``/``finalize`` (and ``inverse``/``value`` for windows) state
-logic, as plain Python or already-jitted (``@njit``/``@proxy``) functions.
+``register_aggregate`` and ``register_window`` generate the SQLite callback functions (xStep, xInverse, xValue and
+xFinal) that perform the per-group state lifecycle. The callbacks allocate a single intp slot with
+``sqlite3_aggregate_context`` and guard against a NULL result. They create the state on the first step through
+``export_meminfo``, keep it in that slot and borrow it with ``borrow_structref``. xFinal releases the state, and xValue
+does not. Callers therefore write only the state logic of ``init``, ``step`` and ``finalize`` (and ``inverse`` and
+``value`` for windows), as plain Python or as already-jitted (``@njit`` or ``@proxy``) functions.
 
-**Exception handling.** Each generated callback wraps the user
-step/inverse/value/finalize call in a ``try``/``except`` that reports a
-descriptive error via ``sqlite3_result_error`` (e.g. "error in user step
-callback", with code ``SQLITE_ERROR``) when the user callback raises.
-A numba ``@cfunc`` otherwise SWALLOWS the exception (it prints "Exception
-ignored" and returns the zero default without unwinding into SQLite), which would
-be a silent wrong result; the in-body catch also lets numba run the borrowed
-state's reference-count decrement, which the unwind would otherwise skip -- a
-per-group meminfo leak. Only ``xFinal`` releases the slot.
+**Exception handling.** Each generated callback wraps the call of the user step, inverse, value or finalize callback
+in a ``try``/``except``. When the user callback raises, the handler reports a descriptive error through
+``sqlite3_result_error``, for example "error in user step callback" with the code ``SQLITE_ERROR``. Without the
+handler, a numba ``@cfunc`` discards the exception: it prints "Exception ignored" and returns the zero default without
+unwinding into SQLite, so the query returns a wrong result without an error. The catch inside the body also lets
+numba decrement the reference count of the borrowed state. The unwind would skip that decrement and leak one meminfo
+per group. Only ``xFinal`` releases the slot.
 
-Mechanism: per-UDAF callback source is generated with the state type and the user functions
-baked in as module globals (so the calls inline), written to a content-addressed
-anchor file under numba's cache dir (reusing numbox.utils.preprocessing), and the
-impls (``@njit(**jit_options)`` -- the numbox-wide config, default ``cache=True``)
-cache across processes. The anchor's content hash
-folds a cloudpickle of the user functions' code objects so editing a body --
-including a numeric literal -- invalidates correctly.
+**Mechanism.** numbox generates the callback source of each UDAF with the state type and the user functions as module
+globals, so the calls are inlined. It writes the source to a content-addressed anchor file under numba's cache
+directory, with the helpers of numbox.utils.preprocessing. The impls (``@njit(**jit_options)``, the numbox-wide
+configuration with the default ``cache=True``) cache across processes. The content hash of the anchor includes a
+fingerprint of each user function's body, closure cells, defaults and referenced globals (``numbox.utils.digest``). If a
+body changes, even only in a numeric literal, the cache therefore invalidates correctly.
 
-**Caller requirements.** Callbacks may be plain Python functions or already-jitted
-callables (``@njit``/``@proxy``); plain ones are compiled with ``njit`` (see
-``_prepare_callbacks``). The generated impls (``@njit(**jit_options)``, default
-``cache=True``) cache and invalidate correctly even when the state-type class and
-the callbacks are defined in ``__main__`` -- the anchor key is content-addressed
-on a ``cloudpickle`` of each callback's ``__code__`` (plus ``repr(state_type)``,
-the resolved ``jit_options``, and the numba/numbox versions), never on
-``__module__`` (see ``numbox.utils.digest.digest``); the
-subprocess tests ``test_xprocess_cache_no_growth`` /
-``test_invalidation_on_literal_edit`` exercise this ``__main__`` path. The one
-case that does require a stable ``__module__`` is a *caller-side*
-``@njit(cache=True)`` callback -- numba refuses to cache functions defined in
-``__main__`` -- so for deployments where callbacks are themselves cached, define
-the state-type class and callbacks in an importable module.
+**Caller requirements.** Callbacks may be plain Python functions or already-jitted callables (``@njit`` or ``@proxy``),
+and ``njit`` compiles the plain ones (see ``_prepare_callbacks``). The generated impls (``@njit(**jit_options)``,
+default ``cache=True``) cache and invalidate correctly even when the state-type class and the callbacks are defined in
+``__main__``. The anchor key is content-addressed on the digest of each callback, which fingerprints its body, closure
+cells, defaults and referenced globals, together with ``repr(state_type)``, the resolved ``jit_options`` and the numba
+and numbox versions, and never on ``__module__`` (see ``numbox.utils.digest.digest``). The subprocess tests
+``test_xprocess_cache_no_growth`` and ``test_invalidation_on_literal_edit`` exercise this ``__main__`` path. Only a
+*caller-side* ``@njit(cache=True)`` callback requires a stable ``__module__``, because numba does not cache functions
+defined in ``__main__``. If the callbacks are themselves cached, define the state-type class and the callbacks in an
+importable module.
 """
 import ctypes
 
@@ -58,8 +50,8 @@ from numbox.utils.preprocessing import (
     _orphan_anchor_sweep,
 )
 
-# These names are referenced by the GENERATED anchor source; importing them here
-# puts them in this module's __dict__, which seeds the exec namespace below.
+# The generated anchor source references these names. Importing them here adds them to this module's __dict__, and
+# _compile_callbacks copies that __dict__ into the exec namespace.
 import numpy as np  # noqa: F401
 from numba import carray, njit  # noqa: F401
 from numbox.core.configurations import jit_options  # noqa: F401
@@ -78,10 +70,10 @@ _ANCHOR_SUBDIR = "numbox-sqlite-udaf"
 _orphan_anchor_sweep(_ANCHOR_SUBDIR)
 
 
-# Generated-source templates. Baked global names: _state_type, _init, _step,
-# _finalize, _inverse, _value, jit_options. Each impl is @njit(**jit_options)
-# (numbox-wide config, default cache=True) so it caches cross-process; the user
-# fns inline because they are module globals here.
+# Generated-source templates. The generated source has these module globals: _state_type, _init, _step, _finalize,
+# _inverse, _value and jit_options. Each impl is @njit(**jit_options), the numbox-wide configuration with the default
+# cache=True, so it caches across processes. The calls of the user functions are inlined, because the functions are
+# module globals here.
 _XSTEP_SRC = '''
 @njit(**jit_options)
 def _xstep_impl(ctx, argc, argv_pp):
@@ -192,13 +184,13 @@ def _validate_state_type(state_type):
 
 
 def _prepare_callbacks(**fns):
-    """Return ``fns`` with each callback ensured numba-compiled: an already
-    jitted callable (``@njit``, ``@proxy``, ...) passes through; a plain Python
-    function is wrapped with ``njit``. The callbacks are inlined into the
-    generated ``@njit(cache=True)`` impls, so a lazy ``njit`` (no explicit
-    signature) suffices -- the impl drives specialization -- and the
-    content-addressed anchor (keyed on ``py_func.__code__``) provides the
-    cross-process caching, so callbacks need no ``cache=True`` of their own."""
+    """Return ``fns`` with each callback as a numba-compiled callable.
+
+    An already jitted callable (``@njit``, ``@proxy``, ...) passes through, and a plain Python function is wrapped
+    with ``njit``. The callbacks are inlined into the generated ``@njit(cache=True)`` impls, so a lazy ``njit`` with no
+    explicit signature suffices: the impl determines the specialization. The content-addressed anchor, keyed on
+    ``py_func.__code__``, provides the cross-process caching, so the callbacks need no ``cache=True`` of their own.
+    """
     prepared = {}
     for role, fn in fns.items():
         if is_jitted(fn):
@@ -212,20 +204,20 @@ def _prepare_callbacks(**fns):
 
 
 def _compile_callbacks(stem, srcs, state_type, fns):
-    """Generate + content-address-anchor + exec the @njit(cache=True) impls.
+    """Generate the @njit(cache=True) impls, anchor them at a content-addressed file and exec them.
 
-    ``fns`` maps generated global names (``_init``, ``_step``, ...) to user
-    callables. Returns the exec namespace (contains ``_xstep_impl`` etc.)."""
-    # repr(state_type) is only the class qualname + field list, so same-qualname
-    # StructRef classes in different modules would collide; fold the defining
-    # module + qualname into the digest subject. (An @overload_method attached to
-    # the type outside this registration is still not captured here -- for
-    # make_structref-built types its body is folded via the method hash.)
+    ``fns`` maps the generated global names (``_init``, ``_step``, ...) to the user callables. Returns the exec
+    namespace, which contains ``_xstep_impl`` and the other impls.
+    """
+    # repr(state_type) gives only the class qualname and the field list, so StructRef classes with the same qualname
+    # in different modules would collide. The digest subject therefore includes the defining module and the qualname.
+    # An @overload_method attached to the type outside this registration is still not captured here. For a type that
+    # make_structref builds, the method hash includes the body of such a method.
     state_id = "%s.%s;%r" % (type(state_type).__module__, type(state_type).__qualname__, state_type)
     udaf_digest = digest(state_id, list(fns.values()))
     code_txt = "# udaf-digest: %s\n%s" % (udaf_digest, "".join(srcs))
-    # globals() is this module's __dict__; it carries __name__, which numba's
-    # warm-cache Environment rebuild requires when reloading the cached impls.
+    # globals() is this module's __dict__, and it carries __name__. numba needs __name__ to rebuild the Environment
+    # when it reloads the cached impls from a warm cache.
     anchor = _anchor_path(_ANCHOR_SUBDIR, stem, code_txt)
     ns = {**globals(), "_state_type": state_type, **fns,
           "jit_options": _anchored_or_uncached(anchor, code_txt, jit_options)}
@@ -252,20 +244,20 @@ def register_aggregate(db, name, n_arg, state_type, init, step, finalize,
                        *, deterministic=False):
     """Register a structref-backed aggregate UDAF.
 
-    Callbacks may be plain Python or already-jitted (``@njit``/``@proxy``); plain
-    functions are compiled with ``njit``.
+    Callbacks may be plain Python or already-jitted (``@njit`` or ``@proxy``), and ``njit`` compiles the plain
+    functions.
 
     :param db: connection pointer (intp), as returned by ``sqlite3_open``.
-    :param name: SQL function name (str); the C-string lifetime is handled here.
+    :param name: SQL function name (str); this function handles the lifetime of the C string.
     :param n_arg: argument count, or -1 for variadic.
     :param state_type: the numba structref *instance* type for per-group state.
     :param init: ``() -> state`` returning a fresh state.
     :param step: ``(state, ctx, argc, argv_pp)`` updating state.
     :param finalize: ``(state, ctx)`` writing the result.
-    :param deterministic: OR-in ``SQLITE_DETERMINISTIC``.
+    :param deterministic: if true, OR ``SQLITE_DETERMINISTIC`` into the flags.
 
-    Returns ``None``; the generated callbacks need not be retained -- numba keeps
-    the compiled cfunc code and dispatchers resident for the process lifetime.
+    Returns ``None``. The caller need not retain the generated callbacks, because numba keeps the compiled cfunc code
+    and the dispatchers resident for the lifetime of the process.
     """
     _validate_state_type(state_type)
     fns = _prepare_callbacks(init=init, step=step, finalize=finalize)
@@ -296,10 +288,9 @@ def register_window(db, name, n_arg, state_type, init, step, inverse, value,
                     finalize, *, deterministic=False):
     """Register a structref-backed window UDAF.
 
-    Same as :func:`register_aggregate` plus ``inverse(state, ctx, argc,
-    argv_pp)`` (un-applies a row; state already exists) and ``value(state,
-    ctx)`` (emits the running result WITHOUT releasing). Only ``xFinal``
-    releases the meminfo.
+    The parameters are those of :func:`register_aggregate`, plus ``inverse(state, ctx, argc, argv_pp)`` and
+    ``value(state, ctx)``. ``inverse`` removes the contribution of a row from a state that already exists. ``value``
+    emits the running result without releasing the state. Only ``xFinal`` releases the meminfo.
     """
     _validate_state_type(state_type)
     fns = _prepare_callbacks(init=init, step=step, inverse=inverse, value=value,

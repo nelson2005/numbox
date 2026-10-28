@@ -1,19 +1,14 @@
-"""SQLite connection + metadata bindings.
+"""SQLite connection and metadata bindings.
 
-Resolves the shared library via ``load_lib("sqlite3")`` from
-``utils._loaded_libs``. Other ``sqlite/*.py`` modules (currently
-``column``) call the same getter rather than importing
-``_sqlite3_lib`` from here, so there's no cross-module dependency on
-which file happens to load the library first.
+This module resolves the shared library through ``load_lib("sqlite3")`` from ``utils._loaded_libs``. Other
+``sqlite/*.py`` modules (currently ``column``) call the same getter rather than importing ``_sqlite3_lib`` from here,
+so no module depends on which file loads the library first.
 
-Two functions are decorated with ``proxy_if_available``:
-``sqlite3_changes64`` and ``sqlite3_total_changes64``, both added in
-SQLite 3.37 (Nov 2021). Older library versions lack these symbols —
-notably the SQLite 3.34 shipped with CPython 3.10 on Windows, and
-distro-shipped system sqlite3 on Linux / macOS that predates 3.37.
-The wrappers stub to ``NotImplementedError`` so callers can
-``hasattr(...,"as_func")`` to decide whether to use them or fall back
-to the int32 variants.
+Two functions are decorated with ``proxy_if_available``: ``sqlite3_changes64`` and ``sqlite3_total_changes64``, both
+added in SQLite 3.37 (Nov 2021). Older library versions lack these symbols, notably the SQLite 3.34 shipped with
+CPython 3.10 on Windows, and a distro-shipped system sqlite3 on Linux or macOS that predates 3.37. The wrappers are
+then stubs that raise ``NotImplementedError``, so callers can check ``hasattr(...,"as_func")`` to decide whether to
+use them or to fall back to the int32 variants.
 """
 from numbox.core.bindings.call import _call_lib_func
 from numbox.core.bindings.signatures import signatures
