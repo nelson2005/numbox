@@ -4,9 +4,10 @@ numbox.core.cache_key
 Overview
 ++++++++
 
-numba keys a cached function on its signature, the target machine, and hashes of its bytecode and closure. Two
-things that do change the binary numba builds, but are not in that key, are the jit flags (such as ``fastmath``,
-``error_model`` and ``boundscheck``) and the ``NUMBA_*`` settings that change the code numba emits. If one of them
+numba keys a cached function on its signature, the target machine, and hashes of its bytecode and closure.
+Two things that do change the binary numba builds, but are not in that key, are the jit flags (such as ``fastmath``,
+``error_model`` and ``boundscheck``) and the ``NUMBA_*`` settings that change the code numba emits.
+If one of them
 changes between two runs, the second run loads the binary cached by the first, and numba issues no warning.
 
 numbox adds both to the key of every function it compiles, and of any function decorated with
@@ -77,22 +78,22 @@ function cached:
 
     scaled(1.0, settings.SCALE)
 
-The same holds for numbox's own code. Each release changes numbox's version, and with it every key that numbox adds.
-An edit in a development checkout, or an edit in place to a package's ``@intrinsic`` or ``@overload``, changes
+The same holds for numbox's own code. Each release changes numbox's version, and so changes every key that numbox
+adds. An edit in a development checkout, or an edit in place to a package's ``@intrinsic`` or ``@overload``, changes
 nothing that the key holds, so clear the cache after such an edit.
 
 The settings
 ++++++++++++
 
-Of the settings that numba's own key leaves out, numbox keys one if and only if changing it changes the LLVM IR or
-assembly that numba emits. A survey of numba
-0.63 to 0.68, each minor version at its latest patch release, compiled a fixed set of functions with each setting
-changed in turn and compared the code. Settings that change only speed or debugging information count as well, and
-so do ``NUMBA_DUMP_ASSEMBLY``, ``NUMBA_DEBUG`` and ``NUMBA_DIFF_IR``, which change the code as a side effect of the
-dumps they request. Three settings change the code only in combination with another setting or flag, so a survey
-that changes one setting at a time cannot reveal them. They were found in numba's source:
-``NUMBA_DEBUG_NRT_STACK_LIMIT`` changes the code only under ``NUMBA_DEBUG_NRT``, and ``NUMBA_FULL_TRACEBACKS`` and
-``NUMBA_DEVELOPER_MODE`` change it only where bounds checking is enabled.
+numbox keys a setting that numba's own key leaves out if and only if changing the setting changes the LLVM IR or
+assembly that numba emits. A survey of numba 0.63 to 0.68, each minor version at its latest patch release, compiled a
+fixed set of functions with each setting changed in turn and compared the code.
+Settings that change only speed or debugging information count as well, and so do ``NUMBA_DUMP_ASSEMBLY``,
+``NUMBA_DEBUG`` and ``NUMBA_DIFF_IR``, which change the code as a side effect of the dumps they request.
+Three settings change the code only in combination
+with another setting or flag, so a survey that changes one setting at a time cannot reveal them. numba's source shows
+them: ``NUMBA_DEBUG_NRT_STACK_LIMIT`` changes the code only under ``NUMBA_DEBUG_NRT``, and ``NUMBA_FULL_TRACEBACKS``
+and ``NUMBA_DEVELOPER_MODE`` change it only where bounds checking is enabled.
 ``NUMBA_DISABLE_INTEL_SVML`` changes the code only where Intel's SVML library is installed, which the survey's
 machines lacked. The keyed settings are :data:`~numbox.core.cache_key.KEYED_SETTINGS`. The table gives numba's
 default for each setting, which is the same on every version surveyed that reads the setting:
@@ -126,8 +127,8 @@ Setting                             Default                        Effect on the
 =================================== ============================== ===================================================
 
 Every other setting that numba 0.63 to 0.68 reads is in :data:`~numbox.core.cache_key.UNKEYED_SETTINGS`, with the
-reason it is not keyed: ``NUMBA_CPU_NAME`` and ``NUMBA_CPU_FEATURES`` are already in numba's own key;
-``NUMBA_DISABLE_JIT`` compiles nothing; the thread count, the threading layer and the other settings change no code
+reason it is not keyed. ``NUMBA_CPU_NAME`` and ``NUMBA_CPU_FEATURES`` are already in numba's own key, and
+``NUMBA_DISABLE_JIT`` compiles nothing. The thread count, the threading layer and the other settings change no code
 on any version surveyed. numba's parallel code reads the thread count at run time, and a binary built for one count
 runs correctly under another. A thread count that is stored in a global variable at import is treated like any other
 global, which the key leaves out, so pass it as an argument instead.
@@ -136,13 +137,13 @@ Limits
 ++++++
 
 - **When numba reads the settings.** Set a ``NUMBA_*`` variable before Python starts. numba reads
-  ``NUMBA_DISABLE_INTEL_SVML`` when it is imported, and from 0.66 on ``NUMBA_DEBUG_NRT`` and
-  ``NUMBA_DEBUG_NRT_STACK_LIMIT`` as well. It reads some other settings once, when the first jit decoration in a
-  process builds its code generator. It reads ``os.environ`` again only when a compile starts, after the key is read.
-  Any setting other than those three can also be changed in code through ``numba.config`` before the first jit
+  ``NUMBA_DISABLE_INTEL_SVML`` when it is imported and, from numba 0.66 on, reads ``NUMBA_DEBUG_NRT`` and
+  ``NUMBA_DEBUG_NRT_STACK_LIMIT`` at import as well. It reads some other settings once, when the first jit decoration
+  in a process builds its code generator. It reads ``os.environ`` again only when a compile starts, after the key is
+  read. Any setting other than those three can also be changed in code through ``numba.config`` before the first jit
   decoration. A change made later can leave the key inconsistent with the binary.
-- **Flags the key cannot hold.** A function given one of these compiles without an on-disk cache, in every process,
-  and an :class:`~numbox.core.cache_key.UncachedWarning` names it, once per process:
+- **Flags the key cannot hold.** A function decorated with one of these compiles without an on-disk cache, in every
+  process, and an :class:`~numbox.core.cache_key.UncachedWarning` names the function, once per process:
 
   - a ``parallel`` dict, which numba empties as it parses it, so that a later compile given the same dict uses
     numba's defaults; ``parallel=True`` is keyed;

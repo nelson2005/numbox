@@ -511,10 +511,9 @@ will return the previously created `Node` objects stored as the `node` attribute
 Exception handling
 ******************
 
-An exception raised inside a `derive` propagates out of `calculate` into the caller,
-carrying its original type and message. The node's `data` is left untouched and
-`derived` stays unset, so once the cause is addressed the node calculates again rather
-than serving a cached failure::
+An exception raised inside a `derive` propagates out of `calculate` into the caller, with its original type and
+message. The node's `data` is left as it was and `derived` stays unset, so once the cause is addressed the node
+calculates again rather than returning a cached failure::
 
     from numbox.core.work.work_utils import make_work_helper
 
@@ -531,110 +530,94 @@ than serving a cached failure::
         assert node.data == 1.0
         assert node.derived == 0
 
-This holds for every way of supplying a `derive` that numbox itself compiles:
-:func:`numbox.core.work.work.make_work`,
-:func:`numbox.core.work.lowlevel_work_utils.ll_make_work`,
-:func:`numbox.core.work.work_utils.make_work_helper` (whose `derive_py` argument is a
-plain Python function that the helper compiles with `cres`) and
-:class:`numbox.core.work.builder.Derived`, provided the `derive` reaches them with its
-numbox type intact. Handing one from Python to a jitted parameter that is *declared* as
-a plain ``FunctionType`` degrades it before it ever gets there; see the limits below.
+This holds for every way of supplying a `derive` that numbox itself compiles,
+:func:`numbox.core.work.work.make_work`, :func:`numbox.core.work.lowlevel_work_utils.ll_make_work`,
+:func:`numbox.core.work.work_utils.make_work_helper` and :class:`numbox.core.work.builder.Derived`, provided the
+`derive` reaches them with its numbox type intact.
+The
+`derive_py` argument of `make_work_helper` is a plain Python function that the helper compiles with `cres`.
+A `derive` passed from Python to a jitted parameter that is *declared* as a plain ``FunctionType`` degrades before it
+arrives there; see the limits below.
 
-This needs a numbox-owned type, for the following reason.
-`derive` is invoked through a first-class `FunctionType` call. numba can lower such a
-call two ways, choosing on the `jit_addr` slot of the function's data model: a populated
-slot selects the numba calling convention, which unwinds normally, while an empty one
-selects a C wrapper that numba documents as not supporting exceptions. That wrapper
-reports the exception on stderr as unraisable (``Exception ignored in:
-<numba.core.cpu.CPUContext ...>``) and returns a zero-initialized value without
-unwinding.
+Propagation needs a numbox-owned type, for the following reason. `derive` is invoked through a first-class
+`FunctionType` call. numba can lower such a call in two ways, and chooses on the `jit_addr` slot of the function's
+data model. A populated slot selects the numba calling convention, which unwinds normally. An empty slot selects a
+C wrapper that numba documents as not supporting exceptions: that wrapper reports the exception on stderr as
+unraisable (``Exception ignored in: <numba.core.cpu.CPUContext ...>``) and returns a zero-initialized value
+without unwinding.
 
-numba populates `jit_addr` only for a dispatcher, leaving it empty for the compile
-result that :func:`numbox.utils.highlevel.cres` produces. :mod:`numbox.utils.derive_wap`
-therefore defines its own :class:`~numbox.utils.derive_wap.DeriveWAP`, which captures
-the calling convention entry point, and :class:`~numbox.utils.derive_wap.DeriveFunctionType`,
-which fills the slot from it. The registrations go through numba's public extension API,
-save for ``lower_constant``, which ``numba.extending`` does not re-export; the data
-model, wrapper protocol and conversion types they build on sit outside it too. No numba
-internals are patched: nothing replaces numba behaviour, it only registers against it.
+numba populates `jit_addr` only for a dispatcher, and leaves it empty for the compile result that
+:func:`numbox.utils.highlevel.cres` produces. :mod:`numbox.utils.derive_wap` therefore defines its own
+:class:`~numbox.utils.derive_wap.DeriveWAP` to capture the calling convention entry point, and
+:class:`~numbox.utils.derive_wap.DeriveFunctionType` to fill the slot from it. The registrations go through numba's
+public extension API, except ``lower_constant``, which ``numba.extending`` does not re-export; the data model, the
+wrapper protocol and the conversion types they build on are outside that API too. No numba internals are patched:
+numbox replaces no numba behavior, it only registers against it.
 
-These limits are worth knowing:
+The limits:
 
-- A `derive` built directly against numba as a ``CompileResultWAP`` rather than through
-  `cres` carries no entry point to call. :func:`numbox.core.work.work.make_work` upgrades
-  such a value when it is passed from Python, because the check is on the object's class.
-  One reached from jitted scope cannot be upgraded and keeps the old behaviour. The upgrade
-  is attached to the object it upgrades and reused, so the node's `derive` attribute reads
-  back as the upgraded wrapper rather than as the object that was passed in. It wraps the
-  same compile result and is called identically; only the identity differs.
-- A `derive` handed from Python into a jitted function whose parameter is *declared* as a
-  plain ``FunctionType`` degrades to the C convention on the way in, so the exception is
-  discarded even though the node was built with `make_work` and calculated normally. An
-  inferred-signature ``njit`` keeps the numbox type and propagates, and a cast to
-  ``FunctionType`` reached from within jitted scope keeps it too, because that cast is an
-  identity on a shared data model. It is specifically the declared parameter, crossed from
-  Python, that degrades.
-- Wherever the exception is discarded, the zero fill is not merely a wrong number. For
-  `unicode_type` `data` it is an all-zero string struct whose data pointer is NULL, so
-  reading `work.data` back from Python dereferences it and terminates the interpreter with
-  a segmentation fault. `derived` is set regardless, so a later `calculate` is a no-op and
-  the value is permanent.
-- The exception's type and message are not recoverable *inside* a jitted body: numba
-  rejects both ``except ... as e`` and any typed ``except`` clause other than
-  ``Exception``. Code that needs to react to a specific failure in jitted scope still has
-  to encode it in the returned value.
-- A container that mixes a `cres` derive with a differently typed function value: a tuple
-  holding a `cres` alongside a plain ``CompileResultWAP``, a signature-declared njit
-  dispatcher or a ``cfunc``. numba unifies the element types before any of numbox's
-  conversions apply, and ``numba.core.utils.unified_function_type``, for numba<0.68.0,
-  requires every function type it meets to equal the first through a bare ``assert``,
-  so the failure arrives as an ``AssertionError`` carrying no message (fixed in numba==0.68.0).
-  A lazily compiled ``@njit`` dispatcher in the mix is the one subcase that reads
-  differently: unification accepts it, and numbox's guard then rejects it at the unboxing
-  boundary with a ``TypeError`` naming the offending type.
-  A ``@proxy`` binding's ``.as_func`` is a `DeriveFunctionType`
-  value as well (see :doc:`numbox.core.proxy`), so it meets this limit identically: a
-  tuple mixing it with a plain ``CompileResultWAP`` fails on the same assertion, for numba<0.68,
-  where before it unified and returned a value.
-  Homogeneous containers are unaffected, including a tuple of two `cres` derives, or a
-  `cres` derive alongside a `@proxy` binding's `.as_func` of the same signature. This
-  is not specific to numbox: two plain ``CompileResultWAP`` values of different
-  signatures but the same argument count fail identically with numbox uninvolved,
-  for numba<0.68.
-  What numbox changes is how easily the case is reached, since `DeriveFunctionType` is a
-  distinct type from ``FunctionType`` and numba compares function types by class. Making the
-  two compare equal is not available as a fix. numba interns types in a cache keyed by a
-  weak reference, whose equality is the referent's, so equal types collapse onto whichever
-  was interned first: either the derive type resolves to the plain one and every derive goes
-  back to discarding its exception, or the plain type resolves to the derive one and every
-  plain function value fails to unbox.
-- Upgrading numbox does not invalidate numba's own on-disk cache. A module of your own
-  compiled with ``cache=True`` against an older numbox keeps cache-hitting after the
-  upgrade, and where it takes a plain ``FunctionType`` `derive` it goes on discarding the
-  exception, because numba keys the entry on your source rather than on the version of the
-  library that compiled it. **Clear** ``NUMBA_CACHE_DIR`` **after upgrading.** A `cres`
-  derive is unaffected: its type name changes, so the entry re-keys on its own.
-- Downgrading numbox below this feature, after a cached compile has seen a `derive`,
-  leaves that cache unreadable rather than merely stale. numba unpickles the stored type
-  index before it checks the freshness stamp, so the load fails outright with
-  ``ModuleNotFoundError: No module named 'numbox.utils.derive_wap'``. Editing or
-  touching your own source does not clear it; deleting the cache directory does.
+- A `derive` built directly against numba as a ``CompileResultWAP``, rather than through `cres`, carries no entry
+  point to call. :func:`numbox.core.work.work.make_work` upgrades such a value when it is passed from Python, because
+  the check is on the object's class. A value reached from jitted scope cannot be upgraded and keeps the old
+  behavior. The upgrade is attached to the object it upgrades and reused, so the node's `derive` attribute reads back
+  as the upgraded wrapper rather than as the object that was passed in. The wrapper holds the same compile result and
+  is called identically; only the identity differs.
+- A `derive` passed from Python into a jitted function whose parameter is *declared* as a plain ``FunctionType``
+  degrades to the C convention at the boundary. The exception is then discarded even though the node was built with
+  `make_work` and calculated normally. An inferred-signature ``njit`` keeps the numbox type and propagates the
+  exception.
+  A cast to ``FunctionType`` within jitted scope keeps the numbox type too, because that cast is an identity on a
+  shared data model.
+  Only the declared parameter, passed from Python, degrades.
+- Wherever the exception is discarded, the zero fill has consequences beyond a wrong number. The zero fill of
+  `unicode_type` `data` is an all-zero string struct whose data pointer is NULL, so reading `work.data` back from
+  Python dereferences the NULL pointer and terminates the interpreter with a segmentation fault. `derived` is set
+  regardless, so a later `calculate` does nothing and the value is permanent.
+- The exception's type and message are not recoverable *inside* a jitted body: numba rejects both ``except ... as e``
+  and any typed ``except`` clause other than ``Exception``. Code that needs to react to a specific failure in jitted
+  scope still has to encode it in the returned value.
+- A container that mixes a `cres` derive with a differently typed function value: a tuple holding a `cres` alongside
+  a plain ``CompileResultWAP``, a signature-declared njit dispatcher or a ``cfunc``. numba unifies the element types
+  before any of numbox's conversions apply, and ``numba.core.utils.unified_function_type``, for numba<0.68.0,
+  requires every function type it meets to equal the first through a bare ``assert``, so the failure arrives as an
+  ``AssertionError`` carrying no message (fixed in numba==0.68.0).
+  A lazily compiled ``@njit`` dispatcher in the mix is the one subcase that reads differently: unification accepts
+  it, and numbox's guard then rejects it at the unboxing boundary with a ``TypeError`` naming the offending type.
+  A ``@proxy`` binding's ``.as_func`` is a
+  `DeriveFunctionType` value as well (see :doc:`numbox.core.proxy`), so it meets this limit identically: a tuple
+  mixing it with a plain ``CompileResultWAP`` fails on the same assertion, for numba<0.68, where before it unified
+  and returned a value. Homogeneous containers are unaffected, including a tuple of two `cres` derives, or a `cres`
+  derive alongside a `@proxy` binding's `.as_func` of the same signature. This is not specific to numbox: two plain
+  ``CompileResultWAP`` values of different signatures but the same argument count fail identically with numbox
+  uninvolved, for numba<0.68. numbox changes how easily the case is reached, since `DeriveFunctionType` is a distinct
+  type from ``FunctionType`` and numba compares function types by class. Making the two compare equal is not
+  available as a fix. numba interns types in a cache keyed by a weak reference, whose equality is the referent's, so
+  equal types resolve to whichever was interned first. Either the derive type resolves to the plain one and every
+  derive reverts to discarding its exception, or the plain type resolves to the derive one and every plain function
+  value fails to unbox.
+- Upgrading numbox does not invalidate numba's own on-disk cache. A module of your own compiled with ``cache=True``
+  against an older numbox continues to load from the cache after the upgrade, because numba keys the entry on your
+  source rather than on the version of the library that compiled it. That module continues to discard the exception
+  where it takes a plain ``FunctionType`` `derive`. **Clear** ``NUMBA_CACHE_DIR`` **after upgrading.** A `cres` derive is
+  unaffected: its type name changes, so the entry is re-keyed automatically.
+- Downgrading numbox below this feature, after a cached compile has seen a `derive`, leaves that cache unreadable
+  rather than stale. numba unpickles the stored type index before it checks the freshness stamp, so the load fails
+  with ``ModuleNotFoundError: No module named 'numbox.utils.derive_wap'``. Editing or touching your own source does
+  not clear it; deleting the cache directory does.
 
-Compiling the `derive` itself with ``parallel`` or ``nogil`` changes nothing, including
-when the raise sits inside the `derive`'s own ``prange``.
+Compiling the `derive` itself with ``parallel`` or ``nogil`` changes nothing, including when the raise is inside
+the `derive`'s own ``prange``.
 
-Invoking `calculate` from *inside* a ``prange`` body is the one case that does differ,
-and it differs by platform. On Linux the failure arrives as numba's
-``SystemError: ... returned a result with an exception set``, with the original exception
-reachable through ``__cause__``, so an ``except ValueError`` around such a call does not
-match. On macOS nothing is raised at all, so the loop finishes and the caller reads the
-node's previous `data` with no indication that the `derive` failed. Neither behaviour is
-specific to a `derive`: this is numba's handling of an exception escaping a parallel
-region, and a plain jitted function raising inside ``prange`` behaves the same way with
-numbox uninvolved. What holds on every platform is that the node is left alone, keeping
-its `data` and its unset `derived`, so the failure is not cached and a later `calculate`
-outside the parallel region raises normally. **Do not rely on a raise to detect a failed
-`derive` when `calculate` is called inside a ``prange`` body.**
+Invoking `calculate` from *inside* a ``prange`` body is the one case that does differ, and it differs by platform.
+The failure arrives on Linux as numba's ``SystemError: ... returned a result with an exception set``, with the
+original exception reachable through ``__cause__``, so an ``except ValueError`` around such a call does not match.
+On macOS nothing is raised, so the loop finishes and the caller reads the node's previous `data` with no indication
+that the `derive` failed.
+Neither behavior is specific to a `derive`: numba handles an exception that escapes a parallel region this way, and a
+plain jitted function raising inside ``prange`` behaves the same when numbox is not involved.
+The node is left as it was on every platform, with its `data` and its unset `derived`, so the failure
+is not cached and a later `calculate` outside the parallel region raises normally. **Do not rely on a raise to detect
+a failed `derive` when `calculate` is called inside a ``prange`` body.**
 
 Graph manager
 *************
@@ -668,10 +651,9 @@ One option to build a graph manager would be via the constructor such as::
         registry_[name] = _cast(work_, NodeType)
         return work_
 
-Here :func:`numbox.core.work.lowlevel_work_utils.ll_make_work` is the intrinsic
-`Work` constructor — it inlines directly into the calling jitted scope, whereas
-:func:`numbox.core.work.work.make_work` is the Python-scope convenience wrapper around it,
-a plain function whose jitted callers reach an ``@overload`` of the same shape.
+Here :func:`numbox.core.work.lowlevel_work_utils.ll_make_work` is the intrinsic `Work` constructor, which
+inlines directly into the calling jitted scope. :func:`numbox.core.work.work.make_work` is the Python-scope
+wrapper around it, a plain function whose jitted callers reach an ``@overload`` of the same shape.
 The utility registry module can be defined as
 
 .. literalinclude:: ./_static/work_registry.py

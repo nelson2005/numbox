@@ -60,22 +60,20 @@ Then in a *different module* main.py define::
 numbox.utils.derive_wap
 -----------------------
 
-A first-class ``FunctionType`` value carries three addresses in its data model, and which
-one numba calls decides whether an exception can leave the call. The ``jit_addr`` slot holds
-the numba calling convention entry point, which unwinds; when it is empty numba calls the C
-wrapper instead, which it documents as not supporting exceptions.
+A first-class ``FunctionType`` value carries three addresses in its data model, and the address that numba calls
+decides whether an exception can leave the call. The ``jit_addr`` slot holds the entry point of the numba calling
+convention, which unwinds. When the slot is empty, numba calls the C wrapper instead, which numba documents as not
+supporting exceptions.
 
-numba populates that slot for a ``Dispatcher`` and leaves it empty for everything else, so
-the compile result behind :func:`numbox.utils.highlevel.cres` would arrive with the slot
-unset. :class:`~numbox.utils.derive_wap.DeriveWAP` captures the entry point from the compile
-result and :class:`~numbox.utils.derive_wap.DeriveFunctionType` fills the slot from it, on
-both unboxing and constant lowering.
+numba fills that slot for a ``Dispatcher`` and leaves it empty for everything else, so the compile result that
+:func:`numbox.utils.highlevel.cres` wraps would arrive with the slot unset.
+:class:`~numbox.utils.derive_wap.DeriveWAP`
+captures the entry point from the compile result, and :class:`~numbox.utils.derive_wap.DeriveFunctionType` fills
+the slot from it, on both unboxing and constant lowering.
 
-The three slots are directly observable through
-:func:`numbox.utils.lowlevel.get_func_tuple`, which is the clearest way to see what the type
-adds. ``jit_addr`` is populated and matches the entry point the wrapper captured, while
-numba's own ``_get_jit_address`` still yields 0 for the same value, because it resolves an
-address only for a ``Dispatcher``.
+The three slots can be read through :func:`numbox.utils.lowlevel.get_func_tuple`, which shows what the type adds.
+``jit_addr`` is filled and matches the entry point the wrapper captured, while numba's own ``_get_jit_address``
+still returns 0 for the same value, because it resolves an address only for a ``Dispatcher``.
 
 .. code-block:: python
 
@@ -100,13 +98,12 @@ address only for a ``Dispatcher``.
     assert _get_jit_address(add, sig) == 0
 
 :func:`numbox.utils.highlevel.cres` is not the only source of one.
-A ``@proxy`` binding's ``.as_func`` is a :class:`~numbox.utils.derive_wap.DeriveWAP` too,
-minted from the proxied body's compile result, with the same exception semantics and the
-same effect on a jitted caller that reaches it as a constant. See :doc:`numbox.core.proxy`.
+A ``@proxy`` binding's ``.as_func`` is a :class:`~numbox.utils.derive_wap.DeriveWAP` too, built from the proxied
+body's compile result, with the same exception semantics and the same effect on a jitted caller that reaches it as
+a constant. See :doc:`numbox.core.proxy`.
 
-``test/utils/test_lowlevel.py::test_get_func_tuple`` pins every assertion above except the
-first; the wrapper's type is pinned separately by
-``test/utils/test_derive_wap.py::test_cres_mints_a_derive_wap``.
+``test/utils/test_lowlevel.py::test_get_func_tuple`` checks every assertion above except the first; the wrapper's
+type is checked separately by ``test/utils/test_derive_wap.py::test_cres_mints_a_derive_wap``.
 
 .. automodule:: numbox.utils.derive_wap
    :members:
@@ -119,119 +116,99 @@ numbox.utils.preprocessing
 Cache-anchor mechanism
 ''''''''''''''''''''''
 
-``make_structref`` writes the generated ``code_txt`` to a
-content-addressed file under numba's cache directory and uses that
-file -- not ``highlevel.py`` -- as the ``compile()`` anchor. The
-content-addressing is what keeps numba's per-overload cache correct
-when two versions of the generated code differ only in ``co_consts``.
+``make_structref`` writes the generated ``code_txt`` to a content-addressed file under numba's cache directory and
+uses that file, not ``highlevel.py``, as the ``compile()`` anchor. The content addressing keeps numba's per-overload
+cache correct when two versions of the generated code differ only in ``co_consts``.
 
-Numba's per-overload cache key
-(``numba.core.caching.Cache._index_key``) is::
+numba's per-overload cache key (``numba.core.caching.Cache._index_key``) is::
 
     (sig, codegen.magic_tuple(), hash(co_code), hash(closure_cells))
 
-It hashes ``co_code`` only, not ``co_consts``. Python's
-`LOAD_CONST <https://docs.python.org/3/library/dis.html#opcode-LOAD_CONST>`_
-opcode encodes an *index* into ``co_consts`` rather than the value
-itself, so two methods differing only in a numeric literal
-(``return self.x + 1`` vs ``return self.x + 1000``) produce identical
-``co_code``. With a shared anchor file both would resolve to the same
-cache files: numba names them after the anchor file's stem and the
-function's qualified name (``CacheImpl.get_filename_base``), in one
-directory for them all, the ``__pycache__`` beside the anchors where
-numba's in-tree locator takes them or, under ``NUMBA_CACHE_DIR`` or
-the user's cache directory, a subdirectory derived from a hash of the
-anchors' *directory* (``_CacheLocator.get_suitable_cache_subpath``),
-so the second to compile would silently load the first's binary.
-Per-content anchors segregate the two by the anchor's stem, which
-numba puts in the cache files' names, so the collision never arises;
-every anchor shares that one directory.
+It hashes ``co_code`` only, not ``co_consts``. Python's `LOAD_CONST
+<https://docs.python.org/3/library/dis.html#opcode-LOAD_CONST>`_ opcode encodes an *index* into ``co_consts`` rather
+than the value itself, so two methods that differ only in a numeric literal (``return self.x + 1`` and ``return
+self.x + 1000``) have identical ``co_code``. With a shared anchor file, both would resolve to the same cache files.
+numba names a cache file after the anchor file's stem and the function's qualified name
+(``CacheImpl.get_filename_base``), and puts every such file in one directory. That directory is the ``__pycache__``
+beside the anchors where numba's in-tree locator takes them. Under ``NUMBA_CACHE_DIR`` or the user's cache directory,
+it is a subdirectory derived from a hash of the anchors' *directory* (``_CacheLocator.get_suitable_cache_subpath``).
+The second version to compile would then load the first version's binary, and numba would issue no warning. A
+per-content anchor gives each version its own stem, which numba puts in the cache files' names, so the collision
+never arises; every anchor shares that one directory.
 
-Structural body changes -- different operators, additional
-statements, renamed variables -- produce different ``co_code`` and
-therefore different ``_index_key`` values regardless of the anchoring
-scheme; those invalidate cleanly even under a shared anchor. The
-narrow failure mode protected by content-addressing is constant-only
-edits (numeric or string literals, default arg values) where
-``co_code`` is identical across versions.
+A structural change to a body (a different operator, an additional statement, a renamed variable) produces
+different ``co_code`` and therefore a different ``_index_key`` under any anchoring scheme, and invalidates the cache
+correctly even under a shared anchor.
+The content addressing protects against a narrow failure mode: an edit to constants only (numeric or string literals,
+default argument values), where ``co_code`` is identical across versions.
 
-Python 3.14's
-`LOAD_SMALL_INT <https://docs.python.org/3.14/whatsnew/3.14.html>`_
-opcode inlines small integers directly into ``co_code``, narrowing
-the failure mode on that version to constants outside the inline
-range. Earlier supported versions (3.10--3.13) collide on any
-constant edit.
+Python 3.14's `LOAD_SMALL_INT <https://docs.python.org/3.14/whatsnew/3.14.html>`_ opcode inlines small integers
+into ``co_code``, which narrows that case on that version to constants outside the inline range. The earlier
+supported versions (3.10 to 3.13) collide on any constant edit.
 
-The anchor is written whenever it can be: numba caches from it, and
-quotes the source from it in its messages, a typing error's among them,
-so with caching off a write that fails is nothing and the path serves
-as the code's name, as it did. With caching on numba is then asked
-whether it can cache a function of that file, the question the package
-puts for its own modules; where the write fails, for whatever reason,
-or the answer is
-no, an unwritable user cache directory or ``NUMBA_CACHE_DIR`` with no
-other location left, the generated code compiles without a cache after
-one warning naming the remedy, instead of dying at the write or at
-numba's set-up. A path too long for the file system is one such
-failure, and the warning says so where the file system does (Windows
-reports a component too long as a syntax error, and the warning then
-offers the directory, quoting the error); with the names bounded, as below,
-the directory is the only part that can make it so, ``NUMBA_CACHE_DIR``
-or the user's cache directory, and ``NUMBA_CACHE_DIR`` at a shorter
-path moves the anchor out of either. A cache directory whose path is
-not UTF-8 is another: numba hashes the anchor's directory path as UTF-8
-to name its cache directory, and the warning asks for ``NUMBA_CACHE_DIR``
-at a UTF-8 path. The anchor's check writes a name as long as the
-longest numba writes for the functions it anchors, read off the
-generated code, the functions decorated themselves or defined within a
-decorated one, an overload's constructor among them: the stem, the
-function's qualified name, its line, Python's version, three digits
-for the data file's number, which numba counts from one without
-bound, and the 21 of the temporary name numba writes each
-file through, so a user cache directory
-or a ``NUMBA_CACHE_DIR`` within that of the path limit, 4096 on Linux,
-fails it and the generated code compiles without a cache after the
-warning; the check wrote a short name there, which numba's own check
-passes too, and numba's first save died through the struct's making
-with no warning at all, and a bound for any struct, 251, then turned
-caching off on a file system whose name limit is under it for a struct
-whose names were a quarter of that. The package's own check answers
-first only nearer the limit, within about 175 bytes of it: the package's
-location under ``NUMBA_CACHE_DIR`` is a directory named for its own, by
-its name and a hash of its path, and its check reserves the length of
-numba's files for the package's functions, so it fails only where those
-no longer fit; the generated code then compiles under its answer.
+numbox writes the anchor whenever it can.
+numba caches from the anchor and quotes the source from it in
+its messages, a typing error's message among them. With caching off, a failed write has no effect, and the path
+serves as the code's name, as it did before.
+With caching on, numbox then asks numba whether it can cache a function of that file, the same question the package
+asks for its own modules.
+The write can fail for any reason, and the answer is no when, for example, the user's cache directory or
+``NUMBA_CACHE_DIR`` is unwritable and no other location is left.
+The generated code then compiles
+without a cache in either case, after one warning that names the remedy, instead of failing at the write or at
+numba's set-up.
 
-The anchor's name carries the struct's or the function's, and numba
-names its cache files after the anchor and the qualified name of the
-function it caches, which carries the struct's again through the class
-whose body defines the jitted getters and method thunks, so a struct
-named with about 93 characters overflowed the 255 bytes a file system
-allows a name, in numba's own files past the anchor's check. Those
-names are bounded now (``bounded_stem``): a name of 40 bytes or fewer
-is used as it is, so nearly every struct keeps the file names it had,
-and a longer one becomes the whole characters of it that fit in 31
-bytes and a digest of the whole. The measure is the name's UTF-8,
-which is the file system's: a character of another script takes up to
-four bytes there. The generated class is defined under the bounded name and
-takes the struct's full name back once its body is compiled, so
-``__name__``, ``__qualname__`` and ``repr`` show the name the caller
-gave, whatever its length, and the struct caches. A field's jitted
-getter is defined under the bounded name the same way and the
-property takes the field's, so a field's name of any length caches
-too; a method's name is bounded in its thunk and its overload.
-``compile_kernel``, the work builder's derives and the sqlite
-aggregate, window and table-valued function registrations anchor their
-generated code the same way and fall back the same way, the derive
-without a warning, and the kernel and the derive write no anchor when
-not caching, as before; ``make_graph``'s kernel, anchored to the builder's
-own file, asks for that file under the options it was given. See :doc:`numbox.core.configurations` for the
-package-wide rule the anchors follow.
+A path too long for the file system is one such failure, and the warning reports it where the file system reports it.
+Windows reports a component that is too long as a syntax error, and the warning then offers ``NUMBA_CACHE_DIR`` at a
+writable directory and quotes the error.
+With the file names bounded, as described below, the directory is the only part that can make the path
+too long, ``NUMBA_CACHE_DIR`` or the user's cache directory, and ``NUMBA_CACHE_DIR`` set to a shorter path moves
+the anchor out of either. A cache directory whose path is not UTF-8 is another failure: numba hashes the anchor's
+directory path as UTF-8 to name its cache directory, and the warning asks for ``NUMBA_CACHE_DIR`` at a UTF-8 path.
+
+The anchor's check writes a file whose name is as long as the longest name numba writes for the functions it
+anchors.
+It reads those functions from the generated code: the decorated functions themselves and the functions defined within
+a decorated one, an overload's constructor among the latter.
+The name consists of the stem, the function's qualified name, its line, Python's version, three digits for the data
+file's number, and the 21 characters of the temporary name through which numba writes each file.
+numba counts the data files from one without
+bound. A user cache directory or a ``NUMBA_CACHE_DIR`` within that length of the path limit, 4096 on Linux, fails
+the check, and the generated code compiles without a cache after the warning.
+A short probe name would pass there, as numba's own check does, and numba's first save would then fail while the
+struct is made, without a warning.
+A fixed bound for every struct, such as 251 bytes, would turn caching off on a file system whose name limit is
+lower, for a struct whose names are a quarter of that.
+The package's own check fails first only nearer the limit, within about 175 bytes of it.
+The package's location under ``NUMBA_CACHE_DIR`` is a directory named for the
+package's own directory, by its name and a hash of its path. That check reserves the length of numba's files for the
+package's functions, so it fails only where those no longer fit.
+The generated code then compiles according to the package's answer.
+
+The anchor's name carries the struct's or the function's name. numba names its cache files after the anchor and the
+qualified name of the function it caches, and that qualified name carries the struct's name again, through the class
+whose body defines the jitted getters and method thunks. A struct name of about 93 characters would therefore push
+numba's own file names past the 255 bytes a file system allows for a name, beyond the reach of the anchor's check.
+Those names are bounded (``bounded_stem``).
+A name of 40 bytes or fewer is used unchanged, so nearly every struct keeps the file names it had.
+A longer name becomes the whole characters of it that fit in 31 bytes plus a digest of
+the whole name. The measure is the name's UTF-8 length, which is the file system's: a character of another script
+takes up to four bytes.
+The generated class is defined under the bounded name and is assigned the struct's full name once its body is
+compiled, so ``__name__``, ``__qualname__`` and ``repr`` show the name the caller gave, whatever its length, and the
+struct caches.
+A field's jitted getter is defined under the bounded name the same way, and the property is assigned the field's
+name, so a field's name of any length caches too.
+A method's name is bounded in
+its thunk and its overload. ``compile_kernel``, the work builder's derives and the sqlite aggregate, window and
+table-valued function registrations anchor their generated code the same way and fall back the same way, the derive
+without a warning. The kernel and the derive write no anchor when not caching, as before. ``make_graph``'s kernel is
+anchored to the builder's own file and asks for that file under the options it was given. See
+:doc:`numbox.core.configurations` for the package-wide rule the anchors follow.
 
 See also ``numba.core.caching.Cache._index_key`` and
-``numba.core.caching._SourceFileBackedLocatorMixin.get_source_stamp``
-in numba's source for the cache key construction and source-stamp
-validity check.
+``numba.core.caching._SourceFileBackedLocatorMixin.get_source_stamp`` in numba's source for the cache key
+construction and the source-stamp validity check.
 
 
 .. automodule:: numbox.utils.preprocessing
@@ -266,32 +243,29 @@ numbox.utils.lowlevel
 numbox.utils.meminfo
 --------------------
 
-Handing a reference through a pointer
+Passing a reference through a pointer
 '''''''''''''''''''''''''''''''''''''
 
-:func:`~numbox.utils.meminfo.export_meminfo` returns a structref's (or an array's) MemInfo
-pointer as an ``intp`` and takes a reference for it,
-:func:`~numbox.utils.meminfo.borrow_structref` rebuilds a live structref from that pointer,
-and :func:`~numbox.utils.meminfo.release_meminfo` gives the reference back. The value stays
-alive for as long as the reference is held.
+:func:`~numbox.utils.meminfo.export_meminfo` returns a structref's (or an array's) MemInfo pointer as an ``intp``
+and takes a reference for it, :func:`~numbox.utils.meminfo.borrow_structref` rebuilds a live structref from that
+pointer, and :func:`~numbox.utils.meminfo.release_meminfo` releases the reference. The value stays alive for as
+long as the reference is held.
 
-On numba 0.65 and earlier, numba's ``removerefctpass`` deletes every ``NRT_incref`` and
-``NRT_decref`` call in a function it judges not to need them: roughly, one whose arguments
-are plain values or arrays, that returns a plain value, and that allocates nothing. The
-reference ``export_meminfo`` takes is one of those calls, so numbox marks the function that
-makes it with numba's ``numba_args_may_always_need_nrt`` metadata, which keeps the pass off
-it. numba 0.66 removed the pass and every mention of that metadata, so from 0.66 on nothing
-reads it.
+On numba 0.65 and earlier, numba's ``removerefctpass`` deletes every ``NRT_incref`` and ``NRT_decref`` call in a
+function it judges not to need them: roughly, one whose arguments are plain values or arrays, that returns a plain
+value, and that allocates nothing. The reference ``export_meminfo`` takes is one of those calls, so numbox marks
+the function that makes it with numba's ``numba_args_may_always_need_nrt`` metadata, which keeps the pass from
+running on it. numba 0.66 removed the pass and every mention of that metadata, so from 0.66 on nothing reads it.
 
-**numba's cache does not see that mark arrive.** numbox releases without it lose the
-reference when ``export_meminfo`` is given an array on numba 0.65 and earlier, so the
-pointer it returns does not hold the array: the MemInfo behind it can be freed while the
-pointer is still in use. A ``cache=True`` function that makes such a call and that numba
-compiled against one of those releases keeps the lost reference after numbox is upgraded,
-because numba's cache key covers the function's own source file, bytecode and closure,
-never the code of the functions it calls
-(`numba's caching limitations <https://numba.readthedocs.io/en/stable/user/jit.html#cache>`__).
-Delete that function's cache files (``*.nbi`` and ``*.nbc``) so numba compiles it again.
+**numba's cache key does not include the mark.**
+numbox releases without the mark lose the reference when ``export_meminfo`` is given an array on numba 0.65 and
+earlier, so the pointer ``export_meminfo`` returns does not hold the array.
+The MemInfo the pointer refers to can be freed while the pointer is still in use.
+A ``cache=True`` function that makes such a
+call, and that numba compiled against one of those releases, keeps the lost reference after numbox is upgraded.
+numba's cache key covers the function's own source file, bytecode and closure, never the code of the functions it
+calls (`numba's caching limitations <https://numba.readthedocs.io/en/stable/user/jit.html#cache>`__).
+Delete that function's cache files (``*.nbi`` and ``*.nbc``) so that numba compiles it again.
 
 .. automodule:: numbox.utils.meminfo
    :members:
@@ -304,17 +278,14 @@ numbox.utils.cstrings
 Allocating C strings for the bindings layer
 '''''''''''''''''''''''''''''''''''''''''''
 
-The bindings family (``numbox.core.bindings.libc``, ``numbox.core.bindings.sqlite.*``, etc.)
-takes ``intp`` pointers for every text argument. Producing a valid
-NUL-terminated UTF-8 C string from a Python ``str`` is non-trivial:
-:func:`~numbox.utils.lowlevel.get_unicode_data_p` returns a pointer to
-the Python string's internal data payload, which CPython stores as
-UCS-1/2/4 depending on contents -- only safe for ASCII inputs.
+The bindings family (``numbox.core.bindings.libc``, ``numbox.core.bindings.sqlite.*`` and the others) takes
+``intp`` pointers for every text argument. A valid NUL-terminated UTF-8 C string is not obtained from a Python
+``str`` directly. :func:`~numbox.utils.lowlevel.get_unicode_data_p` returns a pointer to the Python string's
+internal data, which CPython stores as UCS-1, UCS-2 or UCS-4 depending on the contents, so that pointer is safe for
+ASCII input only.
 
-:func:`~numbox.utils.cstrings.c_string` is a Python-side context
-manager that allocates a real C buffer with the UTF-8 encoding of the
-input and yields the pointer with safe lifetime tied to the ``with``
-block::
+:func:`~numbox.utils.cstrings.c_string` is a Python-side context manager. It allocates a C buffer holding the
+UTF-8 encoding of the input and yields the pointer, whose lifetime is the ``with`` block::
 
     from numbox.utils.cstrings import c_string
     from numbox.core.bindings.sqlite.exec import sqlite3_exec
@@ -323,21 +294,17 @@ block::
         sqlite3_exec(db_p, sql_p, 0, 0, 0)
     # buffer freed here automatically
 
-For concurrent multi-string calls, use a single ``with`` with multiple
-context managers, or :class:`contextlib.ExitStack` when the count is
-dynamic::
+A call that takes several strings at once uses a single ``with`` with several context managers, or
+:class:`contextlib.ExitStack` when their number is dynamic::
 
     with c_string("main") as schema_p, c_string("t") as table_p, c_string("b") as col_p:
         sqlite3_blob_open(db_p, schema_p, table_p, col_p, rowid, flags,
                           addressof(blob_p))
 
-**Python-only.** ``c_string`` cannot be used inside ``@njit`` -- numba
-does not support arbitrary context managers (raises
-``UnsupportedBytecodeError``), and ``ctypes`` objects can't be
-manipulated under JIT anyway. For ``@njit`` callers that need a C
-string, pre-allocate a numpy ``uint8`` buffer containing the UTF-8
-bytes plus a trailing NUL at Python level, then pass
-:func:`~numbox.utils.lowlevel.array_data_p` into the JIT kernel.
+**Python only.** ``c_string`` cannot be used inside ``@njit``: numba does not support arbitrary context managers
+(it raises ``UnsupportedBytecodeError``), and ``ctypes`` objects cannot be manipulated under JIT.
+The Python side of an ``@njit`` caller that needs a C string allocates a numpy ``uint8`` buffer holding the UTF-8
+bytes and a trailing NUL, and passes :func:`~numbox.utils.lowlevel.array_data_p` of it into the JIT kernel.
 
 .. automodule:: numbox.utils.cstrings
    :members:
@@ -350,11 +317,9 @@ numbox.utils.pysqlite_bridge
 Bridging Python ``sqlite3`` connections to the bindings layer
 '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 
-CPython's stdlib ``sqlite3.Connection`` holds the underlying
-``sqlite3 *db`` C handle as a private field inside its PyObject
-struct. :func:`~numbox.utils.pysqlite_bridge.extract_connection_ptr`
-reads that field via ``ctypes`` so callers can pass the handle into
-numbox's JIT-callable SQLite bindings::
+CPython's standard-library ``sqlite3.Connection`` holds the underlying ``sqlite3 *db`` C handle as a private field
+of its PyObject struct. :func:`~numbox.utils.pysqlite_bridge.extract_connection_ptr` reads that field through
+``ctypes``, so that a caller can pass the handle to numbox's JIT-callable SQLite bindings::
 
     import numbox.utils.pysqlite_bridge as pysqlite_bridge
     import sqlite3
@@ -366,21 +331,20 @@ numbox's JIT-callable SQLite bindings::
     db_p = pysqlite_bridge.extract_connection_ptr(conn)
     assert sqlite3_changes(db_p) == 3
 
-Mirrors the pattern in
-`numbduck.pybridge <https://github.com/Goykhman/numbduck/blob/main/numbduck/pybridge.py>`_.
+This follows the pattern of `numbduck.pybridge
+<https://github.com/Goykhman/numbduck/blob/main/numbduck/pybridge.py>`_.
 
-**Build configurations are handled at runtime.** The ``sqlite3 *db`` field
-offset is computed by ``_pyobject_head_fields()``, which adapts to the running
-interpreter: ``Py_DEBUG`` builds (detected via ``sys.gettotalrefcount``)
-prepend the ``_ob_next`` / ``_ob_prev`` trace pointers, and free-threaded
-builds (``Py_GIL_DISABLED``) use the no-GIL object header — so release, debug,
-and free-threaded builds all read the field at the correct offset.
+**Build configurations are handled at run time.** ``_pyobject_head_fields()`` computes the offset of the
+``sqlite3 *db`` field for the running interpreter. A ``Py_DEBUG`` build (detected through
+``sys.gettotalrefcount``) prepends the ``_ob_next`` and ``_ob_prev`` trace pointers, and a free-threaded build
+(``Py_GIL_DISABLED``) uses the no-GIL object header, so release, debug and free-threaded builds all read the field
+at the correct offset.
 
-The macOS shared-cache caveat and its ``DYLD_INSERT_LIBRARIES`` workaround are
-described in the module docstring below; :func:`extract_connection_ptr` also
-validates (via :func:`libraries_coordinated`) that numbox's bindings and
-Python's ``sqlite3`` resolve to the same libsqlite3 before returning a pointer,
-raising rather than handing back a pointer to a mismatched library.
+The macOS shared-cache caveat and its ``DYLD_INSERT_LIBRARIES`` workaround are described in the module docstring
+below.
+:func:`extract_connection_ptr` also checks, through :func:`libraries_coordinated`, that numbox's bindings and
+Python's ``sqlite3`` resolve to the same libsqlite3 before it returns a pointer, and raises an exception rather than
+returning a pointer to a mismatched library.
 
 .. automodule:: numbox.utils.pysqlite_bridge
    :members:

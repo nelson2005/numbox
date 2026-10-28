@@ -204,87 +204,76 @@ numbox.core.variable.compile_kernel
 Overview
 ********
 
-Alongside :meth:`numbox.core.variable.variable.Graph.compile` (which produces a
-:class:`numbox.core.variable.variable.CompiledGraph` evaluated node-by-node in pure Python),
-:func:`numbox.core.variable.compile_kernel.compile_kernel` compiles a `Graph` into
-fused ``@njit`` kernel code for a requested set of variables. It does not replace
-`core.work` or `CompiledGraph`; it is an additional, JIT'ed evaluation path.
+Alongside :meth:`numbox.core.variable.variable.Graph.compile`, which produces a
+:class:`numbox.core.variable.variable.CompiledGraph` evaluated node by node in pure Python,
+:func:`numbox.core.variable.compile_kernel.compile_kernel` compiles a `Graph` into a fused ``@njit`` kernel for a
+requested set of variables. It does not replace `core.work` or `CompiledGraph`; it is an additional, JIT-compiled
+evaluation path.
 
-When every `formula` is njit-able the graph fuses into *one* ``@njit`` kernel that takes
-the required external inputs as positional arguments and returns the requested variables
-as a tuple, with every interior graph node lowered to an SSA temporary inside the single
-compiled function. No per-node type information needs to be supplied: numba infers every
-interior type from the runtime argument types. Plain-Python formulas are auto-wrapped with
-``njit()``. When some formulas are not njit-able for the actual argument types, the first
-call detects them and the graph is split into ``@njit`` segments orchestrated from Python
-(see :ref:`compile_kernel_non_jittable` below).
+When every `formula` can be compiled with ``njit``, the graph is fused into *one* ``@njit`` kernel. The kernel
+takes the required external inputs as positional arguments and returns the requested variables as a tuple, and
+every interior graph node is lowered to an SSA temporary inside the single compiled function. No per-node type
+information has to be supplied: numba infers every interior type from the run-time argument types. A plain-Python
+formula is wrapped with ``njit()``. When some formulas cannot be compiled for the actual argument types, the first
+call detects them, and the graph is split into ``@njit`` segments orchestrated from Python (see
+:ref:`compile_kernel_non_jittable` below).
 
-Per-node type information is *optional*. Each `Variable` may carry a
-``params`` (a ``Params(jitable, type)``) declaring whether its formula is
-jittable and the variable's numba type. A node with no ``params`` behaves
-exactly as above -- jitability is *discovered* at the first call. When every
-node in the required cone is declared and every consumed external is typed,
-``compile_kernel`` resolves the execution mode at *build* time instead: an
-all-jittable graph compiles eagerly into one fused kernel; a declared
-jittable/non-jittable mix compiles eagerly into a static segment plan with no
-probing; and ``CompiledKernel.partition`` is populated at build, inspectable
-before any call. Declaring types moves type errors to build time: a coercible
-but wrong ``params.type`` (for instance declaring ``int64`` over a body that
-naturally returns ``float64``) raises at ``compile_kernel`` rather than silently
-truncating, because it is caught by an explicit unconstrained return-type probe
-of the formula -- not by binding the formula to the declared signature, which
-numba would silently coerce. A graph that declares nothing is byte-for-byte the
-behavior described above.
+Per-node type information is *optional*. Each `Variable` may carry a ``params`` (a ``Params(jitable, type)``) that
+declares whether its formula is jittable and the variable's numba type. A node with no ``params`` behaves exactly
+as above: its jitability is *discovered* at the first call. When every node in the required cone is declared and
+every consumed external is typed, ``compile_kernel`` resolves the execution mode at *build* time instead.
+Such an all-jittable graph compiles eagerly into one fused kernel, and such a declared mix of jittable and
+non-jittable nodes compiles eagerly into a static segment plan, with no probing. ``CompiledKernel.partition`` is then
+populated at build and can be inspected before any call.
+Declaring types moves type errors to build time. A ``params.type`` that is
+coercible but wrong, for instance ``int64`` declared over a body that returns ``float64``, raises at
+``compile_kernel`` rather than truncating the value, because an explicit unconstrained probe of the formula's
+return type catches it. Binding the formula to the declared signature would not catch it, since numba would coerce
+the value and issue no warning. A graph that declares nothing behaves exactly as described above.
 
 The call to ``compile_kernel`` returns a :class:`numbox.core.variable.compile_kernel.CompiledKernel`. It exposes
-``.kernel`` (the hot-path callable — positional in, tuple out: the bare numba dispatcher
-once the graph resolves fully fused, the Python master when the graph is segmented around
-non-jittable nodes) and a dict-in / dict-out ``.execute`` convenience that mirrors
-:meth:`numbox.core.variable.variable.CompiledGraph.execute`. The qualified names of the
-kernel's positional inputs and tuple outputs are available as ``.params`` and ``.outputs``,
-the generated kernel text as ``.source``, and the per-variable temporary identifiers as
-``.identifiers``.
+``.kernel``, the hot-path callable, which takes positional arguments and returns a tuple: the bare numba
+dispatcher once the graph resolves fully fused, and the Python master when the graph is segmented around
+non-jittable nodes. It also exposes ``.execute``, which takes and returns dicts and mirrors
+:meth:`numbox.core.variable.variable.CompiledGraph.execute`. The qualified names of the kernel's positional inputs
+and tuple outputs are available as ``.params`` and ``.outputs``, the generated kernel text as ``.source``, and the
+per-variable temporary identifiers as ``.identifiers``.
 
 This fused path does not honor the `cacheable` memoization of individual nodes; use
-:class:`numbox.core.variable.variable.CompiledGraph` (or the `core.work` graph) when that
-is needed. It does, however, support incremental recompute of only the affected nodes via
-``CompiledKernel.recompute`` (see :ref:`compile_kernel_recompute` below).
+:class:`numbox.core.variable.variable.CompiledGraph` (or the `core.work` graph) when that is needed. It does
+support incremental recompute of only the affected nodes, through ``CompiledKernel.recompute`` (see
+:ref:`compile_kernel_recompute` below).
 
-**Caching.** The fused kernel is cached on disk, content-addressed by a
-fingerprint of the generated kernel source, every formula's behavioral
-state (bytecode, constants, default values, closure-cell values, referenced
-module-level globals including helper functions, defining module), and the
-effective jit flags. Changing any of these recompiles instead of reusing a
-stale binary; cosmetic edits that do not change behavior (comments, local
-renames) do not. The generated source never mentions types, so a declared
-graph's signatures are folded into the digest as well (the consumed external
-signature for an eager fused kernel, each segment's live-in/out signature for
-an eager segment): two declared-type variants of one type-free graph therefore
-get distinct cache anchors and never reuse each other's binary. Formulas whose
-state cannot be fingerprinted -- a ``cres``-compiled callable, or a value with
-no canonical form -- make that one kernel uncacheable: always recompiled per
-process, never wrong. The
-``cache`` keyword is tri-state: ``None`` (the default) defers to
-``jit_options["cache"]``, then numbox's default, the ``NUMBOX_JIT_OPTIONS``
-environment value or ``True`` unless numba can write no cache for numbox's
-own files, where it is ``False`` (see :doc:`numbox.core.configurations`);
-an explicit ``True``/``False`` wins, and the kernel's own anchor still turns
-caching off where it cannot be cached. Two costs are
-worth knowing: a formula that references or closes over a **large array**
-pays a per-compile ``sha256`` over that array's bytes (proportional to its
-size) on every ``compile_kernel`` call; and numba itself declines to
-disk-cache a kernel that calls a ``@cfunc`` formula or references a large
-global array -- the kernel still computes correctly, it is simply
-recompiled in each process regardless of the content-addressed anchor. A
-``@vectorize`` (DUFunc) formula, by contrast, caches cleanly.
+**Caching.** The fused kernel is cached on disk, content-addressed by a fingerprint of the generated kernel source,
+of every formula's behavioral state, and of the effective jit flags.
+A formula's behavioral state is its
+bytecode, constants, default values, closure-cell values, referenced module-level globals including helper
+functions, and defining module.
+A change to the source, to that state or to the flags recompiles the kernel instead of reusing a stale binary; an
+edit that does not change behavior (a comment, a local rename) does not.
+The generated source never mentions types, so a declared graph's
+signatures are folded into the digest as well: the consumed external signature for an eager fused kernel, and each
+segment's live-in and live-out signature for an eager segment. Two declared-type variants of one type-free graph
+therefore get distinct cache anchors and never reuse each other's binary.
+A formula whose state cannot be fingerprinted makes that one kernel uncacheable; a ``cres``-compiled callable is such
+a formula, and so is one that holds a value with no canonical form.
+The kernel is then recompiled in every process and is never wrong.
+The ``cache`` keyword is tri-state. ``None`` (the default)
+defers to ``jit_options["cache"]``, then to numbox's default: the ``NUMBOX_JIT_OPTIONS`` environment value, or
+``True`` unless numba can write no cache for numbox's own files, in which case it is ``False`` (see
+:doc:`numbox.core.configurations`). An explicit ``True`` or ``False`` takes precedence, and the kernel's own anchor
+still turns caching off where the kernel cannot be cached. Two costs apply.
+A formula that references or closes over a **large array** incurs a ``sha256`` over that array's bytes, proportional
+to its size, on every ``compile_kernel`` call.
+numba itself declines to cache on disk a kernel that calls a ``@cfunc`` formula or
+references a large global array; the kernel still computes correctly, and is recompiled in each process regardless
+of the content-addressed anchor. A ``@vectorize`` (DUFunc) formula, by contrast, caches.
 
-**Practical limits.** Graph traversal is recursive: dependency chains
-deeper than roughly ``sys.getrecursionlimit()`` raise a ``RecursionError``
-naming the remedy (raise the limit before compiling). Cold compilation of
-the fused kernel costs on the order of 20 ms and ~1 MiB of memory per
-formula node (numba 0.65, CPython 3.12); graphs beyond a few thousand
-nodes compile increasingly slowly and are better split or evaluated via
-:class:`numbox.core.variable.variable.CompiledGraph`.
+**Practical limits.** Graph traversal is recursive: a dependency chain deeper than roughly
+``sys.getrecursionlimit()`` raises a ``RecursionError`` that names the remedy, which is to raise the limit before
+compiling. Cold compilation of the fused kernel costs on the order of 20 ms and about 1 MiB of memory per formula
+node (numba 0.65, CPython 3.12). A graph beyond a few thousand nodes compiles increasingly slowly, and is better
+split or evaluated through :class:`numbox.core.variable.variable.CompiledGraph`.
 
 A graph can be compiled to a fused kernel as follows:
 
@@ -306,24 +295,21 @@ A graph can be compiled to a fused kernel as follows:
     assert ck.execute({"basket": {"y": 100}}) == {"variables.u": 126}
     assert ck.kernel(100) == (126,)
 
-Here the dict-in / dict-out ``ck.execute`` looks up the required external value
-``basket.y`` and returns the requested ``variables.u``, while ``ck.kernel``
-is called positionally with the external input and returns the output tuple directly.
+The dict-in, dict-out ``ck.execute`` looks up the required external value ``basket.y`` and returns the requested
+``variables.u``. ``ck.kernel`` is called positionally with the external input and returns the output tuple
+directly.
 
 .. _compile_kernel_non_jittable:
 
 Graphs with non-jittable nodes
 ******************************
 
-``compile_kernel`` detects non-jittable formulas automatically at the first
-call: it first tries to compile the fully fused kernel for the actual
-argument types; if that fails, it probes each node against the real
-intermediate values, runs the offenders in plain Python, and fuses the
-jittable remainder into the minimal number of ``@njit`` segments any
-topological order permits (one plus the maximum number of jit/Python
-alternations along a dependency path). A Python master then threads values
-between segments and Python nodes. Compile-time failures demote a node;
-runtime errors always propagate.
+``compile_kernel`` detects non-jittable formulas automatically at the first call. It first tries to compile the
+fully fused kernel for the actual argument types. If that fails, it probes each node against the real intermediate
+values and runs the non-jittable nodes in plain Python. It fuses the jittable remainder into the minimal number of
+``@njit`` segments that any topological order permits: one plus the maximum number of alternations between jitted
+and Python nodes along a dependency path. A Python master then passes values between the segments and the Python
+nodes. A compile-time failure demotes a node to Python; a run-time error always propagates.
 
 .. code-block:: python
 
@@ -350,12 +336,11 @@ runtime errors always propagate.
     ck.kernel(7.0)              # first call: probes, partitions, still correct
     print(str(ck.partition))    # 2 jit segments around the python n3, with reasons
 
-``ck.partition`` is ``None`` until the first call resolves the mode; a fully
-fused graph reports a single jit segment. Each jit segment is cached
-content-addressed on disk the same way the fused kernel is; the learned partition
-itself is per-process. If a later call's types break a segment, the partition
-is re-learned for those values and replaces the previous plan — workloads
-alternating between type families whose partitions differ re-pay discovery on
+``ck.partition`` is ``None`` until the first call resolves the mode; a fully fused graph reports a single jit
+segment. Each jit segment is cached on disk, content-addressed the same way as the fused kernel; the learned
+partition itself is per process. If the types of a later call do not fit a segment, the partition is learned again
+for those values and replaces the previous plan.
+A workload that alternates between type families whose partitions differ therefore incurs the cost of discovery on
 each alternation.
 
 .. _compile_kernel_recompute:
@@ -363,22 +348,21 @@ each alternation.
 Incremental recompute
 *********************
 
-``CompiledKernel.recompute`` is a value-only refresh that re-evaluates only the cone
-of nodes affected by a change, reading every unchanged input from a persistent value
-store seeded by a prior full call. It mirrors
-:meth:`numbox.core.variable.variable.CompiledGraph.recompute`: same types across calls,
-``{source: {name: value}}`` in, a tuple in ``outputs`` order out. A ``changed`` name may
-resolve to an interior node, in which case its value is overridden and only its downstream
-cone recomputes. Do not interleave input-changing throughput ``kernel(...)`` calls between
-``recompute`` calls -- the store is seeded once and a throughput call does not update it.
+``CompiledKernel.recompute`` refreshes values only: it re-evaluates only the cone of nodes affected by a change,
+and reads every unchanged input from a persistent value store seeded by a prior full call.
+It mirrors :meth:`numbox.core.variable.variable.CompiledGraph.recompute`: the types must stay the same across calls,
+the input is ``{source: {name: value}}``, and the output is a tuple in ``outputs`` order.
+A ``changed`` name may resolve to an interior
+node, in which case its value is overridden and only its downstream cone recomputes. Do not interleave
+input-changing ``kernel(...)`` calls between ``recompute`` calls: the store is seeded once, and a ``kernel(...)``
+call does not update it.
 
-For an undeclared graph a changed value of a different numba type triggers a
-one-time flush-and-reseed recovery. A declared kernel enforces a contract
-instead: a changed value is checked for numba assignability to the node's
-declared type, so a value numba cannot assign raises a crisp ``declared type X,
-got Y`` error, while a benign difference numba accepts -- a C-contiguous array
-against an ``'A'``-layout array declaration, or a safe scalar promotion -- is
-accepted. The check is convertibility, not type identity.
+For an undeclared graph, a changed value of a different numba type
+triggers a one-time recovery, a flush and a reseed.
+A declared kernel enforces a contract instead: a changed value is checked for numba assignability to the
+node's declared type. A value numba cannot assign raises a ``declared type X, got Y`` error, while a benign
+difference numba accepts, a C-contiguous array against an ``'A'``-layout array declaration or a safe scalar
+promotion, is accepted. The check is convertibility, not type identity.
 
 .. code-block:: python
 
@@ -405,8 +389,7 @@ accepted. The check is convertibility, not type identity.
    :show-inheritance:
    :undoc-members:
 
-The identifier-assignment and formula helpers used by the compiler live in
-:mod:`numbox.core.variable.utils`.
+The identifier-assignment and formula helpers used by the compiler are defined in :mod:`numbox.core.variable.utils`.
 
 .. automodule:: numbox.core.variable.utils
    :members:
