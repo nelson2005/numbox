@@ -132,7 +132,7 @@ Hard-won notes that aren't obvious from the code. Feature/merge history lives in
 - **`bind_text` / `bind_blob` destructor** — pass `SQLITE_TRANSIENT` (= -1) so SQLite copies the buffer; `SQLITE_STATIC` (= 0) assumes it outlives the statement.
 - **`sqlite3_errmsg`** — SQLite-owned pointer, valid only until the next API call on that connection; decode via `get_str_from_p_as_int` immediately.
 - **`sqlite3_expanded_sql`** — caller must release it with `sqlite3_free()`.
-- **Hook / `sqlite3_exec` `@cfunc`** — the registered cfunc must outlive the registration; keep it at module scope. Callback shape:
+- **Hook / `sqlite3_exec` `@cfunc`** — keep the cfunc object referenced while its hook is installed, usually at module scope, as a precaution. numba keeps a cfunc's compiled code for the life of the process after the object is collected, so a collected cfunc does not dangle the pointer SQLite holds, but numba does not document that behavior. Callback shape:
   ```python
   @cfunc(types.int32(types.voidptr, types.int32, types.intp, types.intp))
   def _row_cb(ctx, ncol, values_pp, names_pp):
