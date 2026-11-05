@@ -580,9 +580,10 @@ When the exception is lost
 In three cases ``calculate`` returns normally although the ``derive`` raised. Python prints the exception to stderr
 below a line that begins ``Exception ignored in:``, which means that the exception was printed and then
 discarded.
-``calculate`` stores a zero-filled value of the ``derive``'s return type in ``data``, such as ``0.0`` or an empty
-array, and sets ``derived``. A later ``calculate`` therefore does not run the ``derive`` again, and the node keeps the
-zero-filled value.
+``calculate`` sets ``derived`` and stores in ``data`` the value that the failed call returned. That value is usually
+zero-filled, of the ``derive``'s return type, such as ``0.0`` or an empty array. Do not rely on it: a ``@cfunc``
+declared ``float64()`` whose body always raises returns an arbitrary value instead. A later ``calculate`` does not run
+the ``derive`` again, because ``derived`` is set, and the node keeps the stored value.
 
 .. warning::
 

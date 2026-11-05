@@ -77,12 +77,15 @@ helper code above its decorator. That decorator therefore cannot be above line 8
 at import with a ``ValueError`` that says where to move it. In the example, the module docstring moves the ``@proxy``
 line to line 8 or later.
 
-Other decorators may be stacked above ``@proxy``, but no other decorator may appear between ``@proxy`` and ``def``. A
-decorator in that position runs first, so ``@proxy`` receives the function that this decorator returns. numba cannot
-compile that function. Its source is also in the decorator's file, not in yours.
+Other decorators may be stacked above ``@proxy``. A decorator between ``@proxy`` and ``def`` runs first, so ``@proxy``
+receives the function that this decorator returns. A decorator that returns the function unchanged, such as one that
+records the function in a registry, works in that position. A decorator that returns a wrapper hands ``@proxy`` the
+wrapper, so numba compiles the wrapper instead of your function. A wrapper that calls your function as a Python object
+fails at import with numba's ``TypingError``, which names the decorator's file.
 
-A proxied function cannot take ``*args`` or ``**kwargs``. Such a function fails at import; with an ordinary signature
-the error is numba's signature-mismatch ``TypeError``.
+A proxied function cannot take ``*args`` or ``**kwargs``. Such a function fails at import. With an ordinary signature
+the error is numba's signature-mismatch ``TypeError``, or numba's ``TypingError`` when ``*args`` is the only
+parameter.
 
 Default arguments
 -----------------
@@ -164,10 +167,11 @@ dispatcher object. The type's name includes the memory address of the function t
 that differs in every process. A cached ``apply`` then recompiles on every run and adds a cache entry each time.
 ``.as_func`` has the same type in every process, so ``apply`` compiles once and loads from the cache after that.
 
-Below numba 0.68.0, every function value in a tuple must have the same type, such as ``.as_func`` values of one
-signature. A tuple that mixes ``.as_func`` with a ``@cfunc``, an ``@njit`` function compiled for a signature, numba's
-own ``CompileResultWAP`` or an ``.as_func`` of another signature fails with an ``AssertionError`` that has no message.
-numba 0.68.0 accepts such a tuple. A lazily compiled ``@njit`` function cannot share a tuple with ``.as_func`` on any
+Below numba 0.68.0, function values that take the same number of arguments can share a tuple only if they have the
+same type, such as ``.as_func`` values of one signature. A tuple that mixes ``.as_func`` with a ``@cfunc``, an
+``@njit`` function compiled for a signature, numba's own ``CompileResultWAP`` or an ``.as_func`` of another signature,
+all taking the same number of arguments, fails with an ``AssertionError`` that has no message. Values that take
+different numbers of arguments can share a tuple on any numba version. numba 0.68.0 accepts every such tuple. A lazily compiled ``@njit`` function cannot share a tuple with ``.as_func`` on any
 numba version: the call raises a ``TypeError``. The :ref:`work page <derive_mixed_function_values>` lists this limit
 alongside related ones. For reference, the value's class is :class:`~numbox.utils.derive_wap.DeriveWAP` and its numba
 type is :class:`~numbox.utils.derive_wap.DeriveFunctionType`.
