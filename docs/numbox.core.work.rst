@@ -632,22 +632,21 @@ Other limits
 .. _derive_mixed_function_values:
 
 Jitted code can receive several function values at once as the elements of a tuple, for example the ``derive`` functions
-of the nodes it builds. Below numba 0.68.0, function values that take the same number of arguments can be elements of
-one tuple only if they have the same type, such as ``cres`` functions of one signature. Values that take different
-numbers of arguments are not affected, on any numba version. Four kinds of function value therefore cannot be elements
-of one tuple with a ``cres`` function: a ``@cfunc``, an ``@njit`` function compiled for a signature, numba's own
-``CompileResultWAP``, and a ``cres`` function of another signature. Such a tuple fails with an ``AssertionError`` that
-has no message. The assertion is numba's own check, and two plain function values of different types fail it as well. A
-``cres`` function fails the check more often, because numbox assigns it ``DeriveFunctionType``, while numba assigns the
-other kinds the plain ``FunctionType``. numba 0.68.0 accepts every such tuple, and each ``cres`` function in it still
-propagates its exception.
+of the nodes it builds. Below numba 0.68.0, a tuple whose elements take the same number of arguments but have
+different types can fail with an ``AssertionError`` that has no message. Four kinds of function value can fail this
+way in one tuple with a ``cres`` function: a ``@cfunc``, an ``@njit`` function compiled for a signature, numba's own
+``CompileResultWAP``, and a ``cres`` function of another signature. The assertion is numba's own check, and two plain
+function values of different types can fail it as well. A ``cres`` function fails the check more often, because
+numbox assigns it ``DeriveFunctionType``, while numba assigns the other kinds the plain ``FunctionType``. numba 0.68.0
+accepts every such tuple, and each ``cres`` function in it still propagates its exception.
 
 Under ``python -O``, which removes assertions, numba below 0.68.0 skips that check and assigns the whole tuple the type
 of its first element. A ``cres`` function that comes after another kind in the tuple then loses its exception. Another
 kind that comes after a ``cres`` function raises a ``TypeError`` that names the value's class.
 
-A lazily compiled ``@njit`` function, one decorated without a signature, cannot be an element of one tuple with a
-``cres`` function on any numba version. Passing such a tuple to a jitted function raises this error:
+A lazily compiled ``@njit`` function, one decorated without a signature, that takes as many arguments as a ``cres``
+function cannot be an element of one tuple with it on any numba version. Passing such a tuple to a jitted function
+raises this error:
 
 .. code-block:: text
 
@@ -715,7 +714,7 @@ function recompiles after every upgrade, as the cache_key page explains under
 
 numbox 0.7.4 assigns the ``.as_func`` value of a proxied function the numba type of a ``cres`` function, on numba
 0.61 or later; before, it was a plain function value. From 0.7.4 on, a tuple that mixes ``.as_func`` with a plain
-``CompileResultWAP`` therefore fails below numba 0.68.0, as :ref:`the tuple rule <derive_mixed_function_values>`
+``CompileResultWAP`` therefore can fail below numba 0.68.0, as :ref:`the tuple rule <derive_mixed_function_values>`
 describes.
 
 A downgrade to numbox 0.7.2 or earlier, with numba's version unchanged, can leave a cache that numba cannot read. A call
