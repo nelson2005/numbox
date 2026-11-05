@@ -404,8 +404,9 @@ def {func_proxy_name}({func_args_str}):
         # notices edits to it. The exact line matters to inspect.findsource, which numba's annotation pipeline calls on
         # the wrapper. On Python 3.12 and earlier, findsource scans backward from co_firstlineno for a line that starts
         # with "@", docstring lines included, and tokenizes from there; Python 3.13 starts at co_firstlineno itself.
-        # Anchored on the decorator line, the scan matches at once and never tokenizes a docstring, where an apostrophe
-        # would raise TokenError (CPython issue 122981).
+        # Anchored on the decorator line, the scan matches at once and never tokenizes a docstring. Tokenizing a
+        # docstring can raise an exception. For instance, if the docstring contains an apostrophe symbol in it, then
+        # TokenError (CPython issue 122981) is raised.
         code_lines = code_txt.split('\n')
         njit_lineno_in_txt = next(
             i + 1 for i, line in enumerate(code_lines) if line.startswith('@njit(')
