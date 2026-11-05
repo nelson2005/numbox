@@ -407,8 +407,8 @@ def {func_proxy_name}({func_args_str}):
         # with "@", "def" or "async def", or holds a lambda, docstring lines included; Python 3.13 starts at
         # co_firstlineno itself. Anchored on the decorator line, tokenizing starts at the decorator, and the docstring
         # is read whole as one string. Tokenizing that starts inside a docstring can raise an exception. For instance,
-        # if the scan stops at a docstring line that begins with "@", an apostrophe later in the docstring reads as the
-        # start of an unterminated string, and TokenError (CPython issue 122981) is raised.
+        # on Python 3.12, if the scan stops at a docstring line that begins with "@", an apostrophe later in the
+        # docstring reads as the start of an unterminated string, and TokenError is raised.
         code_lines = code_txt.split('\n')
         njit_lineno_in_txt = next(
             i + 1 for i, line in enumerate(code_lines) if line.startswith('@njit(')
