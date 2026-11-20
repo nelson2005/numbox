@@ -30,11 +30,6 @@ from numba.core.caching import UserProvidedCacheLocator
 # that is mounted read-only. EACCES and EPERM are the errors where the directory's permissions or flags deny the write.
 _CANNOT_WRITE = (errno.EROFS, errno.EACCES, errno.EPERM)
 
-# os.access tests with the real user and group IDs unless it is called with effective_ids=True. The real and effective
-# IDs differ in a set-user-ID program, and the operating system opens a file using the effective IDs. Windows does
-# not support this distinction.
-_BY_EFFECTIVE_IDS = os.access in os.supports_effective_ids
-
 
 def cannot_be_written(error, location):
     """Return whether ``error`` is the error of a write that the operating system denied in the directory ``location``.
@@ -50,7 +45,7 @@ def cannot_be_written(error, location):
     in it. Any other ``OSError``, such as a full disk or a name that is too long, also gives False.
     """
     return (isinstance(error, OSError) and error.errno in _CANNOT_WRITE and os.path.isdir(location)
-            and os.access(location, os.X_OK, effective_ids=_BY_EFFECTIVE_IDS))
+            and os.access(location, os.X_OK))
 
 
 class ReadOnlyCacheLocator(UserProvidedCacheLocator):

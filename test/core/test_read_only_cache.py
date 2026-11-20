@@ -165,20 +165,6 @@ def test_a_refused_write_in_a_directory_that_cannot_be_searched_is_not_recognize
         location.chmod(0o755)
 
 
-@pytest.mark.skipif(os.access not in os.supports_effective_ids, reason="needs a platform with effective IDs")
-def test_a_directory_that_only_the_real_user_id_can_search_is_not_recognized(tmp_path, monkeypatch):
-    """The effective user ID differs from the real user ID in a set-user-ID program.
-
-    The operating system opens a file using the effective user ID. The test simulates such a program: ``os.access``
-    returns True for the real IDs and False for the effective IDs.
-    """
-    def access(path, mode, *, effective_ids=False):
-        return not effective_ids
-
-    monkeypatch.setattr(os, "access", access)
-    assert not cannot_be_written(PermissionError(errno.EACCES, "Permission denied"), tmp_path)
-
-
 def test_the_locator_behaves_as_numbas_where_the_directory_can_be_written(tmp_path, monkeypatch):
     monkeypatch.setattr(numba.config, "CACHE_DIR", str(tmp_path / "cache"))
     add_one = _function_in_a_file_of_its_own(tmp_path).py_func
