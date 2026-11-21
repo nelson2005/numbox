@@ -84,7 +84,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - The supported numba range is now `>=0.63.1,<0.69.0`. It was `>=0.60.0,<0.68.0`. This adds numba 0.68 and drops numba
-  0.60.0 through 0.63.0. ([#45], [#47])
+  0.60.0 through 0.63.0. ([#45])
 - Everything numbox compiles is cached under the extended key: its bindings, `make_structref` structs, `compile_kernel`
   kernels, the derive functions of `Derived` nodes, and functions passed to `@proxy` and `cres`. Each cached function
   recompiles once after this upgrade and after every later numbox upgrade. ([#48])
@@ -105,10 +105,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Removed
 
 - `numbox.core.configurations.function_struct_has`, with no replacement. numbox used it to test for the `jit_addr` slot,
-  which is always present on the supported numba versions. ([#47])
+  which is always present on the supported numba versions.
 - `numbox.utils.derive_wap.jit_addr_supported`, with no replacement. On the supported numba versions it would always
   return `True`, so callers can remove the check. `cres` and the `.as_func` of a `@proxy` binding always return a
-  `DeriveWAP`. ([#47])
+  `DeriveWAP`.
 
 ### Fixed
 
@@ -496,7 +496,7 @@ No user-facing changes. The release contains a private helper and a change to th
 - `CompiledKernel.recompute` raises `RuntimeError` when the first call of `kernel` raised. The error says that a full
   call of the kernel is required first. Before, `recompute` reused the inputs of the failed call. ([#27])
 - The API section of the `numbox.core.vector` documentation page shows the vector module. Before, the page showed the
-  variable module.
+  variable module. ([#27])
 
 ## [0.5.19] - 2026-06-17
 
@@ -757,7 +757,7 @@ No user-facing changes. The release contains a private helper and a change to th
 ### Changed
 
 - The parameter of `numbox.utils.meminfo.get_nrt_refcount` was renamed from `meminfo_p` to `s`. A call that passes
-  `meminfo_p=` fails. ([#9])
+  `meminfo_p=` fails.
 
 ## [0.5.8] - 2026-04-13
 
@@ -790,12 +790,12 @@ No user-facing changes. The release contains a private helper and a change to th
 
 - 39 libm bindings in `numbox.core.bindings._math`: 30 functions of one argument, such as `exp`, `log`, `sqrt` and
   `erf`, and 9 functions of two arguments, such as `atan2`, `pow` and `hypot`. They take and return `float64` and can be
-  called from Python and from jitted code. `_math` already had `cos`, `sin` and `tan`. ([#2])
+  called from Python and from jitted code. `_math` already had `cos`, `sin` and `tan`. ([#2], [#4])
 
 ### Changed
 
 - `from numbox.core.bindings import *` binds the new names. The bindings `round` and `pow` then shadow the Python
-  built-ins of the same names in the importing module.
+  built-ins of the same names in the importing module. ([#2], [#4])
 
 ### Fixed
 
@@ -1310,6 +1310,7 @@ No user-facing changes. The release removes a demonstration block that ran only 
 [0.1.0]: https://github.com/Goykhman/numbox/releases/tag/0.1.0
 
 [#2]: https://github.com/Goykhman/numbox/pull/2
+[#4]: https://github.com/Goykhman/numbox/pull/4
 [#8]: https://github.com/Goykhman/numbox/pull/8
 [#9]: https://github.com/Goykhman/numbox/pull/9
 [#10]: https://github.com/Goykhman/numbox/pull/10
@@ -1340,7 +1341,6 @@ No user-facing changes. The release removes a demonstration block that ran only 
 [#44]: https://github.com/Goykhman/numbox/pull/44
 [#45]: https://github.com/Goykhman/numbox/pull/45
 [#46]: https://github.com/Goykhman/numbox/pull/46
-[#47]: https://github.com/Goykhman/numbox/pull/47
 [#48]: https://github.com/Goykhman/numbox/pull/48
 [#49]: https://github.com/Goykhman/numbox/pull/49
 [#50]: https://github.com/Goykhman/numbox/pull/50
