@@ -1,19 +1,22 @@
 """Tests of the aggregate and window registrations of :mod:`~numbox.core.bindings.sqlite.udf_helpers`.
 
 The tests check the results of ``register_aggregate`` and ``register_window`` for groups of rows, for an empty group,
-for plain Python callbacks and for a state with two fields, and the flag that ``deterministic=True`` sets. An exception
-in a callback must fail the query: the tests raise an exception in each callback, read the error message, and count
-MemInfo allocations and frees. A registration that SQLite refuses raises ``RuntimeError``. Tests in subprocesses check
-that a second process loads the generated code from numba's cache, that a changed literal compiles new code, and that
-numbox's jit options can disable the cache.
+for plain Python callbacks and for a state with two fields, and the flag that ``deterministic=True`` sets. Two
+aggregates of one name whose steps a factory makes over two ``@intrinsic`` functions must each run their own step. An
+exception in a callback must fail the query: the tests raise an exception in each callback, read the error message, and
+count MemInfo allocations and frees. A registration that SQLite refuses raises ``RuntimeError``. Tests in subprocesses
+check that a second process loads the generated code from numba's cache, that a changed literal compiles new code, and
+that numbox's jit options can disable the cache.
 """
 import gc
 from ctypes import addressof, c_char_p, c_int64
 
 import numpy as np
-from numba import carray, cfunc, njit, types
+import pytest
+from numba import carray, cfunc, int64, njit, types
 from numba.core import types as nb_types
 from numba.experimental import structref
+from numba.extending import intrinsic
 
 from numbox.core.bindings.sqlite.constants import SQLITE_OK, SQLITE_UTF8
 from numbox.core.bindings.sqlite.udf_helpers import register_aggregate, register_window
@@ -328,6 +331,56 @@ def test_two_distinct_aggregates_no_collision():
     v2, _c2 = _read1_int64(db, "SELECT __cap(my_sum2(v)) FROM t")
     sqlite3_close(db)
     assert (v1, v2) == (15, 30)
+
+
+def _make_times(k):
+    """Return an ``@intrinsic`` that multiplies an ``int64`` by ``k``, as a factory over a constant makes one."""
+    @intrinsic
+    def times(typingctx, x):
+        def codegen(context, builder, sig, args):
+            return builder.mul(args[0], context.get_constant(nb_types.int64, k))
+        return nb_types.int64(nb_types.int64), codegen
+    return times
+
+
+def _make_bare_times(k):
+    """Return the intrinsic of ``_make_times``, written with ``int64`` imported by name as numba's examples do."""
+    @intrinsic
+    def times(typingctx, x):
+        def codegen(context, builder, sig, args):
+            return builder.mul(args[0], context.get_constant(int64, k))
+        return int64(int64), codegen
+    return times
+
+
+def _make_scaled_step(times):
+    """Return a step that adds its argument multiplied by the ``@intrinsic`` ``times``."""
+    def step(state, ctx, argc, argv_pp):
+        args = carray(_cast_int_to_void_p(argv_pp), (argc,), dtype=np.intp)
+        state.total += times(sqlite3_value_int64(args[0]))
+    return step
+
+
+@pytest.mark.parametrize("make_times", [_make_times, _make_bare_times], ids=["module_style", "bare_name"])
+def test_two_aggregates_that_a_factory_makes_over_two_intrinsics_run_their_own_steps(make_times):
+    """Two aggregates of one name, whose steps a factory makes over two ``@intrinsic`` functions, return 12 and 18.
+
+    The steps read their argument with ``_cast_int_to_void_p``, so ``digest`` computes the weaker fingerprint for them.
+    An intrinsic has no fingerprint, and the weaker fingerprint walks the definition function of the intrinsic in each
+    step's closure, so the two registrations have two anchors. With one anchor, the second registration would load the
+    code generated for the first and return 12. Each style of intrinsic has an aggregate name of its own, so that the
+    two cases do not share anchors.
+    """
+    results = []
+    for k in (2, 3):
+        db = _open_memory()
+        _make_table(db, [1, 2, 3])
+        register_aggregate(db, f"scaled_sum_{make_times.__name__}", 1, sum_state_type, sum_init,
+                           _make_scaled_step(make_times(k)), sum_finalize)
+        val, _cap = _read1_int64(db, f"SELECT __cap(scaled_sum_{make_times.__name__}(v)) FROM t")
+        sqlite3_close(db)
+        results.append(val)
+    assert results == [12, 18]
 
 
 def test_deterministic_flag():

@@ -18,12 +18,14 @@ import textwrap
 import threading
 import warnings
 
+import numba
 import numpy as np
 import pytest
 from numba import float64, njit, typeof
 from numba.core.errors import TypingError
 from numba.core.types import FunctionType, Omitted
 from numba.core.types.function_type import CompileResultWAP
+from numba.extending import intrinsic
 
 from numbox.core.bindings.errno import errno_get
 from numbox.core.bindings.libc import getenv, memcpy
@@ -1018,6 +1020,59 @@ def test_a_body_over_an_opaque_value_registered_twice_keeps_its_alias():
         return second(x)
 
     assert call(2.5) == 2.0
+
+
+def _make_module_scaled_binding(cfg, ty):
+    """Return a binding over a new ``@intrinsic`` whose codegen reads its factor as the module attribute ``cfg.K``.
+
+    ``ty`` is the numba type ``float64`` itself, which the intrinsic reads by its bare name, or the module
+    ``numba.types``, whose ``float64`` the intrinsic reads as an attribute. An intrinsic has no fingerprint in either
+    style, and the best-effort walk leaves ``cfg.K`` out, so two such bindings made with two values of ``cfg.K``
+    compute one alias.
+    """
+    @intrinsic
+    def scale(typingctx, x):
+        f64 = getattr(ty, "float64", ty)
+
+        def codegen(context, builder, sig, args):
+            return builder.fmul(args[0], context.get_constant(f64, cfg.K))
+        return f64(f64), codegen
+
+    @proxy(float64(float64), jit_options={"cache": False})
+    def scaled(x):
+        return scale(x)
+    return scaled
+
+
+@pytest.mark.parametrize("ty", [float64, numba.types], ids=["bare_name", "module_style"])
+def test_two_bodies_over_intrinsics_that_differ_in_a_module_attribute_each_run_their_own_code(ty):
+    """Two bindings whose intrinsics differ only in ``cfg.K`` compute one alias and still each run their own body.
+
+    The two intrinsics are two objects, which numbox compares as values without a fingerprint. It therefore reports
+    the collision and gives the second body a name of its own, and a jitted caller of each binding runs that binding's
+    body, 2.0 and 3.0. If numbox compared only the values inside the intrinsics' definitions, the second body would
+    replace the first under the shared alias, and both callers would return 3.0.
+    """
+    import types
+
+    from numbox.core.proxy.proxy import AliasCollisionWarning
+
+    cfg = types.ModuleType("cfg")
+    cfg.K = 2.0
+    first = _make_module_scaled_binding(cfg, ty)
+    cfg.K = 3.0
+    with pytest.warns(AliasCollisionWarning):
+        second = _make_module_scaled_binding(cfg, ty)
+
+    @njit(float64(float64))
+    def call_first(x):
+        return first(x)
+
+    @njit(float64(float64))
+    def call_second(x):
+        return second(x)
+
+    assert (call_first(1.0), call_second(1.0)) == (2.0, 3.0)
 
 
 def test_a_trap_keeps_its_hands_off_an_alias_a_present_binding_holds():

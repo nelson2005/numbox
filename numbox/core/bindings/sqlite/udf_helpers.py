@@ -208,11 +208,12 @@ def _compile_callbacks(stem, srcs, state_type, fns):
     # module attributes it reads that hold data, a function, a class or a type. An edit to any of
     # these, a numeric literal included, therefore compiles new code. If a callback reads a value without a fingerprint,
     # such as the @intrinsic _cast_int_to_void_p of the usual argv_pp idiom, digest falls back to a weaker fingerprint.
-    # It names the type of such a value instead of the value and omits module attributes, so an edit to such a value or
-    # to a module attribute keeps the anchor and the cached code. The utils page describes the case under "If a SQLite
-    # function keeps returning old results". A fingerprint names its function's module, and that name is __main__ in
-    # every run of a script, so callbacks and a state type defined in a script's __main__ get the same digest in each
-    # run. test_xprocess_cache_no_growth and test_invalidation_on_literal_edit run that case in subprocesses.
+    # It names the type of such a value instead of the value, except that it walks the definition of an @intrinsic of
+    # the user's, and it omits module attributes, so an edit to such a value or to a module attribute keeps the anchor
+    # and the cached code. The utils page describes the case under "If a SQLite function keeps returning old results". A
+    # fingerprint names its function's module, and that name is __main__ in every run of a script, so callbacks and a
+    # state type defined in a script's __main__ get the same digest in each run. test_xprocess_cache_no_growth and
+    # test_invalidation_on_literal_edit run that case in subprocesses.
     udaf_digest = digest(state_id, list(fns.values()))
     # The anchor's name ends in a hash of the code text, which starts with the digest, so a new digest writes a new
     # anchor and compiles new code.

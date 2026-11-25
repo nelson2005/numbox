@@ -8,10 +8,13 @@ Other tests check that a fingerprint folds the globals and the module attributes
 module global that only shares an attribute's name. ``co_names`` holds both kinds of name, so ``_loaded_global_names``
 reads the opcodes. Folding such a global would change the fingerprint when only the global changes, and a global
 without a fingerprint would make the fingerprint fail, so the work builder would compile the derive without a cache.
-Four rules apply with ``fold_named``. A module attribute that holds a function or a class is folded by its content
-or by its name. A module attribute that holds a numba type or a dtype object is folded by the identity of the type. A
-helper without a fingerprint leaves its caller without one. The text of a dispatcher holds the types that it was
-declared with. The tests state each rule, and that the text without ``fold_named`` does not change.
+An ``@intrinsic`` has no fingerprint, and the best-effort fingerprint folds a user's intrinsic by its definition
+function and its options, so two that a factory makes over different constants have different texts. Four rules apply
+with ``fold_named``. A module attribute that holds a function or a class is folded by its content or by its name, and
+one that holds an ``@intrinsic`` of the user's leaves its reader without a fingerprint. A module attribute that holds a
+numba type or a dtype object is folded by the identity of the type. A helper without a fingerprint leaves its caller
+without one. The text of a dispatcher holds the types that it was declared with. The tests state each rule, and that the
+text without ``fold_named`` does not change.
 The last tests cover ``_opaque_values_match`` and the ``@proxy`` aliases that a collision retires. The tests that need
 a C math library skip if ``open_libm`` finds none.
 """
@@ -34,11 +37,11 @@ from numba import deferred_type, float32, float64, guvectorize, njit, stencil, v
 from numba.core.types import ExternalFunction
 from numba.extending import intrinsic
 
-from numbox.utils import lowlevel
+from numbox.utils import clock, fingerprint, lowlevel
 from numbox.utils.fingerprint import (
-    _MAX_REPR_INT_BITS, _Unfingerprintable, _canon_value, _fingerprint_function, _fingerprint_function_best_effort,
-    _fingerprint_module_attrs, _loaded_global_names, _named_value_text, _opaque_values_match,
-    _referenced_global_names,
+    _ABSENT_ALIASES, _MAX_REPR_INT_BITS, _Unfingerprintable, _canon_value, _fingerprint_function,
+    _fingerprint_function_best_effort, _fingerprint_module_attrs, _loaded_global_names, _named_value_text,
+    _opaque_values_match, _referenced_global_names,
 )
 from test.auxiliary_utils import open_libm
 
@@ -679,13 +682,440 @@ def test_a_jitted_function_of_numbox_without_a_fingerprint_keeps_its_caller_cach
     assert texts[0] != texts[1]
 
 
-def test_a_module_attribute_that_holds_an_intrinsic_or_a_class_of_the_user_is_left_out():
-    # The fingerprint has no text for an @intrinsic, for a class of the user or for an enum. Such an attribute is
-    # left out, the caller keeps its fingerprint, and a change of the value does not change it.
-    @intrinsic
-    def first(typingctx, x):
-        return x(x), lambda context, builder, sig, args: args[0]
+def test_a_dtype_object_is_folded_by_its_layout():
+    # numba compiles in the type that a dtype object stands for, as in np.zeros(n, dtype=DT). Two structured dtypes of
+    # one size and different fields get different texts, and two equal dtypes get one text. A function that reads a
+    # dtype object as a global therefore has a fingerprint, which changes with the layout.
+    first = np.dtype([("a", "<i4"), ("b", "<f4")])
+    texts = [_canon_value(dt, set()) for dt in (first, np.dtype([("a", "<f4"), ("b", "<i4")]), np.dtype(first.descr))]
+    assert texts[0].startswith("npdtype(struct(") and texts[0] != texts[1] and texts[0] == texts[2]
+    assert _canon_value(np.dtype("float32"), set()) != _canon_value(np.dtype("float64"), set())
 
+    f = _make("""
+        def f(n):
+            return np.zeros(n, dtype=DT)
+    """, np=np, DT=first)
+    before = _fingerprint_function(f, set())
+    f.__globals__["DT"] = np.dtype([("a", "<i8")])
+    assert _fingerprint_function(f, set()) != before
+
+
+def _make_scale(k):
+    """Return an ``@intrinsic`` that multiplies a ``float64`` by ``k``, as a factory over a constant makes one."""
+    @intrinsic
+    def scale(typingctx, x):
+        def codegen(context, builder, sig, args):
+            return builder.fmul(args[0], context.get_constant(numba.types.float64, k))
+        return numba.types.float64(numba.types.float64), codegen
+    return scale
+
+
+def _make_cast():
+    """Return an ``@intrinsic`` whose definition function reads the numba type ``float64`` as a global."""
+    return intrinsic(_make("""
+        def f(typingctx, x):
+            return float64(x), lambda context, builder, sig, args: args[0]
+    """, float64=float64))
+
+
+def test_an_intrinsic_has_no_fingerprint_and_its_best_effort_text_follows_its_definition():
+    # numba compiles a call of an @intrinsic with the code that its definition function generates, and that code can
+    # read any object through a module, so an intrinsic has no fingerprint, also one written with numba.types. The
+    # best-effort walk folds its definition: two that one factory makes over different constants get different texts,
+    # and two that it makes over equal constants get one text, though they are different objects.
+    from numba.experimental import structref
+
+    for scale in (_make_scale(2.0), _make_bare_scale(2.0), structref.new):
+        with pytest.raises(_Unfingerprintable):
+            _canon_value(scale, set())
+    reader = """
+        def f(x):
+            return op(x)
+    """
+    two, three, two_again = (_make(reader, op=_make_scale(k)) for k in (2.0, 3.0, 2.0))
+    texts = [_fingerprint_function_best_effort(g) for g in (two, three, two_again)]
+    assert "op=intrinsic-besteffort(" in texts[0] and texts[0] != texts[1] and texts[0] == texts[2]
+
+
+def test_functions_that_a_factory_makes_over_two_intrinsics_have_different_best_effort_fingerprints():
+    # A factory makes the step of a SQLite aggregate over an @intrinsic, and digest names the generated code after the
+    # step's fingerprint. The step has none, because the intrinsic has none, so digest uses the best-effort fingerprint,
+    # which folds the closure value through the intrinsic's definition.
+    def make_step(scale):
+        def step(x):
+            return scale(x)
+        return step
+
+    for make in (_make_scale, _make_bare_scale):
+        steps = [make_step(make(k)) for k in (2.0, 3.0)]
+        with pytest.raises(_Unfingerprintable):
+            _fingerprint_function(steps[0], set())
+        assert _fingerprint_function_best_effort(steps[0]) != _fingerprint_function_best_effort(steps[1])
+
+
+def test_a_module_attribute_that_holds_an_intrinsic_of_the_user_leaves_its_reader_without_a_fingerprint():
+    # helpers.scale can hold an intrinsic over 2.0 in one process and over 3.0 in the next, and the intrinsic has no
+    # fingerprint. With fold_named the walk raises, as it does for a function without one, so a struct method, a
+    # formula or a derive that calls it compiles without a cache. Without fold_named it is left out, as a function is.
+    helpers = types.ModuleType("helpers")
+    f = _make("""
+        def f(x):
+            return helpers.scale(x)
+    """, helpers=helpers)
+    for make in (_make_scale, _make_bare_scale):
+        helpers.scale = make(2.0)
+        with pytest.raises(_Unfingerprintable):
+            _fingerprint_function(f, set(), fold_named=True)
+        assert "module_attrs" not in _fingerprint_function(f, set())
+
+
+def test_an_object_that_passes_for_an_intrinsic_without_a_definition_has_no_fingerprint_and_a_placeholder():
+    # isinstance accepts a mock made with spec=_Intrinsic, which has no _defn. The best-effort walk never raises, so it
+    # gives such an object the placeholder of its type, and digest names a callback that holds it. The strict walk with
+    # fold_named raises _Unfingerprintable for it behind a module attribute, as it does for any value without a
+    # fingerprint, and digest leaves it out there as it leaves out an intrinsic.
+    from unittest import mock
+
+    from numba.core.extending import _Intrinsic
+
+    from numbox.utils.digest import digest
+
+    spoof = mock.Mock(spec=_Intrinsic)
+
+    def held(x):
+        return spoof(x)
+
+    assert "<opaque:Mock>" in _fingerprint_function_best_effort(held)
+    assert len(digest("subject", [held])) == 16
+    helpers = types.ModuleType("helpers")
+    helpers.op = spoof
+    f = _make("""
+        def f(x):
+            return helpers.op(x)
+    """, helpers=helpers)
+    with pytest.raises(_Unfingerprintable):
+        _fingerprint_function(f, set(), fold_named=True)
+    assert len(digest("subject", [f])) == 16
+
+
+def test_an_intrinsic_of_numbox_keeps_its_caller_cacheable():
+    # An intrinsic has no fingerprint, and monotonic_ns is one. numbox supplies it, so a caller that reaches it through
+    # its module keeps its fingerprint, as a caller of array_data_p does. When a module of another package holds it in
+    # an attribute, it is folded by its name.
+    with pytest.raises(_Unfingerprintable):
+        _canon_value(clock.monotonic_ns, set(), True)
+    f = _make("""
+        def f():
+            return clock.monotonic_ns()
+    """, clock=clock)
+    assert "module_attrs" not in _fingerprint_function(f, set(), fold_named=True)
+
+    helpers = types.ModuleType("helpers")
+    helpers.now = clock.monotonic_ns
+    g = _make("""
+        def f():
+            return helpers.now()
+    """, helpers=helpers)
+    assert _fingerprint_function(g, set(), fold_named=True).endswith(
+        ";module_attrs=[helpers.now=named(numbox.utils.clock.monotonic_ns)])")
+
+
+def test_a_proxy_function_whose_alias_is_retired_has_no_fingerprint():
+    # A retired alias identifies nothing, so _canon_value walks the wrapper of the @proxy function instead. The wrapper
+    # calls an @intrinsic whose definition function holds the alias and reads the function's signature, which has no
+    # fingerprint. The walk must raise, and not fold an alias that names another body in another process.
+    from numbox.core.bindings.sqlite.value import sqlite3_value_int64
+
+    alias = sqlite3_value_int64._numbox_proxy_alias
+    assert alias not in _ABSENT_ALIASES
+    _ABSENT_ALIASES.add(alias)
+    try:
+        for fold_named in (False, True):
+            with pytest.raises(_Unfingerprintable):
+                _canon_value(sqlite3_value_int64, set(), fold_named)
+    finally:
+        _ABSENT_ALIASES.discard(alias)
+
+
+def test_a_subarray_dtype_object_is_folded_by_its_elements_and_its_shape():
+    # Every subarray dtype of one size has the str |V<itemsize>, and numba types np.dtype((np.float64, (2,))) and
+    # np.dtype((np.int32, (4,))) as two nested arrays. Both get their own text, as a global and as a module attribute.
+    two_f8, four_i4 = np.dtype((np.float64, (2,))), np.dtype((np.int32, (4,)))
+    assert two_f8.str == four_i4.str
+    assert _canon_value(two_f8, set()) != _canon_value(four_i4, set())
+    assert _canon_value(two_f8, set()) == _canon_value(np.dtype((np.float64, (2,))), set())
+    # The text holds both parts: one element type in two shapes, and one shape of two element types.
+    assert _canon_value(two_f8, set()) != _canon_value(np.dtype((np.float64, (3,))), set())
+    assert _canon_value(two_f8, set()) != _canon_value(np.dtype((np.int64, (2,))), set())
+    # Two structured elements of one size with different fields give two texts as well.
+    rec_a = np.dtype([("a", np.int32), ("b", np.float32)])
+    rec_b = np.dtype([("a", np.float32), ("b", np.int32)])
+    assert rec_a.str == rec_b.str
+    assert _canon_value(np.dtype((rec_a, (2,))), set()) != _canon_value(np.dtype((rec_b, (2,))), set())
+    helpers = types.ModuleType("helpers")
+    f = _make("""
+        def f(x):
+            return helpers.DT
+    """, helpers=helpers)
+    texts = []
+    for dt in (two_f8, four_i4):
+        helpers.DT = dt
+        texts.append(_fingerprint_function(f, set(), fold_named=True))
+    assert texts[0] != texts[1]
+
+
+def test_the_best_effort_text_of_an_intrinsic_holds_the_names_of_its_parameters():
+    # numba binds a keyword call of an intrinsic by the names of its definition's parameters, so sub(a=x, b=y) computes
+    # another thing when the definition names them (typingctx, b, a). The two definitions below have the same bytecode,
+    # constants and names.
+    texts = []
+    for params in ("a, b", "b, a"):
+        texts.append(_fingerprint_function_best_effort(_bare_reader(f"""
+            def f(typingctx, {params}):
+                return float64(float64, float64), None
+        """)))
+    assert texts[0] != texts[1]
+
+
+def test_an_intrinsic_whose_definition_is_not_a_function_has_no_fingerprint():
+    # numba accepts a callable object as the definition of an intrinsic. The object has no code to read, so the
+    # intrinsic has no text, and the best-effort fingerprint of a function that reads it puts a placeholder there.
+    class Definition:
+        def __call__(self, typingctx, x):
+            return numba.types.float64(numba.types.float64), None
+
+    ident = intrinsic(Definition())
+    with pytest.raises(_Unfingerprintable):
+        _canon_value(ident, set())
+    f = _make("""
+        def f(x):
+            return ident(x)
+    """, ident=ident)
+    assert "=<opaque:_Intrinsic>" in _fingerprint_function_best_effort(f)
+
+
+def _make_bare_scale(k):
+    """Return an ``@intrinsic`` over ``k`` whose definition function reads the numba type ``float64`` by name."""
+    make = _make("""
+        def f(k):
+            @intrinsic
+            def scale(typingctx, x):
+                def codegen(context, builder, sig, args):
+                    return builder.fmul(args[0], context.get_constant(float64, k))
+                return float64(float64), codegen
+            return scale
+    """, intrinsic=intrinsic, float64=float64)
+    return make(k)
+
+
+def test_the_best_effort_fingerprint_walks_an_intrinsic_of_the_user():
+    # An intrinsic has no fingerprint. numba's documentation writes one with numba types imported by name, which have
+    # none either. The best-effort fingerprint walks its definition function with placeholders, so two intrinsics that
+    # one factory makes over 2.0 and 3.0 still give a step that reads one of them two fingerprints.
+    def make_step(scale):
+        def step(x):
+            return scale(x)
+        return step
+
+    with pytest.raises(_Unfingerprintable):
+        _canon_value(_make_bare_scale(2.0), set())
+    opaque = []
+    texts = [_fingerprint_function_best_effort(make_step(_make_bare_scale(k)), opaque if k == 2.0 else None)
+             for k in (2.0, 3.0, 2.0)]
+    assert "scale=intrinsic-besteffort(" in texts[0]
+    assert texts[0] != texts[1] and texts[0] == texts[2]
+    # The values without a text are float64, inside the definition, and the intrinsics themselves, which
+    # _opaque_values_match compares as other such values.
+    assert {type(value).__name__ for value in opaque} == {"Float", "_Intrinsic"}
+
+    # An intrinsic of numbox gets the placeholder, so the alias of a binding does not depend on numbox's code.
+    from numbox.core.bindings.call import _call_lib_func
+
+    reader = _make("""
+        def f(x):
+            return _call_lib_func("cos", (x,))
+    """, _call_lib_func=_call_lib_func)
+    opaque = []
+    assert "_call_lib_func=<opaque:_Intrinsic>" in _fingerprint_function_best_effort(reader, opaque)
+    assert opaque == [_call_lib_func]
+
+    # The intrinsic that @proxy generates for the wrapper of a function of the user's holds the body's alias, so it
+    # gets the placeholder as well.
+    from numbox.core.proxy.proxy import proxy
+
+    @proxy(float64(float64), jit_options={"cache": False})
+    def plus_one(x):
+        return x + 1.0
+
+    wrapper_text = _fingerprint_function_best_effort(plus_one.py_func)
+    assert "=<opaque:_Intrinsic>" in wrapper_text and "intrinsic-besteffort" not in wrapper_text
+
+    # An intrinsic whose definition reads the intrinsic itself is walked once; the second time it is a reference.
+    defn = _make("""
+        def f(typingctx, x):
+            return float64(x), SELF
+    """, float64=float64)
+    defn.__globals__["SELF"] = recursive = intrinsic(defn)
+    text = _fingerprint_function_best_effort(make_step(recursive))
+    assert text.count("intrinsic-besteffort(") == 1 and "SELF=intrinsic-ref(0)" in text
+
+
+def _bare_reader(defn_src, decorate=intrinsic):
+    """Return a function that calls an ``@intrinsic`` made from ``defn_src``, which reads ``float64`` by name."""
+    defn = _make(defn_src, float64=float64)
+    return _make("""
+        def f(x):
+            return op(x)
+    """, op=decorate(defn))
+
+
+def test_the_best_effort_text_folds_each_default_value():
+    # A factory can bind the intrinsic as a default, as in "def step(x, sc=scale)". The defaults tuple then has no text,
+    # so the walk folds each default on its own, and the two steps over 2.0 and 3.0 get two texts. A tuple of defaults
+    # that all have a text gives the text of the tuple, as before.
+    def make_step(scale):
+        def step(x, sc=scale):
+            return float64(sc(x))
+        return step
+
+    texts = [_fingerprint_function_best_effort(make_step(_make_bare_scale(k))) for k in (2.0, 3.0)]
+    assert "defaults=tuple[intrinsic-besteffort(" in texts[0] and texts[0] != texts[1]
+    plain = _make("""
+        def f(x, k=2.0, name="a"):
+            return float64(x * k)
+    """, float64=float64)
+    assert "defaults=tuple[2.0,'a'];" in _fingerprint_function_best_effort(plain)
+
+
+def test_the_best_effort_text_of_an_intrinsic_holds_its_options():
+    # prefer_literal changes how numba types a call of an intrinsic, so two intrinsics made from one definition with
+    # and without it get two best-effort texts, and a callback that calls either gets a digest of its own.
+    src = """
+        def f(typingctx, x):
+            return float64(float64), None
+    """
+    plain = _fingerprint_function_best_effort(_bare_reader(src))
+    literal = _fingerprint_function_best_effort(_bare_reader(src, intrinsic(prefer_literal=True)))
+    assert "prefer_literal':False" in plain and plain != literal
+
+
+def test_the_best_effort_text_holds_the_names_that_a_nested_function_uses():
+    # The codegen function of an intrinsic is a nested function. Two codegens that call builder.fadd and builder.fsub
+    # have the same bytecode and constants and differ in their names, and numba compiles them to different code. A
+    # lambda in a function without a fingerprint is folded the same way.
+    texts = []
+    for op in ("fadd", "fsub"):
+        texts.append(_fingerprint_function_best_effort(_bare_reader(f"""
+            def f(typingctx, x):
+                def codegen(context, builder, sig, args):
+                    return builder.{op}(args[0], args[0])
+                return float64(float64), codegen
+        """)))
+    assert texts[0] != texts[1]
+    lambdas = [_make(f"""
+        def f(a):
+            return float64((lambda: a.{attr})())
+    """, float64=float64) for attr in ("x", "y")]
+    assert _fingerprint_function_best_effort(lambdas[0]) != _fingerprint_function_best_effort(lambdas[1])
+
+
+def test_the_best_effort_text_of_nested_code_holds_its_argument_counts_flags_and_constants():
+    # Each pair of lambdas has the same bytecode, constants and names and differs in one part only: the flags (*a
+    # against **a), the number of arguments, or the number of keyword-only arguments. numba binds a call of the two
+    # differently. Two codegens that multiply by 2.0 and by 3.0 differ only in a constant of the nested code.
+    for one, other in (("lambda *a: a", "lambda **a: a"), ("lambda a, b: a", "lambda a: a"),
+                       ("lambda a, *, b: a", "lambda a: a")):
+        texts = [_fingerprint_function_best_effort(_make(f"""
+            def f(x):
+                g = {lam}
+                return float64(x)
+        """, float64=float64)) for lam in (one, other)]
+        assert texts[0] != texts[1], (one, other)
+    literals = [_fingerprint_function_best_effort(_bare_reader(f"""
+        def f(typingctx, x):
+            def codegen(context, builder, sig, args):
+                return builder.fmul(args[0], context.get_constant(float64, {literal}))
+            return float64(float64), codegen
+    """)) for literal in ("2.0", "3.0")]
+    assert literals[0] != literals[1]
+
+
+def test_a_reference_in_the_best_effort_text_names_the_intrinsic_that_it_stands_for():
+    # a(x) + b(x) + c(x) computes 7 x with c = a and 8 x with c = b. The third intrinsic is a reference in both, and its
+    # number is the only part of the text that tells the two apart.
+    two, three = _make_bare_scale(2.0), _make_bare_scale(3.0)
+    src = """
+        def f(x):
+            return a(x) + b(x) + c(x)
+    """
+    texts = [_fingerprint_function_best_effort(_make(src, a=two, b=three, c=c)) for c in (two, three)]
+    assert "c=intrinsic-ref(0)" in texts[0] and "c=intrinsic-ref(1)" in texts[1]
+
+
+def test_the_best_effort_walk_enters_the_definition_of_each_intrinsic_of_the_user_once(monkeypatch):
+    # Six intrinsics whose definitions read all six would make a walk that follows every path enter 1957 definitions.
+    # The walk folds an intrinsic that it has met as a reference, so it enters each definition once and holds each text
+    # once.
+    names = [f"I{i}" for i in range(6)]
+    ns = {"float64": float64}
+    exec("".join(f"def d{i}(typingctx, x):\n    return float64(x), ({', '.join(names)},)\n"
+                 for i in range(6)), ns)  # nosec B102 - a fixed test snippet
+    for i, name in enumerate(names):
+        ns[name] = intrinsic(ns[f"d{i}"])
+    reader = _make("""
+        def f(x):
+            return (I0, I1, I2, I3, I4, I5)
+    """, **{name: ns[name] for name in names})
+
+    entered = collections.Counter()
+    original = fingerprint._fingerprint_function_best_effort
+
+    def counting(func, opaque=None, walked=None):
+        entered[func.__name__] += 1
+        return original(func, opaque, walked)
+
+    monkeypatch.setattr(fingerprint, "_fingerprint_function_best_effort", counting)
+    text = counting(reader)
+    assert entered == collections.Counter({"f": 1, **{f"d{i}": 1 for i in range(6)}})
+    assert text.count("intrinsic-besteffort(") == 6 and "I0=intrinsic-ref(0)" in text
+
+
+def test_the_definition_of_an_intrinsic_of_numba_or_numbox_is_never_walked(monkeypatch):
+    # 167 of numbox's 173 bindings read _call_lib_func, whose definition takes about a millisecond to walk. An intrinsic
+    # has no fingerprint, so neither the strict nor the best-effort fingerprint walks the definition of one of numba or
+    # numbox: the strict one raises at once and the best-effort one puts the placeholder in its place.
+    from numba.experimental import structref
+
+    from numbox.core.bindings.call import _call_lib_func
+
+    walked = []
+    strict, best_effort = fingerprint._fingerprint_function, fingerprint._fingerprint_function_best_effort
+
+    def counting_strict(func, seen, fold_named=False):
+        walked.append(func)
+        return strict(func, seen, fold_named)
+
+    def counting_best_effort(func, opaque=None, walked_intrinsics=None):
+        walked.append(func)
+        return best_effort(func, opaque, walked_intrinsics)
+
+    monkeypatch.setattr(fingerprint, "_fingerprint_function", counting_strict)
+    monkeypatch.setattr(fingerprint, "_fingerprint_function_best_effort", counting_best_effort)
+    reader = _make("""
+        def f(x):
+            return _call_lib_func("cos", (x,)) + new(x)
+    """, _call_lib_func=_call_lib_func, new=structref.new)
+    for value in (_call_lib_func, structref.new):
+        with pytest.raises(_Unfingerprintable):
+            _canon_value(value, set(), True)
+    text = fingerprint._fingerprint_function_best_effort(reader)
+    assert "_call_lib_func=<opaque:_Intrinsic>" in text and "new=<opaque:_Intrinsic>" in text
+    assert _call_lib_func._defn not in walked and structref.new._defn not in walked
+
+
+def test_a_module_attribute_that_holds_a_class_of_the_user_is_left_out():
+    # The fingerprint has no text for a class of the user or for an enum. Such an attribute is left out, the caller
+    # keeps its fingerprint, and a change of the value does not change it.
     class Mine:
         pass
 
@@ -705,7 +1135,7 @@ def test_a_module_attribute_that_holds_an_intrinsic_or_a_class_of_the_user_is_le
         def f(x):
             return helpers.op(x)
     """, helpers=helpers)
-    for op in (first, Mine, Color, unnamed):
+    for op in (Mine, Color, unnamed):
         helpers.op = op
         assert "module_attrs" not in _fingerprint_function(f, set(), fold_named=True)
 

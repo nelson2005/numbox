@@ -360,8 +360,6 @@ numbox release to another compiles each kernel once more under its old name
 
 Some edits do not change the digest. After one of them, the cached kernel returns the result from before the edit:
 
-- an edit to a function decorated with numba's ``@intrinsic`` that a formula calls as a module attribute, as in
-  ``helpers.step(y)``;
 - an edit to a class of your own that a formula reaches as a module attribute, such as a jitclass in
   ``helpers.Scaler(y)``;
 - an edit to the implementation of an ``@overload``, however the formula reaches the function that it overloads;
@@ -493,14 +491,14 @@ for the kernel:
 - A formula is a function made by ``cres``, passed as the formula itself. A formula that calls one, such as
   ``lambda x: double(x)``, allows caching.
 - A formula reads a value that numbox cannot hash. numbox hashes numbers, strings, bytes, ``None``, NumPy scalars and
-  arrays other than object arrays, tuples, lists, sets and dicts of these, modules, Python functions, numba
-  dispatchers and ``@vectorize`` functions. numbox hashes a function or a dispatcher together with the values that
-  it reads in turn, so it cannot hash one that reads a value that it cannot hash. That holds for a function that
-  the formula imports by name and for one that it calls through a module, as in ``helpers.step(y)``. numbox cannot
-  hash a ``@guvectorize`` or a ``@stencil`` function, so a formula that calls one either way prevents caching. numbox
-  also cannot hash a numba type that names an object of the process by its address, such as the type of a jitclass
-  instance. A formula that reads such a type through a module attribute prevents caching, and so does a formula that
-  calls a dispatcher declared with such a type.
+  arrays other than object arrays, NumPy dtype objects, tuples, lists, sets and dicts of these, modules, Python
+  functions, numba dispatchers and ``@vectorize`` functions. numbox hashes a function or a dispatcher together with the
+  values that it reads in turn, so it cannot hash one that reads a value that it cannot hash. That holds for a function
+  that the formula imports by name and for one that it calls through a module, as in ``helpers.step(y)``. numbox cannot
+  hash a ``@guvectorize`` function, a ``@stencil`` function or an ``@intrinsic``, so a formula that calls one either way
+  prevents caching. numbox also cannot hash a numba type that names an object of the process by its address, such as the
+  type of a jitclass instance. A formula that reads such a type through a module attribute prevents caching, and so does
+  a formula that calls a dispatcher declared with such a type.
 
 One rule covers a built-in function, a NumPy ufunc and a type that a module provides, none of which has a value that
 numbox can hash: calling one through its module allows caching, and calling it by a bare name imported from the module
@@ -515,11 +513,12 @@ Allows caching                  Prevents caching
 ``np.float64(x)``
 ==============================  ================================================================
 
-An ``@intrinsic`` imported by name leaves the kernel uncached as well. When it is called through its module, it allows
-caching, but an edit to it then does not change the digest, as listed in `When the kernel compiles again`_. numbox
-cannot hash its own jitted helpers, such as ``numbox.utils.lowlevel.array_data_p``, because they call an
-``@intrinsic``. The rule of the table applies to them: ``lowlevel.array_data_p(a)`` allows caching, and
-``array_data_p(a)`` after ``from numbox.utils.lowlevel import array_data_p`` does not.
+An ``@intrinsic`` leaves the kernel uncached as well, whether the formula imports it by name or calls it through its
+module, because numbox cannot hash the code that it generates. An intrinsic of numba or numbox that its module holds
+under its own name follows the rule of the table, and so do numbox's jitted helpers, such as
+``numbox.utils.lowlevel.array_data_p``, which numbox cannot hash because they call an ``@intrinsic``:
+``lowlevel.array_data_p(a)`` and ``clock.monotonic_ns()`` allow caching, and ``array_data_p(a)`` after
+``from numbox.utils.lowlevel import array_data_p`` does not.
 
 numbox finds the module attributes that a formula reads by their names. It looks up every attribute name in the
 formula's code, such as ``sum`` in ``values.sum()``, in each module that the formula uses. A formula that calls

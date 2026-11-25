@@ -75,22 +75,22 @@ def _formula_fingerprint(formula) -> tuple[str, bool]:
     by its name under the same condition. The attributes of a module that the function takes as a default argument
     are hashed in the same way.
 
-    A dispatcher or a @vectorize formula adds its target options, its ``locals`` and the signatures that it was
-    declared with, and so does one that the formula calls. Builtins are not among a function's globals, so they are
-    not hashed. An @intrinsic that a module attribute holds is not hashed, and neither is a class of any other
-    package. A value that a module provides only through a module-level ``__getattr__`` (PEP 562) is not hashed
-    either, because resolving it would run the ``__getattr__`` of unrelated modules at every compilation. After a
-    change of such a value, numba loads the cached kernel until the user deletes its cache files.
+    A dispatcher or a @vectorize formula adds its target options, its ``locals`` and the signatures that it was declared
+    with, and so does one that the formula calls. Builtins are not among a function's globals, so they are not hashed,
+    and a class of any other package is not hashed. A value that a module provides only through a module-level
+    ``__getattr__`` (PEP 562) is not hashed either, because resolving it would run the ``__getattr__`` of unrelated
+    modules at every compilation. After a change of such a value, numba loads the cached kernel until the user deletes
+    its cache files.
 
-    If the formula has no Python function, or reads a value without a canonical form, the text names the object by
-    its id, and the second value is False. The kernel then compiles in every process, and numba never loads it from a
-    cache. A function, a dispatcher, a cres value or a ctypes function pointer without a canonical form has that
-    effect whether the formula reads it as a global or through a module attribute. A @guvectorize function and a
-    @stencil function never have a canonical form, so they have that effect as well. A function or a dispatcher of
-    NumPy, numba, numbox or the standard library is the exception. numbox hashes it by module and name when the
-    formula reads it through a module attribute, and the kernel stays cached. numbox hashes a @cfunc formula, but the
-    second value is False as well: the kernel calls it at an address that differs from process to process, and numba
-    cannot cache that.
+    If the formula has no Python function, or reads a value without a canonical form, the text names the object by its
+    id, and the second value is False. The kernel then compiles in every process, and numba never loads it from a cache.
+    A function, a dispatcher, a cres value or a ctypes function pointer without a canonical form has that effect whether
+    the formula reads it as a global or through a module attribute. A @guvectorize function, a @stencil function and an
+    @intrinsic never have a canonical form, so they have that effect as well. A function, a dispatcher or an @intrinsic
+    of NumPy, numba, numbox or the standard library that its module holds under its own name is the exception. numbox
+    hashes it by module and name when the formula reads it through a module attribute, and the kernel stays cached.
+    numbox hashes a @cfunc formula, but the second value is False as well: the kernel calls it at an address that
+    differs from process to process, and numba cannot cache that.
     """
     # A dispatcher stores its Python function in py_func, and a @vectorize or @cfunc function in __wrapped__. A cres
     # function has neither, so it reaches the id branch below and leaves the kernel uncached, although _canon_value
