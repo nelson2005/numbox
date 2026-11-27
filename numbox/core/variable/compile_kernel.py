@@ -76,11 +76,11 @@ def _formula_fingerprint(formula) -> tuple[str, bool]:
     are hashed in the same way.
 
     A dispatcher or a @vectorize formula adds its target options, its ``locals`` and the signatures that it was declared
-    with, and so does one that the formula calls. Builtins are not among a function's globals, so they are not hashed,
-    and a class of any other package is not hashed. A value that a module provides only through a module-level
-    ``__getattr__`` (PEP 562) is not hashed either, because resolving it would run the ``__getattr__`` of unrelated
-    modules at every compilation. After a change of such a value, numba loads the cached kernel until the user deletes
-    its cache files.
+    with. So does a dispatcher or a @vectorize function that the formula calls. Builtins are not among a function's
+    globals, so they are not hashed, and a class of any other package is not hashed. A value that a module provides only
+    through a module-level ``__getattr__`` (PEP 562) is not hashed either, because resolving it would run the
+    ``__getattr__`` of unrelated modules at every compilation. After a change of such a value, numba loads the cached
+    kernel until the user deletes its cache files.
 
     If the formula has no Python function, or reads a value without a canonical form, the text names the object by its
     id, and the second value is False. The kernel then compiles in every process, and numba never loads it from a cache.

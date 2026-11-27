@@ -372,12 +372,12 @@ def _named_value_text(value: Any) -> Optional[str]:
 def _is_held_by_its_own_package(holder: Any, value: Any) -> bool:
     """Return whether the module named ``holder`` belongs to the top-level package of ``value``.
 
-    ``value`` is a function, a class, a dispatcher or an ``@intrinsic`` that ``_named_value_text`` names, or the name
-    of a module. A package holds its own functions and classes in the same way in every process that imports it, as
-    ``numpy.add``, ``numpy.sum``, ``numpy.strings.add`` and ``math.sqrt`` show, so such an attribute adds nothing to a
-    fingerprint. ``_fingerprint_module_attrs`` applies the same test to a submodule that its own package holds, such as
-    ``numpy.linalg``, and its docstring gives the reason. The top-level package is the part of a dotted name before the
-    first dot, so ``numpy_extras.ops`` is not a module of ``numpy``.
+    ``value`` is a function, a class, a dispatcher or an ``@intrinsic`` that ``_named_value_text`` names, or the name of
+    a module. A package holds its own functions and classes in the same way in every process that imports it, as
+    ``numpy.add``, ``numpy.sum``, ``numpy.strings.add`` and ``math.sqrt`` show. Such an attribute therefore adds nothing
+    to a fingerprint. ``_fingerprint_module_attrs`` applies the same test to a submodule that its own package holds,
+    such as ``numpy.linalg``, and its docstring gives the reason. The top-level package is the part of a dotted name
+    before the first dot, so ``numpy_extras.ops`` is not a module of ``numpy``.
     """
     if type(value) is str:
         home = value
@@ -802,8 +802,8 @@ def _is_user_intrinsic(value: Any) -> bool:
     The intrinsic that ``@proxy`` generates for a wrapper is excluded: its definition holds the alias of the body, and
     after a collision that alias names another body in another process.
     """
-    # The type is tested first: the walk meets every value that a function reads, and reading an attribute of an
-    # object with a __getattr__ of its own, such as a config dict or a module that imports on access, can raise.
+    # The type is tested first. The walk meets every value that a function reads. Reading an attribute of an object with
+    # a __getattr__ of its own, such as a config dict or a module that imports on access, can raise.
     if not isinstance(value, _Intrinsic):
         return False
     defn = getattr(value, "_defn", None)
@@ -874,9 +874,9 @@ def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list]
 
     def _canon_const(const: object) -> str:
         # A nested function, such as the codegen function of an @intrinsic, a lambda or a generator expression, is
-        # folded as the function itself is: two of them that differ only in a name that they use, such as builder.fadd
-        # and builder.fsub, compile to different code. Python 3.12 and later inline a list, set or dict comprehension
-        # into the function, so its names are already the function's own.
+        # folded in the same way as the function itself. Two of them that differ only in a name that they use, such as
+        # builder.fadd and builder.fsub, compile to different code. Python 3.12 and later inline a list, set or dict
+        # comprehension into the function, so its names are already the function's own.
         if isinstance(const, CodeType):
             inner = ",".join(_canon_const(c) for c in const.co_consts)
             return (

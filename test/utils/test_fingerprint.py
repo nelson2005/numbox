@@ -868,10 +868,10 @@ def _chain_of_intrinsics(top_constant, length=400):
 
 
 def test_the_best_effort_walk_of_a_long_chain_of_intrinsics_keeps_the_text_above_the_cut():
-    # Each definition in the chain reads the next intrinsic as a global, so the walk recurses through all of them. At a
-    # few hundred it exceeds the recursion limit, and the intrinsic at which it does gets a placeholder. The walk itself
-    # returns, the intrinsics above the cut keep their texts, and two chains that differ only at the reader's end get
-    # two texts. digest returns as well.
+    # Each definition in the chain reads the next intrinsic as a global, so the walk recurses through all of them. The
+    # walk exceeds the recursion limit at a few hundred, and the intrinsic at which it does gets a placeholder. The walk
+    # itself returns, the intrinsics above the cut keep their texts, and two chains that differ only at the reader's end
+    # get two texts. digest returns as well.
     from numbox.utils.digest import digest
 
     texts = [_fingerprint_function_best_effort(_chain_of_intrinsics(k)) for k in (2.0, 3.0)]
