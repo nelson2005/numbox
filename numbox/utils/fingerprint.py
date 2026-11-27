@@ -119,11 +119,11 @@ def _dtype_key(dtype: np.dtype) -> str:
 _ABSENT_ALIASES: set[str] = set()
 
 
-# The value of fold_named with which digest asks for a fingerprint. The walk folds what it folds with fold_named, except
-# that it leaves out an @intrinsic that a module attribute holds and that has no name, where fold_named raises. A
-# struct, a kernel or a derive that reads such an intrinsic compiles without a cache, because the intrinsic has no
-# fingerprint. A digest cannot turn its cache off. If the walk raised, digest would compute the text without fold_named,
-# which leaves out every function, class and type that a module attribute holds, not only the intrinsic.
+# The value of fold_named with which digest asks for a fingerprint. The walk folds the same values as with fold_named,
+# except that it leaves out an @intrinsic that a module attribute holds and that has no name, in which case fold_named
+# raises. A struct, a kernel or a derive that reads such an intrinsic compiles without a cache, because the intrinsic
+# has no fingerprint. A digest cannot disable caching. If the walk raised, digest would compute the text without
+# fold_named, which leaves out every function, class and type that a module attribute holds, not only the intrinsic.
 _FOLD_NAMED_FOR_DIGEST = "digest"
 
 
@@ -849,8 +849,8 @@ def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list]
             return f"intrinsic-ref({walked[id(value)]})"
         walked[id(value)] = len(walked)
         # The best-effort rules leave out what the definition reads through a module or an object, as in cfg.K, so two
-        # intrinsics with one text can compile to different code. The intrinsic itself therefore goes to opaque as
-        # well, and _opaque_values_match tells two such intrinsics apart.
+        # intrinsics with one text can compile to different code. The intrinsic itself is therefore appended to opaque
+        # as well, and _opaque_values_match distinguishes two such intrinsics.
         if opaque is not None:
             opaque.append(value)
         # A chain of intrinsics, each of whose definitions reads the next, is walked by recursion. A chain of a few

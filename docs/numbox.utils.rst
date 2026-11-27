@@ -643,11 +643,11 @@ that the decorator wraps in the same way, so two intrinsics that a factory makes
 fingerprint, such as two numbers, give two anchors. Two intrinsics that it makes over two numba types, such as
 ``float32`` and ``float64``, share one anchor, because a numba type has no fingerprint, and the second of them in a
 process runs the code compiled for the first. A callback that calls the intrinsic through a jitted function that the
-factory makes shares one anchor too, because such a jitted function has no fingerprint and gets a placeholder. So do two
-intrinsics that keep the number in a helper function without a fingerprint that their definition calls, such as a
-codegen helper that reads ``int64`` by its bare name. A later change to a value without a fingerprint, or to a module
-attribute that the callback reads, therefore leaves the anchor's name unchanged. The registration then loads the code
-compiled before the change, and numbox gives no warning.
+factory makes shares one anchor too, because such a jitted function has no fingerprint and gets a placeholder. Two
+intrinsics also share one anchor if their definition calls a helper function without a fingerprint that holds the
+number, such as a codegen helper that reads ``int64`` by its bare name. A later change to a value without a fingerprint,
+or to a module attribute that the callback reads, therefore leaves the anchor's name unchanged. The registration then
+loads the code compiled before the change, and numbox gives no warning.
 
 A callback that calls a helper without a fingerprint through a module, as in ``helpers.step(x)``, can also keep running
 old code. A struct method, a formula or a derive that does so compiles without a cache. A SQLite registration stays

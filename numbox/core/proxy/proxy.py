@@ -54,9 +54,9 @@ def _body_fingerprint(func, opaque=None):
     The fingerprint covers the bytecode, the constants, the default arguments, the values of the closure cells and the
     values of the globals that the body reads. The docstring is one of the constants, so an edit to the docstring alone
     changes the fingerprint. A value that has no form stable across processes enters as a placeholder for its type. An
-    ``@intrinsic`` of the user's is the exception: its definition function is walked in the same
-    way. If ``opaque`` is a list, each such value is appended to it, and so is such an intrinsic.
-    :func:`_publish_cfunc_alias` compares those values to distinguish a second body from the same body registered twice.
+    ``@intrinsic`` of the user's is the exception: its definition function is walked in the same way. If ``opaque`` is a
+    list, each such value and each such intrinsic is appended to it. :func:`_publish_cfunc_alias` compares those values
+    to distinguish a second body from the same body registered twice.
     """
     # The strict walker raises on the first value that has no canonical form. The body of a binding usually calls one
     # such value, the @intrinsic _call_lib_func. The best-effort walker then folds every value that it can
@@ -509,8 +509,9 @@ def {func_proxy_name}({func_args_str}):
         prefixed = '\n' * prepend + code_txt
         code = compile(prefixed, inspect.getfile(func), mode='exec')
         exec(code, ns)  # nosec B102 - JIT codegen of internal source
-        # The best-effort fingerprint walks the definition of a user's @intrinsic. This one holds the alias, which after
-        # a collision names another body in another process, so the tag keeps the walk out of it.
+        # The best-effort fingerprint walks the definition of a user's @intrinsic. The template's intrinsic holds the
+        # alias, which after a collision names another body in another process, so the tag stops the walk from entering
+        # it.
         ns[f"_{func_proxy_name}"]._numbox_proxy_template = True
         dispatcher = ns[func_proxy_name]
         # When numba builds a dispatcher, functools.update_wrapper copies the docstring of its py_func, which for the
