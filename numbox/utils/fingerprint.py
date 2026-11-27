@@ -30,12 +30,14 @@ import sysconfig
 
 from functools import lru_cache
 from importlib.machinery import ModuleSpec
+from inspect import CO_VARARGS, CO_VARKEYWORDS
 from types import BuiltinFunctionType, CodeType, FunctionType, MethodType, ModuleType
 from typing import Any, Optional, Sequence
 
 import numpy as np
 
 from numba.core.dispatcher import Dispatcher
+from numba.core.extending import _Intrinsic
 from numba.core.itanium_mangler import mangle_type_or_value
 from numba.core.types import ExternalFunction, Type
 from numba.core.types.function_type import CompileResultWAP
@@ -79,7 +81,13 @@ def _dtype_key(dtype: np.dtype) -> str:
     NumPy defines no ``descr`` for a dtype whose fields overlap or are not in the order of their offsets, such as the
     dtype of ``array[["b", "a"]]``. The ``str`` of such a dtype lists the names, the formats and the offsets of the
     fields, so the text holds a fixed word in place of the ``descr``.
+
+    A subarray dtype, such as ``np.dtype((np.float64, (2,)))``, also has the ``str`` ``|V<itemsize>``, which every
+    subarray dtype of that size shares. Its text holds the text of the dtype of its elements and its shape.
     """
+    if dtype.subdtype is not None:
+        base, shape = dtype.subdtype
+        return f"subarray({_dtype_key(base)};{shape})"
     if dtype.names is not None:
         try:
             descr = dtype.descr
@@ -111,13 +119,35 @@ def _dtype_key(dtype: np.dtype) -> str:
 _ABSENT_ALIASES: set[str] = set()
 
 
+# The value of fold_named with which digest asks for a fingerprint. The walk folds the same values as with fold_named,
+# except that it leaves out an @intrinsic that a module attribute holds and that has no name, in which case fold_named
+# raises. A struct, a kernel or a derive that reads such an intrinsic compiles without a cache, because the intrinsic
+# has no fingerprint. A digest cannot disable caching. If the walk raised, digest would compute the text without
+# fold_named, which leaves out every function, class and type that a module attribute holds, not only the intrinsic.
+_FOLD_NAMED_FOR_DIGEST = "digest"
+
+
+def _parameter_names(func: FunctionType) -> str:
+    """Return the names of the parameters of ``func`` in their order, as a text."""
+    code = func.__code__
+    count = (code.co_argcount + code.co_kwonlyargcount + bool(code.co_flags & CO_VARARGS)
+             + bool(code.co_flags & CO_VARKEYWORDS))
+    return "[" + ",".join(code.co_varnames[:count]) + "]"
+
+
+def _defined_in_supplied_package(func: FunctionType) -> bool:
+    """Return whether the module of ``func`` belongs to NumPy, numba, numbox or the standard library."""
+    home = func.__module__
+    return type(home) is str and _in_supplied_package(home)
+
+
 # repr raises ValueError for an int of more decimal digits than sys.get_int_max_str_digits() allows. A process can set
 # that limit as low as 640 digits, and an int of at most 2048 bits has at most 617. _canon_value writes a larger int
 # with hex, which has no limit, so that the text of an int does not depend on the limit of the process.
 _MAX_REPR_INT_BITS = 2048
 
 
-def _canon_value(value: Any, seen: set[int], fold_named: bool = False) -> str:
+def _canon_value(value: Any, seen: set[int], fold_named: bool | str = False) -> str:
     if isinstance(value, int) and value.bit_length() > _MAX_REPR_INT_BITS:
         return hex(value)
     if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
@@ -133,6 +163,10 @@ def _canon_value(value: Any, seen: set[int], fold_named: bool = False) -> str:
         except (ValueError, TypeError) as e:
             raise _Unfingerprintable(f"unhashable ndarray {value.dtype.str}") from e
         return f"ndarray({_dtype_key(data.dtype)};{value.shape};{raw})"
+    if isinstance(value, np.dtype):
+        # A dtype object, as DT in np.zeros(n, dtype=DT). numba compiles in the type that it stands for, and _dtype_key
+        # keeps the layout of a structured dtype. A module attribute that holds one gets the same text.
+        return f"npdtype({_dtype_key(value)})"
     if isinstance(value, (tuple, list)):
         return f"{type(value).__name__}[" + ",".join(_canon_value(v, seen, fold_named) for v in value) + "]"
     if isinstance(value, (set, frozenset)):
@@ -181,8 +215,9 @@ def _canon_value(value: Any, seen: set[int], fold_named: bool = False) -> str:
             return f"cresfunc({_fingerprint_function(py_func, seen, fold_named)};{value.cres.signature})"
     if isinstance(value, ctypes._CFuncPtr):
         return f"cfuncptr({_ctypes_func_key(value)})"
-    # Any other value has no fingerprint, among them a builtin function, a ufunc, a numba type, a class and a
-    # CompileResultWAP that numbox did not tag.
+    # Any other value has no fingerprint, among them a builtin function, a ufunc, a numba type, a class, an @intrinsic
+    # and a CompileResultWAP that numbox did not tag. numba compiles a call of an @intrinsic with the code that its
+    # definition function generates, which can read any object through a module, so no text describes it fully.
     raise _Unfingerprintable(type(value).__name__)
 
 
@@ -303,15 +338,22 @@ def _named_value_text(value: Any) -> Optional[str]:
     ``sys.modules`` whose type is exactly the module type. A module that ``importlib.util.LazyLoader`` has not loaded
     yet has another type, and reading its ``__dict__`` would run the module.
 
-    A numba dispatcher is named after its Python function, by the same rule, if ``_is_supplied`` accepts that function
-    and the module holds the dispatcher under the function's name, as ``numbox.utils.lowlevel`` holds
-    ``array_data_p``. ``_fingerprint_module_attrs`` uses that name only for a dispatcher that has no fingerprint.
+    A numba dispatcher is named after its Python function, and an ``@intrinsic`` after its definition function, by the
+    same rule. ``_is_supplied`` must accept that function, and the module must hold the dispatcher or the intrinsic
+    under the function's name, as ``numbox.utils.lowlevel`` holds ``array_data_p`` and ``numbox.utils.clock`` holds
+    ``monotonic_ns``. ``_fingerprint_module_attrs`` uses that name only for a dispatcher that has no fingerprint and for
+    an intrinsic, which never has one.
     """
     if type(value) is np.ufunc:
         if vars(np).get(value.__name__) is value:
             return f"ufunc(numpy.{value.__name__})"
         return None
-    described = value.py_func if isinstance(value, Dispatcher) else value
+    if isinstance(value, Dispatcher):
+        described = value.py_func
+    elif isinstance(value, _Intrinsic):
+        described = getattr(value, "_defn", None)
+    else:
+        described = value
     if type(described) is BuiltinFunctionType:
         tag = "builtin"
     elif _is_supplied(described):
@@ -330,18 +372,20 @@ def _named_value_text(value: Any) -> Optional[str]:
 def _is_held_by_its_own_package(holder: Any, value: Any) -> bool:
     """Return whether the module named ``holder`` belongs to the top-level package of ``value``.
 
-    ``value`` is a function, a class or a dispatcher that ``_named_value_text`` names, or the name of a module. A
-    package holds its own functions and classes in the same way in every process that imports it, as ``numpy.add``,
-    ``numpy.sum``, ``numpy.strings.add`` and ``math.sqrt`` show, so such an attribute adds nothing to a fingerprint.
-    ``_fingerprint_module_attrs`` applies the same test to a submodule that its own package holds, such as
-    ``numpy.linalg``, and its docstring gives the reason. The top-level package is the part of a dotted name before the
-    first dot, so ``numpy_extras.ops`` is not a module of ``numpy``.
+    ``value`` is a function, a class, a dispatcher or an ``@intrinsic`` that ``_named_value_text`` names, or the name of
+    a module. A package holds its own functions and classes in the same way in every process that imports it, as
+    ``numpy.add``, ``numpy.sum``, ``numpy.strings.add`` and ``math.sqrt`` show. Such an attribute therefore adds nothing
+    to a fingerprint. ``_fingerprint_module_attrs`` applies the same test to a submodule that its own package holds,
+    such as ``numpy.linalg``, and its docstring gives the reason. The top-level package is the part of a dotted name
+    before the first dot, so ``numpy_extras.ops`` is not a module of ``numpy``.
     """
     if type(value) is str:
         home = value
     elif type(value) is np.ufunc:
         home = "numpy"
     else:
+        # numba copies the module and the name of an @intrinsic's definition function onto the intrinsic, so _home_of
+        # reads them from the intrinsic itself.
         home = _home_of(value.py_func if isinstance(value, Dispatcher) else value)
     return type(holder) is str and home is not None and holder.partition(".")[0] == home.partition(".")[0]
 
@@ -514,7 +558,7 @@ def _has_fingerprint(value: Any, seen: set[int]) -> bool:
 
 
 def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[int],
-                              fold_named: bool = False) -> str:
+                              fold_named: bool | str = False) -> str:
     """Return the text for the module attributes that a function reads, such as ``cfg.SCALE``, or an empty string.
 
     ``_fingerprint_function`` folds the globals that a function reads, but not a value that it reads through a module,
@@ -535,19 +579,21 @@ def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[i
 
     The first kind is a value that numba compiles from the value's own content: a plain Python function, which numba
     compiles from its body if it is ``@register_jitable``, a ``cres`` value, an ``ExternalFunction`` and a ctypes
-    function pointer. Such a value gets the text that ``_canon_value`` gives it when a function reads it as a global.
-    If it has no such text, the function raises ``_Unfingerprintable``, as a global read does. A dispatcher and a
+    function pointer. Such a value gets the text that ``_canon_value`` gives it when a function reads it as a global. If
+    it has no such text, the function raises ``_Unfingerprintable``, as a global read does. A dispatcher and a
     ``@vectorize`` function follow the same rule: without ``fold_named`` one that has no fingerprint is left out, and
-    with ``fold_named`` it raises. A ``@guvectorize`` function and a ``@stencil`` function never have a fingerprint.
-    Without ``fold_named`` they are left out, and with it they raise. A struct method, a formula or a derive then
-    compiles without a cache. Its code is therefore never loaded from a cache after ``helpers.op``, or the function
-    that it holds, has changed. ``digest`` cannot disable caching. It computes the text again without ``fold_named``,
-    which leaves such a value out, so code named after a digest is still loaded after such a change.
+    with ``fold_named`` it raises. A ``@guvectorize`` function, a ``@stencil`` function and an ``@intrinsic`` never have
+    a fingerprint. Without ``fold_named`` they are left out, and with it they raise. A struct method, a formula or a
+    derive then compiles without a cache. Its code is therefore never loaded from a cache after ``helpers.op``, or the
+    function that it holds, has changed. ``digest`` cannot disable caching. It computes the text again without
+    ``fold_named``, which leaves such a value out, so code named after a digest is still loaded after such a change.
+    For an ``@intrinsic``, ``digest`` asks first with ``_FOLD_NAMED_FOR_DIGEST``, which leaves the intrinsic out and
+    folds the rest as ``fold_named`` does.
 
-    One kind of dispatcher without a fingerprint does not raise: a jitted function of NumPy, numba, numbox or the
-    standard library that ``_named_value_text`` names, such as ``numbox.utils.lowlevel.array_data_p``, which calls an
-    ``@intrinsic``. It is folded by that name, as a value of the second kind, so code that calls it through its
-    module stays cached.
+    A dispatcher of NumPy, numba, numbox or the standard library that has no fingerprint, and an ``@intrinsic`` of one
+    of them, does not raise if ``_named_value_text`` names it. ``numbox.utils.lowlevel.array_data_p``, which calls an
+    ``@intrinsic``, and the ``@intrinsic`` ``numbox.utils.clock.monotonic_ns`` are two such values. Such a value is
+    folded by that name, as a value of the second kind, so code that calls it through its module stays cached.
 
     The second kind is a value that numba compiles from an implementation of its own: a NumPy ufunc, a builtin
     function, and a function or a class that ``_is_supplied`` accepts, such as ``numpy.sum`` or ``numpy.float32``. It
@@ -572,11 +618,11 @@ def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[i
     fingerprint then changes with a function that the code never calls, and the code compiles without a cache if that
     function has no fingerprint. Neither case loads stale code.
 
-    Some values are left out with ``fold_named`` too. These are an ``@intrinsic``, a class that ``_is_supplied`` does
-    not accept, such as an enum or a jitclass, and a function without a name, such as a method of an object that the
-    user created. Data without a fingerprint, such as a tuple that holds a numba type, is left out as well, and so is
-    a value of any kind that this docstring does not name. A change of such a value leaves the fingerprint unchanged.
-    A fingerprint also never holds the implementation of an ``@overload``.
+    Some values are left out with ``fold_named`` too. These are a class that ``_is_supplied`` does not accept, such as
+    an enum or a jitclass, and a function without a name, such as a method of an object that the user created. Data
+    without a fingerprint, such as a tuple that holds a numba type, is left out as well, and so is a value of any kind
+    that this docstring does not name. A change of such a value leaves the fingerprint unchanged. A fingerprint also
+    never holds the implementation of an ``@overload``.
 
     Data can hold a function, as a tuple of dispatchers does. Such data can have a text without ``fold_named`` and
     none with it, because one of its functions calls a helper without a fingerprint through a module. The function
@@ -627,16 +673,19 @@ def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[i
                 if named is not None and not _is_held_by_its_own_package(holder, value):
                     attrs.append(f"{prefix}.{attr}={named}")
                 continue
-            if fold_named and (type(value) is FunctionType or isinstance(
-                    value, (Dispatcher, DUFunc, GUFunc, StencilFunc, CompileResultWAP, ExternalFunction, ctypes._CFuncPtr))):
+            if fold_named and (type(value) is FunctionType or isinstance(value, (
+                    Dispatcher, _Intrinsic, DUFunc, GUFunc, StencilFunc, CompileResultWAP, ExternalFunction,
+                    ctypes._CFuncPtr))):
                 # numba compiles a call of such a value from the value's own content, so the walk folds the value as
-                # a global read does. The walk raises for a value without a fingerprint. A jitted function that
-                # numbox or numba supplies is the exception: it has a name.
+                # a global read does. The walk raises for a value without a fingerprint. A jitted function or an
+                # @intrinsic that numbox or numba supplies is the exception: it has a name.
                 try:
                     canon = _canon_value(value, seen, fold_named)
                 except (_Unfingerprintable, RecursionError):
-                    canon = _named_value_text(value) if isinstance(value, Dispatcher) else None
+                    canon = _named_value_text(value) if isinstance(value, (Dispatcher, _Intrinsic)) else None
                     if canon is None:
+                        if fold_named == _FOLD_NAMED_FOR_DIGEST and isinstance(value, _Intrinsic):
+                            continue
                         raise
                     if _is_held_by_its_own_package(holder, value):
                         continue
@@ -671,7 +720,7 @@ def _fingerprint_module_attrs(referenced: set[str], namespace: dict, seen: set[i
     return f";module_attrs=[{';'.join(sorted(attrs))}]" if attrs else ""
 
 
-def _fingerprint_function(func: FunctionType, seen: set[int], fold_named: bool = False) -> str:
+def _fingerprint_function(func: FunctionType, seen: set[int], fold_named: bool | str = False) -> str:
     # A function that the walk has already entered, through recursion or a cycle, is folded by its qualified name.
     if id(func) in seen:
         return f"recursive({func.__qualname__})"
@@ -747,7 +796,24 @@ def _opaque_values_match(old: Sequence[Any], new: Sequence[Any]) -> bool:
     return True
 
 
-def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list] = None) -> str:
+def _is_user_intrinsic(value: Any) -> bool:
+    """Return whether ``value`` is an ``@intrinsic`` whose definition is a Python function outside a supplied package.
+
+    The intrinsic that ``@proxy`` generates for a wrapper is excluded: its definition holds the alias of the body, and
+    after a collision that alias names another body in another process.
+    """
+    # The type is tested first. The walk meets every value that a function reads. Reading an attribute of an object with
+    # a __getattr__ of its own, such as a config dict or a module that imports on access, can raise.
+    if not isinstance(value, _Intrinsic):
+        return False
+    defn = getattr(value, "_defn", None)
+    if not isinstance(defn, FunctionType):
+        return False
+    return not _defined_in_supplied_package(defn) and not getattr(value, "_numbox_proxy_template", False)
+
+
+def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list] = None,
+                                      walked: Optional[dict] = None) -> str:
     """Return a fingerprint of ``func`` that never raises: a placeholder stands for each value without a fingerprint.
 
     ``_fingerprint_function`` raises at the first value without a fingerprint, so a body that only reads such a
@@ -763,10 +829,42 @@ def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list]
     replaced by a placeholder are appended to it in the order of the walk. A caller with two equal fingerprints can then
     call :func:`_opaque_values_match` to determine whether they come from one body or from two that the fingerprint
     cannot separate.
+
+    An ``@intrinsic`` of the user's whose definition is a Python function gets no placeholder. The function walks its
+    definition function in the same way, with placeholders for the values in it that have no fingerprint, such as a
+    numba type read by a bare name. The walk leaves out what a definition reads through a module or an object, so the
+    intrinsic itself is appended to ``opaque`` as well. An intrinsic of NumPy, numba, numbox or the standard library
+    gets the placeholder, so the alias of a numbox binding that reads ``_call_lib_func`` does not depend on numbox's
+    code. ``walked`` maps the id of each intrinsic of the user's that the walk has met to the order in which the walk
+    met it. An intrinsic that the walk meets again, or that reaches itself, is folded as ``intrinsic-ref(<that
+    number>)``. The walk therefore enters each definition once, and the text grows with the number of intrinsics, not
+    with the number of paths between them.
     """
     seen: set[int] = set()
+    if walked is None:
+        walked = {}
+
+    def _canon_user_intrinsic(value: Any) -> str:
+        if id(value) in walked:
+            return f"intrinsic-ref({walked[id(value)]})"
+        walked[id(value)] = len(walked)
+        # The best-effort rules leave out what the definition reads through a module or an object, as in cfg.K, so two
+        # intrinsics with one text can compile to different code. The intrinsic itself is therefore appended to opaque
+        # as well, and _opaque_values_match distinguishes two such intrinsics.
+        if opaque is not None:
+            opaque.append(value)
+        # A chain of intrinsics, each of whose definitions reads the next, is walked by recursion. A chain of a few
+        # hundred exceeds the recursion limit, and the intrinsic at which it does gets the placeholder of its type.
+        try:
+            defn = _fingerprint_function_best_effort(value._defn, opaque, walked)
+        except RecursionError:
+            return f"<opaque:{type(value).__name__}>"
+        options = _canon({"prefer_literal": value._prefer_literal, **value._ctor_kwargs})
+        return f"intrinsic-besteffort({defn};params={_parameter_names(value._defn)};{options})"
 
     def _canon(value: Any) -> str:
+        if _is_user_intrinsic(value):
+            return _canon_user_intrinsic(value)
         try:
             return _canon_value(value, seen)
         except (_Unfingerprintable, RecursionError):
@@ -775,13 +873,19 @@ def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list]
             return f"<opaque:{type(value).__name__}>"
 
     def _canon_const(const: object) -> str:
+        # A nested function, such as the codegen function of an @intrinsic, a lambda or a generator expression, is
+        # folded in the same way as the function itself. Two of them that differ only in a name that they use, such as
+        # builder.fadd and builder.fsub, compile to different code. Python 3.12 and later inline a list, set or dict
+        # comprehension into the function, so its names are already the function's own.
         if isinstance(const, CodeType):
             inner = ",".join(_canon_const(c) for c in const.co_consts)
-            return f"code({const.co_code.hex()};consts=[{inner}])"
+            return (
+                f"code({const.co_code.hex()};flags={const.co_flags};argc={const.co_argcount};"
+                f"kwonly={const.co_kwonlyargcount};names={','.join(const.co_names)};consts=[{inner}])"
+            )
         return _canon(const)
 
     code = func.__code__
-    consts = ",".join(_canon_const(c) for c in code.co_consts)
     cells = []
     for name, cell in zip(code.co_freevars, func.__closure__ or ()):
         try:
@@ -795,16 +899,22 @@ def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list]
         for name in sorted(_loaded_global_names(code))
         if name in func.__globals__
     ]
+
+    def _kwdefaults_text() -> str:
+        items = sorted((_canon(k), _canon(v)) for k, v in (func.__kwdefaults__ or {}).items())
+        return "dict[" + ",".join(f"{k}:{v}" for k, v in items) + "]"
+
     # Unlike _fingerprint_function, this walk does not call _fingerprint_module_attrs, so the module attributes that
     # the function reads are not folded. If digest uses this fingerprint for the callback of a SQLite registration, the
     # name of the registration's anchor does not change when such an attribute changes, and the registration loads the
     # code compiled before the change.
     return (
-        f"besteffort({func.__module__}:{func.__qualname__};"
-        f"code({code.co_code.hex()};flags={code.co_flags};argc={code.co_argcount};"
-        f"kwonly={code.co_kwonlyargcount};names={','.join(code.co_names)};consts=[{consts}]);"
-        f"defaults={_canon(func.__defaults__ or ())};"
-        f"kwdefaults={_canon(func.__kwdefaults__ or {})};"
+        f"besteffort({func.__module__}:{func.__qualname__};{_canon_const(code)};"
+        # Each default, a keyword-only one included, is folded on its own, so an @intrinsic bound as a default, as in
+        # "def step(x, sc=sc)", is walked as a closure value is. When every default has a text, the result is the text
+        # of the tuple and of the dict.
+        f"defaults=tuple[{','.join(_canon(d) for d in func.__defaults__ or ())}];"
+        f"kwdefaults={_kwdefaults_text()};"
         f"closure=[{';'.join(cells)}];globals=[{';'.join(hashed_globals)}])"
     )
 

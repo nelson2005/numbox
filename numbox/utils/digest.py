@@ -19,7 +19,7 @@ from numba.core.dispatcher import Dispatcher
 from numba.np.ufunc.dufunc import DUFunc
 
 from numbox.utils.fingerprint import (
-    _Unfingerprintable, _canon_value, _fingerprint_function, _fingerprint_function_best_effort,
+    _FOLD_NAMED_FOR_DIGEST, _Unfingerprintable, _canon_value, _fingerprint_function, _fingerprint_function_best_effort,
 )
 
 
@@ -28,11 +28,13 @@ def _fingerprint_or_none(describe, value):
 
     ``describe`` is ``_canon_value`` or ``_fingerprint_function``. With ``fold_named``, each of them raises if the
     function reads, as a module attribute, a function or a type without a fingerprint. The callers that name a struct,
-    a kernel or a derive then compile without a cache. A digest only names code and cannot disable caching, so this
-    function calls ``describe`` again without ``fold_named``. That call leaves such an attribute out. Its text still
-    holds the data that the function reads as module attributes, which the best-effort fingerprint omits.
+    a kernel or a derive then compile without a cache. A digest only names code and cannot disable caching. It asks
+    first with ``_FOLD_NAMED_FOR_DIGEST``, under which an ``@intrinsic`` that a module attribute holds is left out
+    instead of raising, and then, if ``describe`` still raises, without ``fold_named``. That call leaves every such
+    attribute out. Its text still holds the data that the function reads as module attributes, which the best-effort
+    fingerprint omits.
     """
-    for fold_named in (True, False):
+    for fold_named in (_FOLD_NAMED_FOR_DIGEST, False):
         try:
             return describe(value, set(), fold_named)
         except (_Unfingerprintable, RecursionError):
@@ -58,13 +60,16 @@ def digest(subject, fns):
     fingerprint through a module, as in ``helpers.step(x)``. A digest only names code. For such a function, the hash
     therefore folds the fingerprint that the alias of a ``@proxy`` function has. That fingerprint holds the data that
     the function reads as module attributes, and each dispatcher among them that has a fingerprint. It leaves out
-    every other function, class and type that the function reads as a module attribute. An edit to the helper
-    therefore leaves the hash unchanged.
+    every other function, class and type that the function reads as a module attribute. An edit to the helper therefore
+    leaves the hash unchanged. An ``@intrinsic`` of the user's that a module attribute holds is the exception. The hash
+    leaves out only the intrinsic and folds the rest of the function's full fingerprint. An edit to the intrinsic still
+    leaves the hash unchanged.
 
     For a Python function or a dispatcher, the hash is the same in every process. The weaker fingerprint puts the name
     of a value's type in place of each value without a fingerprint, and it leaves out module attributes, so an edit to
-    such a value or attribute leaves the hash unchanged. A cloudpickle can differ in every process, as it does for an
-    object whose class is defined in the script that runs.
+    such a value or attribute leaves the hash unchanged. An ``@intrinsic`` of the user's gets no such name: the weaker
+    fingerprint walks the function that the decorator wraps in the same way. A cloudpickle can differ in every process,
+    as it does for an object whose class is defined in the script that runs.
     """
     h = hashlib.sha256()
     h.update(repr(subject).encode("utf-8"))
@@ -98,10 +103,11 @@ def digest(subject, fns):
                 # The function reads a value without a fingerprint as a global, a closure value or a default. The
                 # best-effort fingerprint still folds the constants, closure values, defaults and globals that have
                 # one. It sorts the elements of sets, so the result does not depend on PYTHONHASHSEED. It puts the
-                # name of the type in place of each value without a fingerprint, and it omits the module attributes
-                # that the function reads. An edit to such a value, or to such an attribute, therefore leaves the
-                # digest unchanged. A SQLite registration named after the digest then loads the code compiled before
-                # the edit.
+                # name of the type in place of each value without a fingerprint, except an @intrinsic of the user's,
+                # whose definition function it walks in the same way, and it omits the module attributes that the
+                # function reads. An edit to such a value, or to such an attribute, therefore leaves the digest
+                # unchanged. A SQLite registration named after the digest then loads the code compiled before the
+                # edit.
                 text = _fingerprint_function_best_effort(py)
             h.update(text.encode("utf-8"))
             continue

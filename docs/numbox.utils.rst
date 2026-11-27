@@ -550,8 +550,9 @@ new code, which is compiled again. The fingerprint of a function is built from:
   dispatcher compiles under. The fingerprint of a struct method, a formula, a derive and a ``digest`` also holds the
   ``locals`` of a dispatcher and the signatures that it was declared with.
 
-The fingerprint leaves out an ``@intrinsic`` and a class of your own, such as a jitclass, that the function reads as a
-module attribute. It never holds the implementation of an ``@overload``.
+The fingerprint leaves out a class of your own, such as a jitclass, that the function reads as a module attribute. A
+struct method, a formula or a derive that reads an ``@intrinsic`` of your own that way has no fingerprint, as the next
+section explains. A fingerprint never holds the implementation of an ``@overload``.
 
 numbox reads these values when it computes the fingerprint. A program that rebinds one of them later in the same
 process, before numba compiles the code, caches code that the fingerprint does not describe.
@@ -594,15 +595,17 @@ When a function reads a value without a fingerprint
 '''''''''''''''''''''''''''''''''''''''''''''''''''
 
 Some values have no form that means the same thing in another process, so numbox cannot fingerprint them. The ones that
-jitted code reads most often are a numba type used as a global, such as ``float64`` or ``intp``, numba's ``prange``, a
-class and a NumPy dtype. A builtin function imported by name, such as ``sqrt`` after ``from math import sqrt``, has
-none, and neither has an ``@intrinsic``, a ``@guvectorize`` function or a ``@stencil`` function. No jitted helper of
-``numbox.utils.lowlevel``, such as ``array_data_p``, ``load_at``, ``store_at`` or ``get_str_from_p_as_int``, has a
-fingerprint. numbox's bindings, such as ``strlen``, do, so a function that calls a binding keeps its fingerprint. A
-jitted function that reads a value without a fingerprint has none itself. A struct method, a formula or a derive that
-calls a jitted function without a fingerprint has none either, whether it imports the function by name or calls it
-through a module, as in ``helpers.step(x)``. The jitted helpers of numbox are the one exception: when they are called
-through their module, as in ``lowlevel.array_data_p(a)``, the caller keeps its fingerprint.
+jitted code reads most often are a numba type used as a global, such as ``float64`` or ``intp``, numba's ``prange`` and
+a class, such as ``np.float64``. A NumPy dtype object, such as ``np.dtype("float64")``, has one. A builtin function
+imported by name, such as ``sqrt`` after ``from math import sqrt``, has none, and neither has an ``@intrinsic``, a
+``@guvectorize`` function or a ``@stencil`` function. No jitted helper of ``numbox.utils.lowlevel``, such as
+``array_data_p``, ``load_at``, ``store_at`` or ``get_str_from_p_as_int``, has a fingerprint. numbox's bindings, such as
+``strlen``, do, so a function that calls a binding keeps its fingerprint. A jitted function that reads a value without a
+fingerprint has none itself. A struct method, a formula or a derive that calls a jitted function without a fingerprint
+has none either, whether it imports the function by name or calls it through a module, as in ``helpers.step(x)``. The
+jitted helpers of numbox and the intrinsics of numba and numbox are the exception, if their module holds them under
+their own name: when they are called through their module, as in ``lowlevel.array_data_p(a)`` or
+``clock.monotonic_ns()``, the caller keeps its fingerprint.
 A struct method, a formula or a derive also has no fingerprint if it reads, through a module attribute, a numba type
 that names an object of the process by its address, such as the type of a jitclass instance. The same holds if it
 calls a dispatcher that was declared with such a type.
@@ -635,17 +638,26 @@ A SQLite aggregate, window or table-valued function can keep running code compil
 callbacks. This happens when a callback reads a value without a fingerprint: ``digest`` then computes a weaker
 fingerprint for the callback. The weaker fingerprint still covers the callback's code and the values of the globals it
 reads by name. It puts the name of each value's type in place of a value without a fingerprint, though, and it leaves
-out every module attribute. A later change to such a value, or to a module attribute that the callback reads, therefore
-leaves the anchor's name unchanged. The registration then loads the code compiled before the change, and numbox gives no
-warning.
+out every module attribute. An ``@intrinsic`` of your own is the exception: the weaker fingerprint covers the function
+that the decorator wraps in the same way, so two intrinsics that a factory makes over different values with a
+fingerprint, such as two numbers, give two anchors. Two intrinsics that it makes over two numba types, such as
+``float32`` and ``float64``, share one anchor, because a numba type has no fingerprint, and the second of them in a
+process runs the code compiled for the first. A callback that calls the intrinsic through a jitted function that the
+factory makes shares one anchor too, because such a jitted function has no fingerprint and gets a placeholder. Two
+intrinsics also share one anchor if their definition calls a helper function without a fingerprint that holds the
+number, such as a codegen helper that reads ``int64`` by its bare name. A later change to a value without a fingerprint,
+or to a module attribute that the callback reads, therefore leaves the anchor's name unchanged. The registration then
+loads the code compiled before the change, and numbox gives no warning.
 
-A callback that calls a helper without a fingerprint through a module, as in ``helpers.step(x)``, can also keep
-running old code. A struct method, a formula or a derive that does so compiles without a cache. A SQLite registration
-stays cached, and ``digest`` computes for the callback the fingerprint that the alias of a ``@proxy`` function has. That
+A callback that calls a helper without a fingerprint through a module, as in ``helpers.step(x)``, can also keep running
+old code. A struct method, a formula or a derive that does so compiles without a cache. A SQLite registration stays
+cached, and ``digest`` computes for the callback the fingerprint that the alias of a ``@proxy`` function has. That
 fingerprint holds the data that the callback reads as module attributes, such as ``config.SCALE``, and each dispatcher
 among them that has a fingerprint. It leaves out every other function, class and type that the callback reads as a
 module attribute, and the helper is one of them. A change to such a function, class or type leaves the anchor's name
-unchanged.
+unchanged. An ``@intrinsic`` of your own that the callback calls through a module is the exception: ``digest`` leaves
+only the intrinsic out and keeps the rest of the callback's full fingerprint. An edit to the intrinsic then leaves the
+anchor's name unchanged.
 
 For a SQLite callback, the weaker fingerprint is the common case. A step callback receives the number of SQL arguments
 as ``argc`` and the address of SQLite's array of pointers to the argument values as ``argv_pp``, as the docstring of

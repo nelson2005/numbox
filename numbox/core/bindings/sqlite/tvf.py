@@ -359,9 +359,10 @@ def _compile_xfilter(stem, arg_tags, out_dtype, fn):
     # The digest covers out_dtype, the argument tags, numba's and numbox's versions, numbox's jit options and the
     # fingerprint of fn. The anchor's name ends in a hash of the code text, which starts with the digest, so an edit
     # that changes the digest compiles new code. If fn reads a value without a fingerprint, digest falls back to a
-    # weaker fingerprint. It names the type of such a value instead of the value and omits the module attributes that
-    # fn reads, so an edit to such a value or to such an attribute keeps the anchor and the cached code. The utils page
-    # describes the case under "If a SQLite function keeps returning old results".
+    # weaker fingerprint. It names the type of such a value instead of the value. The definition of an @intrinsic of the
+    # user's is the exception: the weaker fingerprint walks it. The weaker fingerprint omits the module attributes that
+    # fn reads. An edit to such a value or to such an attribute therefore keeps the anchor and the cached code. The
+    # utils page describes the case under "If a SQLite function keeps returning old results".
     tvf_digest = digest((out_dtype, tuple(arg_tags)), [fn])
     code_txt = "# tvf-digest: %s\n%s" % (tvf_digest, src)
     anchor = _anchor_path(_ANCHOR_SUBDIR, stem, code_txt)

@@ -54,6 +54,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and numbox loaded it after the function changed. Code that imports such a function by name already compiled without a
   cache. The jitted helpers of `numbox.utils.lowlevel` are the exception, so their callers remain cached. A SQLite
   registration cannot disable its cache, so its cached code still does not change with such a function.
+- numbox fingerprints a NumPy dtype object, such as the `DT` of `np.zeros(n, dtype=DT)`, by its layout. Before, a
+  function that read a dtype object as a global, a closure value or a default had no fingerprint. A struct method or a
+  `compile_kernel` formula that reads one is now cached. Before, it compiled in every process.
+- A `@proxy` or `cres` function can get a new alias after the upgrade if its body reads an `@intrinsic` of the user's or
+  a dtype object, directly or through a function or data that it reads. It can also get one if its body has no
+  fingerprint and has a default value without one, such as a numba type, or defines a nested function, a lambda or a
+  generator expression (on Python 3.10 and 3.11 also a list, set or dict comprehension). A cached caller of such a
+  function then compiles again once, and numbox emits a `StaleProxyCacheWarning` for each cache entry that it discards.
+  The aliases of numbox's own bindings do not change.
 
 ### Fixed
 
@@ -78,6 +87,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_cast_int_to_void_p` as a global, is such a callback. The weaker fingerprint covers none of these changes, as before.
   A registration therefore still loads its cached code after a change that only such callbacks reach. The utils page
   describes this in the section "If a SQLite function keeps returning old results".
+- Two SQLite aggregate, window or table-valued functions of one name that a process registers on two connections each
+  run their own callbacks when a factory makes the callbacks over two `@intrinsic` functions of the user's that differ
+  in a value with a fingerprint, such as a number. This holds for a callback that reads its arguments with
+  `_cast_int_to_void_p` too. Before, the second registration loaded the code generated for the first and returned the
+  first one's results. An intrinsic has no fingerprint, so `digest` computes the weaker fingerprint for such a callback.
+  The weaker fingerprint now walks the Python function that the `@intrinsic` decorator wraps when the callback holds the
+  intrinsic as a global, a closure value or a default. It still puts a placeholder in place of a function without a
+  fingerprint, jitted or not. Two callbacks that each call their intrinsic through such a jitted function, which the
+  factory makes, therefore still share one anchor. Two intrinsics also share one anchor if their number is held by such
+  a function that their definition calls, such as a codegen helper that reads a numba type by its bare name.
+- A struct method or a `compile_kernel` formula that calls an `@intrinsic` of the user's through a module attribute, as
+  in `helpers.scale(x)`, compiles without a cache. Before, numbox left the intrinsic out of the fingerprint and loaded
+  the code compiled before an edit to it. An intrinsic of numba or numbox that its module holds under its own name is
+  named instead, so code that calls it through its module stays cached. A SQLite registration cannot disable its cache,
+  so its cached code still does not change with such an intrinsic.
+- The weaker fingerprint folds a nested function, a lambda or a generator expression (on Python 3.10 and 3.11 also a
+  list, set or dict comprehension) with the names that it uses, its argument counts and its flags, as the full
+  fingerprint does. Two SQLite callbacks without a fingerprint that differ only there, such as one with `lambda: a.x`
+  and one with `lambda: a.y`, therefore get two anchors, and so do two `@proxy` bodies two aliases. Before, the two
+  callbacks got one anchor, and the second registration ran the code compiled for the first. The two bodies got one
+  alias, and a caller of the first ran the code compiled for the second.
+- A table-valued function whose body reads its output dtype as a global, as in `np.zeros(n, dtype=DT)`, now gets a full
+  fingerprint if it reads nothing else without one. Its code then compiles again after a change to a module attribute
+  that holds data and that the body reads, such as `config.SCALE`. Before, `digest` computed the weaker fingerprint for
+  such a body, which leaves out every module attribute.
 
 ## [0.7.9] - 2026-11-05
 

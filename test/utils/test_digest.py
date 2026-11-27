@@ -1,10 +1,11 @@
 """Tests for ``numbox.utils.digest``, the hash of 16 hexadecimal digits that names generated code.
 
-The tests check that the digest has 16 digits and is the same for the same inputs. They check that it changes with
-the subject, with a function that differs in a literal and in its name, and with numbox's default jit options. It
-also changes with the options of a dispatcher or a ``@vectorize`` function. A callable without code is hashed as a
+The tests check that the digest has 16 digits and is the same for the same inputs. They check that it changes with the
+subject, with a function that differs in a literal and in its name, and with numbox's default jit options. It also
+changes with the options of a dispatcher or a ``@vectorize`` function. A callable without code is hashed as a
 cloudpickle that holds its state. A function that reads a value without a fingerprint is hashed with the best-effort
-fingerprint, which still folds closure values. All the digests are compared within one process.
+fingerprint, which still folds closure values. A body that reads a dtype object as a global has a full fingerprint,
+which folds the data that a module attribute holds. All the digests are compared within one process.
 """
 import functools
 
@@ -151,6 +152,92 @@ def test_digest_varies_with_a_named_function_that_a_module_attribute_holds():
             helpers.op = op
             digests.append(digest("subject", [fn]))
         assert digests[0] != digests[1]
+
+
+def test_digest_of_a_table_function_that_reads_its_dtype_varies_with_data_that_a_module_attribute_holds():
+    """The digest of a body that reads a dtype global and ``helpers.SCALE`` changes with the value of ``helpers.SCALE``.
+
+    A table-valued function's body usually makes its output with ``np.zeros(n, dtype=DT)``. The dtype object has a
+    fingerprint, so the body has a full one, and that folds the data that ``helpers.SCALE`` holds. With one digest for
+    both values, the registration in the next process would load the code compiled for the first.
+    """
+    import textwrap
+    import types
+
+    import numpy as np
+
+    dt = np.dtype([("v", np.float64)])
+    helpers = types.ModuleType("helpers")
+    ns = {"np": np, "DT": dt, "helpers": helpers}
+    exec(textwrap.dedent("""
+        def body(a):
+            out = np.zeros(1, dtype=DT)
+            out[0]["v"] = helpers.SCALE
+            return out
+    """), ns)  # nosec B102 - a fixed test snippet
+    body = ns["body"]
+    digests = []
+    for scale in (2.0, 3.0):
+        helpers.SCALE = scale
+        digests.append(digest((dt, (0,)), [body]))
+    assert digests[0] != digests[1]
+
+
+def test_digest_of_a_callback_that_reads_an_intrinsic_through_a_module_still_folds_the_functions_beside_it():
+    """A callback that calls ``helpers.scale`` and ``helpers.op`` changes its digest with the function in ``op``.
+
+    ``helpers.scale`` holds an ``@intrinsic``, which has no fingerprint. ``digest`` leaves it out and keeps the rest of
+    the callback's full fingerprint, which names the builtin function that ``helpers.op`` holds. If the intrinsic made
+    ``digest`` fall back to the text without ``fold_named``, both callbacks would get one digest, and the registration
+    in the next process would load the code compiled for ``math.sin``. The SQLite registrations hand ``digest`` the
+    callback's dispatcher, so the test asks for the digest of the function and of its dispatcher.
+    """
+    import math
+    import types
+
+    from numba.core import types as nb_types
+    from numba.extending import intrinsic
+
+    @intrinsic
+    def scale(typingctx, x):
+        def codegen(context, builder, sig, args):
+            return builder.fmul(args[0], context.get_constant(nb_types.float64, 2.0))
+        return nb_types.float64(nb_types.float64), codegen
+
+    helpers = types.ModuleType("helpers")
+    helpers.scale = scale
+
+    def callback(x):
+        return helpers.scale(helpers.op(x))
+
+    for fn in (callback, njit(callback)):
+        digests = []
+        for op in (math.sin, math.cos):
+            helpers.op = op
+            digests.append(digest("subject", [fn]))
+        assert digests[0] != digests[1], fn
+
+
+def test_digest_names_an_intrinsic_of_numbox_that_a_module_attribute_holds():
+    """A callback that calls ``helpers.op`` changes its digest with the intrinsic of numbox that ``op`` holds.
+
+    ``digest`` leaves out an ``@intrinsic`` of the user's that a module attribute holds. An intrinsic of numbox is named
+    by its module and its name instead, so ``monotonic_ns`` and ``_cast_void_p_to_int`` give two digests.
+    """
+    import types
+
+    from numbox.utils import clock, lowlevel
+
+    helpers = types.ModuleType("helpers")
+
+    def callback(x):
+        return helpers.op(x)
+
+    digests = []
+    for op in (clock.monotonic_ns, lowlevel._cast_void_p_to_int):
+        helpers.op = op
+        digests.append(digest("subject", [callback]))
+    assert digests[0] != digests[1]
 
 
 def test_digest_of_a_callback_that_calls_a_helper_without_a_fingerprint_through_a_module_holds_the_data_it_reads():
