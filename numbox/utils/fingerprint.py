@@ -802,8 +802,12 @@ def _is_user_intrinsic(value: Any) -> bool:
     The intrinsic that ``@proxy`` generates for a wrapper is excluded: its definition holds the alias of the body, and
     after a collision that alias names another body in another process.
     """
+    # The type is tested first: the walk meets every value that a function reads, and reading an attribute of an
+    # object with a __getattr__ of its own, such as a config dict or a module that imports on access, can raise.
+    if not isinstance(value, _Intrinsic):
+        return False
     defn = getattr(value, "_defn", None)
-    if not isinstance(value, _Intrinsic) or not isinstance(defn, FunctionType):
+    if not isinstance(defn, FunctionType):
         return False
     return not _defined_in_supplied_package(defn) and not getattr(value, "_numbox_proxy_template", False)
 
@@ -850,7 +854,12 @@ def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list]
         # well, and _opaque_values_match tells two such intrinsics apart.
         if opaque is not None:
             opaque.append(value)
-        defn = _fingerprint_function_best_effort(value._defn, opaque, walked)
+        # A chain of intrinsics, each of whose definitions reads the next, is walked by recursion. A chain of a few
+        # hundred exceeds the recursion limit, and the intrinsic at which it does gets the placeholder of its type.
+        try:
+            defn = _fingerprint_function_best_effort(value._defn, opaque, walked)
+        except RecursionError:
+            return f"<opaque:{type(value).__name__}>"
         options = _canon({"prefer_literal": value._prefer_literal, **value._ctor_kwargs})
         return f"intrinsic-besteffort({defn};params={_parameter_names(value._defn)};{options})"
 
@@ -891,16 +900,22 @@ def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list]
         for name in sorted(_loaded_global_names(code))
         if name in func.__globals__
     ]
+
+    def _kwdefaults_text() -> str:
+        items = sorted((_canon(k), _canon(v)) for k, v in (func.__kwdefaults__ or {}).items())
+        return "dict[" + ",".join(f"{k}:{v}" for k, v in items) + "]"
+
     # Unlike _fingerprint_function, this walk does not call _fingerprint_module_attrs, so the module attributes that
     # the function reads are not folded. If digest uses this fingerprint for the callback of a SQLite registration, the
     # name of the registration's anchor does not change when such an attribute changes, and the registration loads the
     # code compiled before the change.
     return (
         f"besteffort({func.__module__}:{func.__qualname__};{_canon_const(code)};"
-        # Each default is folded on its own, so an @intrinsic bound as a default, as in "def step(x, sc=sc)", is walked
-        # as a closure value is. When every default has a text, the result is the text of the tuple.
+        # Each default, a keyword-only one included, is folded on its own, so an @intrinsic bound as a default, as in
+        # "def step(x, sc=sc)", is walked as a closure value is. When every default has a text, the result is the text
+        # of the tuple and of the dict.
         f"defaults=tuple[{','.join(_canon(d) for d in func.__defaults__ or ())}];"
-        f"kwdefaults={_canon(func.__kwdefaults__ or {})};"
+        f"kwdefaults={_kwdefaults_text()};"
         f"closure=[{';'.join(cells)}];globals=[{';'.join(hashed_globals)}])"
     )
 

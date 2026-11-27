@@ -93,9 +93,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_cast_int_to_void_p` too. Before, the second registration loaded the code generated for the first and returned the
   first one's results. An intrinsic has no fingerprint, so `digest` computes the weaker fingerprint for such a callback.
   The weaker fingerprint now walks the Python function that the `@intrinsic` decorator wraps when the callback holds the
-  intrinsic as a global, a closure value or a default. It still puts a placeholder in place of a jitted function without
-  a fingerprint. Two callbacks that each call their intrinsic through such a jitted function, which the factory makes,
-  therefore still share one anchor.
+  intrinsic as a global, a closure value or a default. It still puts a placeholder in place of a function without a
+  fingerprint, jitted or not. Two callbacks that each call their intrinsic through such a jitted function, which the
+  factory makes, therefore still share one anchor. So do two intrinsics whose number sits in such a function that their
+  definition calls, such as a codegen helper that reads a numba type by its bare name.
 - A struct method or a `compile_kernel` formula that calls an `@intrinsic` of the user's through a module attribute, as
   in `helpers.scale(x)`, compiles without a cache. Before, numbox left the intrinsic out of the fingerprint and loaded
   the code compiled before an edit to it. An intrinsic of numba or numbox that its module holds under its own name is

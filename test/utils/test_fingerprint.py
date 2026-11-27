@@ -798,6 +798,78 @@ def test_an_object_that_passes_for_an_intrinsic_without_a_definition_has_no_fing
     assert len(digest("subject", [f])) == 16
 
 
+def test_the_best_effort_walk_tests_the_type_of_a_value_before_it_reads_an_attribute():
+    # The walk meets every global that a function reads. A config dict whose keys read as attributes raises KeyError for
+    # a key it lacks, and a module whose __getattr__ imports on access raises ModuleNotFoundError, so reading _defn from
+    # either before testing the type made digest and @proxy raise.
+    from numbox.utils.digest import digest
+
+    class AttrDict(dict):
+        __getattr__ = dict.__getitem__
+
+    lazy = types.ModuleType("lazy_helpers_for_the_walk")
+
+    def lazy_getattr(name):
+        raise ModuleNotFoundError(f"No module named 'lazy_helpers_for_the_walk.{name}'")
+
+    lazy.__getattr__ = lazy_getattr
+    f = _make("""
+        def f(x):
+            return CFG.k * x + lazy.offset
+    """, CFG=AttrDict(k=3.0), lazy=lazy)
+    assert "CFG=" in _fingerprint_function_best_effort(f)
+    assert len(digest("subject", [f])) == 16
+
+
+def test_the_best_effort_walk_folds_each_keyword_only_default():
+    # Two functions whose keyword-only default is one of two intrinsics that one factory makes over different constants
+    # get two texts. A keyword-only default with a text keeps the text that the dict of the defaults had.
+    def make_scale(k):
+        @intrinsic
+        def scale(typingctx, x):
+            def codegen(context, builder, sig, args):
+                return builder.fmul(args[0], context.get_constant(float64, k))
+            return float64(float64), codegen
+        return scale
+
+    texts = []
+    for k in (2.0, 3.0):
+        f = _make("""
+            def f(x, *, sc):
+                return sc(x)
+        """)
+        f.__kwdefaults__ = {"sc": make_scale(k)}
+        texts.append(_fingerprint_function_best_effort(f))
+    assert texts[0] != texts[1]
+    g = _make("""
+        def f(x, *, k=2.0, j=1):
+            return x * k + j
+    """)
+    assert f"kwdefaults={_canon_value(g.__kwdefaults__, set())};" in _fingerprint_function_best_effort(g)
+
+
+def test_the_best_effort_walk_of_a_long_chain_of_intrinsics_does_not_raise():
+    # Each definition in the chain reads the next intrinsic as a global, so the walk recurses through all of them. At a
+    # few hundred it exceeds the recursion limit, and the intrinsic at which it does gets a placeholder, so the walk,
+    # which never raises, still returns, and so does digest.
+    from numbox.utils.digest import digest
+
+    previous = None
+    for _ in range(400):
+        if previous is None:
+            ns = {"float64": float64}
+            exec("def d(typingctx, x):\n    return float64(x), None\n", ns)  # nosec B102 - a fixed test snippet
+        else:
+            ns = {"float64": float64, "previous": previous}
+            exec("def d(typingctx, x):\n    return float64(previous(x)[0]), None\n", ns)  # nosec B102 - a fixed test snippet
+        previous = intrinsic(ns["d"])
+    f = _make("""
+        def f(x):
+            return deepest(x)
+    """, deepest=previous)
+    assert len(digest("subject", [f])) == 16
+
+
 def test_an_intrinsic_of_numbox_keeps_its_caller_cacheable():
     # An intrinsic has no fingerprint, and monotonic_ns is one. numbox supplies it, so a caller that reaches it through
     # its module keeps its fingerprint, as a caller of array_data_p does. When a module of another package holds it in
