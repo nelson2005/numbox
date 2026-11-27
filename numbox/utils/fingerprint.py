@@ -832,14 +832,13 @@ def _fingerprint_function_best_effort(func: FunctionType, opaque: Optional[list]
 
     An ``@intrinsic`` of the user's whose definition is a Python function gets no placeholder. The function walks its
     definition function in the same way, with placeholders for the values in it that have no fingerprint, such as a
-    numba type read by a bare name. Two intrinsics that one factory makes over different constants therefore have
-    different fingerprints. The walk leaves out what a definition reads through a module or an object, so the intrinsic
-    itself is appended to ``opaque`` as well. An intrinsic of NumPy, numba, numbox or the standard library gets the
-    placeholder, so the alias of a numbox binding that reads ``_call_lib_func`` does not depend on numbox's code.
-    ``walked`` maps the id of each intrinsic of the user's that the walk has met to the order in which the walk met it.
-    An intrinsic that the walk meets again, or that reaches itself, is folded as ``intrinsic-ref(<that number>)``. The
-    walk therefore enters each definition once, and the text grows with the number of intrinsics, not with the number of
-    paths between them.
+    numba type read by a bare name. The walk leaves out what a definition reads through a module or an object, so the
+    intrinsic itself is appended to ``opaque`` as well. An intrinsic of NumPy, numba, numbox or the standard library
+    gets the placeholder, so the alias of a numbox binding that reads ``_call_lib_func`` does not depend on numbox's
+    code. ``walked`` maps the id of each intrinsic of the user's that the walk has met to the order in which the walk
+    met it. An intrinsic that the walk meets again, or that reaches itself, is folded as ``intrinsic-ref(<that
+    number>)``. The walk therefore enters each definition once, and the text grows with the number of intrinsics, not
+    with the number of paths between them.
     """
     seen: set[int] = set()
     if walked is None:

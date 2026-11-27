@@ -9,14 +9,13 @@ module global that only shares an attribute's name. ``co_names`` holds both kind
 reads the opcodes. Folding such a global would change the fingerprint when only the global changes, and a global
 without a fingerprint would make the fingerprint fail, so the work builder would compile the derive without a cache.
 An ``@intrinsic`` has no fingerprint, and the best-effort fingerprint folds a user's intrinsic by its definition
-function and its options, so two that a factory makes over different constants have different texts. Four rules apply
-with ``fold_named``. A module attribute that holds a function or a class is folded by its content or by its name, and
-one that holds an ``@intrinsic`` of the user's leaves its reader without a fingerprint. A module attribute that holds a
-numba type or a dtype object is folded by the identity of the type. A helper without a fingerprint leaves its caller
-without one. The text of a dispatcher holds the types that it was declared with. The tests state each rule, and that the
-text without ``fold_named`` does not change.
-The last tests cover ``_opaque_values_match`` and the ``@proxy`` aliases that a collision retires. The tests that need
-a C math library skip if ``open_libm`` finds none.
+function and its options. Four rules apply with ``fold_named``. A module attribute that holds a function or a class is
+folded by its content or by its name, and one that holds an ``@intrinsic`` of the user's leaves its reader without a
+fingerprint. A module attribute that holds a numba type or a dtype object is folded by the identity of the type. A
+helper without a fingerprint leaves its caller without one. The text of a dispatcher holds the types that it was
+declared with. The tests state each rule, and that the text without ``fold_named`` does not change. The last tests cover
+``_opaque_values_match`` and the ``@proxy`` aliases that a collision retires. The tests that need a C math library skip
+if ``open_libm`` finds none.
 """
 import abc
 import cmath
@@ -848,26 +847,39 @@ def test_the_best_effort_walk_folds_each_keyword_only_default():
     assert f"kwdefaults={_canon_value(g.__kwdefaults__, set())};" in _fingerprint_function_best_effort(g)
 
 
-def test_the_best_effort_walk_of_a_long_chain_of_intrinsics_does_not_raise():
-    # Each definition in the chain reads the next intrinsic as a global, so the walk recurses through all of them. At a
-    # few hundred it exceeds the recursion limit, and the intrinsic at which it does gets a placeholder, so the walk,
-    # which never raises, still returns, and so does digest.
-    from numbox.utils.digest import digest
+def _chain_of_intrinsics(top_constant, length=400):
+    """Return a reader of the last of ``length`` intrinsics, each of whose definitions reads the one before it.
 
+    The definition of the last one also holds ``top_constant``, so two chains that differ in it differ only at the end
+    that the reader reads, far above the depth at which the walk reaches the recursion limit.
+    """
     previous = None
-    for _ in range(400):
+    for i in range(length):
+        ns = {"float64": float64, "previous": previous, "K": top_constant if i == length - 1 else 0.0}
         if previous is None:
-            ns = {"float64": float64}
-            exec("def d(typingctx, x):\n    return float64(x), None\n", ns)  # nosec B102 - a fixed test snippet
+            exec("def d(typingctx, x):\n    return float64(x), K\n", ns)  # nosec B102 - a fixed test snippet
         else:
-            ns = {"float64": float64, "previous": previous}
-            exec("def d(typingctx, x):\n    return float64(previous(x)[0]), None\n", ns)  # nosec B102 - a fixed test snippet
+            exec("def d(typingctx, x):\n    return float64(previous(x)[0]), K\n", ns)  # nosec B102 - a fixed test snippet
         previous = intrinsic(ns["d"])
-    f = _make("""
+    return _make("""
         def f(x):
             return deepest(x)
     """, deepest=previous)
-    assert len(digest("subject", [f])) == 16
+
+
+def test_the_best_effort_walk_of_a_long_chain_of_intrinsics_keeps_the_text_above_the_cut():
+    # Each definition in the chain reads the next intrinsic as a global, so the walk recurses through all of them. At a
+    # few hundred it exceeds the recursion limit, and the intrinsic at which it does gets a placeholder. The walk itself
+    # returns, the intrinsics above the cut keep their texts, and two chains that differ only at the reader's end get
+    # two texts. digest returns as well.
+    from numbox.utils.digest import digest
+
+    texts = [_fingerprint_function_best_effort(_chain_of_intrinsics(k)) for k in (2.0, 3.0)]
+    for text in texts:
+        assert text.count("intrinsic-besteffort(") > 10, text[:300]
+        assert "<opaque:_Intrinsic>" in text
+    assert texts[0] != texts[1]
+    assert len(digest("subject", [_chain_of_intrinsics(2.0)])) == 16
 
 
 def test_an_intrinsic_of_numbox_keeps_its_caller_cacheable():

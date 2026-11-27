@@ -57,12 +57,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - numbox fingerprints a NumPy dtype object, such as the `DT` of `np.zeros(n, dtype=DT)`, by its layout. Before, a
   function that read a dtype object as a global, a closure value or a default had no fingerprint. A struct method or a
   `compile_kernel` formula that reads one is now cached. Before, it compiled in every process.
-- A `@proxy` or `cres` function gets a new alias if its body reads an `@intrinsic` of the user's or a dtype object as a
-  global, a closure value or a default. It also gets one if its body has a default value without a fingerprint, such as
-  a numba type, or if its body has no fingerprint and defines a nested function, a lambda or a generator expression (on
-  Python 3.10 and 3.11 also a list, set or dict comprehension). A cached caller of such a function therefore compiles
-  again once after the upgrade, and numbox emits a `StaleProxyCacheWarning` for each cache entry that it discards. The
-  aliases of numbox's own bindings do not change.
+- A `@proxy` or `cres` function can get a new alias after the upgrade if its body reads an `@intrinsic` of the user's or
+  a dtype object, directly or through a function or data that it reads. It can also get one if its body has no
+  fingerprint and has a default value without one, such as a numba type, or defines a nested function, a lambda or a
+  generator expression (on Python 3.10 and 3.11 also a list, set or dict comprehension). A cached caller of such a
+  function then compiles again once, and numbox emits a `StaleProxyCacheWarning` for each cache entry that it discards.
+  The aliases of numbox's own bindings do not change.
 
 ### Fixed
 
